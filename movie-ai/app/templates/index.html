@@ -2,12 +2,16 @@
 <html lang="en">
 
 <head>
-
     <meta charset="UTF-8">
 
     <meta
         name="viewport"
         content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="theme-color"
+        content="#070709"
     >
 
     <title>My Movie AI</title>
@@ -16,215 +20,497 @@
         rel="stylesheet"
         href="/static/style.css"
     >
-
 </head>
 
 <body>
 
-<div class="background-overlay"></div>
+<!-- ====================================================== -->
+<!-- BACKGROUND -->
+<!-- ====================================================== -->
 
-<div class="container">
-
-    <!-- HEADER -->
-
-    <header>
-
-        <h1>🎬 My Movie AI</h1>
-
-        <p class="subtitle">
-            Your personal movie & series database
-        </p>
-
-    </header>
+<div class="site-background"></div>
 
 
-    <!-- ADD -->
+<!-- ====================================================== -->
+<!-- NAVBAR -->
+<!-- ====================================================== -->
 
-    <section class="card">
+<nav class="topbar">
 
-        <h2>➕ Add watched</h2>
+    <div class="brand">
 
-        <form
-            action="/add"
-            method="post"
-        >
+        <div class="brand-icon">
+            🎬
+        </div>
 
-            <label>
-                Title
-            </label>
+        <div class="brand-text">
+            <strong>My Movie AI</strong>
+            <span>your personal cinema</span>
+        </div>
 
-            <input
-                type="text"
-                name="title"
-                placeholder="Interstellar"
-                autocomplete="off"
-                required
-            >
-
-            <label>
-                Rating
-            </label>
-
-            <input
-                type="number"
-                name="rating"
-                min="0"
-                max="10"
-                step="0.1"
-                placeholder="9.5"
-                required
-            >
-
-            <label>
-                Type
-            </label>
-
-            <select name="media_type">
-
-                <option value="Movie">
-                    🎬 Movie
-                </option>
-
-                <option value="Series">
-                    📺 Series
-                </option>
-
-            </select>
-
-            <button type="submit">
-                ➕ Add
-            </button>
-
-        </form>
-
-    </section>
+    </div>
 
 
-    <!-- ================================================= -->
-    <!-- AI RECOMMENDATION -->
-    <!-- ================================================= -->
+    <div class="topbar-status">
 
-    <section class="ai-recommendation">
+        <span class="status-dot"></span>
 
-        <h2>
-            🤖 What should I watch?
-        </h2>
+        <span>
+            Personal Library
+        </span>
 
-        <p>
-            Gemini analyzes your watched titles and ratings
-            to find something you may enjoy.
-        </p>
+    </div>
 
-        <div class="ai-buttons">
+</nav>
 
-            <a
-                href="/recommend/movie"
-                class="ai-button movie-button"
-            >
-                🎬 Recommend a Movie
-            </a>
 
-            <a
-                href="/recommend/series"
-                class="ai-button series-button"
-            >
-                📺 Recommend a Series
-            </a>
+<!-- ====================================================== -->
+<!-- MAIN -->
+<!-- ====================================================== -->
+
+<main class="page">
+
+
+    <!-- ================================================== -->
+    <!-- HERO -->
+    <!-- ================================================== -->
+
+    <section class="hero">
+
+        <div class="hero-content">
+
+            <div class="hero-kicker">
+                YOUR PRIVATE MOVIE COLLECTION
+            </div>
+
+            <h1>
+                What are you<br>
+                watching tonight?
+            </h1>
+
+            <p>
+                Track everything you've watched,
+                rate it, and let AI help you discover
+                your next favorite.
+            </p>
+
+            <div class="hero-stats">
+
+                <div class="stat">
+
+                    <strong>
+                        {{ movies|length }}
+                    </strong>
+
+                    <span>
+                        Watched
+                    </span>
+
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+
+                    <strong>
+                        🤖
+                    </strong>
+
+                    <span>
+                        AI Ready
+                    </span>
+
+                </div>
+
+            </div>
 
         </div>
 
     </section>
 
 
-    <!-- ================================================= -->
+    <!-- ================================================== -->
+    <!-- ADD + AI -->
+    <!-- ================================================== -->
+
+    <section class="dashboard-grid">
+
+
+        <!-- ADD WATCHED -->
+
+        <div class="panel add-panel">
+
+            <div class="panel-header">
+
+                <div>
+
+                    <span class="panel-label">
+                        LIBRARY
+                    </span>
+
+                    <h2>
+                        Add something you've watched
+                    </h2>
+
+                </div>
+
+                <div class="panel-icon">
+                    +
+                </div>
+
+            </div>
+
+
+            <form
+                action="/add"
+                method="post"
+                class="add-form"
+            >
+
+                <div class="field">
+
+                    <label for="title">
+                        Title
+                    </label>
+
+                    <input
+                        id="title"
+                        type="text"
+                        name="title"
+                        placeholder="Interstellar"
+                        autocomplete="off"
+                        required
+                    >
+
+                </div>
+
+
+                <div class="form-row">
+
+                    <div class="field">
+
+                        <label for="rating">
+                            Your rating
+                        </label>
+
+                        <div class="input-rating">
+
+                            <span>★</span>
+
+                            <input
+                                id="rating"
+                                type="number"
+                                name="rating"
+                                min="0"
+                                max="10"
+                                step="0.1"
+                                placeholder="9.5"
+                                required
+                            >
+
+                            <small>
+                                / 10
+                            </small>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="field">
+
+                        <label for="media_type">
+                            Type
+                        </label>
+
+                        <select
+                            id="media_type"
+                            name="media_type"
+                        >
+
+                            <option value="Movie">
+                                🎬 Movie
+                            </option>
+
+                            <option value="Series">
+                                📺 Series
+                            </option>
+
+                        </select>
+
+                    </div>
+
+                </div>
+
+
+                <button
+                    type="submit"
+                    class="primary-button"
+                >
+
+                    <span>
+                        Add to collection
+                    </span>
+
+                    <span>
+                        →
+                    </span>
+
+                </button>
+
+            </form>
+
+            <div class="panel-hint">
+                We'll automatically look up the title
+                and artwork using TMDB.
+            </div>
+
+        </div>
+
+
+        <!-- AI -->
+
+        <div class="panel ai-panel">
+
+            <div class="ai-glow"></div>
+
+            <div class="panel-header">
+
+                <div>
+
+                    <span class="panel-label ai-label">
+                        AI DISCOVERY
+                    </span>
+
+                    <h2>
+                        Find your next watch
+                    </h2>
+
+                </div>
+
+                <div class="ai-icon">
+                    ✦
+                </div>
+
+            </div>
+
+            <p class="ai-description">
+                Gemini looks at the movies and series
+                you've rated and finds something you
+                haven't watched yet.
+            </p>
+
+
+            <div class="recommend-buttons">
+
+                <a
+                    href="/recommend/movie"
+                    class="recommend-button movie-recommend"
+                >
+
+                    <span class="recommend-icon">
+                        🎬
+                    </span>
+
+                    <span class="recommend-text">
+
+                        <strong>
+                            Recommend a movie
+                        </strong>
+
+                        <small>
+                            Based on your ratings
+                        </small>
+
+                    </span>
+
+                    <span class="recommend-arrow">
+                        →
+                    </span>
+
+                </a>
+
+
+                <a
+                    href="/recommend/series"
+                    class="recommend-button series-recommend"
+                >
+
+                    <span class="recommend-icon">
+                        📺
+                    </span>
+
+                    <span class="recommend-text">
+
+                        <strong>
+                            Recommend a series
+                        </strong>
+
+                        <small>
+                            Find your next binge
+                        </small>
+
+                    </span>
+
+                    <span class="recommend-arrow">
+                        →
+                    </span>
+
+                </a>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
     <!-- AI RESULT -->
-    <!-- ================================================= -->
+    <!-- ================================================== -->
 
     {% if recommendation %}
 
-    <section class="recommendation-card">
+    <section class="recommendation-result">
 
         {% if recommendation.error %}
 
-            <h2>
-                ⚠️ Recommendation Error
-            </h2>
+        <div class="recommendation-error">
 
-            <p class="recommendation-error">
-                {{ recommendation.error }}
-            </p>
+            <div class="error-icon">
+                !
+            </div>
+
+            <div>
+
+                <strong>
+                    Recommendation unavailable
+                </strong>
+
+                <p>
+                    {{ recommendation.error }}
+                </p>
+
+            </div>
+
+        </div>
 
         {% else %}
 
-            <h2>
-                🤖 Gemini recommends
-            </h2>
 
-            <div class="recommendation-content">
+        <div class="result-kicker">
+            GEMINI PICKED FOR YOU
+        </div>
 
-                <!-- POSTER -->
+
+        <div class="result-card">
+
+            {% if recommendation.backdrop %}
+
+            <div
+                class="result-backdrop"
+                style="background-image:
+                url('{{ recommendation.backdrop }}');"
+            ></div>
+
+            {% endif %}
+
+
+            <div class="result-overlay"></div>
+
+
+            <div class="result-content">
+
 
                 {% if recommendation.poster %}
 
                 <img
                     src="{{ recommendation.poster }}"
                     alt="{{ recommendation.tmdb_title }}"
-                    class="recommendation-poster"
+                    class="result-poster"
+                    loading="lazy"
                 >
 
                 {% else %}
 
-                <div class="recommendation-placeholder">
+                <div class="result-poster result-poster-placeholder">
                     🎬
                 </div>
 
                 {% endif %}
 
 
-                <!-- INFO -->
+                <div class="result-info">
 
-                <div class="recommendation-info">
+                    <div class="result-badge">
+                        🤖 AI RECOMMENDATION
+                    </div>
 
-                    <h3>
+
+                    <h2>
                         {{ recommendation.tmdb_title }}
-                    </h3>
+                    </h2>
 
 
-                    {% if recommendation.tmdb_year %}
+                    <div class="result-meta">
 
-                    <div class="recommendation-year">
+                        {% if recommendation.tmdb_year %}
 
-                        📅 {{ recommendation.tmdb_year }}
+                        <span>
+                            {{ recommendation.tmdb_year }}
+                        </span>
+
+                        <span class="meta-dot">
+                            •
+                        </span>
+
+                        {% endif %}
+
+                        <span>
+                            {{ "Movie" if recommendation.tmdb_id else "Recommendation" }}
+                        </span>
+
+                    </div>
+
+
+                    {% if recommendation.reason %}
+
+                    <div class="why-box">
+
+                        <span>
+                            WHY YOU MIGHT LIKE IT
+                        </span>
+
+                        <p>
+                            {{ recommendation.reason }}
+                        </p>
 
                     </div>
 
                     {% endif %}
 
 
-                    {% if recommendation.reason %}
-
-                    <p class="recommendation-reason">
-
-                        💡 {{ recommendation.reason }}
-
-                    </p>
-
-                    {% endif %}
-
-
                     {% if recommendation.overview %}
 
-                    <p class="recommendation-overview">
-
+                    <p class="result-overview">
                         {{ recommendation.overview }}
-
                     </p>
 
                     {% endif %}
+
+
+                    <a
+                        href="/"
+                        class="secondary-button"
+                    >
+                        ← Back to collection
+                    </a>
 
                 </div>
 
             </div>
+
+        </div>
 
         {% endif %}
 
@@ -233,114 +519,142 @@
     {% endif %}
 
 
-    <!-- ================================================= -->
+    <!-- ================================================== -->
     <!-- COLLECTION -->
-    <!-- ================================================= -->
+    <!-- ================================================== -->
 
-    <section class="collection">
+    <section class="collection-section">
 
-        <div class="section-header">
 
-            <h2>
-                Watched
-            </h2>
+        <div class="collection-heading">
 
-            {% if movies %}
+            <div>
 
-            <span>
-                {{ movies|length }} watched
-            </span>
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
 
-            {% endif %}
+                <h2>
+                    Watched
+                </h2>
+
+            </div>
+
+
+            <div class="collection-count">
+
+                <strong>
+                    {{ movies|length }}
+                </strong>
+
+                <span>
+                    titles
+                </span>
+
+            </div>
 
         </div>
 
 
         {% if movies %}
 
-        <div class="movies">
+
+        <div class="movie-grid">
 
             {% for movie in movies %}
 
-            <article class="movie">
+            <article class="movie-card">
 
-                <!-- POSTER -->
 
-                <div class="poster-container">
+                <!-- ARTWORK -->
+
+                <div class="movie-art">
 
                     {% if movie["poster"] %}
 
                     <img
                         src="{{ movie['poster'] }}"
                         alt="{{ movie['title'] }}"
-                        class="poster"
                         loading="lazy"
                     >
 
                     {% else %}
 
-                    <div class="poster-placeholder">
-                        🎬
+                    <div class="poster-fallback">
+                        {% if movie["type"] == "Movie" %}
+                            🎬
+                        {% else %}
+                            📺
+                        {% endif %}
                     </div>
 
                     {% endif %}
 
+
+                    <div class="art-gradient"></div>
+
+
+                    <div class="type-badge">
+
+                        {% if movie["type"] == "Movie" %}
+                            🎬 Movie
+                        {% else %}
+                            📺 Series
+                        {% endif %}
+
+                    </div>
+
                 </div>
 
 
-                <!-- INFO -->
+                <!-- CARD CONTENT -->
 
-                <div class="movie-info">
-
-                    <h3>
-                        {{ movie["title"] }}
-                    </h3>
+                <div class="movie-card-content">
 
 
-                    <div class="info">
+                    <div class="movie-card-title-row">
 
-                        ⭐
-                        {{ "%.1f"|format(movie["rating"]) }}/10
+                        <h3>
+                            {{ movie["title"] }}
+                        </h3>
 
-                        <span class="separator">
-                            ·
-                        </span>
+                        <div class="rating-pill">
+                            ★
+                            {{ "%.1f"|format(movie["rating"]) }}
+                        </div>
+
+                    </div>
 
 
-                        {% if movie["type"] == "Movie" %}
-
-                            🎬 Movie
-
-                        {% else %}
-
-                            📺 Series
-
-                        {% endif %}
-
+                    <div class="movie-details">
 
                         {% if movie["year"] %}
 
-                        <span class="separator">
-                            ·
+                        <span>
+                            {{ movie["year"] }}
                         </span>
 
-                        📅 {{ movie["year"] }}
-
                         {% endif %}
+
+                        <span class="meta-dot">
+                            •
+                        </span>
+
+                        <span>
+                            {{ movie["type"] }}
+                        </span>
 
                     </div>
 
 
                     {% if movie["overview"] %}
 
-                    <p class="overview">
+                    <p>
                         {{ movie["overview"] }}
                     </p>
 
                     {% endif %}
 
-
-                    <!-- DELETE -->
 
                     <form
                         action="/delete/{{ movie['id'] }}"
@@ -348,10 +662,10 @@
                     >
 
                         <button
-                            class="delete"
                             type="submit"
+                            class="remove-button"
                         >
-                            🗑️ Remove
+                            Remove
                         </button>
 
                     </form>
@@ -367,32 +681,52 @@
 
         {% else %}
 
-        <div class="empty">
 
-            <div>
+        <div class="empty-library">
+
+            <div class="empty-art">
                 🎬
             </div>
 
+            <h3>
+                Your library is empty
+            </h3>
+
             <p>
-                No movies yet. Add your first one above!
+                Add the first movie or series
+                you've watched.
             </p>
 
         </div>
+
 
         {% endif %}
 
     </section>
 
 
-    <!-- TMDB -->
+    <!-- ================================================== -->
+    <!-- FOOTER -->
+    <!-- ================================================== -->
 
     <footer>
 
-        Movie information and images provided by TMDB.
+        <span>
+            My Movie AI
+        </span>
+
+        <span>
+            •
+        </span>
+
+        <span>
+            Movie information & artwork powered by TMDB
+        </span>
 
     </footer>
 
-</div>
+
+</main>
 
 </body>
 
