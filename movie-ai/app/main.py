@@ -1,3 +1,7 @@
+import os
+
+import requests
+
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -10,6 +14,7 @@ from app.database import (
     delete_movie
 )
 
+
 app = FastAPI(title="My Movie AI")
 
 templates = Jinja2Templates(directory="app/templates")
@@ -21,6 +26,79 @@ app.mount(
 )
 
 init_database()
+
+
+def search_tmdb(title, media_type):
+    token = os.getenv("TMDB_TOKEN")
+
+    if not token:
+        return None
+
+    if media_type == "Movie":
+        endpoint = "https://api.themoviedb.org/3/search/movie"
+    else:
+        endpoint = "https://api.themoviedb.org/3/search/tv"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "accept": "application/json"
+    }
+
+    params = {
+        "query": title,
+        "language": "en-US"
+    }
+
+    try:
+        response = requests.get(
+            endpoint,
+            headers=headers,
+            params=params,
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        results = response.json().get("results", [])
+
+        if not results:
+            return None
+
+        result = results[0]
+
+        poster = result.get("poster_path")
+        backdrop = result.get("backdrop_path")
+
+        if poster:
+            poster = f"https://image.tmdb.org/t/p/w500{poster}"
+
+        if backdrop:
+            backdrop = f"https://image.tmdb.org/t/p/w1280{backdrop}"
+
+        if media_type == "Movie":
+            date = result.get("release_date", "")
+        else:
+            date = result.get("first_air_date", "")
+
+        year = None
+
+        if date:
+            try:
+                year = int(date[:4])
+            except ValueError:
+                pass
+
+        return {
+            "poster": poster,
+            "backdrop": backdrop,
+            "year": year,
+            "overview": result.get("overview"),
+            "tmdb_id": result.get("id")
+        }
+
+    except Exception as error:
+        print(f"TMDB error: {error}")
+        return None
 
 
 @app.get("/")
@@ -46,7 +124,26 @@ def add(
     title = title.strip()
 
     if title and 0 <= rating <= 10 and media_type in ("Movie", "Series"):
-        add_movie(title, rating, media_type)
+
+        tmdb_data = search_tmdb(title, media_type)
+
+        if tmdb_data:
+            add_movie(
+                title=title,
+                rating=rating,
+                media_type=media_type,
+                poster=tmdb_data["poster"],
+                backdrop=tmdb_data["backdrop"],
+                year=tmdb_data["year"],
+                overview=tmdb_data["overview"],
+                tmdb_id=tmdb_data["tmdb_id"]
+            )
+        else:
+            add_movie(
+                title=title,
+                rating=rating,
+                media_type=media_type
+            )
 
     return RedirectResponse("/", status_code=303)
 
