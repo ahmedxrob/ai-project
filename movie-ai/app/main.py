@@ -1,4 +1,5 @@
-import os
+import json
+from pathlib import Path
 
 import requests
 
@@ -28,11 +29,42 @@ app.mount(
 init_database()
 
 
+# --------------------------------------------------
+# Home Assistant configuration
+# --------------------------------------------------
+
+def get_tmdb_token():
+    options_file = Path("/data/options.json")
+
+    try:
+        if not options_file.exists():
+            print("Home Assistant options.json not found")
+            return None
+
+        with options_file.open("r", encoding="utf-8") as file:
+            options = json.load(file)
+
+        token = options.get("tmdb_token")
+
+        if not token:
+            print("TMDB token is not configured")
+            return None
+
+        return token.strip()
+
+    except Exception as error:
+        print(f"Could not read Home Assistant configuration: {error}")
+        return None
+
+
+# --------------------------------------------------
+# TMDB search
+# --------------------------------------------------
+
 def search_tmdb(title, media_type):
-    token = os.getenv("TMDB_TOKEN")
+    token = get_tmdb_token()
 
     if not token:
-        print("TMDB_TOKEN is not configured")
         return None
 
     if media_type == "Movie":
@@ -108,6 +140,10 @@ def search_tmdb(title, media_type):
         return None
 
 
+# --------------------------------------------------
+# Home page
+# --------------------------------------------------
+
 @app.get("/")
 @app.get("//")
 def home(request: Request):
@@ -122,6 +158,10 @@ def home(request: Request):
     )
 
 
+# --------------------------------------------------
+# Add movie / series
+# --------------------------------------------------
+
 @app.post("/add")
 def add(
     title: str = Form(...),
@@ -135,9 +175,16 @@ def add(
         and 0 <= rating <= 10
         and media_type in ("Movie", "Series")
     ):
+        print(f"Searching TMDB for: {title}")
+
         tmdb_data = search_tmdb(title, media_type)
 
         if tmdb_data:
+            print(
+                f"TMDB match found: "
+                f"{tmdb_data.get('tmdb_id')}"
+            )
+
             add_movie(
                 title=title,
                 rating=rating,
@@ -148,8 +195,13 @@ def add(
                 overview=tmdb_data["overview"],
                 tmdb_id=tmdb_data["tmdb_id"],
             )
+
         else:
-            # Still save the movie if TMDB doesn't find it
+            print(
+                f"No TMDB result for '{title}'. "
+                f"Saving without poster."
+            )
+
             add_movie(
                 title=title,
                 rating=rating,
@@ -158,6 +210,10 @@ def add(
 
     return RedirectResponse("/", status_code=303)
 
+
+# --------------------------------------------------
+# Delete
+# --------------------------------------------------
 
 @app.post("/delete/{movie_id}")
 def delete(movie_id: int):
