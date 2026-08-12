@@ -1,6 +1,7 @@
-import os
+import json
 import requests
 
+from pathlib import Path
 from rapidfuzz import fuzz
 
 from fastapi import FastAPI, Request, Form
@@ -26,11 +27,45 @@ app.mount(
     name="static",
 )
 
+
 init_database()
 
 
+# ==========================================
+# HOME ASSISTANT APP CONFIG
+# ==========================================
+
+def get_tmdb_token():
+    options_file = Path("/data/options.json")
+
+    try:
+        if not options_file.exists():
+            print("ERROR: /data/options.json not found")
+            return None
+
+        with open(options_file, "r", encoding="utf-8") as file:
+            options = json.load(file)
+
+        token = options.get("tmdb_token")
+
+        if not token:
+            print("ERROR: TMDB token is not configured")
+            return None
+
+        return token.strip()
+
+    except Exception as error:
+        print(f"ERROR reading TMDB token: {error}")
+        return None
+
+
+# ==========================================
+# TMDB SEARCH
+# ==========================================
+
 def search_tmdb(title, media_type):
-    token = os.getenv("TMDB_TOKEN")
+
+    token = get_tmdb_token()
 
     if not token:
         print("TMDB_TOKEN is not configured")
@@ -55,6 +90,7 @@ def search_tmdb(title, media_type):
     }
 
     try:
+
         response = requests.get(
             endpoint,
             headers=headers,
@@ -66,17 +102,13 @@ def search_tmdb(title, media_type):
 
         results = response.json().get("results", [])
 
-        # --------------------------------
-        # Normal TMDB result
-        # --------------------------------
-
         if not results:
             print(f"TMDB returned no results for: {title}")
             return None
 
-        # --------------------------------
-        # Find best matching title
-        # --------------------------------
+        # ==========================================
+        # FIND BEST MATCH
+        # ==========================================
 
         best_result = None
         best_score = 0
@@ -110,7 +142,6 @@ def search_tmdb(title, media_type):
                 result_title_lower,
             )
 
-            # Use the strongest useful score
             final_score = max(
                 score,
                 partial_score,
@@ -126,27 +157,47 @@ def search_tmdb(title, media_type):
                 best_score = final_score
                 best_result = result
 
-        # --------------------------------
-        # Minimum confidence
-        # --------------------------------
+        # ==========================================
+        # CONFIDENCE CHECK
+        # ==========================================
 
         if not best_result or best_score < 60:
+
             print(
                 f"No confident TMDB match for "
-                f"'{title}' (score={best_score:.1f})"
+                f"'{title}' "
+                f"(score={best_score:.1f})"
             )
+
             return None
 
-        # --------------------------------
-        # Get title
-        # --------------------------------
+        # ==========================================
+        # TITLE / DATE
+        # ==========================================
 
         if media_type == "Movie":
-            matched_title = best_result.get("title", title)
-            date = best_result.get("release_date", "")
+
+            matched_title = best_result.get(
+                "title",
+                title,
+            )
+
+            date = best_result.get(
+                "release_date",
+                "",
+            )
+
         else:
-            matched_title = best_result.get("name", title)
-            date = best_result.get("first_air_date", "")
+
+            matched_title = best_result.get(
+                "name",
+                title,
+            )
+
+            date = best_result.get(
+                "first_air_date",
+                "",
+            )
 
         print(
             f"TMDB match found: "
@@ -155,62 +206,83 @@ def search_tmdb(title, media_type):
             f"score={best_score:.1f})"
         )
 
-        # --------------------------------
-        # Poster
-        # --------------------------------
+        # ==========================================
+        # POSTER
+        # ==========================================
 
         poster = best_result.get("poster_path")
 
         if poster:
+
             poster = (
                 "https://image.tmdb.org/t/p/w500"
                 + poster
             )
 
-        # --------------------------------
-        # Backdrop
-        # --------------------------------
+        # ==========================================
+        # BACKDROP
+        # ==========================================
 
-        backdrop = best_result.get("backdrop_path")
+        backdrop = best_result.get(
+            "backdrop_path"
+        )
 
         if backdrop:
+
             backdrop = (
                 "https://image.tmdb.org/t/p/w1280"
                 + backdrop
             )
 
-        # --------------------------------
-        # Year
-        # --------------------------------
+        # ==========================================
+        # YEAR
+        # ==========================================
 
         year = None
 
         if date:
+
             try:
                 year = int(date[:4])
+
             except (ValueError, TypeError):
                 year = None
 
-        # --------------------------------
-        # Return data
-        # --------------------------------
+        # ==========================================
+        # RETURN
+        # ==========================================
 
         return {
             "poster": poster,
             "backdrop": backdrop,
             "year": year,
-            "overview": best_result.get("overview") or "",
+            "overview": (
+                best_result.get("overview")
+                or ""
+            ),
             "tmdb_id": best_result.get("id"),
         }
 
     except requests.RequestException as error:
-        print(f"TMDB request error: {error}")
+
+        print(
+            f"TMDB request error: {error}"
+        )
+
         return None
 
     except Exception as error:
-        print(f"TMDB error: {error}")
+
+        print(
+            f"TMDB error: {error}"
+        )
+
         return None
 
+
+# ==========================================
+# HOME
+# ==========================================
 
 @app.get("/")
 @app.get("//")
@@ -226,6 +298,10 @@ def home(request: Request):
         },
     )
 
+
+# ==========================================
+# ADD MOVIE / SERIES
+# ==========================================
 
 @app.post("/add")
 def add(
@@ -262,8 +338,10 @@ def add(
 
         else:
 
-            # Still save the movie
-            # without TMDB information
+            print(
+                f"No TMDB result for '{title}'. "
+                "Saving without poster."
+            )
 
             add_movie(
                 title=title,
@@ -276,6 +354,10 @@ def add(
         status_code=303,
     )
 
+
+# ==========================================
+# DELETE
+# ==========================================
 
 @app.post("/delete/{movie_id}")
 def delete(movie_id: int):
