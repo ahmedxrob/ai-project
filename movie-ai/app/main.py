@@ -18,6 +18,10 @@ from app.database import (
 )
 
 
+# ============================================================
+# APP
+# ============================================================
+
 app = FastAPI(title="My Movie AI")
 
 templates = Jinja2Templates(
@@ -44,19 +48,22 @@ recent_recommendations = {
 
 
 # ============================================================
-# ENV
+# ENVIRONMENT
 # ============================================================
 
-def get_env(name):
+def get_env(name: str) -> str:
     return os.getenv(name, "").strip()
 
 
 # ============================================================
-# TMDB
+# TMDB SEARCH
 # ============================================================
 
-def tmdb_search(query, media_type, token):
-
+def tmdb_search(
+    query: str,
+    media_type: str,
+    token: str,
+):
     if media_type == "Movie":
         endpoint = (
             "https://api.themoviedb.org/3/search/movie"
@@ -92,10 +99,49 @@ def tmdb_search(query, media_type, token):
     )
 
 
-def get_spelling_suggestions(title):
+def tmdb_get_by_id(
+    tmdb_id: int,
+    media_type: str,
+    token: str,
+):
+    """
+    Fetch the exact TMDB item by ID.
+    This prevents a Series from accidentally
+    becoming a Movie with the same title.
+    """
 
+    if media_type == "Movie":
+        endpoint = (
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}"
+        )
+    else:
+        endpoint = (
+            f"https://api.themoviedb.org/3/tv/{tmdb_id}"
+        )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "accept": "application/json",
+    }
+
+    params = {
+        "language": "en-US",
+    }
+
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        params=params,
+        timeout=10,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def get_spelling_suggestions(title: str):
     try:
-
         response = requests.get(
             "https://api.datamuse.com/words",
             params={
@@ -107,11 +153,19 @@ def get_spelling_suggestions(title):
 
         response.raise_for_status()
 
-        return [
-            item.get("word", "").strip()
-            for item in response.json()
-            if item.get("word", "").strip()
-        ]
+        suggestions = []
+
+        for item in response.json():
+
+            word = item.get(
+                "word",
+                "",
+            ).strip()
+
+            if word:
+                suggestions.append(word)
+
+        return suggestions
 
     except Exception as error:
 
@@ -126,7 +180,6 @@ def get_result_title(
     result,
     media_type,
 ):
-
     if media_type == "Movie":
         return result.get(
             "title",
@@ -143,7 +196,6 @@ def score_tmdb_result(
     search_title,
     result_title,
 ):
-
     search_title = (
         search_title
         .lower()
@@ -182,7 +234,6 @@ def choose_best_tmdb_result(
     title,
     media_type,
 ):
-
     best_result = None
     best_score = 0
 
@@ -208,7 +259,6 @@ def choose_best_tmdb_result(
         )
 
         if score > best_score:
-
             best_score = score
             best_result = result
 
@@ -221,9 +271,8 @@ def choose_best_tmdb_result(
 def build_tmdb_data(
     result,
     media_type,
-    score,
+    score=100,
 ):
-
     if media_type == "Movie":
 
         title = result.get(
@@ -251,18 +300,26 @@ def build_tmdb_data(
     poster = None
     backdrop = None
 
-    if result.get("poster_path"):
+    poster_path = result.get(
+        "poster_path"
+    )
+
+    backdrop_path = result.get(
+        "backdrop_path"
+    )
+
+    if poster_path:
 
         poster = (
             "https://image.tmdb.org/t/p/w500"
-            + result["poster_path"]
+            + poster_path
         )
 
-    if result.get("backdrop_path"):
+    if backdrop_path:
 
         backdrop = (
             "https://image.tmdb.org/t/p/w1280"
-            + result["backdrop_path"]
+            + backdrop_path
         )
 
     year = None
@@ -270,12 +327,14 @@ def build_tmdb_data(
     if date:
 
         try:
-            year = int(date[:4])
+            year = int(
+                date[:4]
+            )
         except (
             ValueError,
             TypeError,
         ):
-            pass
+            year = None
 
     print(
         f"TMDB match found: "
@@ -298,10 +357,9 @@ def build_tmdb_data(
 
 
 def search_tmdb(
-    title,
-    media_type,
+    title: str,
+    media_type: str,
 ):
-
     token = get_env(
         "TMDB_TOKEN"
     )
@@ -318,6 +376,10 @@ def search_tmdb(
         f"Searching TMDB for: "
         f"{title} [{media_type}]"
     )
+
+    # --------------------------------------------------------
+    # Normal search
+    # --------------------------------------------------------
 
     try:
 
@@ -357,14 +419,22 @@ def search_tmdb(
                 best_score,
             )
 
+    # --------------------------------------------------------
+    # Spelling correction
+    # --------------------------------------------------------
+
     print(
         f"TMDB returned no confident "
         f"result for: {title}"
     )
 
-    # Spelling correction
     suggestions = get_spelling_suggestions(
         title
+    )
+
+    print(
+        f"Spelling suggestions: "
+        f"{suggestions}"
     )
 
     for suggestion in suggestions:
@@ -388,7 +458,12 @@ def search_tmdb(
                 token,
             )
 
-        except requests.RequestException:
+        except requests.RequestException as error:
+
+            print(
+                f"TMDB correction error: "
+                f"{error}"
+            )
 
             continue
 
@@ -422,82 +497,68 @@ def search_tmdb(
 # GEMINI
 # ============================================================
 
-def get_gemini_recommendation(
-    media_type,
-    watched,
-):
+def extract_gemini_text(data):
+    """
+    Extract text from the current Interactions API response.
+    """
 
+    output_text = data.get(
+        "output_text",
+        "",
+    )
+
+    if output_text:
+        return output_text.strip()
+
+    parts = []
+
+    for step in data.get(
+        "steps",
+        [],
+    ):
+
+        if step.get(
+            "type"
+        ) != "model_output":
+
+            continue
+
+        for item in step.get(
+            "content",
+            [],
+        ):
+
+            if item.get(
+                "type"
+            ) == "text":
+
+                text = item.get(
+                    "text",
+                    "",
+                )
+
+                if text:
+                    parts.append(text)
+
+    return "\n".join(
+        parts
+    ).strip()
+
+
+def call_gemini(
+    prompt: str,
+):
     api_key = get_env(
         "GEMINI_API_KEY"
     )
 
     if not api_key:
+
         print(
             "GEMINI_API_KEY is not configured"
         )
+
         return None
-
-    watched_items = [
-        movie
-        for movie in watched
-        if movie["type"] == media_type
-    ]
-
-    if not watched_items:
-        return None
-
-    watched_text = "\n".join(
-        f"- {movie['title']} — "
-        f"{movie['rating']}/10"
-        for movie in watched_items
-    )
-
-    recent = recent_recommendations.get(
-        media_type,
-        [],
-    )
-
-    recent_text = "\n".join(
-        f"- {title}"
-        for title in recent
-    ) or "None"
-
-    media_word = (
-        "movie"
-        if media_type == "Movie"
-        else "TV series"
-    )
-
-    prompt = f"""
-You are a personal {media_word} recommendation assistant.
-
-Recommend ONE {media_word} the user has NOT watched.
-
-WATCHED:
-{watched_text}
-
-RECENT RECOMMENDATIONS:
-{recent_text}
-
-Rules:
-- Never recommend a watched title.
-- Never repeat a recent recommendation.
-- Use the user's ratings to understand taste.
-- Choose a different title.
-- Recommend a real released {media_word}.
-- Do not invent a title.
-
-Return exactly:
-
-TITLE: exact official title
-YEAR: four digit year
-REASON: one short sentence
-"""
-
-    print(
-        f"Asking Gemini for a "
-        f"{media_type} recommendation..."
-    )
 
     url = (
         "https://generativelanguage.googleapis.com"
@@ -526,9 +587,13 @@ REASON: one short sentence
 
         if response.status_code == 429:
 
+            print(
+                "Gemini quota/rate limit reached"
+            )
+
             return {
                 "error": (
-                    "Gemini free quota is "
+                    "Gemini's free quota is "
                     "temporarily exhausted."
                 )
             }
@@ -547,48 +612,124 @@ REASON: one short sentence
                 )
             }
 
-        data = response.json()
+        return response.json()
 
-        text = str(
-            data.get(
-                "output_text",
-                "",
+    except requests.RequestException as error:
+
+        print(
+            f"Gemini request error: "
+            f"{error}"
+        )
+
+        return {
+            "error": (
+                "Could not connect to Gemini."
             )
-        ).strip()
+        }
+
+
+def get_gemini_recommendation(
+    media_type,
+    watched,
+):
+    watched_items = [
+        movie
+        for movie in watched
+        if movie["type"] == media_type
+    ]
+
+    if not watched_items:
+        return {
+            "error": (
+                f"You don't have any watched "
+                f"{media_type.lower()}s yet."
+            )
+        }
+
+    recent = recent_recommendations.get(
+        media_type,
+        [],
+    )
+
+    watched_text = "\n".join(
+        f"- {movie['title']} — "
+        f"{movie['rating']}/10"
+        for movie in watched_items
+    )
+
+    recent_text = "\n".join(
+        f"- {title}"
+        for title in recent
+    )
+
+    if not recent_text:
+        recent_text = "None"
+
+    media_word = (
+        "movie"
+        if media_type == "Movie"
+        else "TV series"
+    )
+
+    prompt = f"""
+You are a personal {media_word} recommendation assistant.
+
+Recommend ONE {media_word} the user has NOT watched.
+
+WATCHED:
+{watched_text}
+
+RECENT AI RECOMMENDATIONS:
+{recent_text}
+
+Rules:
+- Never recommend a title already watched.
+- Never repeat a recent AI recommendation.
+- Use the user's ratings to infer their taste.
+- Give strong preference to highly rated titles.
+- Choose a genuinely different title.
+- Recommend a real released {media_word}.
+- Do not invent a title.
+- Return exactly:
+
+TITLE: exact official title
+YEAR: four digit release year
+REASON: one short sentence explaining why the user may like it
+"""
+
+    # Try up to three times so a repeated Gemini answer
+    # doesn't immediately become an error.
+    for attempt in range(1, 4):
+
+        print(
+            f"Gemini recommendation attempt "
+            f"{attempt}/3 for {media_type}"
+        )
+
+        data = call_gemini(
+            prompt
+        )
+
+        if not data:
+            continue
+
+        if data.get("error"):
+            return data
+
+        text = extract_gemini_text(
+            data
+        )
 
         if not text:
+            print(
+                "Gemini returned no text"
+            )
+            continue
 
-            parts = []
-
-            for step in data.get(
-                "steps",
-                [],
-            ):
-
-                if step.get(
-                    "type"
-                ) != "model_output":
-                    continue
-
-                for item in step.get(
-                    "content",
-                    [],
-                ):
-
-                    if item.get(
-                        "type"
-                    ) == "text":
-
-                        parts.append(
-                            item.get(
-                                "text",
-                                "",
-                            )
-                        )
-
-            text = "\n".join(
-                parts
-            ).strip()
+        print(
+            "Gemini response:"
+        )
+        print(text)
 
         title_match = re.search(
             r"^\s*TITLE:\s*(.+)$",
@@ -612,11 +753,13 @@ REASON: one short sentence
         )
 
         if not title_match:
-            return None
+            continue
 
-        title = title_match.group(
-            1
-        ).strip()
+        title = (
+            title_match
+            .group(1)
+            .strip()
+        )
 
         year = None
 
@@ -627,16 +770,17 @@ REASON: one short sentence
                     year_match.group(1)
                 )
             except ValueError:
-                pass
+                year = None
 
         reason = ""
 
         if reason_match:
-            reason = reason_match.group(
-                1
-            ).strip()
+            reason = (
+                reason_match
+                .group(1)
+                .strip()
+            )
 
-        # Never recommend something already watched.
         watched_titles = {
             movie["title"]
             .strip()
@@ -644,15 +788,40 @@ REASON: one short sentence
             for movie in watched_items
         }
 
-        if title.lower() in watched_titles:
-            return None
-
-        # Never repeat recent recommendation.
-        if title.lower() in {
-            item.lower()
+        recent_titles = {
+            item
+            .strip()
+            .lower()
             for item in recent
-        }:
-            return None
+        }
+
+        if title.lower() in watched_titles:
+
+            print(
+                f"Gemini selected watched title: "
+                f"{title}"
+            )
+
+            prompt += (
+                f"\nIMPORTANT: Do not choose "
+                f"'{title}'. Choose another title."
+            )
+
+            continue
+
+        if title.lower() in recent_titles:
+
+            print(
+                f"Gemini repeated recent title: "
+                f"{title}"
+            )
+
+            prompt += (
+                f"\nIMPORTANT: Do not choose "
+                f"'{title}'. Choose another title."
+            )
+
+            continue
 
         return {
             "title": title,
@@ -661,13 +830,12 @@ REASON: one short sentence
             "media_type": media_type,
         }
 
-    except Exception as error:
-
-        print(
-            f"Gemini error: {error}"
+    return {
+        "error": (
+            "Gemini could not produce a new "
+            "recommendation. Try again."
         )
-
-        return None
+    }
 
 
 # ============================================================
@@ -689,7 +857,7 @@ def home(request: Request):
 
 
 # ============================================================
-# ADD
+# ADD WATCHED
 # ============================================================
 
 @app.post("/add")
@@ -698,7 +866,6 @@ def add(
     rating: float = Form(...),
     media_type: str = Form(...),
 ):
-
     title = title.strip()
 
     if (
@@ -717,7 +884,7 @@ def add(
 
         if tmdb_data:
 
-            add_movie(
+            added = add_movie(
                 title=tmdb_data["title"],
                 rating=rating,
                 media_type=media_type,
@@ -737,6 +904,14 @@ def add(
                     "tmdb_id"
                 ),
             )
+
+            if not added:
+
+                print(
+                    f"Duplicate prevented: "
+                    f"{tmdb_data['title']} "
+                    f"[{media_type}]"
+                )
 
         else:
 
@@ -765,12 +940,15 @@ def recommend(
 ):
 
     if media_type == "movie":
+
         selected_type = "Movie"
 
     elif media_type == "series":
+
         selected_type = "Series"
 
     else:
+
         return RedirectResponse(
             "/",
             status_code=303,
@@ -814,11 +992,9 @@ def recommend(
             },
         )
 
-    # VERY IMPORTANT:
-    # Preserve whether this is Movie or Series.
     recommendation["media_type"] = selected_type
 
-    # Search TMDB using the CORRECT type.
+    # Search TMDB using the exact requested type.
     tmdb_data = search_tmdb(
         recommendation["title"],
         selected_type,
@@ -855,14 +1031,41 @@ def recommend(
             {
                 "poster": None,
                 "backdrop": None,
-                "tmdb_title": recommendation["title"],
-                "tmdb_year": recommendation["year"],
+                "tmdb_title": recommendation[
+                    "title"
+                ],
+                "tmdb_year": recommendation[
+                    "year"
+                ],
                 "overview": "",
                 "tmdb_id": None,
             }
         )
 
-    # Add to recent list ONLY after success.
+    # --------------------------------------------------------
+    # Do not display a recommendation already in database.
+    # --------------------------------------------------------
+
+    if recommendation.get("tmdb_id"):
+
+        if movie_exists(
+            media_type=selected_type,
+            tmdb_id=recommendation[
+                "tmdb_id"
+            ],
+        ):
+
+            print(
+                "Recommended title is already watched:"
+                f" {recommendation['tmdb_title']}"
+            )
+
+            return RedirectResponse(
+                f"/recommend/{media_type}",
+                status_code=303,
+            )
+
+    # Save it into temporary in-memory history.
     recent = recent_recommendations[
         selected_type
     ]
@@ -880,7 +1083,7 @@ def recommend(
             title_to_store
         )
 
-    if len(recent) > 10:
+    if len(recent) > 15:
         recent.pop(0)
 
     return templates.TemplateResponse(
@@ -894,7 +1097,7 @@ def recommend(
 
 
 # ============================================================
-# ALREADY WATCHED
+# MARK RECOMMENDATION AS WATCHED
 # ============================================================
 
 @app.post(
@@ -904,8 +1107,8 @@ def recommendation_watched(
     title: str = Form(...),
     rating: float = Form(...),
     media_type: str = Form(...),
+    tmdb_id: int = Form(None),
 ):
-
     title = title.strip()
 
     if (
@@ -922,11 +1125,57 @@ def recommendation_watched(
             status_code=303,
         )
 
-    # Search using the EXACT media type.
-    tmdb_data = search_tmdb(
-        title,
-        media_type,
+    token = get_env(
+        "TMDB_TOKEN"
     )
+
+    tmdb_data = None
+
+    # --------------------------------------------------------
+    # BEST OPTION:
+    # Use exact TMDB ID sent by the recommendation.
+    # --------------------------------------------------------
+
+    if (
+        tmdb_id
+        and token
+    ):
+
+        try:
+
+            exact_result = tmdb_get_by_id(
+                tmdb_id,
+                media_type,
+                token,
+            )
+
+            tmdb_data = build_tmdb_data(
+                exact_result,
+                media_type,
+                100,
+            )
+
+        except requests.RequestException as error:
+
+            print(
+                f"Could not fetch exact TMDB "
+                f"item: {error}"
+            )
+
+    # --------------------------------------------------------
+    # Fallback
+    # --------------------------------------------------------
+
+    if not tmdb_data:
+
+        tmdb_data = search_tmdb(
+            title,
+            media_type,
+        )
+
+    # --------------------------------------------------------
+    # Save
+    # --------------------------------------------------------
 
     if tmdb_data:
 
@@ -951,28 +1200,41 @@ def recommendation_watched(
             ),
         )
 
-        if saved:
-            print(
-                f"Added watched {media_type}: "
-                f"{tmdb_data['title']}"
-            )
-        else:
-            print(
-                f"Already exists: "
-                f"{tmdb_data['title']} "
-                f"[{media_type}]"
-            )
+        print(
+            f"Watched action: "
+            f"{tmdb_data['title']} "
+            f"[{media_type}] "
+            f"saved={saved}"
+        )
 
     else:
 
-        add_movie(
+        saved = add_movie(
             title=title,
             rating=rating,
             media_type=media_type,
+            tmdb_id=tmdb_id,
+        )
+
+        print(
+            f"Watched action without TMDB: "
+            f"{title} [{media_type}] "
+            f"saved={saved}"
+        )
+
+    # --------------------------------------------------------
+    # Automatically get another recommendation.
+    # --------------------------------------------------------
+
+    if media_type == "Movie":
+
+        return RedirectResponse(
+            "/recommend/movie",
+            status_code=303,
         )
 
     return RedirectResponse(
-        "/",
+        "/recommend/series",
         status_code=303,
     )
 
@@ -994,4 +1256,3 @@ def delete(movie_id: int):
         "/",
         status_code=303,
     )
-
