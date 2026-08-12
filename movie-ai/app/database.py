@@ -3,14 +3,22 @@ from pathlib import Path
 
 
 DATA_DIR = Path("/data")
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DATA_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
 
 DB_PATH = DATA_DIR / "movies.db"
 
 
 def get_connection():
-    connection = sqlite3.connect(DB_PATH)
+    connection = sqlite3.connect(
+        DB_PATH
+    )
+
     connection.row_factory = sqlite3.Row
+
     return connection
 
 
@@ -18,7 +26,8 @@ def init_database():
 
     connection = get_connection()
 
-    connection.execute("""
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS watched (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -31,9 +40,13 @@ def init_database():
             overview TEXT,
             tmdb_id INTEGER
         )
-    """)
+        """
+    )
 
-    # Upgrade older databases
+    # --------------------------------------------------------
+    # Upgrade an old database
+    # --------------------------------------------------------
+
     columns = connection.execute(
         "PRAGMA table_info(watched)"
     ).fetchall()
@@ -57,10 +70,12 @@ def init_database():
 
             connection.execute(
                 f"ALTER TABLE watched "
-                f"ADD COLUMN {column_name} {column_type}"
+                f"ADD COLUMN {column_name} "
+                f"{column_type}"
             )
 
     connection.commit()
+
     connection.close()
 
 
@@ -68,7 +83,8 @@ def get_all():
 
     connection = get_connection()
 
-    movies = connection.execute("""
+    movies = connection.execute(
+        """
         SELECT
             id,
             title,
@@ -81,7 +97,8 @@ def get_all():
             tmdb_id
         FROM watched
         ORDER BY id DESC
-    """).fetchall()
+        """
+    ).fetchall()
 
     connection.close()
 
@@ -95,7 +112,9 @@ def movie_exists(
 ):
     connection = get_connection()
 
-    # Best duplicate check: TMDB ID + type
+    result = None
+
+    # Exact match using TMDB ID + type.
     if tmdb_id and media_type:
 
         result = connection.execute(
@@ -112,6 +131,7 @@ def movie_exists(
             ),
         ).fetchone()
 
+    # Fallback using title + type.
     elif title and media_type:
 
         result = connection.execute(
@@ -128,9 +148,6 @@ def movie_exists(
             ),
         ).fetchone()
 
-    else:
-        result = None
-
     connection.close()
 
     return result is not None
@@ -146,15 +163,18 @@ def add_movie(
     overview=None,
     tmdb_id=None,
 ):
+    # --------------------------------------------------------
+    # Prevent duplicates.
+    # --------------------------------------------------------
 
-    # Prevent duplicates
     if movie_exists(
         title=title,
         media_type=media_type,
         tmdb_id=tmdb_id,
     ):
+
         print(
-            f"Already watched: "
+            f"Duplicate prevented: "
             f"{title} [{media_type}]"
         )
 
@@ -189,6 +209,7 @@ def add_movie(
     )
 
     connection.commit()
+
     connection.close()
 
     return True
@@ -199,9 +220,13 @@ def delete_movie(movie_id):
     connection = get_connection()
 
     connection.execute(
-        "DELETE FROM watched WHERE id = ?",
+        """
+        DELETE FROM watched
+        WHERE id = ?
+        """,
         (movie_id,),
     )
 
     connection.commit()
+
     connection.close()
