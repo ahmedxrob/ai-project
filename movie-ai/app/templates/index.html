@@ -118,7 +118,6 @@
 
     <section class="dashboard-grid">
 
-
         <!-- ADD -->
 
         <div class="panel add-panel">
@@ -272,9 +271,9 @@
 
 
             <p class="ai-description">
-                Gemini uses your ratings and remembers
-                recent suggestions so it can give you
-                different choices.
+                Gemini uses your ratings and avoids
+                titles you've already watched or
+                recently recommended.
             </p>
 
 
@@ -348,7 +347,6 @@
 
     <section class="recommendation-result">
 
-
         {% if recommendation.error %}
 
         <div class="recommendation-error">
@@ -371,9 +369,7 @@
 
         </div>
 
-
         {% else %}
-
 
         <div class="result-kicker">
             GEMINI PICKED FOR YOU
@@ -382,13 +378,11 @@
 
         <div class="result-card">
 
-
             {% if recommendation.backdrop %}
 
             <div
                 class="result-backdrop"
-                style="background-image:
-                url('{{ recommendation.backdrop }}');"
+                style="background-image: url('{{ recommendation.backdrop }}');"
             ></div>
 
             {% endif %}
@@ -411,7 +405,11 @@
                 {% else %}
 
                 <div class="result-poster result-poster-placeholder">
-                    🎬
+                    {% if recommendation.media_type == "Series" %}
+                        📺
+                    {% else %}
+                        🎬
+                    {% endif %}
                 </div>
 
                 {% endif %}
@@ -429,17 +427,29 @@
                     </h2>
 
 
-                    {% if recommendation.tmdb_year %}
-
                     <div class="result-meta">
+
+                        {% if recommendation.tmdb_year %}
 
                         <span>
                             {{ recommendation.tmdb_year }}
                         </span>
 
-                    </div>
+                        <span class="meta-dot">
+                            •
+                        </span>
 
-                    {% endif %}
+                        {% endif %}
+
+                        <span>
+                            {% if recommendation.media_type == "Series" %}
+                                📺 Series
+                            {% else %}
+                                🎬 Movie
+                            {% endif %}
+                        </span>
+
+                    </div>
 
 
                     {% if recommendation.reason %}
@@ -473,7 +483,7 @@
                     <div class="recommendation-actions">
 
 
-                        <!-- AGAIN -->
+                        <!-- ANOTHER -->
 
                         <a
                             href="/recommend/{{ 'movie' if recommendation.media_type == 'Movie' else 'series' }}"
@@ -491,17 +501,36 @@
                             class="watched-form"
                         >
 
+                            <!-- EXACT TMDB TITLE -->
+
                             <input
                                 type="hidden"
                                 name="title"
                                 value="{{ recommendation.tmdb_title }}"
                             >
 
+
+                            <!-- EXACT TYPE -->
+
                             <input
                                 type="hidden"
                                 name="media_type"
-                                value="{{ recommendation.media_type or 'Movie' }}"
+                                value="{{ recommendation.media_type }}"
                             >
+
+
+                            <!-- EXACT TMDB ID -->
+
+                            {% if recommendation.tmdb_id %}
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ recommendation.tmdb_id }}"
+                            >
+
+                            {% endif %}
+
 
                             <div class="watched-rating">
 
@@ -605,11 +634,13 @@
                     {% else %}
 
                     <div class="poster-fallback">
+
                         {% if movie["type"] == "Movie" %}
                             🎬
                         {% else %}
                             📺
                         {% endif %}
+
                     </div>
 
                     {% endif %}
@@ -655,11 +686,11 @@
                             {{ movie["year"] }}
                         </span>
 
-                        {% endif %}
-
                         <span class="meta-dot">
                             •
                         </span>
+
+                        {% endif %}
 
                         <span>
                             {{ movie["type"] }}
@@ -698,7 +729,6 @@
             {% endfor %}
 
         </div>
-
 
         {% else %}
 
