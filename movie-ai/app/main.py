@@ -14,12 +14,17 @@ app = FastAPI(title="My Movie AI")
 
 templates = Jinja2Templates(directory="app/templates")
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount(
+    "/static",
+    StaticFiles(directory="app/static"),
+    name="static"
+)
 
 init_database()
 
 
 @app.get("/")
+@app.get("//")
 def home(request: Request):
     movies = get_all()
 
