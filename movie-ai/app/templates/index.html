@@ -29,6 +29,10 @@
 <div class="site-background"></div>
 
 
+<!-- ====================================================== -->
+<!-- TOPBAR -->
+<!-- ====================================================== -->
+
 <nav class="topbar">
 
     <div class="brand">
@@ -38,11 +42,19 @@
         </div>
 
         <div class="brand-text">
-            <strong>My Movie AI</strong>
-            <span>your personal cinema</span>
+
+            <strong>
+                My Movie AI
+            </strong>
+
+            <span>
+                your personal cinema
+            </span>
+
         </div>
 
     </div>
+
 
     <div class="topbar-status">
 
@@ -58,7 +70,9 @@
 <main class="page">
 
 
+    <!-- ================================================== -->
     <!-- HERO -->
+    <!-- ================================================== -->
 
     <section class="hero">
 
@@ -114,9 +128,12 @@
     </section>
 
 
+    <!-- ================================================== -->
     <!-- ADD + AI -->
+    <!-- ================================================== -->
 
     <section class="dashboard-grid">
+
 
         <!-- ADD -->
 
@@ -177,7 +194,9 @@
 
                         <div class="input-rating">
 
-                            <span>★</span>
+                            <span>
+                                ★
+                            </span>
 
                             <input
                                 id="rating"
@@ -242,12 +261,20 @@
 
             </form>
 
+
+            <div class="panel-hint">
+                We'll automatically find the title,
+                poster and information using TMDB.
+            </div>
+
         </div>
 
 
         <!-- AI -->
 
         <div class="panel ai-panel">
+
+            <div class="ai-glow"></div>
 
             <div class="panel-header">
 
@@ -295,7 +322,7 @@
                         </strong>
 
                         <small>
-                            Give me another choice
+                            Find something new
                         </small>
 
                     </span>
@@ -323,7 +350,7 @@
                         </strong>
 
                         <small>
-                            Give me another choice
+                            Find your next binge
                         </small>
 
                     </span>
@@ -341,7 +368,9 @@
     </section>
 
 
+    <!-- ================================================== -->
     <!-- AI RESULT -->
+    <!-- ================================================== -->
 
     {% if recommendation %}
 
@@ -378,11 +407,13 @@
 
         <div class="result-card">
 
+
             {% if recommendation.backdrop %}
 
             <div
                 class="result-backdrop"
-                style="background-image: url('{{ recommendation.backdrop }}');"
+                style="background-image:
+                url('{{ recommendation.backdrop }}');"
             ></div>
 
             {% endif %}
@@ -404,12 +435,17 @@
 
                 {% else %}
 
-                <div class="result-poster result-poster-placeholder">
+                <div
+                    class="result-poster
+                    result-poster-placeholder"
+                >
+
                     {% if recommendation.media_type == "Series" %}
                         📺
                     {% else %}
                         🎬
                     {% endif %}
+
                 </div>
 
                 {% endif %}
@@ -441,12 +477,15 @@
 
                         {% endif %}
 
+
                         <span>
+
                             {% if recommendation.media_type == "Series" %}
                                 📺 Series
                             {% else %}
                                 🎬 Movie
                             {% endif %}
+
                         </span>
 
                     </div>
@@ -493,6 +532,18 @@
                         </a>
 
 
+                        <!-- WEB SEARCH -->
+
+                        <a
+                            href="https://www.google.com/search?q={{ (recommendation.tmdb_title ~ ' reviews is it worth watching')|urlencode }}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="secondary-button web-search-button"
+                        >
+                            🌐 Search web
+                        </a>
+
+
                         <!-- ALREADY WATCHED -->
 
                         <form
@@ -501,8 +552,6 @@
                             class="watched-form"
                         >
 
-                            <!-- EXACT TMDB TITLE -->
-
                             <input
                                 type="hidden"
                                 name="title"
@@ -510,16 +559,12 @@
                             >
 
 
-                            <!-- EXACT TYPE -->
-
                             <input
                                 type="hidden"
                                 name="media_type"
                                 value="{{ recommendation.media_type }}"
                             >
 
-
-                            <!-- EXACT TMDB ID -->
 
                             {% if recommendation.tmdb_id %}
 
@@ -579,7 +624,9 @@
     {% endif %}
 
 
+    <!-- ================================================== -->
     <!-- COLLECTION -->
+    <!-- ================================================== -->
 
     <section class="collection-section">
 
@@ -620,6 +667,7 @@
             {% for movie in movies %}
 
             <article class="movie-card">
+
 
                 <div class="movie-art">
 
@@ -730,6 +778,7 @@
 
         </div>
 
+
         {% else %}
 
         <div class="empty-library">
@@ -775,4 +824,3 @@
 </body>
 
 </html>
-
