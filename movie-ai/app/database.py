@@ -22,33 +22,39 @@ def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             rating REAL NOT NULL,
-            type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
-            poster TEXT,
-            backdrop TEXT,
-            year INTEGER,
-            overview TEXT,
-            tmdb_id INTEGER
+            type TEXT NOT NULL
+                CHECK(type IN ('Movie', 'Series'))
         )
     """)
 
-    # Upgrade existing databases
-    columns = [
-        ("poster", "TEXT"),
-        ("backdrop", "TEXT"),
-        ("year", "INTEGER"),
-        ("overview", "TEXT"),
-        ("tmdb_id", "INTEGER"),
-    ]
+    # -----------------------------------------
+    # Upgrade existing database
+    # -----------------------------------------
 
-    existing = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(watched)").fetchall()
+    columns = connection.execute(
+        "PRAGMA table_info(watched)"
+    ).fetchall()
+
+    existing_columns = {
+        column["name"]
+        for column in columns
     }
 
-    for name, data_type in columns:
-        if name not in existing:
+    new_columns = {
+        "poster": "TEXT",
+        "backdrop": "TEXT",
+        "year": "INTEGER",
+        "overview": "TEXT",
+        "tmdb_id": "INTEGER",
+    }
+
+    for column_name, column_type in new_columns.items():
+
+        if column_name not in existing_columns:
+
             connection.execute(
-                f"ALTER TABLE watched ADD COLUMN {name} {data_type}"
+                f"ALTER TABLE watched "
+                f"ADD COLUMN {column_name} {column_type}"
             )
 
     connection.commit()
@@ -56,6 +62,7 @@ def init_database():
 
 
 def get_all():
+
     connection = get_connection()
 
     movies = connection.execute("""
@@ -86,14 +93,23 @@ def add_movie(
     backdrop=None,
     year=None,
     overview=None,
-    tmdb_id=None
+    tmdb_id=None,
 ):
+
     connection = get_connection()
 
     connection.execute(
         """
-        INSERT INTO watched
-        (title, rating, type, poster, backdrop, year, overview, tmdb_id)
+        INSERT INTO watched (
+            title,
+            rating,
+            type,
+            poster,
+            backdrop,
+            year,
+            overview,
+            tmdb_id
+        )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
@@ -104,8 +120,8 @@ def add_movie(
             backdrop,
             year,
             overview,
-            tmdb_id
-        )
+            tmdb_id,
+        ),
     )
 
     connection.commit()
@@ -113,11 +129,12 @@ def add_movie(
 
 
 def delete_movie(movie_id):
+
     connection = get_connection()
 
     connection.execute(
         "DELETE FROM watched WHERE id = ?",
-        (movie_id,)
+        (movie_id,),
     )
 
     connection.commit()
