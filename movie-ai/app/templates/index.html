@@ -1,13 +1,23 @@
+
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
+
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
     <title>My Movie AI</title>
 
-    <link rel="stylesheet" href="/static/style.css">
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+
 </head>
 
 <body>
@@ -18,28 +28,31 @@
 
     <!-- HEADER -->
 
-    <header class="hero-header">
+    <header>
 
-        <div>
-            <h1>🎬 My Movie AI</h1>
+        <h1>🎬 My Movie AI</h1>
 
-            <p class="subtitle">
-                Your personal movie & series collection
-            </p>
-        </div>
+        <p class="subtitle">
+            Your personal movie & series database
+        </p>
 
     </header>
 
 
-    <!-- ADD MOVIE -->
+    <!-- ADD -->
 
-    <section class="card add-card">
+    <section class="card">
 
         <h2>➕ Add watched</h2>
 
-        <form action="/add" method="post">
+        <form
+            action="/add"
+            method="post"
+        >
 
-            <label>Title</label>
+            <label>
+                Title
+            </label>
 
             <input
                 type="text"
@@ -49,7 +62,9 @@
                 required
             >
 
-            <label>Your Rating</label>
+            <label>
+                Rating
+            </label>
 
             <input
                 type="number"
@@ -61,7 +76,9 @@
                 required
             >
 
-            <label>Type</label>
+            <label>
+                Type
+            </label>
 
             <select name="media_type">
 
@@ -76,7 +93,7 @@
             </select>
 
             <button type="submit">
-                ➕ Add to my collection
+                ➕ Add
             </button>
 
         </form>
@@ -88,14 +105,18 @@
 
     <section class="collection">
 
-        <div class="section-title">
+        <div class="section-header">
 
-            <h2>My Collection</h2>
+            <h2>
+                Watched
+            </h2>
 
             {% if movies %}
-                <span>
-                    {{ movies|length }} watched
-                </span>
+
+            <span>
+                {{ movies|length }} watched
+            </span>
+
             {% endif %}
 
         </div>
@@ -103,24 +124,11 @@
 
         {% if movies %}
 
-        <div class="movies-grid">
+        <div class="movies">
 
             {% for movie in movies %}
 
-            <article class="movie-card">
-
-                <!-- BACKDROP -->
-
-                {% if movie["backdrop"] %}
-
-                <div
-                    class="movie-backdrop"
-                    style="background-image:
-                    url('{{ movie["backdrop"] }}');"
-                ></div>
-
-                {% endif %}
-
+            <article class="movie">
 
                 <!-- POSTER -->
 
@@ -129,8 +137,8 @@
                     {% if movie["poster"] %}
 
                     <img
-                        src="{{ movie["poster"] }}"
-                        alt="{{ movie["title"] }} poster"
+                        src="{{ movie['poster'] }}"
+                        alt="{{ movie['title'] }}"
                         class="poster"
                         loading="lazy"
                     >
@@ -146,45 +154,41 @@
                 </div>
 
 
-                <!-- CONTENT -->
+                <!-- INFO -->
 
-                <div class="movie-content">
+                <div class="movie-info">
 
-                    <div class="movie-title-row">
+                    <h3>
+                        {{ movie["title"] }}
+                    </h3>
 
-                        <h3>
-                            {{ movie["title"] }}
-                        </h3>
+                    <div class="info">
 
-                        <div class="rating">
-                            ⭐ {{ "%.1f"|format(movie["rating"]) }}
-                        </div>
+                        ⭐
+                        {{ "%.1f"|format(movie["rating"]) }}/10
 
-                    </div>
-
-
-                    <div class="movie-meta">
+                        <span class="separator">
+                            ·
+                        </span>
 
                         {% if movie["type"] == "Movie" %}
 
-                            <span>
-                                🎬 Movie
-                            </span>
+                            🎬 Movie
 
                         {% else %}
 
-                            <span>
-                                📺 Series
-                            </span>
+                            📺 Series
 
                         {% endif %}
 
 
                         {% if movie["year"] %}
 
-                            <span>
-                                📅 {{ movie["year"] }}
-                            </span>
+                        <span class="separator">
+                            ·
+                        </span>
+
+                        📅 {{ movie["year"] }}
 
                         {% endif %}
 
@@ -199,8 +203,6 @@
 
                     {% endif %}
 
-
-                    <!-- DELETE -->
 
                     <form
                         action="/delete/{{ movie['id'] }}"
@@ -228,14 +230,12 @@
 
         <div class="empty">
 
-            <div class="empty-icon">
+            <div>
                 🎬
             </div>
 
-            <h3>Your collection is empty</h3>
-
             <p>
-                Add your first movie or series above.
+                No movies yet. Add your first one above!
             </p>
 
         </div>
@@ -245,13 +245,11 @@
     </section>
 
 
-    <!-- TMDB ATTRIBUTION -->
+    <!-- TMDB -->
 
-    <footer class="tmdb-footer">
+    <footer>
 
-        <p>
-            Movie information and images provided by TMDB.
-        </p>
+        Movie information and images provided by TMDB.
 
     </footer>
 
