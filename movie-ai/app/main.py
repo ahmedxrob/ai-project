@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 
 from app.database import (
     init_database,
@@ -13,6 +14,8 @@ app = FastAPI(title="My Movie AI")
 
 templates = Jinja2Templates(directory="app/templates")
 
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
 init_database()
 
 
@@ -21,9 +24,9 @@ def home(request: Request):
     movies = get_all()
 
     return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
+        request=request,
+        name="index.html",
+        context={
             "movies": movies
         }
     )
@@ -37,7 +40,7 @@ def add(
 ):
     title = title.strip()
 
-    if title and 0 <= rating <= 10:
+    if title and 0 <= rating <= 10 and media_type in ("Movie", "Series"):
         add_movie(title, rating, media_type)
 
     return RedirectResponse("/", status_code=303)
