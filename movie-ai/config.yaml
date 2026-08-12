@@ -21,4 +21,4 @@ options:
   tmdb_token: ""
 
 schema:
-  tmdb_token: str
+  tmdb_token: password
