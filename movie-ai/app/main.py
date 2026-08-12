@@ -11,7 +11,7 @@ from app.database import (
     init_database,
     get_all,
     add_movie,
-    delete_movie
+    delete_movie,
 )
 
 
@@ -22,7 +22,7 @@ templates = Jinja2Templates(directory="app/templates")
 app.mount(
     "/static",
     StaticFiles(directory="app/static"),
-    name="static"
+    name="static",
 )
 
 init_database()
@@ -32,6 +32,7 @@ def search_tmdb(title, media_type):
     token = os.getenv("TMDB_TOKEN")
 
     if not token:
+        print("TMDB_TOKEN is not configured")
         return None
 
     if media_type == "Movie":
@@ -41,12 +42,13 @@ def search_tmdb(title, media_type):
 
     headers = {
         "Authorization": f"Bearer {token}",
-        "accept": "application/json"
+        "accept": "application/json",
     }
 
     params = {
         "query": title,
-        "language": "en-US"
+        "language": "en-US",
+        "include_adult": "false",
     }
 
     try:
@@ -54,7 +56,7 @@ def search_tmdb(title, media_type):
             endpoint,
             headers=headers,
             params=params,
-            timeout=10
+            timeout=10,
         )
 
         response.raise_for_status()
@@ -62,6 +64,7 @@ def search_tmdb(title, media_type):
         results = response.json().get("results", [])
 
         if not results:
+            print(f"TMDB: no results found for '{title}'")
             return None
 
         result = results[0]
@@ -85,16 +88,20 @@ def search_tmdb(title, media_type):
         if date:
             try:
                 year = int(date[:4])
-            except ValueError:
-                pass
+            except (ValueError, TypeError):
+                year = None
 
         return {
             "poster": poster,
             "backdrop": backdrop,
             "year": year,
-            "overview": result.get("overview"),
-            "tmdb_id": result.get("id")
+            "overview": result.get("overview") or "",
+            "tmdb_id": result.get("id"),
         }
+
+    except requests.RequestException as error:
+        print(f"TMDB request error: {error}")
+        return None
 
     except Exception as error:
         print(f"TMDB error: {error}")
@@ -110,8 +117,8 @@ def home(request: Request):
         request=request,
         name="index.html",
         context={
-            "movies": movies
-        }
+            "movies": movies,
+        },
     )
 
 
@@ -119,12 +126,15 @@ def home(request: Request):
 def add(
     title: str = Form(...),
     rating: float = Form(...),
-    media_type: str = Form(...)
+    media_type: str = Form(...),
 ):
     title = title.strip()
 
-    if title and 0 <= rating <= 10 and media_type in ("Movie", "Series"):
-
+    if (
+        title
+        and 0 <= rating <= 10
+        and media_type in ("Movie", "Series")
+    ):
         tmdb_data = search_tmdb(title, media_type)
 
         if tmdb_data:
@@ -136,13 +146,14 @@ def add(
                 backdrop=tmdb_data["backdrop"],
                 year=tmdb_data["year"],
                 overview=tmdb_data["overview"],
-                tmdb_id=tmdb_data["tmdb_id"]
+                tmdb_id=tmdb_data["tmdb_id"],
             )
         else:
+            # Still save the movie if TMDB doesn't find it
             add_movie(
                 title=title,
                 rating=rating,
-                media_type=media_type
+                media_type=media_type,
             )
 
     return RedirectResponse("/", status_code=303)
