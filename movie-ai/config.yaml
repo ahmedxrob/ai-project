@@ -1,5 +1,5 @@
 name: My Movie AI
-version: "0.4.1"
+version: "0.5.0"
 slug: movie_ai
 description: Personal movie and series database with AI recommendations
 url: https://github.com/ahmedxrob/ai-project
@@ -21,6 +21,8 @@ webui: "http://[HOST]:[PORT:8099]"
 
 options:
   tmdb_token: ""
+  gemini_api_key: ""
 
 schema:
   tmdb_token: password
+  gemini_api_key: password
