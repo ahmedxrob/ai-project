@@ -3,8 +3,10 @@ version: "0.1.0"
 slug: movie_ai
 description: Personal movie and series database with AI recommendations
 url: https://github.com/ahmedxrob/ai-project
+
 arch:
   - amd64
+
 startup: application
 boot: auto
 init: false
