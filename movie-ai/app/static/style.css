@@ -1694,4 +1694,143 @@ footer {
         align-items: center;
     }
 }
+/* ========================================================= */
+/* RECOMMENDATION ACTIONS */
+/* ========================================================= */
+
+.recommendation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 22px;
+}
+
+.recommendation-actions .secondary-button {
+    margin-top: 0;
+}
+
+.watched-form {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+}
+
+.watched-rating {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.watched-rating label {
+    margin: 0;
+    color: #777984;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.watched-rating input {
+    width: 62px;
+    height: 36px;
+    padding: 0 8px;
+
+    border:
+        1px solid
+        rgba(255, 255, 255, 0.10);
+
+    border-radius: 7px;
+
+    background:
+        rgba(255, 255, 255, 0.05);
+
+    color: white;
+
+    font-size: 12px;
+}
+
+.watched-rating span {
+    color: #777984;
+    font-size: 12px;
+}
+
+.watched-button {
+    width: auto;
+    min-height: 36px;
+
+    margin: 0;
+
+    padding:
+        0
+        13px;
+
+    border:
+        1px solid
+        rgba(53, 208, 127, 0.20);
+
+    border-radius: 7px;
+
+    background:
+        rgba(53, 208, 127, 0.10);
+
+    color: #8ee5ae;
+
+    font-size: 11px;
+    font-weight: 800;
+
+    box-shadow: none;
+}
+
+.watched-button:hover {
+    background:
+        rgba(53, 208, 127, 0.18);
+
+    border-color:
+        rgba(53, 208, 127, 0.35);
+
+    color: #b8f2cb;
+
+    box-shadow: none;
+
+    transform: none;
+}
+
+
+/* ========================================================= */
+/* MOBILE */
+/* ========================================================= */
+
+@media (max-width: 650px) {
+
+    .recommendation-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .recommendation-actions .secondary-button {
+        width: 100%;
+        justify-content: center;
+        margin-top: 0;
+    }
+
+    .watched-form {
+        width: 100%;
+    }
+
+    .watched-button {
+        flex: 1;
+    }
+
+    .watched-rating {
+        flex: 1;
+    }
+
+    .watched-rating input {
+        width: 70px;
+    }
+}
+
 
