@@ -1,7 +1,6 @@
-import json
+import os
 import requests
 
-from pathlib import Path
 from rapidfuzz import fuzz
 
 from fastapi import FastAPI, Request, Form
@@ -16,7 +15,6 @@ from app.database import (
     delete_movie,
 )
 
-
 app = FastAPI(title="My Movie AI")
 
 templates = Jinja2Templates(directory="app/templates")
@@ -27,56 +25,33 @@ app.mount(
     name="static",
 )
 
-
 init_database()
 
 
-# ==========================================
-# HOME ASSISTANT APP CONFIG
-# ==========================================
+TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
+
 
 def get_tmdb_token():
-    options_file = Path("/data/options.json")
+    """
+    Get TMDB token from environment.
+    """
+    token = os.getenv("TMDB_TOKEN")
 
-    try:
-        if not options_file.exists():
-            print("ERROR: /data/options.json not found")
-            return None
+    if not token:
+        print("TMDB_TOKEN is not configured")
 
-        with open(options_file, "r", encoding="utf-8") as file:
-            options = json.load(file)
-
-        token = options.get("tmdb_token")
-
-        if not token:
-            print("ERROR: TMDB token is not configured")
-            return None
-
-        return token.strip()
-
-    except Exception as error:
-        print(f"ERROR reading TMDB token: {error}")
-        return None
+    return token
 
 
-# ==========================================
-# TMDB SEARCH
-# ==========================================
-
-def search_tmdb(title, media_type):
+def tmdb_request(endpoint, query):
+    """
+    Perform a TMDB search request.
+    """
 
     token = get_tmdb_token()
 
     if not token:
-        print("TMDB_TOKEN is not configured")
-        return None
-
-    print(f"Searching TMDB for: {title}")
-
-    if media_type == "Movie":
-        endpoint = "https://api.themoviedb.org/3/search/movie"
-    else:
-        endpoint = "https://api.themoviedb.org/3/search/tv"
+        return []
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -84,13 +59,12 @@ def search_tmdb(title, media_type):
     }
 
     params = {
-        "query": title,
+        "query": query,
         "language": "en-US",
         "include_adult": "false",
     }
 
     try:
-
         response = requests.get(
             endpoint,
             headers=headers,
@@ -100,189 +74,334 @@ def search_tmdb(title, media_type):
 
         response.raise_for_status()
 
-        results = response.json().get("results", [])
+        return response.json().get("results", [])
+
+    except requests.RequestException as error:
+        print(f"TMDB request error: {error}")
+        return []
+
+    except Exception as error:
+        print(f"TMDB error: {error}")
+        return []
+
+
+def get_result_title(result, media_type):
+    """
+    Get the correct title field from a TMDB result.
+    """
+
+    if media_type == "Movie":
+        return result.get("title", "")
+
+    return result.get("name", "")
+
+
+def score_result(search_title, result_title):
+    """
+    Calculate a safe fuzzy score.
+
+    We deliberately don't use partial_ratio as the main score,
+    because it can make unrelated titles score 100.
+    """
+
+    search_title = search_title.lower().strip()
+    result_title = result_title.lower().strip()
+
+    ratio = fuzz.ratio(
+        search_title,
+        result_title,
+    )
+
+    token_ratio = fuzz.token_set_ratio(
+        search_title,
+        result_title,
+    )
+
+    weighted_score = (
+        ratio * 0.7
+        + token_ratio * 0.3
+    )
+
+    return weighted_score
+
+
+def find_best_result(title, results, media_type):
+    """
+    Find the best TMDB result.
+    """
+
+    best_result = None
+    best_score = -1
+
+    for result in results[:20]:
+
+        result_title = get_result_title(
+            result,
+            media_type,
+        )
+
+        if not result_title:
+            continue
+
+        score = score_result(
+            title,
+            result_title,
+        )
+
+        print(
+            f"TMDB candidate: {result_title} "
+            f"(score={score:.1f})"
+        )
+
+        # Exact match gets priority.
+        if (
+            title.lower().strip()
+            == result_title.lower().strip()
+        ):
+            score = 100
+
+        if score > best_score:
+            best_score = score
+            best_result = result
+
+    return best_result, best_score
+
+
+def search_tmdb(title, media_type):
+    """
+    Search TMDB and find the best matching movie/series.
+
+    Handles:
+    - Exact titles
+    - Misspellings
+    - Partial titles
+    - Alternative TMDB search attempts
+    """
+
+    title = title.strip()
+
+    if not title:
+        return None
+
+    print(f"Searching TMDB for: {title}")
+
+    if media_type == "Movie":
+        endpoint = (
+            "https://api.themoviedb.org/3/search/movie"
+        )
+    else:
+        endpoint = (
+            "https://api.themoviedb.org/3/search/tv"
+        )
+
+    # -------------------------------------------------
+    # FIRST SEARCH
+    # -------------------------------------------------
+
+    results = tmdb_request(
+        endpoint,
+        title,
+    )
+
+    # -------------------------------------------------
+    # NORMAL MATCH
+    # -------------------------------------------------
+
+    if results:
+
+        best_result, best_score = find_best_result(
+            title,
+            results,
+            media_type,
+        )
+
+        if best_result and best_score >= 60:
+            return build_tmdb_data(
+                best_result,
+                media_type,
+            )
+
+    # -------------------------------------------------
+    # TYPO SEARCH
+    # -------------------------------------------------
+    #
+    # TMDB itself cannot always correct spelling.
+    #
+    # We therefore create a few simplified searches.
+    #
+
+    words = title.split()
+
+    alternative_queries = []
+
+    # Remove duplicate spaces
+    cleaned = " ".join(words)
+
+    if cleaned.lower() != title.lower():
+        alternative_queries.append(cleaned)
+
+    # Try individual words for multi-word titles
+    if len(words) > 1:
+        alternative_queries.append(
+            " ".join(words[:2])
+        )
+
+    # Try removing common punctuation
+    simplified = (
+        title
+        .replace("-", " ")
+        .replace("_", " ")
+        .replace(".", " ")
+        .replace(",", " ")
+    )
+
+    simplified = " ".join(
+        simplified.split()
+    )
+
+    if simplified.lower() != title.lower():
+        alternative_queries.append(simplified)
+
+    # -------------------------------------------------
+    # SECONDARY SEARCHES
+    # -------------------------------------------------
+
+    for query in alternative_queries:
+
+        print(
+            f"Trying alternative TMDB search: {query}"
+        )
+
+        results = tmdb_request(
+            endpoint,
+            query,
+        )
 
         if not results:
-            print(f"TMDB returned no results for: {title}")
-            return None
+            continue
 
-        # ==========================================
-        # FIND BEST MATCH
-        # ==========================================
+        best_result, best_score = find_best_result(
+            title,
+            results,
+            media_type,
+        )
 
-        best_result = None
-        best_score = 0
-
-        search_title = title.lower().strip()
-
-        for result in results[:10]:
-
-            if media_type == "Movie":
-                result_title = result.get("title", "")
-            else:
-                result_title = result.get("name", "")
-
-            if not result_title:
-                continue
-
-            result_title_lower = result_title.lower().strip()
-
-            score = fuzz.ratio(
-                search_title,
-                result_title_lower,
-            )
-
-            partial_score = fuzz.partial_ratio(
-                search_title,
-                result_title_lower,
-            )
-
-            token_score = fuzz.token_set_ratio(
-                search_title,
-                result_title_lower,
-            )
-
-            final_score = max(
-                score,
-                partial_score,
-                token_score,
-            )
+        if best_result and best_score >= 60:
 
             print(
-                f"TMDB candidate: {result_title} "
-                f"(score={final_score:.1f})"
-            )
-
-            if final_score > best_score:
-                best_score = final_score
-                best_result = result
-
-        # ==========================================
-        # CONFIDENCE CHECK
-        # ==========================================
-
-        if not best_result or best_score < 60:
-
-            print(
-                f"No confident TMDB match for "
-                f"'{title}' "
+                f"TMDB match found using alternative "
+                f"search: "
+                f"{get_result_title(best_result, media_type)} "
                 f"(score={best_score:.1f})"
             )
 
-            return None
-
-        # ==========================================
-        # TITLE / DATE
-        # ==========================================
-
-        if media_type == "Movie":
-
-            matched_title = best_result.get(
-                "title",
-                title,
+            return build_tmdb_data(
+                best_result,
+                media_type,
             )
 
-            date = best_result.get(
-                "release_date",
-                "",
-            )
+    # -------------------------------------------------
+    # NO MATCH
+    # -------------------------------------------------
 
-        else:
+    print(
+        f"No confident TMDB match for '{title}'"
+    )
 
-            matched_title = best_result.get(
-                "name",
-                title,
-            )
+    return None
 
-            date = best_result.get(
-                "first_air_date",
-                "",
-            )
 
-        print(
-            f"TMDB match found: "
-            f"{matched_title} "
-            f"(ID={best_result.get('id')}, "
-            f"score={best_score:.1f})"
+def build_tmdb_data(result, media_type):
+    """
+    Convert TMDB result into our database format.
+    """
+
+    if media_type == "Movie":
+        matched_title = result.get(
+            "title",
+            "",
         )
 
-        # ==========================================
-        # POSTER
-        # ==========================================
-
-        poster = best_result.get("poster_path")
-
-        if poster:
-
-            poster = (
-                "https://image.tmdb.org/t/p/w500"
-                + poster
-            )
-
-        # ==========================================
-        # BACKDROP
-        # ==========================================
-
-        backdrop = best_result.get(
-            "backdrop_path"
+        date = result.get(
+            "release_date",
+            "",
         )
 
-        if backdrop:
-
-            backdrop = (
-                "https://image.tmdb.org/t/p/w1280"
-                + backdrop
-            )
-
-        # ==========================================
-        # YEAR
-        # ==========================================
-
-        year = None
-
-        if date:
-
-            try:
-                year = int(date[:4])
-
-            except (ValueError, TypeError):
-                year = None
-
-        # ==========================================
-        # RETURN
-        # ==========================================
-
-        return {
-            "poster": poster,
-            "backdrop": backdrop,
-            "year": year,
-            "overview": (
-                best_result.get("overview")
-                or ""
-            ),
-            "tmdb_id": best_result.get("id"),
-        }
-
-    except requests.RequestException as error:
-
-        print(
-            f"TMDB request error: {error}"
+    else:
+        matched_title = result.get(
+            "name",
+            "",
         )
 
-        return None
-
-    except Exception as error:
-
-        print(
-            f"TMDB error: {error}"
+        date = result.get(
+            "first_air_date",
+            "",
         )
 
-        return None
+    print(
+        f"TMDB match found: "
+        f"{matched_title} "
+        f"(ID={result.get('id')})"
+    )
 
+    # -------------------------------------------------
+    # POSTER
+    # -------------------------------------------------
 
-# ==========================================
-# HOME
-# ==========================================
+    poster_path = result.get(
+        "poster_path"
+    )
+
+    poster = None
+
+    if poster_path:
+        poster = (
+            f"{TMDB_IMAGE_BASE}/w500"
+            f"{poster_path}"
+        )
+
+    # -------------------------------------------------
+    # BACKDROP
+    # -------------------------------------------------
+
+    backdrop_path = result.get(
+        "backdrop_path"
+    )
+
+    backdrop = None
+
+    if backdrop_path:
+        backdrop = (
+            f"{TMDB_IMAGE_BASE}/w1280"
+            f"{backdrop_path}"
+        )
+
+    # -------------------------------------------------
+    # YEAR
+    # -------------------------------------------------
+
+    year = None
+
+    if date:
+        try:
+            year = int(date[:4])
+        except (
+            ValueError,
+            TypeError,
+        ):
+            pass
+
+    return {
+        "poster": poster,
+        "backdrop": backdrop,
+        "year": year,
+        "overview": (
+            result.get("overview")
+            or ""
+        ),
+        "tmdb_id": result.get("id"),
+    }
+
 
 @app.get("/")
 @app.get("//")
@@ -299,10 +418,6 @@ def home(request: Request):
     )
 
 
-# ==========================================
-# ADD MOVIE / SERIES
-# ==========================================
-
 @app.post("/add")
 def add(
     title: str = Form(...),
@@ -315,7 +430,10 @@ def add(
     if (
         title
         and 0 <= rating <= 10
-        and media_type in ("Movie", "Series")
+        and media_type in (
+            "Movie",
+            "Series",
+        )
     ):
 
         tmdb_data = search_tmdb(
@@ -339,8 +457,9 @@ def add(
         else:
 
             print(
-                f"No TMDB result for '{title}'. "
-                "Saving without poster."
+                f"No TMDB result for "
+                f"'{title}'. "
+                f"Saving without poster."
             )
 
             add_movie(
@@ -354,10 +473,6 @@ def add(
         status_code=303,
     )
 
-
-# ==========================================
-# DELETE
-# ==========================================
 
 @app.post("/delete/{movie_id}")
 def delete(movie_id: int):
