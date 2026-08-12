@@ -15,9 +15,11 @@ def get_connection():
 
 
 def init_database():
+
     connection = get_connection()
 
-    connection.execute("""
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS watched (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -25,7 +27,8 @@ def init_database():
             type TEXT NOT NULL
                 CHECK(type IN ('Movie', 'Series'))
         )
-    """)
+        """
+    )
 
     # -----------------------------------------
     # Upgrade existing database
@@ -57,6 +60,10 @@ def init_database():
                 f"ADD COLUMN {column_name} {column_type}"
             )
 
+            print(
+                f"Database upgraded: added {column_name}"
+            )
+
     connection.commit()
     connection.close()
 
@@ -65,7 +72,8 @@ def get_all():
 
     connection = get_connection()
 
-    movies = connection.execute("""
+    movies = connection.execute(
+        """
         SELECT
             id,
             title,
@@ -78,7 +86,8 @@ def get_all():
             tmdb_id
         FROM watched
         ORDER BY id DESC
-    """).fetchall()
+        """
+    ).fetchall()
 
     connection.close()
 
