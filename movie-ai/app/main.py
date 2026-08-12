@@ -17,6 +17,10 @@ from app.database import (
 )
 
 
+# ============================================================
+# APP
+# ============================================================
+
 app = FastAPI(title="My Movie AI")
 
 templates = Jinja2Templates(directory="app/templates")
@@ -30,12 +34,11 @@ app.mount(
 init_database()
 
 
-# =========================================================
+# ============================================================
 # TMDB
-# =========================================================
+# ============================================================
 
 def search_tmdb(title, media_type):
-
     token = os.getenv("TMDB_TOKEN")
 
     if not token:
@@ -61,7 +64,6 @@ def search_tmdb(title, media_type):
     }
 
     try:
-
         response = requests.get(
             endpoint,
             headers=headers,
@@ -83,7 +85,6 @@ def search_tmdb(title, media_type):
         best_score = 0
 
         for result in results[:20]:
-
             if media_type == "Movie":
                 result_title = result.get("title", "")
             else:
@@ -114,71 +115,59 @@ def search_tmdb(title, media_type):
                 f"(score={score:.1f})"
             )
 
+            # Exact title gets absolute priority.
+            if result_title_lower == search_title:
+                score = 100
+
             if score > best_score:
                 best_score = score
                 best_result = result
 
         if not best_result or best_score < 60:
-
             print(
                 f"No confident TMDB match for "
-                f"'{title}' "
-                f"(score={best_score:.1f})"
+                f"'{title}' (score={best_score:.1f})"
             )
-
             return None
 
         if media_type == "Movie":
-
             matched_title = best_result.get(
                 "title",
                 title,
             )
-
             date = best_result.get(
                 "release_date",
                 "",
             )
-
         else:
-
             matched_title = best_result.get(
                 "name",
                 title,
             )
-
             date = best_result.get(
                 "first_air_date",
                 "",
             )
 
         print(
-            f"TMDB match found: "
-            f"{matched_title} "
+            f"TMDB match found: {matched_title} "
             f"(ID={best_result.get('id')}, "
             f"score={best_score:.1f})"
         )
 
-        poster_path = best_result.get(
-            "poster_path"
-        )
-
-        backdrop_path = best_result.get(
-            "backdrop_path"
-        )
+        poster_path = best_result.get("poster_path")
+        backdrop_path = best_result.get("backdrop_path")
 
         poster = None
         backdrop = None
 
         if poster_path:
-
             poster = (
                 "https://image.tmdb.org/t/p/w500"
                 + poster_path
             )
 
         if backdrop_path:
-
             backdrop = (
                 "https://image.tmdb.org/t/p/w1280"
                 + backdrop_path
@@ -187,14 +176,9 @@ def search_tmdb(title, media_type):
         year = None
 
         if date:
-
             try:
                 year = int(date[:4])
-
-            except (
-                ValueError,
-                TypeError,
-            ):
+            except (ValueError, TypeError):
                 year = None
 
         return {
@@ -202,117 +186,86 @@ def search_tmdb(title, media_type):
             "poster": poster,
             "backdrop": backdrop,
             "year": year,
-            "overview": (
-                best_result.get("overview")
-                or ""
-            ),
+            "overview": best_result.get("overview") or "",
             "tmdb_id": best_result.get("id"),
         }
 
     except requests.RequestException as error:
-
-        print(
-            f"TMDB request error: {error}"
-        )
-
+        print(f"TMDB request error: {error}")
         return None
 
     except Exception as error:
-
-        print(
-            f"TMDB error: {error}"
-        )
-
+        print(f"TMDB error: {error}")
         return None
 
 
-# =========================================================
+# ============================================================
 # GEMINI
-# =========================================================
+# ============================================================
 
-def get_gemini_recommendation(
-    media_type,
-    watched,
-):
-
+def get_gemini_recommendation(media_type, watched):
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-
-        print(
-            "GEMINI_API_KEY is not configured"
-        )
-
+        print("GEMINI_API_KEY is not configured")
         return None
 
-    if not watched:
+    watched_items = [
+        movie
+        for movie in watched
+        if movie["type"] == media_type
+    ]
 
+    if not watched_items:
         print(
-            "No watched movies/series available"
+            f"No watched {media_type.lower()} entries "
+            "available for recommendation"
         )
-
         return None
 
     watched_text = "\n".join(
-        [
-            f"- {movie['title']} — "
-            f"{movie['rating']}/10"
-            for movie in watched
-            if movie["type"] == media_type
-        ]
+        f"- {movie['title']} — {movie['rating']}/10"
+        for movie in watched_items
     )
 
-    if not watched_text:
-
-        watched_text = (
-            "No titles of this type have "
-            "been watched yet."
-        )
-
-    if media_type == "Movie":
-
-        media_word = "movie"
-
-    else:
-
-        media_word = "TV series"
+    media_word = (
+        "movie"
+        if media_type == "Movie"
+        else "TV series"
+    )
 
     prompt = f"""
 You are a movie recommendation assistant.
 
-I want you to recommend ONE {media_word} that I should watch.
+Recommend exactly ONE {media_word} that the user has NOT already watched.
 
-Here is my watched list and my personal ratings:
+Watched {media_word}s and personal ratings:
 
 {watched_text}
 
-Important rules:
+Rules:
+- Do not recommend any title from the watched list.
+- Use the ratings to infer the user's taste.
+- Search the web before deciding.
+- Prefer a real, released title.
+- Prefer a strong match to the user's highest-rated titles.
+- Return ONLY these three lines:
 
-1. Recommend exactly ONE {media_word}.
-2. Do NOT recommend anything already in my watched list.
-3. Use my ratings to understand my taste.
-4. Search the internet using Google Search before deciding.
-5. Prefer a real, released {media_word}.
-6. Prefer something that strongly matches my highest-rated titles.
-7. Do not recommend something simply because it is popular.
-8. Give the exact official title.
-9. Include the release year.
-10. Keep the explanation short.
-
-Return ONLY this format:
-
-TITLE: exact title
-YEAR: release year
-REASON: one short sentence explaining why I may like it
+TITLE: exact official title
+YEAR: four digit release year
+REASON: one short sentence explaining why this user may like it
 """
 
     print(
         f"Asking Gemini for a {media_type} recommendation..."
     )
 
+    # Current Gemini Interactions REST API.
+    # Gemini 3.6 Flash is a current stable model and
+    # supports search grounding. See Google's current docs.
     url = (
         "https://generativelanguage.googleapis.com/"
-        "v1beta/models/gemini-2.5-flash:generateContent"
+        "v1/interactions"
     )
 
     headers = {
@@ -321,24 +274,16 @@ REASON: one short sentence explaining why I may like it
     }
 
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": prompt
-                    }
-                ]
-            }
-        ],
+        "model": "gemini-3.6-flash",
+        "input": prompt,
         "tools": [
             {
-                "google_search": {}
+                "type": "google_search"
             }
         ],
     }
 
     try:
-
         response = requests.post(
             url,
             headers=headers,
@@ -347,115 +292,94 @@ REASON: one short sentence explaining why I may like it
         )
 
         if not response.ok:
-
             print(
                 "Gemini API error:",
                 response.status_code,
                 response.text,
             )
-
             return None
 
         data = response.json()
 
-        candidates = data.get(
-            "candidates",
-            [],
-        )
-
-        if not candidates:
-
-            print(
-                "Gemini returned no candidates"
-            )
-
-            return None
-
-        parts = (
-            candidates[0]
-            .get("content", {})
-            .get("parts", [])
-        )
-
+        # Interactions API returns model output in steps.
         text_parts = []
 
-        for part in parts:
+        for step in data.get("steps", []):
+            if step.get("type") != "model_output":
+                continue
 
-            if "text" in part:
-
-                text_parts.append(
-                    part["text"]
-                )
+            for item in step.get("content", []):
+                if item.get("type") == "text":
+                    text_parts.append(
+                        item.get("text", "")
+                    )
 
         text = "\n".join(
             text_parts
         ).strip()
 
         if not text:
-
-            print(
-                "Gemini returned empty text"
-            )
-
+            print("Gemini returned no text")
+            print(data)
             return None
 
-        print(
-            "Gemini response:"
-        )
-
+        print("Gemini response:")
         print(text)
 
         title_match = re.search(
-            r"TITLE:\s*(.+)",
+            r"^\s*TITLE:\s*(.+)$",
             text,
-            re.IGNORECASE,
+            re.IGNORECASE | re.MULTILINE,
         )
 
         year_match = re.search(
-            r"YEAR:\s*(\d{4})",
+            r"^\s*YEAR:\s*(\d{4})$",
             text,
-            re.IGNORECASE,
+            re.IGNORECASE | re.MULTILINE,
         )
 
         reason_match = re.search(
-            r"REASON:\s*(.+)",
+            r"^\s*REASON:\s*(.+)$",
             text,
-            re.IGNORECASE,
+            re.IGNORECASE | re.MULTILINE,
         )
 
         if not title_match:
-
             print(
-                "Could not extract recommendation"
+                "Could not extract recommendation "
+                "from Gemini response"
             )
-
             return None
 
-        title = title_match.group(
-            1
-        ).strip()
+        title = title_match.group(1).strip()
 
         year = None
 
         if year_match:
-
             try:
                 year = int(
                     year_match.group(1)
                 )
-
             except ValueError:
                 year = None
 
         reason = ""
 
         if reason_match:
+            reason = reason_match.group(1).strip()
 
-            reason = (
-                reason_match
-                .group(1)
-                .strip()
+        # Final safety check: don't recommend something already watched.
+        watched_titles = {
+            movie["title"].strip().lower()
+            for movie in watched_items
+        }
+
+        if title.strip().lower() in watched_titles:
+            print(
+                f"Gemini recommended an already watched title: "
+                f"{title}"
             )
+            return None
 
         return {
             "title": title,
@@ -464,30 +388,25 @@ REASON: one short sentence explaining why I may like it
         }
 
     except requests.RequestException as error:
-
         print(
             f"Gemini request error: {error}"
         )
-
         return None
 
     except Exception as error:
-
         print(
             f"Gemini error: {error}"
         )
-
         return None
 
 
-# =========================================================
+# ============================================================
 # HOME
-# =========================================================
+# ============================================================
 
 @app.get("/")
 @app.get("//")
 def home(request: Request):
-
     movies = get_all()
 
     return templates.TemplateResponse(
@@ -500,9 +419,9 @@ def home(request: Request):
     )
 
 
-# =========================================================
-# ADD
-# =========================================================
+# ============================================================
+# ADD MOVIE / SERIES
+# ============================================================
 
 @app.post("/add")
 def add(
@@ -510,25 +429,19 @@ def add(
     rating: float = Form(...),
     media_type: str = Form(...),
 ):
-
     title = title.strip()
 
     if (
         title
         and 0 <= rating <= 10
-        and media_type in (
-            "Movie",
-            "Series",
-        )
+        and media_type in ("Movie", "Series")
     ):
-
         tmdb_data = search_tmdb(
             title,
             media_type,
         )
 
         if tmdb_data:
-
             add_movie(
                 title=title,
                 rating=rating,
@@ -541,6 +454,10 @@ def add(
             )
 
         else:
+            print(
+                f"No TMDB result for '{title}'. "
+                "Saving without poster."
+            )
 
             add_movie(
                 title=title,
@@ -554,26 +471,20 @@ def add(
     )
 
 
-# =========================================================
+# ============================================================
 # AI RECOMMENDATION
-# =========================================================
+# ============================================================
 
 @app.get("/recommend/{media_type}")
 def recommend(
     request: Request,
     media_type: str,
 ):
-
     if media_type == "movie":
-
         selected_type = "Movie"
-
     elif media_type == "series":
-
         selected_type = "Series"
-
     else:
-
         return RedirectResponse(
             "/",
             status_code=303,
@@ -587,15 +498,12 @@ def recommend(
         if movie["type"] == selected_type
     ]
 
-    recommendation = (
-        get_gemini_recommendation(
-            selected_type,
-            watched,
-        )
+    recommendation = get_gemini_recommendation(
+        selected_type,
+        watched,
     )
 
     if not recommendation:
-
         return templates.TemplateResponse(
             request=request,
             name="index.html",
@@ -603,22 +511,21 @@ def recommend(
                 "movies": movies,
                 "recommendation": {
                     "error": (
-                        "I couldn't get an AI "
-                        "recommendation right now. "
-                        "Check the Gemini API key "
-                        "and the add-on logs."
+                        "I couldn't get a recommendation "
+                        "right now. Check the Gemini API "
+                        "key and app logs."
                     )
                 },
             },
         )
 
+    # Get TMDB poster and metadata for Gemini's pick.
     tmdb_data = search_tmdb(
         recommendation["title"],
         selected_type,
     )
 
     if tmdb_data:
-
         recommendation.update(
             {
                 "poster": tmdb_data["poster"],
@@ -629,19 +536,13 @@ def recommend(
                 "tmdb_id": tmdb_data["tmdb_id"],
             }
         )
-
     else:
-
         recommendation.update(
             {
                 "poster": None,
                 "backdrop": None,
-                "tmdb_title": recommendation[
-                    "title"
-                ],
-                "tmdb_year": recommendation[
-                    "year"
-                ],
+                "tmdb_title": recommendation["title"],
+                "tmdb_year": recommendation["year"],
                 "overview": "",
                 "tmdb_id": None,
             }
@@ -657,13 +558,12 @@ def recommend(
     )
 
 
-# =========================================================
+# ============================================================
 # DELETE
-# =========================================================
+# ============================================================
 
 @app.post("/delete/{movie_id}")
 def delete(movie_id: int):
-
     delete_movie(movie_id)
 
     return RedirectResponse(
