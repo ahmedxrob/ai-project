@@ -2,6 +2,7 @@
 <html lang="en">
 
 <head>
+
     <meta charset="UTF-8">
 
     <meta
@@ -20,20 +21,13 @@
         rel="stylesheet"
         href="/static/style.css"
     >
+
 </head>
 
 <body>
 
-<!-- ====================================================== -->
-<!-- BACKGROUND -->
-<!-- ====================================================== -->
-
 <div class="site-background"></div>
 
-
-<!-- ====================================================== -->
-<!-- NAVBAR -->
-<!-- ====================================================== -->
 
 <nav class="topbar">
 
@@ -50,30 +44,21 @@
 
     </div>
 
-
     <div class="topbar-status">
 
         <span class="status-dot"></span>
 
-        <span>
-            Personal Library
-        </span>
+        Personal Library
 
     </div>
 
 </nav>
 
 
-<!-- ====================================================== -->
-<!-- MAIN -->
-<!-- ====================================================== -->
-
 <main class="page">
 
 
-    <!-- ================================================== -->
     <!-- HERO -->
-    <!-- ================================================== -->
 
     <section class="hero">
 
@@ -129,14 +114,12 @@
     </section>
 
 
-    <!-- ================================================== -->
     <!-- ADD + AI -->
-    <!-- ================================================== -->
 
     <section class="dashboard-grid">
 
 
-        <!-- ADD WATCHED -->
+        <!-- ADD -->
 
         <div class="panel add-panel">
 
@@ -260,19 +243,12 @@
 
             </form>
 
-            <div class="panel-hint">
-                We'll automatically look up the title
-                and artwork using TMDB.
-            </div>
-
         </div>
 
 
         <!-- AI -->
 
         <div class="panel ai-panel">
-
-            <div class="ai-glow"></div>
 
             <div class="panel-header">
 
@@ -294,10 +270,11 @@
 
             </div>
 
+
             <p class="ai-description">
-                Gemini looks at the movies and series
-                you've rated and finds something you
-                haven't watched yet.
+                Gemini uses your ratings and remembers
+                recent suggestions so it can give you
+                different choices.
             </p>
 
 
@@ -319,7 +296,7 @@
                         </strong>
 
                         <small>
-                            Based on your ratings
+                            Give me another choice
                         </small>
 
                     </span>
@@ -347,7 +324,7 @@
                         </strong>
 
                         <small>
-                            Find your next binge
+                            Give me another choice
                         </small>
 
                     </span>
@@ -365,13 +342,12 @@
     </section>
 
 
-    <!-- ================================================== -->
     <!-- AI RESULT -->
-    <!-- ================================================== -->
 
     {% if recommendation %}
 
     <section class="recommendation-result">
+
 
         {% if recommendation.error %}
 
@@ -395,6 +371,7 @@
 
         </div>
 
+
         {% else %}
 
 
@@ -404,6 +381,7 @@
 
 
         <div class="result-card">
+
 
             {% if recommendation.backdrop %}
 
@@ -428,7 +406,6 @@
                     src="{{ recommendation.poster }}"
                     alt="{{ recommendation.tmdb_title }}"
                     class="result-poster"
-                    loading="lazy"
                 >
 
                 {% else %}
@@ -452,25 +429,17 @@
                     </h2>
 
 
-                    <div class="result-meta">
+                    {% if recommendation.tmdb_year %}
 
-                        {% if recommendation.tmdb_year %}
+                    <div class="result-meta">
 
                         <span>
                             {{ recommendation.tmdb_year }}
                         </span>
 
-                        <span class="meta-dot">
-                            •
-                        </span>
-
-                        {% endif %}
-
-                        <span>
-                            {{ "Movie" if recommendation.tmdb_id else "Recommendation" }}
-                        </span>
-
                     </div>
+
+                    {% endif %}
 
 
                     {% if recommendation.reason %}
@@ -499,12 +468,74 @@
                     {% endif %}
 
 
-                    <a
-                        href="/"
-                        class="secondary-button"
-                    >
-                        ← Back to collection
-                    </a>
+                    <!-- ACTIONS -->
+
+                    <div class="recommendation-actions">
+
+
+                        <!-- AGAIN -->
+
+                        <a
+                            href="/recommend/{{ 'movie' if recommendation.media_type == 'Movie' else 'series' }}"
+                            class="secondary-button"
+                        >
+                            🔄 Recommend another
+                        </a>
+
+
+                        <!-- ALREADY WATCHED -->
+
+                        <form
+                            action="/recommendation/watched"
+                            method="post"
+                            class="watched-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ recommendation.tmdb_title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="{{ recommendation.media_type or 'Movie' }}"
+                            >
+
+                            <div class="watched-rating">
+
+                                <label>
+                                    My rating
+                                </label>
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <span>
+                                    /10
+                                </span>
+
+                            </div>
+
+
+                            <button
+                                type="submit"
+                                class="watched-button"
+                            >
+                                ✅ I already watched this
+                            </button>
+
+                        </form>
+
+                    </div>
 
                 </div>
 
@@ -519,12 +550,9 @@
     {% endif %}
 
 
-    <!-- ================================================== -->
     <!-- COLLECTION -->
-    <!-- ================================================== -->
 
     <section class="collection-section">
-
 
         <div class="collection-heading">
 
@@ -558,15 +586,11 @@
 
         {% if movies %}
 
-
         <div class="movie-grid">
 
             {% for movie in movies %}
 
             <article class="movie-card">
-
-
-                <!-- ARTWORK -->
 
                 <div class="movie-art">
 
@@ -607,10 +631,7 @@
                 </div>
 
 
-                <!-- CARD CONTENT -->
-
                 <div class="movie-card-content">
-
 
                     <div class="movie-card-title-row">
 
@@ -681,7 +702,6 @@
 
         {% else %}
 
-
         <div class="empty-library">
 
             <div class="empty-art">
@@ -699,15 +719,10 @@
 
         </div>
 
-
         {% endif %}
 
     </section>
 
-
-    <!-- ================================================== -->
-    <!-- FOOTER -->
-    <!-- ================================================== -->
 
     <footer>
 
@@ -724,7 +739,6 @@
         </span>
 
     </footer>
-
 
 </main>
 
