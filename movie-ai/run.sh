@@ -1,7 +1,7 @@
 #!/bin/sh
 
-TMDB_TOKEN="$(python -c "import json; print(json.load(open('/data/options.json')).get('tmdb_token', ''))")"
-GEMINI_API_KEY="$(python -c "import json; print(json.load(open('/data/options.json')).get('gemini_api_key', ''))")"
+TMDB_TOKEN="$(python -c "import json; print(json.load(open('/data/options.json')).get('tmdb_token',''))")"
+GEMINI_API_KEY="$(python -c "import json; print(json.load(open('/data/options.json')).get('gemini_api_key',''))")"
 
 export TMDB_TOKEN
 export GEMINI_API_KEY
