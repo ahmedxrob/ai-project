@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 
+
 DATA_DIR = Path("/data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -21,9 +22,34 @@ def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             rating REAL NOT NULL,
-            type TEXT NOT NULL CHECK(type IN ('Movie', 'Series'))
+            type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
+            poster TEXT,
+            backdrop TEXT,
+            year INTEGER,
+            overview TEXT,
+            tmdb_id INTEGER
         )
     """)
+
+    # Upgrade existing databases
+    columns = [
+        ("poster", "TEXT"),
+        ("backdrop", "TEXT"),
+        ("year", "INTEGER"),
+        ("overview", "TEXT"),
+        ("tmdb_id", "INTEGER"),
+    ]
+
+    existing = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(watched)").fetchall()
+    }
+
+    for name, data_type in columns:
+        if name not in existing:
+            connection.execute(
+                f"ALTER TABLE watched ADD COLUMN {name} {data_type}"
+            )
 
     connection.commit()
     connection.close()
@@ -33,7 +59,16 @@ def get_all():
     connection = get_connection()
 
     movies = connection.execute("""
-        SELECT id, title, rating, type
+        SELECT
+            id,
+            title,
+            rating,
+            type,
+            poster,
+            backdrop,
+            year,
+            overview,
+            tmdb_id
         FROM watched
         ORDER BY id DESC
     """).fetchall()
@@ -43,15 +78,34 @@ def get_all():
     return movies
 
 
-def add_movie(title, rating, media_type):
+def add_movie(
+    title,
+    rating,
+    media_type,
+    poster=None,
+    backdrop=None,
+    year=None,
+    overview=None,
+    tmdb_id=None
+):
     connection = get_connection()
 
     connection.execute(
         """
-        INSERT INTO watched (title, rating, type)
-        VALUES (?, ?, ?)
+        INSERT INTO watched
+        (title, rating, type, poster, backdrop, year, overview, tmdb_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (title, rating, media_type)
+        (
+            title,
+            rating,
+            media_type,
+            poster,
+            backdrop,
+            year,
+            overview,
+            tmdb_id
+        )
     )
 
     connection.commit()
