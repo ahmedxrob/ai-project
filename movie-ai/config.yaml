@@ -1,5 +1,5 @@
 name: My Movie AI
-version: "0.3.1"
+version: "0.2.3"
 slug: movie_ai
 description: Personal movie and series database with AI recommendations
 url: https://github.com/ahmedxrob/ai-project
@@ -11,17 +11,13 @@ startup: application
 boot: auto
 init: false
 
-ingress: true
-ingress_port: 8099
-
 ports:
   8099/tcp: 8099
 
 ports_description:
   8099/tcp: Movie AI web interface
 
-panel_icon: mdi:movie-open
-panel_title: My Movie AI
+webui: "http://[HOST]:8099"
 
 options:
   tmdb_token: ""
