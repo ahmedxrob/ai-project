@@ -18,22 +18,22 @@ def init_database():
 
     connection = get_connection()
 
-    connection.execute(
-        """
+    connection.execute("""
         CREATE TABLE IF NOT EXISTS watched (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             rating REAL NOT NULL,
             type TEXT NOT NULL
-                CHECK(type IN ('Movie', 'Series'))
+                CHECK(type IN ('Movie', 'Series')),
+            poster TEXT,
+            backdrop TEXT,
+            year INTEGER,
+            overview TEXT,
+            tmdb_id INTEGER
         )
-        """
-    )
+    """)
 
-    # -----------------------------------------
-    # Upgrade existing database
-    # -----------------------------------------
-
+    # Upgrade older databases
     columns = connection.execute(
         "PRAGMA table_info(watched)"
     ).fetchall()
@@ -60,10 +60,6 @@ def init_database():
                 f"ADD COLUMN {column_name} {column_type}"
             )
 
-            print(
-                f"Database upgraded: added {column_name}"
-            )
-
     connection.commit()
     connection.close()
 
@@ -72,8 +68,7 @@ def get_all():
 
     connection = get_connection()
 
-    movies = connection.execute(
-        """
+    movies = connection.execute("""
         SELECT
             id,
             title,
@@ -86,12 +81,59 @@ def get_all():
             tmdb_id
         FROM watched
         ORDER BY id DESC
-        """
-    ).fetchall()
+    """).fetchall()
 
     connection.close()
 
     return movies
+
+
+def movie_exists(
+    title=None,
+    media_type=None,
+    tmdb_id=None,
+):
+    connection = get_connection()
+
+    # Best duplicate check: TMDB ID + type
+    if tmdb_id and media_type:
+
+        result = connection.execute(
+            """
+            SELECT id
+            FROM watched
+            WHERE tmdb_id = ?
+              AND type = ?
+            LIMIT 1
+            """,
+            (
+                tmdb_id,
+                media_type,
+            ),
+        ).fetchone()
+
+    elif title and media_type:
+
+        result = connection.execute(
+            """
+            SELECT id
+            FROM watched
+            WHERE LOWER(title) = LOWER(?)
+              AND type = ?
+            LIMIT 1
+            """,
+            (
+                title.strip(),
+                media_type,
+            ),
+        ).fetchone()
+
+    else:
+        result = None
+
+    connection.close()
+
+    return result is not None
 
 
 def add_movie(
@@ -104,6 +146,19 @@ def add_movie(
     overview=None,
     tmdb_id=None,
 ):
+
+    # Prevent duplicates
+    if movie_exists(
+        title=title,
+        media_type=media_type,
+        tmdb_id=tmdb_id,
+    ):
+        print(
+            f"Already watched: "
+            f"{title} [{media_type}]"
+        )
+
+        return False
 
     connection = get_connection()
 
@@ -135,6 +190,8 @@ def add_movie(
 
     connection.commit()
     connection.close()
+
+    return True
 
 
 def delete_movie(movie_id):
