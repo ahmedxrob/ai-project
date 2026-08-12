@@ -17,13 +17,7 @@ ports:
 ports_description:
   8099/tcp: Movie AI web interface
 
-ingress: true
-ingress_port: 8099
-ingress_entry: /
 
-panel_icon: mdi:movie-open
-panel_title: My Movie AI
-panel_admin: false
 
 options: {}
 
