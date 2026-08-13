@@ -12,12 +12,10 @@
 
     <meta
         name="theme-color"
-        content="#070709"
+        content="#060608"
     >
 
-    <title>
-        My Movie AI
-    </title>
+    <title>My Movie AI</title>
 
     <link
         rel="stylesheet"
@@ -31,10 +29,6 @@
 
 <div class="site-background"></div>
 
-
-<!-- ====================================================== -->
-<!-- TOPBAR -->
-<!-- ====================================================== -->
 
 <nav class="topbar">
 
@@ -73,9 +67,7 @@
 <main class="page">
 
 
-    <!-- ================================================== -->
     <!-- HERO -->
-    <!-- ================================================== -->
 
     <section class="hero">
 
@@ -91,10 +83,11 @@
             </h1>
 
             <p>
-                Your recommendations are built from
-                what you watched, your ratings, similar
-                titles, genres and TMDB quality signals.
+                Your recommendations use your highest-rated
+                titles, genres, similar titles, popularity
+                and TMDB ratings.
             </p>
+
 
             <div class="hero-stats">
 
@@ -145,9 +138,7 @@
     </section>
 
 
-    <!-- ================================================== -->
     <!-- ADD -->
-    <!-- ================================================== -->
 
     <section class="panel add-panel">
 
@@ -282,16 +273,14 @@
     </section>
 
 
-    <!-- ================================================== -->
-    <!-- RECOMMENDATION CONTROL -->
-    <!-- ================================================== -->
+    <!-- RECOMMEND CONTROL -->
 
     <section class="recommend-control">
 
         <div>
 
             <span class="panel-label">
-                PERSONAL RECOMMENDATION ENGINE
+                PERSONALIZED RECOMMENDATION ENGINE
             </span>
 
             <h2>
@@ -299,9 +288,9 @@
             </h2>
 
             <p>
-                No AI request required. The engine compares
-                your highest-rated titles with TMDB's similar
-                and discovery data.
+                No Gemini request required. The engine compares
+                your highly rated titles with TMDB's similar,
+                genre, popular and top-rated content.
             </p>
 
         </div>
@@ -329,9 +318,7 @@
     </section>
 
 
-    <!-- ================================================== -->
     <!-- RECOMMENDATIONS -->
-    <!-- ================================================== -->
 
     {% if recommendations %}
 
@@ -387,9 +374,7 @@
 
                     {% endif %}
 
-
                     <div class="poster-overlay"></div>
-
 
                     <div class="recommendation-type">
                         🎬 Movie
@@ -426,9 +411,13 @@
                     </div>
 
 
+                    {% if item.overview %}
+
                     <p>
                         {{ item.overview }}
                     </p>
+
+                    {% endif %}
 
 
                     <div class="recommendation-actions">
@@ -467,7 +456,6 @@
                                 value="{{ item.tmdb_id }}"
                             >
 
-
                             <input
                                 type="number"
                                 name="rating"
@@ -478,7 +466,6 @@
                                 required
                                 aria-label="Your rating"
                             >
-
 
                             <button
                                 type="submit"
@@ -557,9 +544,7 @@
 
                     {% endif %}
 
-
                     <div class="poster-overlay"></div>
-
 
                     <div class="recommendation-type series-badge">
                         📺 Series
@@ -596,9 +581,13 @@
                     </div>
 
 
+                    {% if item.overview %}
+
                     <p>
                         {{ item.overview }}
                     </p>
+
+                    {% endif %}
 
 
                     <div class="recommendation-actions">
@@ -637,7 +626,6 @@
                                 value="{{ item.tmdb_id }}"
                             >
 
-
                             <input
                                 type="number"
                                 name="rating"
@@ -648,7 +636,6 @@
                                 required
                                 aria-label="Your rating"
                             >
-
 
                             <button
                                 type="submit"
@@ -682,9 +669,7 @@
     {% endif %}
 
 
-    <!-- ================================================== -->
     <!-- WATCHED MOVIES -->
-    <!-- ================================================== -->
 
     <section class="library-section">
 
@@ -808,9 +793,7 @@
     </section>
 
 
-    <!-- ================================================== -->
     <!-- WATCHED SERIES -->
-    <!-- ================================================== -->
 
     <section class="library-section">
 
