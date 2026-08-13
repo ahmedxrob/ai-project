@@ -58,23 +58,18 @@ GEMINI_MODELS = [
     "gemini-3.5-flash-lite",
 ]
 
-# Gemini generates a large pool.
+# Gemini generates a large candidate pool.
 AI_MOVIE_CANDIDATES = 30
 AI_SERIES_CANDIDATES = 30
 
-# Final displayed amount per type.
-DISPLAY_MOVIES = 12
-DISPLAY_SERIES = 12
-
-# Desired source mix per type.
+# Final number shown in EACH source section.
 AI_MOVIES_TARGET = 8
 AI_SERIES_TARGET = 8
+TMDB_MOVIES_TARGET = 8
+TMDB_SERIES_TARGET = 8
 
-TMDB_MOVIES_TARGET = 4
-TMDB_SERIES_TARGET = 4
-
-# Only recent recommendations are blocked.
-# Older recommendations become available again.
+# Recent recommendations only.
+# Old recommendations can become available again.
 RECENT_HISTORY_LIMIT = 12
 
 
@@ -87,7 +82,7 @@ def get_env(name: str) -> str:
 
 
 # ============================================================
-# GEMINI SCHEMA
+# GEMINI RESPONSE SCHEMA
 # ============================================================
 
 class RecommendationItem(BaseModel):
@@ -139,11 +134,8 @@ def build_user_profile(watched):
         }
 
         if item["type"] == "Movie":
-
             movies.append(data)
-
         else:
-
             series.append(data)
 
     movies.sort(
@@ -219,45 +211,45 @@ def build_gemini_prompt(watched):
 You are the personalized recommendation engine
 for a private movie and TV library.
 
-Understand the user's taste from their watched
-titles and ratings.
+Study the user's watched titles and ratings.
 
 Return:
 
 - EXACTLY {AI_MOVIE_CANDIDATES} movie candidates
 - EXACTLY {AI_SERIES_CANDIDATES} series candidates
 
-The application will verify every title through TMDB.
+The application will verify all titles with TMDB.
 
 RULES:
 
 1. Never recommend a watched title.
-2. Never recommend a recent recommendation.
+2. Never recommend a recently recommended title.
 3. Never recommend a NOT INTERESTED title.
-4. Movies and series are separate.
+4. Movies and series are completely separate.
 5. Never put a movie in the series list.
 6. Never put a series in the movie list.
-7. Strongly prioritize ratings of 8/10 or higher.
-8. Analyze:
+7. Strongly prioritize titles rated 8/10 or higher.
+8. Use lower ratings as negative taste signals.
+9. Consider:
    - genre
    - tone
    - themes
    - pacing
-   - story style
+   - storytelling
    - actors
    - directors
-   - franchise relationships
+   - franchises
    - audience appeal
-9. Include obvious matches and discoveries.
-10. Avoid recommending only famous/popular titles.
-11. Avoid overusing one franchise.
-12. Avoid overusing one actor.
-13. Avoid overusing one director.
-14. Avoid overusing one genre.
-15. Every title must be a real existing title.
-16. Every candidate MUST have a personalized reason.
-17. Reasons should mention the user's taste when possible.
-18. Return structured data only.
+10. Include strong matches and interesting discoveries.
+11. Avoid returning only famous mainstream titles.
+12. Avoid overusing one franchise.
+13. Avoid overusing one actor.
+14. Avoid overusing one director.
+15. Avoid overusing one genre.
+16. Every title must be a real existing title.
+17. Every title needs a personalized reason.
+18. Reasons should explain why THIS user may like it.
+19. Return structured data only.
 
 RANDOMIZATION VALUE:
 {random_nonce}
@@ -433,8 +425,7 @@ def get_ai_recommendations(watched):
                     or "rate limit" in error_text
                     or "too many requests"
                     in error_text
-                    or "overloaded"
-                    in error_text
+                    or "overloaded" in error_text
                     or "internal server error"
                     in error_text
                 )
@@ -442,8 +433,7 @@ def get_ai_recommendations(watched):
                 if temporary_error:
 
                     time.sleep(
-                        1.5
-                        * (
+                        1.5 * (
                             attempt + 1
                         )
                     )
@@ -536,16 +526,13 @@ def normalise_tmdb_result(
     if date:
 
         try:
-
             year = int(
                 date[:4]
             )
-
         except (
             ValueError,
             TypeError,
         ):
-
             pass
 
     poster = None
@@ -656,11 +643,8 @@ def tmdb_search(
     if year:
 
         if media_type == "Movie":
-
             params["year"] = year
-
         else:
-
             params[
                 "first_air_date_year"
             ] = year
@@ -725,10 +709,7 @@ def tmdb_search(
                 .lower()
             )
 
-            if (
-                requested
-                == normalized
-            ):
+            if requested == normalized:
 
                 score = 100
 
@@ -760,14 +741,12 @@ def tmdb_search(
                     )
 
                     if result_year == year:
-
                         score += 20
 
                 except (
                     ValueError,
                     TypeError,
                 ):
-
                     pass
 
             if score > best_score:
@@ -817,8 +796,7 @@ def verify_recommendation(
     result["reason"] = (
         item.reason
         or
-        "Recommended because it matches your "
-        "watched titles and ratings."
+        "Recommended because it matches your watched titles and ratings."
     )
 
     result["source"] = "AI"
@@ -876,15 +854,11 @@ def verify_all_recommendations(
 
                 if media_type == "Movie":
 
-                    movies.append(
-                        result
-                    )
+                    movies.append(result)
 
                 else:
 
-                    series.append(
-                        result
-                    )
+                    series.append(result)
 
             except Exception as error:
 
@@ -894,17 +868,13 @@ def verify_all_recommendations(
                 )
 
     return (
-        unique_results(
-            movies
-        ),
-        unique_results(
-            series
-        ),
+        unique_results(movies),
+        unique_results(series),
     )
 
 
 # ============================================================
-# UNIQUE RESULTS
+# UNIQUE
 # ============================================================
 
 def unique_results(
@@ -912,17 +882,14 @@ def unique_results(
 ):
 
     seen = set()
+
     output = []
 
     for item in results:
 
         key = (
-            item.get(
-                "media_type"
-            ),
-            item.get(
-                "tmdb_id"
-            ),
+            item.get("media_type"),
+            item.get("tmdb_id"),
         )
 
         if not item.get(
@@ -933,19 +900,15 @@ def unique_results(
         if key in seen:
             continue
 
-        seen.add(
-            key
-        )
+        seen.add(key)
 
-        output.append(
-            item
-        )
+        output.append(item)
 
     return output
 
 
 # ============================================================
-# FILTER RESULTS
+# FILTER
 # ============================================================
 
 def filter_new_results(
@@ -975,19 +938,15 @@ def filter_new_results(
         if tmdb_id in seen:
             continue
 
-        seen.add(
-            tmdb_id
-        )
+        seen.add(tmdb_id)
 
-        output.append(
-            item
-        )
+        output.append(item)
 
     return output
 
 
 # ============================================================
-# TMDB FALLBACK
+# TMDB DISCOVERY
 # ============================================================
 
 def tmdb_fallback(
@@ -1085,7 +1044,7 @@ def tmdb_fallback(
         except Exception as error:
 
             print(
-                f"TMDB fallback error: "
+                f"TMDB discovery error: "
                 f"{error}"
             )
 
@@ -1101,6 +1060,8 @@ def tmdb_fallback(
         ("Movie", 4),
         ("Movie", 5),
         ("Movie", 6),
+        ("Movie", 7),
+        ("Movie", 8),
 
         ("Series", 1),
         ("Series", 2),
@@ -1108,13 +1069,15 @@ def tmdb_fallback(
         ("Series", 4),
         ("Series", 5),
         ("Series", 6),
+        ("Series", 7),
+        ("Series", 8),
     ]
 
     movies = []
     series = []
 
     with ThreadPoolExecutor(
-        max_workers=12
+        max_workers=16
     ) as executor:
 
         futures = [
@@ -1123,8 +1086,7 @@ def tmdb_fallback(
                 media_type,
                 page,
             )
-            for media_type, page
-            in jobs
+            for media_type, page in jobs
         ]
 
         for future in futures:
@@ -1161,20 +1123,13 @@ def tmdb_fallback(
                 result["source"] = "TMDB"
 
                 result["reason"] = (
-                    "TMDB discovery suggestion."
+                    "TMDB discovery."
                 )
 
                 if media_type == "Movie":
-
-                    movies.append(
-                        result
-                    )
-
+                    movies.append(result)
                 else:
-
-                    series.append(
-                        result
-                    )
+                    series.append(result)
 
     movies = unique_results(
         movies
@@ -1193,16 +1148,13 @@ def tmdb_fallback(
     )
 
     return {
-        "movies":
-            movies,
-
-        "series":
-            series,
+        "movies": movies,
+        "series": series,
     }
 
 
 # ============================================================
-# GENERATE MIXED RECOMMENDATIONS
+# GENERATE RECOMMENDATIONS
 # ============================================================
 
 def generate_recommendations(
@@ -1210,13 +1162,13 @@ def generate_recommendations(
 ):
 
     print(
-        "Starting MIXED AI + TMDB "
+        "Starting separate AI + TMDB "
         "recommendation engine..."
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # BLOCK LIST
-    # --------------------------------------------------------
+    # ========================================================
 
     watched_movie_ids = {
         item["tmdb_id"]
@@ -1274,9 +1226,9 @@ def generate_recommendations(
         | not_interested_series_ids
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # GEMINI
-    # --------------------------------------------------------
+    # ========================================================
 
     ai_result = (
         get_ai_recommendations(
@@ -1284,9 +1236,19 @@ def generate_recommendations(
         )
     )
 
-    # --------------------------------------------------------
-    # GEMINI SUCCESS
-    # --------------------------------------------------------
+    # ========================================================
+    # DEFAULT EMPTY GROUPS
+    # ========================================================
+
+    ai_movies = []
+    ai_series = []
+
+    tmdb_movies = []
+    tmdb_series = []
+
+    # ========================================================
+    # AI SUCCESS
+    # ========================================================
 
     if ai_result:
 
@@ -1295,23 +1257,22 @@ def generate_recommendations(
         )
 
         print(
-            "Verifying AI candidates "
-            "through TMDB..."
+            "Verifying AI candidates with TMDB..."
         )
 
-        ai_movies, ai_series = (
+        verified_movies, verified_series = (
             verify_all_recommendations(
                 ai_result
             )
         )
 
         ai_movies = filter_new_results(
-            ai_movies,
+            verified_movies,
             blocked_movies,
         )
 
         ai_series = filter_new_results(
-            ai_series,
+            verified_series,
             blocked_series,
         )
 
@@ -1323,294 +1284,93 @@ def generate_recommendations(
             ai_series
         )
 
-        # ----------------------------------------------------
-        # SELECT AI PORTION
-        # ----------------------------------------------------
-
-        selected_ai_movies = ai_movies[
+        # Keep exactly up to 8 AI picks.
+        ai_movies = ai_movies[
             :AI_MOVIES_TARGET
         ]
 
-        selected_ai_series = ai_series[
+        ai_series = ai_series[
             :AI_SERIES_TARGET
         ]
 
-        # ----------------------------------------------------
-        # HOW MANY TMDB RESULTS ARE NEEDED?
-        # ----------------------------------------------------
-
-        needed_tmdb_movies = (
-            DISPLAY_MOVIES
-            - len(
-                selected_ai_movies
-            )
-        )
-
-        needed_tmdb_series = (
-            DISPLAY_SERIES
-            - len(
-                selected_ai_series
-            )
-        )
-
         print(
             f"AI selected: "
-            f"{len(selected_ai_movies)} movies, "
-            f"{len(selected_ai_series)} series"
+            f"{len(ai_movies)} movies, "
+            f"{len(ai_series)} series"
         )
+
+    else:
 
         print(
-            f"TMDB needed: "
-            f"{needed_tmdb_movies} movies, "
-            f"{needed_tmdb_series} series"
+            "Gemini unavailable."
         )
 
-        # ----------------------------------------------------
-        # TMDB DISCOVERY FOR THE SECOND PART
-        # ----------------------------------------------------
+    # ========================================================
+    # TMDB SECTION
+    #
+    # TMDB supplies a separate 8-card section.
+    # ========================================================
 
-        tmdb_movies = []
-        tmdb_series = []
-
-        if (
-            needed_tmdb_movies > 0
-            or needed_tmdb_series > 0
-        ):
-
-            tmdb_results = tmdb_fallback(
-                watched,
-
-                blocked_movie_ids=(
-                    blocked_movies
-                    | {
-                        item["tmdb_id"]
-                        for item
-                        in selected_ai_movies
-                    }
-                ),
-
-                blocked_series_ids=(
-                    blocked_series
-                    | {
-                        item["tmdb_id"]
-                        for item
-                        in selected_ai_series
-                    }
-                ),
-            )
-
-            tmdb_movies = filter_new_results(
-                tmdb_results["movies"],
-                blocked_movies
-                | {
-                    item["tmdb_id"]
-                    for item
-                    in selected_ai_movies
-                },
-            )
-
-            tmdb_series = filter_new_results(
-                tmdb_results["series"],
-                blocked_series
-                | {
-                    item["tmdb_id"]
-                    for item
-                    in selected_ai_series
-                },
-            )
-
-        # ----------------------------------------------------
-        # SELECT TMDB PORTION
-        # ----------------------------------------------------
-
-        selected_tmdb_movies = tmdb_movies[
-            :max(
-                0,
-                needed_tmdb_movies,
-            )
-        ]
-
-        selected_tmdb_series = tmdb_series[
-            :max(
-                0,
-                needed_tmdb_series,
-            )
-        ]
-
-        # ----------------------------------------------------
-        # COMBINE
-        # ----------------------------------------------------
-
-        final_movies = (
-            selected_ai_movies
-            + selected_tmdb_movies
-        )
-
-        final_series = (
-            selected_ai_series
-            + selected_tmdb_series
-        )
-
-        # ----------------------------------------------------
-        # FINAL SAFETY
-        # ----------------------------------------------------
-
-        final_movies = filter_new_results(
-            unique_results(
-                final_movies
-            ),
-            watched_movie_ids
-            | not_interested_movie_ids,
-        )[:DISPLAY_MOVIES]
-
-        final_series = filter_new_results(
-            unique_results(
-                final_series
-            ),
-            watched_series_ids
-            | not_interested_series_ids,
-        )[:DISPLAY_SERIES]
-
-        # ----------------------------------------------------
-        # SHUFFLE SO AI IS NOT ALWAYS AT THE TOP
-        # ----------------------------------------------------
-
-        random.shuffle(
-            final_movies
-        )
-
-        random.shuffle(
-            final_series
-        )
-
-        # ----------------------------------------------------
-        # SAVE DISPLAYED RESULTS
-        # ----------------------------------------------------
-
-        for item in final_movies:
-
-            add_recommendation_history(
-                tmdb_id=item[
-                    "tmdb_id"
-                ],
-
-                media_type="Movie",
-
-                title=item[
-                    "title"
-                ],
-            )
-
-        for item in final_series:
-
-            add_recommendation_history(
-                tmdb_id=item[
-                    "tmdb_id"
-                ],
-
-                media_type="Series",
-
-                title=item[
-                    "title"
-                ],
-            )
-
-        ai_movie_count = sum(
-            1
-            for item in final_movies
-            if item.get(
-                "source"
-            ) == "AI"
-        )
-
-        tmdb_movie_count = sum(
-            1
-            for item in final_movies
-            if item.get(
-                "source"
-            ) == "TMDB"
-        )
-
-        ai_series_count = sum(
-            1
-            for item in final_series
-            if item.get(
-                "source"
-            ) == "AI"
-        )
-
-        tmdb_series_count = sum(
-            1
-            for item in final_series
-            if item.get(
-                "source"
-            ) == "TMDB"
-        )
-
-        print(
-            "FINAL MOVIES: "
-            f"{ai_movie_count} AI + "
-            f"{tmdb_movie_count} TMDB"
-        )
-
-        print(
-            "FINAL SERIES: "
-            f"{ai_series_count} AI + "
-            f"{tmdb_series_count} TMDB"
-        )
-
-        return {
-            "movies":
-                final_movies,
-
-            "series":
-                final_series,
-
-            "source":
-                "Gemini + TMDB",
-        }
-
-    # --------------------------------------------------------
-    # GEMINI COMPLETELY FAILED
-    # --------------------------------------------------------
-
-    print(
-        "Gemini unavailable."
-    )
-
-    print(
-        "Using TMDB-only fallback."
-    )
-
-    fallback = tmdb_fallback(
+    tmdb_results = tmdb_fallback(
         watched,
 
-        blocked_movie_ids=
-            blocked_movies,
+        blocked_movie_ids=(
+            blocked_movies
+            | {
+                item["tmdb_id"]
+                for item in ai_movies
+            }
+        ),
 
-        blocked_series_ids=
-            blocked_series,
+        blocked_series_ids=(
+            blocked_series
+            | {
+                item["tmdb_id"]
+                for item in ai_series
+            }
+        ),
     )
 
-    fallback_movies = filter_new_results(
-        fallback["movies"],
-        blocked_movies,
+    tmdb_movies = filter_new_results(
+        tmdb_results["movies"],
+        blocked_movies
+        | {
+            item["tmdb_id"]
+            for item in ai_movies
+        },
     )
 
-    fallback_series = filter_new_results(
-        fallback["series"],
-        blocked_series,
+    tmdb_series = filter_new_results(
+        tmdb_results["series"],
+        blocked_series
+        | {
+            item["tmdb_id"]
+            for item in ai_series
+        },
     )
 
-    fallback_movies = fallback_movies[
-        :DISPLAY_MOVIES
+    tmdb_movies = tmdb_movies[
+        :TMDB_MOVIES_TARGET
     ]
 
-    fallback_series = fallback_series[
-        :DISPLAY_SERIES
+    tmdb_series = tmdb_series[
+        :TMDB_SERIES_TARGET
     ]
 
-    for item in fallback_movies:
+    print(
+        f"TMDB selected: "
+        f"{len(tmdb_movies)} movies, "
+        f"{len(tmdb_series)} series"
+    )
+
+    # ========================================================
+    # SAVE HISTORY
+    #
+    # Save both AI and TMDB results because both have been
+    # shown to the user.
+    # ========================================================
+
+    for item in ai_movies:
 
         add_recommendation_history(
             tmdb_id=item[
@@ -1624,7 +1384,21 @@ def generate_recommendations(
             ],
         )
 
-    for item in fallback_series:
+    for item in tmdb_movies:
+
+        add_recommendation_history(
+            tmdb_id=item[
+                "tmdb_id"
+            ],
+
+            media_type="Movie",
+
+            title=item[
+                "title"
+            ],
+        )
+
+    for item in ai_series:
 
         add_recommendation_history(
             tmdb_id=item[
@@ -1638,15 +1412,43 @@ def generate_recommendations(
             ],
         )
 
-    return {
-        "movies":
-            fallback_movies,
+    for item in tmdb_series:
 
-        "series":
-            fallback_series,
+        add_recommendation_history(
+            tmdb_id=item[
+                "tmdb_id"
+            ],
+
+            media_type="Series",
+
+            title=item[
+                "title"
+            ],
+        )
+
+    # ========================================================
+    # RETURN FOUR SEPARATE GROUPS
+    # ========================================================
+
+    return {
+        "ai_movies":
+            ai_movies,
+
+        "tmdb_movies":
+            tmdb_movies,
+
+        "ai_series":
+            ai_series,
+
+        "tmdb_series":
+            tmdb_series,
 
         "source":
-            "TMDB",
+            (
+                "Gemini + TMDB"
+                if ai_result
+                else "TMDB"
+            ),
     }
 
 
@@ -1674,24 +1476,22 @@ def home(
         if item["type"] == "Series"
     ]
 
-    response = (
-        templates.TemplateResponse(
-            request=request,
-            name="index.html",
-            context={
-                "movies":
-                    movies,
+    response = templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "movies":
+                movies,
 
-                "watched_movies":
-                    watched_movies,
+            "watched_movies":
+                watched_movies,
 
-                "watched_series":
-                    watched_series,
+            "watched_series":
+                watched_series,
 
-                "recommendations":
-                    None,
-            },
-        )
+            "recommendations":
+                None,
+        },
     )
 
     response.headers[
@@ -1791,7 +1591,7 @@ def add(
 
 
 # ============================================================
-# RECOMMENDATIONS
+# RECOMMENDATIONS PAGE
 # ============================================================
 
 @app.get("/recommendations")
@@ -1819,24 +1619,22 @@ def recommendations(
         )
     )
 
-    response = (
-        templates.TemplateResponse(
-            request=request,
-            name="index.html",
-            context={
-                "movies":
-                    movies,
+    response = templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "movies":
+                movies,
 
-                "watched_movies":
-                    watched_movies,
+            "watched_movies":
+                watched_movies,
 
-                "watched_series":
-                    watched_series,
+            "watched_series":
+                watched_series,
 
-                "recommendations":
-                    recommendations_data,
-            },
-        )
+            "recommendations":
+                recommendations_data,
+        },
     )
 
     response.headers[
@@ -1858,7 +1656,7 @@ def recommendations(
 
 
 # ============================================================
-# MARK AS WATCHED
+# MARK RECOMMENDATION AS WATCHED
 # ============================================================
 
 @app.post(
