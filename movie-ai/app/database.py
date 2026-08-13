@@ -14,6 +14,7 @@ DB_PATH = DATA_DIR / "movies.db"
 
 
 def get_connection():
+
     connection = sqlite3.connect(
         DB_PATH
     )
@@ -114,20 +115,26 @@ def get_all():
     return movies
 
 
-def movie_exists(
+# ============================================================
+# FIND EXISTING TITLE
+# ============================================================
+
+def find_movie(
     title=None,
     media_type=None,
     tmdb_id=None,
 ):
+
     connection = get_connection()
 
     result = None
 
+    # First priority: exact TMDB ID + media type.
     if tmdb_id and media_type:
 
         result = connection.execute(
             """
-            SELECT id
+            SELECT *
             FROM watched
             WHERE tmdb_id = ?
               AND type = ?
@@ -139,26 +146,51 @@ def movie_exists(
             ),
         ).fetchone()
 
-    elif title and media_type:
+    # Second priority: title + type.
+    if result is None and title and media_type:
 
         result = connection.execute(
             """
-            SELECT id
+            SELECT *
             FROM watched
-            WHERE LOWER(title) = LOWER(?)
+            WHERE LOWER(TRIM(title)) = LOWER(TRIM(?))
               AND type = ?
             LIMIT 1
             """,
             (
-                title.strip(),
+                title,
                 media_type,
             ),
         ).fetchone()
 
     connection.close()
 
-    return result is not None
+    return result
 
+
+# ============================================================
+# CHECK EXISTENCE
+# ============================================================
+
+def movie_exists(
+    title=None,
+    media_type=None,
+    tmdb_id=None,
+):
+
+    return (
+        find_movie(
+            title=title,
+            media_type=media_type,
+            tmdb_id=tmdb_id,
+        )
+        is not None
+    )
+
+
+# ============================================================
+# ADD / UPDATE MOVIE
+# ============================================================
 
 def add_movie(
     title,
@@ -171,22 +203,140 @@ def add_movie(
     tmdb_id=None,
 ):
 
-    if movie_exists(
-        title=title,
-        media_type=media_type,
-        tmdb_id=tmdb_id,
-    ):
-
-        print(
-            f"Duplicate prevented: "
-            f"{title} [{media_type}]"
-        )
-
-        return False
-
     connection = get_connection()
 
-    connection.execute(
+    existing = None
+
+    # --------------------------------------------------------
+    # Find by TMDB ID first
+    # --------------------------------------------------------
+
+    if tmdb_id:
+
+        existing = connection.execute(
+            """
+            SELECT *
+            FROM watched
+            WHERE tmdb_id = ?
+              AND type = ?
+            LIMIT 1
+            """,
+            (
+                tmdb_id,
+                media_type,
+            ),
+        ).fetchone()
+
+    # --------------------------------------------------------
+    # If not found, find by title + type
+    # --------------------------------------------------------
+
+    if existing is None:
+
+        existing = connection.execute(
+            """
+            SELECT *
+            FROM watched
+            WHERE LOWER(TRIM(title))
+                  =
+                  LOWER(TRIM(?))
+              AND type = ?
+            LIMIT 1
+            """,
+            (
+                title,
+                media_type,
+            ),
+        ).fetchone()
+
+    # --------------------------------------------------------
+    # EXISTING ROW
+    # --------------------------------------------------------
+
+    if existing:
+
+        # Preserve good existing data if the new
+        # request doesn't have it.
+
+        final_title = (
+            title
+            or existing["title"]
+        )
+
+        final_poster = (
+            poster
+            if poster
+            else existing["poster"]
+        )
+
+        final_backdrop = (
+            backdrop
+            if backdrop
+            else existing["backdrop"]
+        )
+
+        final_year = (
+            year
+            if year
+            else existing["year"]
+        )
+
+        final_overview = (
+            overview
+            if overview
+            else existing["overview"]
+        )
+
+        final_tmdb_id = (
+            tmdb_id
+            if tmdb_id
+            else existing["tmdb_id"]
+        )
+
+        connection.execute(
+            """
+            UPDATE watched
+            SET
+                title = ?,
+                rating = ?,
+                type = ?,
+                poster = ?,
+                backdrop = ?,
+                year = ?,
+                overview = ?,
+                tmdb_id = ?
+            WHERE id = ?
+            """,
+            (
+                final_title,
+                rating,
+                media_type,
+                final_poster,
+                final_backdrop,
+                final_year,
+                final_overview,
+                final_tmdb_id,
+                existing["id"],
+            ),
+        )
+
+        connection.commit()
+        connection.close()
+
+        print(
+            f"Updated watched item: "
+            f"{final_title} "
+            f"[{media_type}] "
+            f"TMDB={final_tmdb_id}"
+        )
+
+        return existing["id"]
+
+    # --------------------------------------------------------
+    # NEW ROW
+    # --------------------------------------------------------
+
+    cursor = connection.execute(
         """
         INSERT INTO watched (
             title,
@@ -213,12 +363,28 @@ def add_movie(
     )
 
     connection.commit()
+
+    new_id = cursor.lastrowid
+
     connection.close()
 
-    return True
+    print(
+        f"Added watched item: "
+        f"{title} "
+        f"[{media_type}] "
+        f"TMDB={tmdb_id}"
+    )
+
+    return new_id
 
 
-def delete_movie(movie_id):
+# ============================================================
+# DELETE
+# ============================================================
+
+def delete_movie(
+    movie_id,
+):
 
     connection = get_connection()
 
@@ -227,18 +393,25 @@ def delete_movie(movie_id):
         DELETE FROM watched
         WHERE id = ?
         """,
-        (movie_id,),
+        (
+            movie_id,
+        ),
     )
 
     connection.commit()
     connection.close()
 
 
+# ============================================================
+# RECOMMENDATION HISTORY
+# ============================================================
+
 def add_recommendation_history(
     tmdb_id,
     media_type,
     title,
 ):
+
     if not tmdb_id:
         return
 
@@ -283,8 +456,9 @@ def add_recommendation_history(
 
 def get_recent_recommendation_ids(
     media_type,
-    limit=40,
+    limit=50,
 ):
+
     connection = get_connection()
 
     rows = connection.execute(
@@ -307,4 +481,3 @@ def get_recent_recommendation_ids(
         row["tmdb_id"]
         for row in rows
     ]
-
