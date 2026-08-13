@@ -34,7 +34,9 @@ from app.database import (
 # APP
 # ============================================================
 
-app = FastAPI(title="My Movie AI")
+app = FastAPI(
+    title="My Movie AI"
+)
 
 templates = Jinja2Templates(
     directory="app/templates"
@@ -42,7 +44,9 @@ templates = Jinja2Templates(
 
 app.mount(
     "/static",
-    StaticFiles(directory="app/static"),
+    StaticFiles(
+        directory="app/static"
+    ),
     name="static",
 )
 
@@ -62,14 +66,16 @@ GEMINI_MODELS = [
 AI_MOVIE_CANDIDATES = 30
 AI_SERIES_CANDIDATES = 30
 
-# Final number shown in EACH source section.
+# Display exactly 8 AI + 8 TMDB
+# for each media type.
 AI_MOVIES_TARGET = 8
 AI_SERIES_TARGET = 8
+
 TMDB_MOVIES_TARGET = 8
 TMDB_SERIES_TARGET = 8
 
-# Recent recommendations only.
-# Old recommendations can become available again.
+# Only recent recommendations are blocked.
+# Older recommendations can become available again.
 RECENT_HISTORY_LIMIT = 12
 
 
@@ -77,8 +83,14 @@ RECENT_HISTORY_LIMIT = 12
 # ENVIRONMENT
 # ============================================================
 
-def get_env(name: str) -> str:
-    return os.getenv(name, "").strip()
+def get_env(
+    name: str,
+) -> str:
+
+    return os.getenv(
+        name,
+        "",
+    ).strip()
 
 
 # ============================================================
@@ -86,14 +98,23 @@ def get_env(name: str) -> str:
 # ============================================================
 
 class RecommendationItem(BaseModel):
+
     title: str
+
     year: Optional[int] = None
+
     reason: str
 
 
 class RecommendationResponse(BaseModel):
-    movies: List[RecommendationItem]
-    series: List[RecommendationItem]
+
+    movies: List[
+        RecommendationItem
+    ]
+
+    series: List[
+        RecommendationItem
+    ]
 
 
 # ============================================================
@@ -107,6 +128,7 @@ def get_gemini_client():
     )
 
     if not api_key:
+
         return None
 
     return genai.Client(
@@ -118,39 +140,59 @@ def get_gemini_client():
 # USER PROFILE
 # ============================================================
 
-def build_user_profile(watched):
+def build_user_profile(
+    watched,
+):
 
     movies = []
+
     series = []
 
     for item in watched:
 
         data = {
-            "title": item["title"],
-            "rating": float(
-                item["rating"]
-            ),
-            "year": item["year"],
+            "title":
+                item["title"],
+
+            "rating":
+                float(
+                    item["rating"]
+                ),
+
+            "year":
+                item["year"],
         }
 
         if item["type"] == "Movie":
-            movies.append(data)
+
+            movies.append(
+                data
+            )
+
         else:
-            series.append(data)
+
+            series.append(
+                data
+            )
 
     movies.sort(
-        key=lambda x: x["rating"],
+        key=lambda x:
+            x["rating"],
         reverse=True,
     )
 
     series.sort(
-        key=lambda x: x["rating"],
+        key=lambda x:
+            x["rating"],
         reverse=True,
     )
 
     return {
-        "movies": movies,
-        "series": series,
+        "movies":
+            movies,
+
+        "series":
+            series,
     }
 
 
@@ -158,7 +200,9 @@ def build_user_profile(watched):
 # GEMINI PROMPT
 # ============================================================
 
-def build_gemini_prompt(watched):
+def build_gemini_prompt(
+    watched,
+):
 
     profile = build_user_profile(
         watched
@@ -218,7 +262,7 @@ Return:
 - EXACTLY {AI_MOVIE_CANDIDATES} movie candidates
 - EXACTLY {AI_SERIES_CANDIDATES} series candidates
 
-The application will verify all titles with TMDB.
+The application will verify every title with TMDB.
 
 RULES:
 
@@ -229,17 +273,10 @@ RULES:
 5. Never put a movie in the series list.
 6. Never put a series in the movie list.
 7. Strongly prioritize titles rated 8/10 or higher.
-8. Use lower ratings as negative taste signals.
-9. Consider:
-   - genre
-   - tone
-   - themes
-   - pacing
-   - storytelling
-   - actors
-   - directors
-   - franchises
-   - audience appeal
+8. Use low ratings as negative taste signals.
+9. Consider genre, tone, themes, pacing,
+   storytelling, actors, directors,
+   franchises and audience appeal.
 10. Include strong matches and interesting discoveries.
 11. Avoid returning only famous mainstream titles.
 12. Avoid overusing one franchise.
@@ -318,7 +355,9 @@ Return only the structured response.
 # GEMINI
 # ============================================================
 
-def get_ai_recommendations(watched):
+def get_ai_recommendations(
+    watched,
+):
 
     client = get_gemini_client()
 
@@ -337,21 +376,28 @@ def get_ai_recommendations(watched):
     for model in GEMINI_MODELS:
 
         print(
-            f"Trying Gemini model: {model}"
+            f"Trying Gemini model: "
+            f"{model}"
         )
 
         for attempt in range(2):
 
             try:
 
-                response = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=RecommendationResponse,
-                        temperature=1.2,
-                    ),
+                response = (
+                    client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type=(
+                                "application/json"
+                            ),
+                            response_schema=(
+                                RecommendationResponse
+                            ),
+                            temperature=1.2,
+                        ),
+                    )
                 )
 
                 parsed = getattr(
@@ -372,7 +418,8 @@ def get_ai_recommendations(watched):
                     else:
 
                         result = (
-                            RecommendationResponse.model_validate(
+                            RecommendationResponse
+                            .model_validate(
                                 parsed
                             )
                         )
@@ -382,26 +429,30 @@ def get_ai_recommendations(watched):
                     if not response.text:
 
                         print(
-                            f"{model}: empty response"
+                            f"{model}: "
+                            f"empty response"
                         )
 
                         continue
 
                     result = (
-                        RecommendationResponse.model_validate_json(
+                        RecommendationResponse
+                        .model_validate_json(
                             response.text
                         )
                     )
 
                 print(
-                    f"{model}: Gemini success"
+                    f"{model}: "
+                    f"Gemini success"
                 )
 
                 print(
                     f"Gemini returned "
-                    f"{len(result.movies)} movies "
-                    f"and "
-                    f"{len(result.series)} series"
+                    f"{len(result.movies)} "
+                    f"movies and "
+                    f"{len(result.series)} "
+                    f"series"
                 )
 
                 return result
@@ -420,20 +471,30 @@ def get_ai_recommendations(watched):
 
                 temporary_error = (
                     "503" in error_text
-                    or "unavailable" in error_text
-                    or "429" in error_text
-                    or "rate limit" in error_text
-                    or "too many requests"
+                    or
+                    "unavailable"
                     in error_text
-                    or "overloaded" in error_text
-                    or "internal server error"
+                    or
+                    "429" in error_text
+                    or
+                    "rate limit"
+                    in error_text
+                    or
+                    "too many requests"
+                    in error_text
+                    or
+                    "overloaded"
+                    in error_text
+                    or
+                    "internal server error"
                     in error_text
                 )
 
                 if temporary_error:
 
                     time.sleep(
-                        1.5 * (
+                        1.5
+                        * (
                             attempt + 1
                         )
                     )
@@ -462,6 +523,7 @@ def tmdb_request(
     headers = {
         "Authorization":
             f"Bearer {token}",
+
         "accept":
             "application/json",
     }
@@ -526,13 +588,16 @@ def normalise_tmdb_result(
     if date:
 
         try:
+
             year = int(
                 date[:4]
             )
+
         except (
             ValueError,
             TypeError,
         ):
+
             pass
 
     poster = None
@@ -562,7 +627,9 @@ def normalise_tmdb_result(
             media_type,
 
         "tmdb_id":
-            result.get("id"),
+            result.get(
+                "id"
+            ),
 
         "title":
             canonical_title,
@@ -622,6 +689,7 @@ def tmdb_search(
     )
 
     if not token:
+
         return None
 
     endpoint = (
@@ -643,8 +711,11 @@ def tmdb_search(
     if year:
 
         if media_type == "Movie":
+
             params["year"] = year
+
         else:
+
             params[
                 "first_air_date_year"
             ] = year
@@ -663,6 +734,7 @@ def tmdb_search(
         )
 
         if not results:
+
             return None
 
         requested = (
@@ -701,6 +773,7 @@ def tmdb_search(
                 )
 
             if not result_title:
+
                 continue
 
             normalized = (
@@ -709,7 +782,11 @@ def tmdb_search(
                 .lower()
             )
 
-            if requested == normalized:
+            if (
+                requested
+                ==
+                normalized
+            ):
 
                 score = 100
 
@@ -741,12 +818,14 @@ def tmdb_search(
                     )
 
                     if result_year == year:
+
                         score += 20
 
                 except (
                     ValueError,
                     TypeError,
                 ):
+
                     pass
 
             if score > best_score:
@@ -755,9 +834,11 @@ def tmdb_search(
                 best = result
 
         if not best:
+
             return None
 
         if best_score < 55:
+
             return None
 
         return normalise_tmdb_result(
@@ -791,12 +872,14 @@ def verify_recommendation(
     )
 
     if not result:
+
         return None
 
     result["reason"] = (
         item.reason
         or
-        "Recommended because it matches your watched titles and ratings."
+        "Recommended because it matches "
+        "your watched titles and ratings."
     )
 
     result["source"] = "AI"
@@ -810,7 +893,6 @@ def verify_all_recommendations(
 
     movies = []
     series = []
-
     jobs = []
 
     with ThreadPoolExecutor(
@@ -850,31 +932,40 @@ def verify_all_recommendations(
                 result = future.result()
 
                 if not result:
+
                     continue
 
                 if media_type == "Movie":
 
-                    movies.append(result)
+                    movies.append(
+                        result
+                    )
 
                 else:
 
-                    series.append(result)
+                    series.append(
+                        result
+                    )
 
             except Exception as error:
 
                 print(
-                    f"TMDB verification error: "
-                    f"{error}"
+                    "TMDB verification "
+                    f"error: {error}"
                 )
 
     return (
-        unique_results(movies),
-        unique_results(series),
+        unique_results(
+            movies
+        ),
+        unique_results(
+            series
+        ),
     )
 
 
 # ============================================================
-# UNIQUE
+# UNIQUE RESULTS
 # ============================================================
 
 def unique_results(
@@ -882,33 +973,42 @@ def unique_results(
 ):
 
     seen = set()
-
     output = []
 
     for item in results:
 
         key = (
-            item.get("media_type"),
-            item.get("tmdb_id"),
+            item.get(
+                "media_type"
+            ),
+            item.get(
+                "tmdb_id"
+            ),
         )
 
         if not item.get(
             "tmdb_id"
         ):
+
             continue
 
         if key in seen:
+
             continue
 
-        seen.add(key)
+        seen.add(
+            key
+        )
 
-        output.append(item)
+        output.append(
+            item
+        )
 
     return output
 
 
 # ============================================================
-# FILTER
+# FILTER RESULTS
 # ============================================================
 
 def filter_new_results(
@@ -930,17 +1030,24 @@ def filter_new_results(
         )
 
         if not tmdb_id:
+
             continue
 
         if tmdb_id in blocked_ids:
+
             continue
 
         if tmdb_id in seen:
+
             continue
 
-        seen.add(tmdb_id)
+        seen.add(
+            tmdb_id
+        )
 
-        output.append(item)
+        output.append(
+            item
+        )
 
     return output
 
@@ -1044,7 +1151,7 @@ def tmdb_fallback(
         except Exception as error:
 
             print(
-                f"TMDB discovery error: "
+                "TMDB discovery error: "
                 f"{error}"
             )
 
@@ -1054,6 +1161,7 @@ def tmdb_fallback(
             )
 
     jobs = [
+
         ("Movie", 1),
         ("Movie", 2),
         ("Movie", 3),
@@ -1086,7 +1194,8 @@ def tmdb_fallback(
                 media_type,
                 page,
             )
-            for media_type, page in jobs
+            for media_type, page
+            in jobs
         ]
 
         for future in futures:
@@ -1108,9 +1217,11 @@ def tmdb_fallback(
                 )
 
                 if not tmdb_id:
+
                     continue
 
                 if tmdb_id in blocked:
+
                     continue
 
                 result = (
@@ -1120,16 +1231,25 @@ def tmdb_fallback(
                     )
                 )
 
-                result["source"] = "TMDB"
+                result["source"] = (
+                    "TMDB"
+                )
 
                 result["reason"] = (
                     "TMDB discovery."
                 )
 
                 if media_type == "Movie":
-                    movies.append(result)
+
+                    movies.append(
+                        result
+                    )
+
                 else:
-                    series.append(result)
+
+                    series.append(
+                        result
+                    )
 
     movies = unique_results(
         movies
@@ -1148,8 +1268,11 @@ def tmdb_fallback(
     )
 
     return {
-        "movies": movies,
-        "series": series,
+        "movies":
+            movies,
+
+        "series":
+            series,
     }
 
 
@@ -1162,13 +1285,13 @@ def generate_recommendations(
 ):
 
     print(
-        "Starting separate AI + TMDB "
-        "recommendation engine..."
+        "Starting separate "
+        "AI + TMDB engine..."
     )
 
-    # ========================================================
-    # BLOCK LIST
-    # ========================================================
+    # --------------------------------------------------------
+    # BLOCK LISTS
+    # --------------------------------------------------------
 
     watched_movie_ids = {
         item["tmdb_id"]
@@ -1226,9 +1349,9 @@ def generate_recommendations(
         | not_interested_series_ids
     )
 
-    # ========================================================
-    # GEMINI
-    # ========================================================
+    # --------------------------------------------------------
+    # AI
+    # --------------------------------------------------------
 
     ai_result = (
         get_ai_recommendations(
@@ -1236,28 +1359,17 @@ def generate_recommendations(
         )
     )
 
-    # ========================================================
-    # DEFAULT EMPTY GROUPS
-    # ========================================================
-
     ai_movies = []
     ai_series = []
 
-    tmdb_movies = []
-    tmdb_series = []
-
-    # ========================================================
-    # AI SUCCESS
-    # ========================================================
+    # --------------------------------------------------------
+    # IF GEMINI WORKS
+    # --------------------------------------------------------
 
     if ai_result:
 
         print(
             "Gemini succeeded."
-        )
-
-        print(
-            "Verifying AI candidates with TMDB..."
         )
 
         verified_movies, verified_series = (
@@ -1284,7 +1396,6 @@ def generate_recommendations(
             ai_series
         )
 
-        # Keep exactly up to 8 AI picks.
         ai_movies = ai_movies[
             :AI_MOVIES_TARGET
         ]
@@ -1294,9 +1405,13 @@ def generate_recommendations(
         ]
 
         print(
-            f"AI selected: "
-            f"{len(ai_movies)} movies, "
-            f"{len(ai_series)} series"
+            f"AI movies: "
+            f"{len(ai_movies)}"
+        )
+
+        print(
+            f"AI series: "
+            f"{len(ai_series)}"
         )
 
     else:
@@ -1305,11 +1420,9 @@ def generate_recommendations(
             "Gemini unavailable."
         )
 
-    # ========================================================
-    # TMDB SECTION
-    #
-    # TMDB supplies a separate 8-card section.
-    # ========================================================
+    # --------------------------------------------------------
+    # TMDB ALWAYS GETS ITS OWN SECTION
+    # --------------------------------------------------------
 
     tmdb_results = tmdb_fallback(
         watched,
@@ -1357,18 +1470,9 @@ def generate_recommendations(
         :TMDB_SERIES_TARGET
     ]
 
-    print(
-        f"TMDB selected: "
-        f"{len(tmdb_movies)} movies, "
-        f"{len(tmdb_series)} series"
-    )
-
-    # ========================================================
+    # --------------------------------------------------------
     # SAVE HISTORY
-    #
-    # Save both AI and TMDB results because both have been
-    # shown to the user.
-    # ========================================================
+    # --------------------------------------------------------
 
     for item in ai_movies:
 
@@ -1376,9 +1480,7 @@ def generate_recommendations(
             tmdb_id=item[
                 "tmdb_id"
             ],
-
             media_type="Movie",
-
             title=item[
                 "title"
             ],
@@ -1390,9 +1492,7 @@ def generate_recommendations(
             tmdb_id=item[
                 "tmdb_id"
             ],
-
             media_type="Movie",
-
             title=item[
                 "title"
             ],
@@ -1404,9 +1504,7 @@ def generate_recommendations(
             tmdb_id=item[
                 "tmdb_id"
             ],
-
             media_type="Series",
-
             title=item[
                 "title"
             ],
@@ -1418,17 +1516,27 @@ def generate_recommendations(
             tmdb_id=item[
                 "tmdb_id"
             ],
-
             media_type="Series",
-
             title=item[
                 "title"
             ],
         )
 
-    # ========================================================
-    # RETURN FOUR SEPARATE GROUPS
-    # ========================================================
+    print(
+        "FINAL:"
+    )
+
+    print(
+        f"Movies: "
+        f"{len(ai_movies)} AI + "
+        f"{len(tmdb_movies)} TMDB"
+    )
+
+    print(
+        f"Series: "
+        f"{len(ai_series)} AI + "
+        f"{len(tmdb_series)} TMDB"
+    )
 
     return {
         "ai_movies":
@@ -1454,62 +1562,18 @@ def generate_recommendations(
 
 # ============================================================
 # HOME
+#
+# Opening the main URL automatically starts discovery.
 # ============================================================
 
 @app.get("/")
 @app.get("//")
-def home(
-    request: Request,
-):
+def home():
 
-    movies = get_all()
-
-    watched_movies = [
-        item
-        for item in movies
-        if item["type"] == "Movie"
-    ]
-
-    watched_series = [
-        item
-        for item in movies
-        if item["type"] == "Series"
-    ]
-
-    response = templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
-            "movies":
-                movies,
-
-            "watched_movies":
-                watched_movies,
-
-            "watched_series":
-                watched_series,
-
-            "recommendations":
-                None,
-        },
+    return RedirectResponse(
+        "/recommendations",
+        status_code=303,
     )
-
-    response.headers[
-        "Cache-Control"
-    ] = (
-        "no-store, no-cache, "
-        "must-revalidate, max-age=0"
-    )
-
-    response.headers[
-        "Pragma"
-    ] = "no-cache"
-
-    response.headers[
-        "Expires"
-    ] = "0"
-
-    return response
 
 
 # ============================================================
@@ -1547,41 +1611,52 @@ def add(
     if tmdb_data:
 
         add_movie(
-            title=tmdb_data[
-                "title"
-            ],
+            title=
+                tmdb_data["title"],
 
-            rating=rating,
+            rating=
+                rating,
 
-            media_type=media_type,
+            media_type=
+                media_type,
 
-            poster=tmdb_data.get(
-                "poster"
-            ),
+            poster=
+                tmdb_data.get(
+                    "poster"
+                ),
 
-            backdrop=tmdb_data.get(
-                "backdrop"
-            ),
+            backdrop=
+                tmdb_data.get(
+                    "backdrop"
+                ),
 
-            year=tmdb_data.get(
-                "year"
-            ),
+            year=
+                tmdb_data.get(
+                    "year"
+                ),
 
-            overview=tmdb_data.get(
-                "overview"
-            ),
+            overview=
+                tmdb_data.get(
+                    "overview"
+                ),
 
-            tmdb_id=tmdb_data.get(
-                "tmdb_id"
-            ),
+            tmdb_id=
+                tmdb_data.get(
+                    "tmdb_id"
+                ),
         )
 
     else:
 
         add_movie(
-            title=title,
-            rating=rating,
-            media_type=media_type,
+            title=
+                title,
+
+            rating=
+                rating,
+
+            media_type=
+                media_type,
         )
 
     return RedirectResponse(
@@ -1591,10 +1666,12 @@ def add(
 
 
 # ============================================================
-# RECOMMENDATIONS PAGE
+# RECOMMENDATIONS
 # ============================================================
 
-@app.get("/recommendations")
+@app.get(
+    "/recommendations"
+)
 def recommendations(
     request: Request,
 ):
@@ -1619,22 +1696,24 @@ def recommendations(
         )
     )
 
-    response = templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
-            "movies":
-                movies,
+    response = (
+        templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={
+                "movies":
+                    movies,
 
-            "watched_movies":
-                watched_movies,
+                "watched_movies":
+                    watched_movies,
 
-            "watched_series":
-                watched_series,
+                "watched_series":
+                    watched_series,
 
-            "recommendations":
-                recommendations_data,
-        },
+                "recommendations":
+                    recommendations_data,
+            },
+        )
     )
 
     response.headers[
@@ -1690,7 +1769,7 @@ def recommendation_watched(
                 token,
                 {
                     "language":
-                        "en-US",
+                        "en-US"
                 },
             )
 
@@ -1704,49 +1783,62 @@ def recommendation_watched(
         except Exception as error:
 
             print(
-                f"TMDB watched lookup error: "
-                f"{error}"
+                "TMDB watched lookup "
+                f"error: {error}"
             )
 
     if tmdb_data:
 
         add_movie(
-            title=tmdb_data[
-                "title"
-            ],
+            title=
+                tmdb_data["title"],
 
-            rating=rating,
+            rating=
+                rating,
 
-            media_type=media_type,
+            media_type=
+                media_type,
 
-            poster=tmdb_data.get(
-                "poster"
-            ),
+            poster=
+                tmdb_data.get(
+                    "poster"
+                ),
 
-            backdrop=tmdb_data.get(
-                "backdrop"
-            ),
+            backdrop=
+                tmdb_data.get(
+                    "backdrop"
+                ),
 
-            year=tmdb_data.get(
-                "year"
-            ),
+            year=
+                tmdb_data.get(
+                    "year"
+                ),
 
-            overview=tmdb_data.get(
-                "overview"
-            ),
+            overview=
+                tmdb_data.get(
+                    "overview"
+                ),
 
-            tmdb_id=tmdb_data.get(
-                "tmdb_id"
-            ),
+            tmdb_id=
+                tmdb_data.get(
+                    "tmdb_id"
+                ),
         )
 
     else:
 
         add_movie(
-            title=title,
-            rating=rating,
-            media_type=media_type,
-            tmdb_id=tmdb_id,
+            title=
+                title,
+
+            rating=
+                rating,
+
+            media_type=
+                media_type,
+
+            tmdb_id=
+                tmdb_id,
         )
 
     return RedirectResponse(
@@ -1769,9 +1861,14 @@ def recommendation_not_interested(
 ):
 
     add_not_interested(
-        tmdb_id=tmdb_id,
-        media_type=media_type,
-        title=title,
+        tmdb_id=
+            tmdb_id,
+
+        media_type=
+            media_type,
+
+        title=
+            title,
     )
 
     print(
