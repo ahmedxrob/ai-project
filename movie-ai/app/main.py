@@ -1,4 +1,3 @@
-```python
 import os
 import json
 import requests
@@ -968,4 +967,4 @@ def delete(movie_id: int):
         "/",
         status_code=303,
     )
-```
+
