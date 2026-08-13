@@ -1,4 +1,3 @@
-```python
 import sqlite3
 from pathlib import Path
 
@@ -220,4 +219,4 @@ def delete_movie(movie_id):
 
     connection.commit()
     connection.close()
-```
+
