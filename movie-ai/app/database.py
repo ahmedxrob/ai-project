@@ -1,4 +1,6 @@
+```python id="q4bx6w"
 import sqlite3
+
 from pathlib import Path
 
 
@@ -12,6 +14,10 @@ DATA_DIR.mkdir(
 DB_PATH = DATA_DIR / "movies.db"
 
 
+# ============================================================
+# CONNECTION
+# ============================================================
+
 def get_connection():
 
     connection = sqlite3.connect(
@@ -22,6 +28,10 @@ def get_connection():
 
     return connection
 
+
+# ============================================================
+# INIT
+# ============================================================
 
 def init_database():
 
@@ -43,6 +53,23 @@ def init_database():
         )
         """
     )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS recommendation_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tmdb_id INTEGER NOT NULL,
+            type TEXT NOT NULL
+                CHECK(type IN ('Movie', 'Series')),
+            title TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    # --------------------------------------------------------
+    # Upgrade old watched database
+    # --------------------------------------------------------
 
     columns = connection.execute(
         "PRAGMA table_info(watched)"
@@ -72,8 +99,13 @@ def init_database():
             )
 
     connection.commit()
+
     connection.close()
 
+
+# ============================================================
+# GET EVERYTHING
+# ============================================================
 
 def get_all():
 
@@ -100,6 +132,10 @@ def get_all():
 
     return movies
 
+
+# ============================================================
+# DUPLICATE CHECK
+# ============================================================
 
 def movie_exists(
     title=None,
@@ -146,6 +182,10 @@ def movie_exists(
 
     return result is not None
 
+
+# ============================================================
+# ADD MOVIE / SERIES
+# ============================================================
 
 def add_movie(
     title,
@@ -200,12 +240,19 @@ def add_movie(
     )
 
     connection.commit()
+
     connection.close()
 
     return True
 
 
-def delete_movie(movie_id):
+# ============================================================
+# DELETE
+# ============================================================
+
+def delete_movie(
+    movie_id,
+):
 
     connection = get_connection()
 
@@ -214,9 +261,92 @@ def delete_movie(movie_id):
         DELETE FROM watched
         WHERE id = ?
         """,
-        (movie_id,),
+        (
+            movie_id,
+        ),
     )
 
     connection.commit()
+
     connection.close()
 
+
+# ============================================================
+# RECOMMENDATION HISTORY
+# ============================================================
+
+def add_recommendation_history(
+    tmdb_id,
+    media_type,
+    title,
+):
+    if not tmdb_id:
+        return
+
+    connection = get_connection()
+
+    # Don't insert the same recommendation twice.
+    existing = connection.execute(
+        """
+        SELECT id
+        FROM recommendation_history
+        WHERE tmdb_id = ?
+          AND type = ?
+        LIMIT 1
+        """,
+        (
+            tmdb_id,
+            media_type,
+        ),
+    ).fetchone()
+
+    if not existing:
+
+        connection.execute(
+            """
+            INSERT INTO recommendation_history (
+                tmdb_id,
+                type,
+                title
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                tmdb_id,
+                media_type,
+                title,
+            ),
+        )
+
+        connection.commit()
+
+    connection.close()
+
+
+def get_recent_recommendation_ids(
+    media_type,
+    limit=500,
+):
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT tmdb_id
+        FROM recommendation_history
+        WHERE type = ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (
+            media_type,
+            limit,
+        ),
+    ).fetchall()
+
+    connection.close()
+
+    return [
+        row["tmdb_id"]
+        for row in rows
+    ]
+```
