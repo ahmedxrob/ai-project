@@ -1,4 +1,3 @@
-```yaml
 name: My Movie AI
 version: "0.8.1"
 slug: movie_ai
@@ -25,4 +24,4 @@ options:
 
 schema:
   tmdb_token: password
-```
+
