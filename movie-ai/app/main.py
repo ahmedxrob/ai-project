@@ -1,9 +1,9 @@
 import json
 import os
+import time
 import requests
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 from fastapi import FastAPI, Request, Form
@@ -50,7 +50,10 @@ init_database()
 # SETTINGS
 # ============================================================
 
-GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_MODELS = [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+]
 
 MOVIE_COUNT = 12
 SERIES_COUNT = 12
@@ -67,7 +70,7 @@ def get_env(name: str) -> str:
 
 
 # ============================================================
-# GEMINI STRUCTURED RESPONSE
+# GEMINI RESPONSE SCHEMA
 # ============================================================
 
 class RecommendationItem(BaseModel):
@@ -174,34 +177,38 @@ def build_gemini_prompt(watched):
 You are the personalized recommendation engine
 for a private movie and TV library.
 
-Your job is to recommend things this specific user
-is likely to enjoy.
+The user personally rated the titles below.
+Learn their taste primarily from HIGH ratings.
 
-Return EXACTLY:
+Return exactly:
 - {MOVIE_COUNT} movies
 - {SERIES_COUNT} TV series
 
-IMPORTANT RULES:
+RULES:
 
 1. Never recommend something already watched.
 2. Never recommend a recently recommended title.
-3. Movies and TV series are separate types.
-4. Do not turn a movie into a series.
-5. Do not turn a TV series into a movie.
-6. Prefer the user's HIGHLY rated titles as the strongest signal.
-7. Use patterns in ratings, genres, themes, tone,
-   storytelling style, actors and directors when useful.
-8. Include a mixture of:
-   - very strong matches
-   - less obvious discoveries
-9. Do not give 12 titles from the same director,
-   franchise, genre or actor.
+3. Movies and TV series are separate media types.
+4. Never classify a movie as a series.
+5. Never classify a series as a movie.
+6. Give strong weight to the user's highest ratings.
+7. Consider:
+   - genre
+   - tone
+   - themes
+   - story style
+   - pacing
+   - actors
+   - directors
+   - critical/audience reception
+8. Include both obvious matches and interesting discoveries.
+9. Avoid giving many recommendations from one franchise,
+   director, actor, genre or decade.
 10. Every title must be a real existing movie or TV series.
 11. Reasons must be short and personalized.
-12. Do not return explanations outside the structured result.
+12. Do not output explanations outside the structured response.
 
 WATCHED MOVIES:
-
 {json.dumps(
     profile["movies"],
     ensure_ascii=False,
@@ -209,44 +216,38 @@ WATCHED MOVIES:
 )}
 
 WATCHED SERIES:
-
 {json.dumps(
     profile["series"],
     ensure_ascii=False,
     indent=2
 )}
 
-ALREADY WATCHED MOVIE TITLES:
-
+ALREADY WATCHED MOVIES:
 {json.dumps(
     watched_movie_titles,
     ensure_ascii=False
 )}
 
-ALREADY WATCHED SERIES TITLES:
-
+ALREADY WATCHED SERIES:
 {json.dumps(
     watched_series_titles,
     ensure_ascii=False
 )}
 
-RECENT MOVIE RECOMMENDATION IDS:
-
+RECENT MOVIE RECOMMENDATION IDs:
 {json.dumps(recent_movie_ids)}
 
-RECENT SERIES RECOMMENDATION IDS:
-
+RECENT SERIES RECOMMENDATION IDs:
 {json.dumps(recent_series_ids)}
 
-Return exactly the requested number of movies
-and series whenever possible.
+Return only the requested structured result.
 """
 
     return prompt
 
 
 # ============================================================
-# ONE GEMINI REQUEST
+# ONE GEMINI REQUEST + FALLBACK MODEL
 # ============================================================
 
 def get_ai_recommendations(watched):
@@ -254,89 +255,126 @@ def get_ai_recommendations(watched):
     client = get_gemini_client()
 
     if client is None:
-
         print(
             "Gemini API key is not configured"
         )
-
         return None
 
-    print(
-        "Sending ONE recommendation request "
-        "to Gemini..."
+    prompt = build_gemini_prompt(
+        watched
     )
 
-    try:
+    for model in GEMINI_MODELS:
 
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=build_gemini_prompt(
-                watched
-            ),
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=RecommendationResponse,
-            ),
+        print(
+            f"Trying Gemini model: {model}"
         )
 
-        # Current SDK can return the typed
-        # parsed object when a Pydantic schema
-        # is supplied.
-        if getattr(
-            response,
-            "parsed",
-            None,
-        ) is not None:
+        for attempt in range(2):
 
-            parsed = response.parsed
+            try:
 
-            if isinstance(
-                parsed,
-                RecommendationResponse,
-            ):
-                result = parsed
-            else:
-                result = (
-                    RecommendationResponse.model_validate(
-                        parsed
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=RecommendationResponse,
+                    ),
+                )
+
+                parsed = getattr(
+                    response,
+                    "parsed",
+                    None,
+                )
+
+                if parsed is not None:
+
+                    if isinstance(
+                        parsed,
+                        RecommendationResponse,
+                    ):
+                        result = parsed
+                    else:
+                        result = (
+                            RecommendationResponse.model_validate(
+                                parsed
+                            )
+                        )
+
+                else:
+
+                    if not response.text:
+                        print(
+                            f"{model}: empty response"
+                        )
+                        continue
+
+                    result = (
+                        RecommendationResponse.model_validate_json(
+                            response.text
+                        )
                     )
-                )
 
-        else:
-
-            if not response.text:
                 print(
-                    "Gemini returned empty response"
+                    f"{model}: Gemini success"
                 )
-                return None
 
-            result = (
-                RecommendationResponse.model_validate_json(
-                    response.text
+                print(
+                    f"Gemini returned "
+                    f"{len(result.movies)} movies "
+                    f"and "
+                    f"{len(result.series)} series"
                 )
-            )
 
-        print(
-            f"Gemini returned "
-            f"{len(result.movies)} movies "
-            f"and "
-            f"{len(result.series)} series"
-        )
+                return result
 
-        return result
+            except Exception as error:
 
-    except Exception as error:
+                error_text = str(
+                    error
+                ).lower()
 
-        print(
-            f"Gemini recommendation error: "
-            f"{error}"
-        )
+                print(
+                    f"{model} attempt "
+                    f"{attempt + 1}/2 failed: "
+                    f"{error}"
+                )
 
-        return None
+                temporary_error = (
+                    "503" in error_text
+                    or "unavailable" in error_text
+                    or "429" in error_text
+                    or "rate limit" in error_text
+                    or "too many requests" in error_text
+                    or "overloaded" in error_text
+                    or "internal server error"
+                    in error_text
+                )
+
+                if temporary_error:
+
+                    time.sleep(
+                        1.5
+                        * (
+                            attempt + 1
+                        )
+                    )
+
+                    continue
+
+                break
+
+    print(
+        "All Gemini models unavailable."
+    )
+
+    return None
 
 
 # ============================================================
-# TMDB
+# TMDB REQUEST
 # ============================================================
 
 def tmdb_request(
@@ -360,6 +398,10 @@ def tmdb_request(
 
     return response.json()
 
+
+# ============================================================
+# TMDB SEARCH
+# ============================================================
 
 def tmdb_search(
     title,
@@ -446,7 +488,6 @@ def tmdb_search(
                 result_title.lower().strip(),
             )
 
-            # Prefer matching year.
             if year and date:
 
                 try:
@@ -472,8 +513,12 @@ def tmdb_search(
         if not best:
             return None
 
-        # Reject clearly unrelated results.
         if best_score < 55:
+            return None
+
+        tmdb_id = best.get("id")
+
+        if not tmdb_id:
             return None
 
         if media_type == "Movie":
@@ -489,8 +534,8 @@ def tmdb_search(
             )
 
             tmdb_url = (
-                f"https://www.themoviedb.org/movie/"
-                f"{best.get('id')}"
+                "https://www.themoviedb.org/movie/"
+                f"{tmdb_id}"
             )
 
         else:
@@ -506,8 +551,8 @@ def tmdb_search(
             )
 
             tmdb_url = (
-                f"https://www.themoviedb.org/tv/"
-                f"{best.get('id')}"
+                "https://www.themoviedb.org/tv/"
+                f"{tmdb_id}"
             )
 
         result_year = None
@@ -548,9 +593,7 @@ def tmdb_search(
 
         return {
             "media_type": media_type,
-            "tmdb_id": best.get(
-                "id"
-            ),
+            "tmdb_id": tmdb_id,
             "title": matched_title,
             "year": result_year,
             "poster": poster,
@@ -589,7 +632,7 @@ def tmdb_search(
 
 
 # ============================================================
-# VERIFY ONE GEMINI RESULT
+# VERIFY GEMINI RECOMMENDATION
 # ============================================================
 
 def verify_recommendation(
@@ -611,7 +654,7 @@ def verify_recommendation(
 
 
 # ============================================================
-# VERIFY ALL 24 RESULTS CONCURRENTLY
+# CONCURRENT TMDB VERIFICATION
 # ============================================================
 
 def verify_all_recommendations(
@@ -620,7 +663,7 @@ def verify_all_recommendations(
     movies = []
     series = []
 
-    futures = []
+    jobs = []
 
     with ThreadPoolExecutor(
         max_workers=12
@@ -628,7 +671,7 @@ def verify_all_recommendations(
 
         for item in ai_result.movies:
 
-            futures.append(
+            jobs.append(
                 (
                     "Movie",
                     executor.submit(
@@ -641,7 +684,7 @@ def verify_all_recommendations(
 
         for item in ai_result.series:
 
-            futures.append(
+            jobs.append(
                 (
                     "Series",
                     executor.submit(
@@ -652,7 +695,7 @@ def verify_all_recommendations(
                 )
             )
 
-        for media_type, future in futures:
+        for media_type, future in jobs:
 
             try:
 
@@ -684,11 +727,11 @@ def verify_all_recommendations(
 
 
 # ============================================================
-# REMOVE DUPLICATES
+# DUPLICATE REMOVAL
 # ============================================================
 
 def unique_results(
-    results,
+    results
 ):
     seen = set()
     output = []
@@ -696,34 +739,36 @@ def unique_results(
     for item in results:
 
         key = (
-            item.get("media_type"),
-            item.get("tmdb_id"),
+            item.get(
+                "media_type"
+            ),
+            item.get(
+                "tmdb_id"
+            ),
         )
 
-        if not item.get("tmdb_id"):
+        if not item.get(
+            "tmdb_id"
+        ):
             continue
 
         if key in seen:
             continue
 
         seen.add(key)
+
         output.append(item)
 
     return output
 
 
 # ============================================================
-# FALLBACK
+# FALLBACK TMDB DISCOVERY
 # ============================================================
 
 def tmdb_fallback(
     watched,
 ):
-    """
-    Small fallback if Gemini is unavailable.
-    Much faster than the previous recommendation engine.
-    """
-
     token = get_env(
         "TMDB_TOKEN"
     )
@@ -784,34 +829,25 @@ def tmdb_fallback(
                 ),
             )
 
-        except Exception:
-            return media_type, []
+        except Exception as error:
+
+            print(
+                f"Fallback discovery error: "
+                f"{error}"
+            )
+
+            return (
+                media_type,
+                [],
+            )
 
     jobs = [
-        (
-            "Movie",
-            1,
-        ),
-        (
-            "Movie",
-            2,
-        ),
-        (
-            "Movie",
-            3,
-        ),
-        (
-            "Series",
-            1,
-        ),
-        (
-            "Series",
-            2,
-        ),
-        (
-            "Series",
-            3,
-        ),
+        ("Movie", 1),
+        ("Movie", 2),
+        ("Movie", 3),
+        ("Series", 1),
+        ("Series", 2),
+        ("Series", 3),
     ]
 
     movies = []
@@ -830,9 +866,7 @@ def tmdb_fallback(
             for media_type, page in jobs
         ]
 
-        for future in as_completed(
-            futures
-        ):
+        for future in futures:
 
             media_type, items = (
                 future.result()
@@ -868,8 +902,8 @@ def tmdb_fallback(
                         "",
                     )
 
-                    url = (
-                        f"https://www.themoviedb.org/movie/"
+                    tmdb_url = (
+                        "https://www.themoviedb.org/movie/"
                         f"{tmdb_id}"
                     )
 
@@ -885,8 +919,8 @@ def tmdb_fallback(
                         "",
                     )
 
-                    url = (
-                        f"https://www.themoviedb.org/tv/"
+                    tmdb_url = (
+                        "https://www.themoviedb.org/tv/"
                         f"{tmdb_id}"
                     )
 
@@ -895,9 +929,11 @@ def tmdb_fallback(
                 if date:
 
                     try:
+
                         year = int(
                             date[:4]
                         )
+
                     except (
                         ValueError,
                         TypeError,
@@ -912,7 +948,9 @@ def tmdb_fallback(
 
                     poster = (
                         "https://image.tmdb.org/t/p/w500"
-                        + item["poster_path"]
+                        + item[
+                            "poster_path"
+                        ]
                     )
 
                 backdrop = None
@@ -923,7 +961,9 @@ def tmdb_fallback(
 
                     backdrop = (
                         "https://image.tmdb.org/t/p/w1280"
-                        + item["backdrop_path"]
+                        + item[
+                            "backdrop_path"
+                        ]
                     )
 
                 result = {
@@ -953,7 +993,7 @@ def tmdb_fallback(
                         )
                         or 0
                     ),
-                    "tmdb_url": url,
+                    "tmdb_url": tmdb_url,
                     "reason": (
                         "TMDB fallback recommendation."
                     ),
@@ -964,17 +1004,18 @@ def tmdb_fallback(
                 else:
                     series.append(result)
 
+    # Remove duplicates.
     movies = unique_results(
         movies
-    )[:MOVIE_COUNT]
+    )
 
     series = unique_results(
         series
-    )[:SERIES_COUNT]
+    )
 
     return {
-        "movies": movies,
-        "series": series,
+        "movies": movies[:MOVIE_COUNT],
+        "series": series[:SERIES_COUNT],
     }
 
 
@@ -1011,7 +1052,13 @@ def generate_recommendations(
             )
         )
 
-        # Save only verified results.
+        print(
+            f"Verified results: "
+            f"{len(movies)} movies, "
+            f"{len(series)} series"
+        )
+
+        # Save only verified recommendations.
         for item in movies:
 
             add_recommendation_history(
@@ -1036,12 +1083,6 @@ def generate_recommendations(
                 ],
             )
 
-        print(
-            f"Verified: "
-            f"{len(movies)} movies, "
-            f"{len(series)} series"
-        )
-
         if movies or series:
 
             return {
@@ -1051,7 +1092,10 @@ def generate_recommendations(
             }
 
     print(
-        "Gemini unavailable. "
+        "Gemini unavailable."
+    )
+
+    print(
         "Using TMDB fallback..."
     )
 
@@ -1392,3 +1436,4 @@ def delete(
         "/",
         status_code=303,
     )
+
