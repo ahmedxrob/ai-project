@@ -15,7 +15,9 @@
         content="#060608"
     >
 
-    <title>My Movie AI</title>
+    <title>
+        My Movie AI
+    </title>
 
     <link
         rel="stylesheet"
@@ -23,7 +25,6 @@
     >
 
 </head>
-
 
 <body>
 
@@ -149,7 +150,7 @@
 
 
     <!-- ================================================== -->
-    <!-- ADD WATCHED -->
+    <!-- ADD -->
     <!-- ================================================== -->
 
     <section class="panel add-panel">
@@ -280,11 +281,8 @@
 
 
         <div class="panel-hint">
-
-            TMDB automatically finds the
-            canonical title, poster, year
-            and description.
-
+            TMDB automatically finds the canonical
+            title, poster, year and description.
         </div>
 
     </section>
@@ -299,7 +297,7 @@
         <div>
 
             <span class="panel-label">
-                AI DISCOVERY
+                AI + TMDB DISCOVERY
             </span>
 
             <h2>
@@ -307,10 +305,8 @@
             </h2>
 
             <p>
-                Gemini analyzes your ratings and
-                generates personalized candidates.
-                TMDB verifies titles and artwork.
-                Watched and rejected titles stay excluded.
+                8 AI picks + 4 TMDB discoveries per type.
+                Watched, recent and rejected titles stay excluded.
             </p>
 
         </div>
@@ -365,6 +361,7 @@
 
             </div>
 
+
             <span>
                 {{ recommendations.movies|length }}
                 results
@@ -381,8 +378,6 @@
 
             <article class="recommendation-card">
 
-
-                <!-- POSTER -->
 
                 <div class="recommendation-poster">
 
@@ -405,8 +400,6 @@
 
                     <div class="poster-overlay"></div>
 
-
-                    <!-- SOURCE -->
 
                     <div
                         class="
@@ -434,8 +427,6 @@
                 </div>
 
 
-                <!-- CONTENT -->
-
                 <div class="recommendation-content">
 
                     <div class="recommendation-title-row">
@@ -462,13 +453,9 @@
                         {% endif %}
 
 
-                        {% if item.vote_average %}
-
                         <span class="tmdb-rating">
                             ★ {{ "%.1f"|format(item.vote_average) }}
                         </span>
-
-                        {% endif %}
 
                     </div>
 
@@ -482,8 +469,6 @@
                     {% endif %}
 
 
-                    <!-- WHY -->
-
                     <button
                         type="button"
                         class="why-button"
@@ -495,28 +480,12 @@
 
                     <div class="why-panel">
 
-                        {% if item.reason %}
-
-                            {{ item.reason }}
-
-                        {% else %}
-
-                            This title was selected from
-                            the available recommendation pool
-                            after excluding your watched,
-                            recent and rejected titles.
-
-                        {% endif %}
+                        {{ item.reason }}
 
                     </div>
 
 
-                    <!-- ACTIONS -->
-
                     <div class="recommendation-actions">
-
-
-                        <!-- TMDB -->
 
                         <a
                             href="{{ item.tmdb_url }}"
@@ -527,8 +496,6 @@
                             🎬 TMDB
                         </a>
 
-
-                        <!-- WATCHED -->
 
                         <form
                             action="/recommendation/watched"
@@ -562,7 +529,6 @@
                                 step="0.1"
                                 value="8"
                                 required
-                                aria-label="Your rating"
                             >
 
                             <button
@@ -576,8 +542,6 @@
 
                     </div>
 
-
-                    <!-- NOT INTERESTED -->
 
                     <form
                         action="/recommendation/not-interested"
@@ -624,9 +588,7 @@
         {% else %}
 
         <div class="empty-recommendations">
-
             No new movie candidates found.
-
         </div>
 
         {% endif %}
@@ -668,8 +630,6 @@
             <article class="recommendation-card">
 
 
-                <!-- POSTER -->
-
                 <div class="recommendation-poster">
 
                     {% if item.poster %}
@@ -691,8 +651,6 @@
 
                     <div class="poster-overlay"></div>
 
-
-                    <!-- SOURCE -->
 
                     <div
                         class="
@@ -721,8 +679,6 @@
                 </div>
 
 
-                <!-- CONTENT -->
-
                 <div class="recommendation-content">
 
                     <div class="recommendation-title-row">
@@ -749,13 +705,9 @@
                         {% endif %}
 
 
-                        {% if item.vote_average %}
-
                         <span class="tmdb-rating">
                             ★ {{ "%.1f"|format(item.vote_average) }}
                         </span>
-
-                        {% endif %}
 
                     </div>
 
@@ -769,8 +721,6 @@
                     {% endif %}
 
 
-                    <!-- WHY -->
-
                     <button
                         type="button"
                         class="why-button"
@@ -782,28 +732,12 @@
 
                     <div class="why-panel">
 
-                        {% if item.reason %}
-
-                            {{ item.reason }}
-
-                        {% else %}
-
-                            This title was selected from
-                            the available recommendation pool
-                            after excluding your watched,
-                            recent and rejected titles.
-
-                        {% endif %}
+                        {{ item.reason }}
 
                     </div>
 
 
-                    <!-- ACTIONS -->
-
                     <div class="recommendation-actions">
-
-
-                        <!-- TMDB -->
 
                         <a
                             href="{{ item.tmdb_url }}"
@@ -814,8 +748,6 @@
                             🎬 TMDB
                         </a>
 
-
-                        <!-- WATCHED -->
 
                         <form
                             action="/recommendation/watched"
@@ -849,7 +781,6 @@
                                 step="0.1"
                                 value="8"
                                 required
-                                aria-label="Your rating"
                             >
 
                             <button
@@ -863,8 +794,6 @@
 
                     </div>
 
-
-                    <!-- NOT INTERESTED -->
 
                     <form
                         action="/recommendation/not-interested"
@@ -911,9 +840,7 @@
         {% else %}
 
         <div class="empty-recommendations">
-
             No new series candidates found.
-
         </div>
 
         {% endif %}
@@ -958,7 +885,6 @@
             {% for movie in watched_movies %}
 
             <article class="library-card">
-
 
                 <div class="library-poster">
 
@@ -1089,7 +1015,6 @@
 
             <article class="library-card">
 
-
                 <div class="library-poster">
 
                     {% if movie["poster"] %}
@@ -1183,10 +1108,6 @@
     </section>
 
 
-    <!-- ================================================== -->
-    <!-- FOOTER -->
-    <!-- ================================================== -->
-
     <footer>
 
         <span>
@@ -1203,13 +1124,8 @@
 
     </footer>
 
-
 </main>
 
-
-<!-- ====================================================== -->
-<!-- WHY TOGGLE -->
-<!-- ====================================================== -->
 
 <script>
 
@@ -1225,7 +1141,6 @@ function toggleWhy(button) {
     panel.classList.toggle(
         "show"
     );
-
 
     if (
         panel.classList.contains(
