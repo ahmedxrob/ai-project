@@ -13,12 +13,7 @@ DATA_DIR.mkdir(
 DB_PATH = DATA_DIR / "movies.db"
 
 
-# ============================================================
-# CONNECTION
-# ============================================================
-
 def get_connection():
-
     connection = sqlite3.connect(
         DB_PATH
     )
@@ -27,10 +22,6 @@ def get_connection():
 
     return connection
 
-
-# ============================================================
-# INIT
-# ============================================================
 
 def init_database():
 
@@ -66,10 +57,6 @@ def init_database():
         """
     )
 
-    # --------------------------------------------------------
-    # Upgrade old watched database
-    # --------------------------------------------------------
-
     columns = connection.execute(
         "PRAGMA table_info(watched)"
     ).fetchall()
@@ -98,13 +85,8 @@ def init_database():
             )
 
     connection.commit()
-
     connection.close()
 
-
-# ============================================================
-# GET EVERYTHING
-# ============================================================
 
 def get_all():
 
@@ -131,10 +113,6 @@ def get_all():
 
     return movies
 
-
-# ============================================================
-# DUPLICATE CHECK
-# ============================================================
 
 def movie_exists(
     title=None,
@@ -181,10 +159,6 @@ def movie_exists(
 
     return result is not None
 
-
-# ============================================================
-# ADD MOVIE / SERIES
-# ============================================================
 
 def add_movie(
     title,
@@ -239,19 +213,12 @@ def add_movie(
     )
 
     connection.commit()
-
     connection.close()
 
     return True
 
 
-# ============================================================
-# DELETE
-# ============================================================
-
-def delete_movie(
-    movie_id,
-):
+def delete_movie(movie_id):
 
     connection = get_connection()
 
@@ -260,19 +227,12 @@ def delete_movie(
         DELETE FROM watched
         WHERE id = ?
         """,
-        (
-            movie_id,
-        ),
+        (movie_id,),
     )
 
     connection.commit()
-
     connection.close()
 
-
-# ============================================================
-# RECOMMENDATION HISTORY
-# ============================================================
 
 def add_recommendation_history(
     tmdb_id,
@@ -284,7 +244,6 @@ def add_recommendation_history(
 
     connection = get_connection()
 
-    # Don't insert the same recommendation twice.
     existing = connection.execute(
         """
         SELECT id
@@ -324,7 +283,7 @@ def add_recommendation_history(
 
 def get_recent_recommendation_ids(
     media_type,
-    limit=500,
+    limit=40,
 ):
     connection = get_connection()
 
