@@ -26,6 +26,7 @@
 
 </head>
 
+
 <body>
 
 <div class="site-background"></div>
@@ -281,8 +282,11 @@
 
 
         <div class="panel-hint">
-            TMDB automatically finds the canonical
-            title, poster, year and description.
+
+            TMDB automatically finds the
+            canonical title, poster, year
+            and description.
+
         </div>
 
     </section>
@@ -305,8 +309,8 @@
             </h2>
 
             <p>
-                8 AI picks + 4 TMDB discoveries per type.
-                Watched, recent and rejected titles stay excluded.
+                8 AI picks + 8 TMDB discoveries
+                for movies and series.
             </p>
 
         </div>
@@ -322,7 +326,7 @@
             </span>
 
             <strong>
-                Discover 12 + 12
+                Discover
             </strong>
 
             <span>
@@ -340,19 +344,22 @@
 
     {% if recommendations %}
 
+
+    <!-- ================================================== -->
+    <!-- MOVIES -->
+    <!-- ================================================== -->
+
     <section class="recommendations-section">
 
 
-        <!-- ================================================= -->
-        <!-- MOVIES -->
-        <!-- ================================================= -->
+        <!-- MOVIE HEADING -->
 
         <div class="section-heading">
 
             <div>
 
                 <span class="panel-label">
-                    PERSONALIZED PICKS
+                    MOVIE DISCOVERY
                 </span>
 
                 <h2>
@@ -361,146 +368,200 @@
 
             </div>
 
-
             <span>
-                {{ recommendations.movies|length }}
-                results
+                16 total
             </span>
 
         </div>
 
 
-        {% if recommendations.movies %}
+        <!-- ================================================= -->
+        <!-- AI MOVIES -->
+        <!-- ================================================= -->
 
-        <div class="recommendation-grid">
+        <div class="source-section">
 
-            {% for item in recommendations.movies %}
+            <div class="source-heading ai-heading">
 
-            <article class="recommendation-card">
+                <div>
 
+                    <span class="source-icon">
+                        🤖
+                    </span>
 
-                <div class="recommendation-poster">
+                    <div>
 
-                    {% if item.poster %}
+                        <h3>
+                            AI Picks
+                        </h3>
 
-                    <img
-                        src="{{ item.poster }}"
-                        alt="{{ item.title }}"
-                        loading="lazy"
-                    >
-
-                    {% else %}
-
-                    <div class="poster-placeholder">
-                        🎬
-                    </div>
-
-                    {% endif %}
-
-
-                    <div class="poster-overlay"></div>
-
-
-                    <div
-                        class="
-                            recommendation-type
-                            {% if item.source == 'AI' %}
-                                ai-source
-                            {% else %}
-                                tmdb-source
-                            {% endif %}
-                        "
-                    >
-
-                        {% if item.source == "AI" %}
-
-                            🤖 AI PICK
-
-                        {% else %}
-
-                            🔵 TMDB
-
-                        {% endif %}
+                        <p>
+                            Personalized from your ratings
+                        </p>
 
                     </div>
 
                 </div>
 
 
-                <div class="recommendation-content">
+                <span class="source-count">
+                    {{ recommendations.ai_movies|length }}
+                </span>
 
-                    <div class="recommendation-title-row">
+            </div>
+
+
+            {% if recommendations.ai_movies %}
+
+            <div class="recommendation-grid">
+
+                {% for item in recommendations.ai_movies %}
+
+                <article class="recommendation-card ai-card">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            🎬
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge ai-source">
+                            🤖 AI PICK
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
 
                         <h3>
                             {{ item.title }}
                         </h3>
 
-                    </div>
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
 
 
-                    <div class="recommendation-meta">
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
 
-                        {% if item.year %}
+                        </div>
 
-                        <span>
-                            {{ item.year }}
-                        </span>
 
-                        <span>
-                            •
-                        </span>
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
 
                         {% endif %}
 
 
-                        <span class="tmdb-rating">
-                            ★ {{ "%.1f"|format(item.vote_average) }}
-                        </span>
-
-                    </div>
-
-
-                    {% if item.overview %}
-
-                    <p class="recommendation-overview">
-                        {{ item.overview }}
-                    </p>
-
-                    {% endif %}
-
-
-                    <button
-                        type="button"
-                        class="why-button"
-                        onclick="toggleWhy(this)"
-                    >
-                        💡 Why this?
-                    </button>
-
-
-                    <div class="why-panel">
-
-                        {{ item.reason }}
-
-                    </div>
-
-
-                    <div class="recommendation-actions">
-
-                        <a
-                            href="{{ item.tmdb_url }}"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="tmdb-button"
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
                         >
-                            🎬 TMDB
-                        </a>
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Movie"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
 
 
                         <form
-                            action="/recommendation/watched"
+                            action="/recommendation/not-interested"
                             method="post"
-                            class="watched-inline"
+                            class="not-interested-form"
                         >
 
                             <input
@@ -521,89 +582,279 @@
                                 value="{{ item.tmdb_id }}"
                             >
 
-                            <input
-                                type="number"
-                                name="rating"
-                                min="0"
-                                max="10"
-                                step="0.1"
-                                value="8"
-                                required
-                            >
-
                             <button
                                 type="submit"
-                                class="watched-button"
+                                class="not-interested-button"
                             >
-                                ✅ Watched
+                                ✕ Not interested
                             </button>
 
                         </form>
 
                     </div>
 
+                </article>
 
-                    <form
-                        action="/recommendation/not-interested"
-                        method="post"
-                        class="not-interested-form"
-                    >
+                {% endfor %}
 
-                        <input
-                            type="hidden"
-                            name="title"
-                            value="{{ item.title }}"
-                        >
+            </div>
 
-                        <input
-                            type="hidden"
-                            name="media_type"
-                            value="Movie"
-                        >
+            {% else %}
 
-                        <input
-                            type="hidden"
-                            name="tmdb_id"
-                            value="{{ item.tmdb_id }}"
-                        >
+            <div class="empty-recommendations">
+                No AI movie picks available.
+            </div>
 
-                        <button
-                            type="submit"
-                            class="not-interested-button"
-                        >
-                            ✕ Not interested
-                        </button>
+            {% endif %}
 
-                    </form>
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- TMDB MOVIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section tmdb-section">
+
+            <div class="source-heading tmdb-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🔵
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            TMDB Discoveries
+                        </h3>
+
+                        <p>
+                            Discoveries from TMDB
+                        </p>
+
+                    </div>
 
                 </div>
 
-            </article>
 
-            {% endfor %}
+                <span class="source-count">
+                    {{ recommendations.tmdb_movies|length }}
+                </span>
+
+            </div>
+
+
+            {% if recommendations.tmdb_movies %}
+
+            <div class="recommendation-grid">
+
+                {% for item in recommendations.tmdb_movies %}
+
+                <article class="recommendation-card tmdb-card">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            🎬
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge tmdb-source">
+                            🔵 TMDB
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Movie"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Movie"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            <div class="empty-recommendations">
+                No TMDB movie discoveries available.
+            </div>
+
+            {% endif %}
 
         </div>
-
-
-        {% else %}
-
-        <div class="empty-recommendations">
-            No new movie candidates found.
-        </div>
-
-        {% endif %}
 
 
         <!-- ================================================= -->
         <!-- SERIES -->
         <!-- ================================================= -->
 
-        <div class="section-heading series-section-heading">
+        <div class="section-heading series-main-heading">
 
             <div>
 
                 <span class="panel-label">
-                    PERSONALIZED PICKS
+                    SERIES DISCOVERY
                 </span>
 
                 <h2>
@@ -612,147 +863,200 @@
 
             </div>
 
-
             <span>
-                {{ recommendations.series|length }}
-                results
+                16 total
             </span>
 
         </div>
 
 
-        {% if recommendations.series %}
+        <!-- ================================================= -->
+        <!-- AI SERIES -->
+        <!-- ================================================= -->
 
-        <div class="recommendation-grid">
+        <div class="source-section">
 
-            {% for item in recommendations.series %}
+            <div class="source-heading ai-heading">
 
-            <article class="recommendation-card">
+                <div>
 
+                    <span class="source-icon">
+                        🤖
+                    </span>
 
-                <div class="recommendation-poster">
+                    <div>
 
-                    {% if item.poster %}
+                        <h3>
+                            AI Picks
+                        </h3>
 
-                    <img
-                        src="{{ item.poster }}"
-                        alt="{{ item.title }}"
-                        loading="lazy"
-                    >
-
-                    {% else %}
-
-                    <div class="poster-placeholder">
-                        📺
-                    </div>
-
-                    {% endif %}
-
-
-                    <div class="poster-overlay"></div>
-
-
-                    <div
-                        class="
-                            recommendation-type
-                            series-badge
-                            {% if item.source == 'AI' %}
-                                ai-source
-                            {% else %}
-                                tmdb-source
-                            {% endif %}
-                        "
-                    >
-
-                        {% if item.source == "AI" %}
-
-                            🤖 AI PICK
-
-                        {% else %}
-
-                            🔵 TMDB
-
-                        {% endif %}
+                        <p>
+                            Personalized from your ratings
+                        </p>
 
                     </div>
 
                 </div>
 
 
-                <div class="recommendation-content">
+                <span class="source-count">
+                    {{ recommendations.ai_series|length }}
+                </span>
 
-                    <div class="recommendation-title-row">
+            </div>
+
+
+            {% if recommendations.ai_series %}
+
+            <div class="recommendation-grid">
+
+                {% for item in recommendations.ai_series %}
+
+                <article class="recommendation-card ai-card">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            📺
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge ai-source">
+                            🤖 AI PICK
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
 
                         <h3>
                             {{ item.title }}
                         </h3>
 
-                    </div>
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
 
 
-                    <div class="recommendation-meta">
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
 
-                        {% if item.year %}
+                        </div>
 
-                        <span>
-                            {{ item.year }}
-                        </span>
 
-                        <span>
-                            •
-                        </span>
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
 
                         {% endif %}
 
 
-                        <span class="tmdb-rating">
-                            ★ {{ "%.1f"|format(item.vote_average) }}
-                        </span>
-
-                    </div>
-
-
-                    {% if item.overview %}
-
-                    <p class="recommendation-overview">
-                        {{ item.overview }}
-                    </p>
-
-                    {% endif %}
-
-
-                    <button
-                        type="button"
-                        class="why-button"
-                        onclick="toggleWhy(this)"
-                    >
-                        💡 Why this?
-                    </button>
-
-
-                    <div class="why-panel">
-
-                        {{ item.reason }}
-
-                    </div>
-
-
-                    <div class="recommendation-actions">
-
-                        <a
-                            href="{{ item.tmdb_url }}"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="tmdb-button"
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
                         >
-                            🎬 TMDB
-                        </a>
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Series"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
 
 
                         <form
-                            action="/recommendation/watched"
+                            action="/recommendation/not-interested"
                             method="post"
-                            class="watched-inline"
+                            class="not-interested-form"
                         >
 
                             <input
@@ -773,77 +1077,267 @@
                                 value="{{ item.tmdb_id }}"
                             >
 
-                            <input
-                                type="number"
-                                name="rating"
-                                min="0"
-                                max="10"
-                                step="0.1"
-                                value="8"
-                                required
-                            >
-
                             <button
                                 type="submit"
-                                class="watched-button"
+                                class="not-interested-button"
                             >
-                                ✅ Watched
+                                ✕ Not interested
                             </button>
 
                         </form>
 
                     </div>
 
+                </article>
 
-                    <form
-                        action="/recommendation/not-interested"
-                        method="post"
-                        class="not-interested-form"
-                    >
+                {% endfor %}
 
-                        <input
-                            type="hidden"
-                            name="title"
-                            value="{{ item.title }}"
-                        >
+            </div>
 
-                        <input
-                            type="hidden"
-                            name="media_type"
-                            value="Series"
-                        >
+            {% else %}
 
-                        <input
-                            type="hidden"
-                            name="tmdb_id"
-                            value="{{ item.tmdb_id }}"
-                        >
+            <div class="empty-recommendations">
+                No AI series picks available.
+            </div>
 
-                        <button
-                            type="submit"
-                            class="not-interested-button"
-                        >
-                            ✕ Not interested
-                        </button>
+            {% endif %}
 
-                    </form>
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- TMDB SERIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section tmdb-section">
+
+            <div class="source-heading tmdb-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🔵
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            TMDB Discoveries
+                        </h3>
+
+                        <p>
+                            Discoveries from TMDB
+                        </p>
+
+                    </div>
 
                 </div>
 
-            </article>
 
-            {% endfor %}
+                <span class="source-count">
+                    {{ recommendations.tmdb_series|length }}
+                </span>
+
+            </div>
+
+
+            {% if recommendations.tmdb_series %}
+
+            <div class="recommendation-grid">
+
+                {% for item in recommendations.tmdb_series %}
+
+                <article class="recommendation-card tmdb-card">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            📺
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge tmdb-source">
+                            🔵 TMDB
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Series"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Series"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            <div class="empty-recommendations">
+                No TMDB series discoveries available.
+            </div>
+
+            {% endif %}
 
         </div>
-
-
-        {% else %}
-
-        <div class="empty-recommendations">
-            No new series candidates found.
-        </div>
-
-        {% endif %}
 
     </section>
 
@@ -869,7 +1363,6 @@
                 </h2>
 
             </div>
-
 
             <span>
                 {{ watched_movies|length }}
@@ -998,7 +1491,6 @@
                 </h2>
 
             </div>
-
 
             <span>
                 {{ watched_series|length }}
