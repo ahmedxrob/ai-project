@@ -26,15 +26,10 @@
 
 </head>
 
-
 <body>
 
 <div class="site-background"></div>
 
-
-<!-- ====================================================== -->
-<!-- TOPBAR -->
-<!-- ====================================================== -->
 
 <nav class="topbar">
 
@@ -151,7 +146,7 @@
 
 
     <!-- ================================================== -->
-    <!-- ADD -->
+    <!-- ADD WATCHED -->
     <!-- ================================================== -->
 
     <section class="panel add-panel">
@@ -182,81 +177,141 @@
             action="/add"
             method="post"
             class="add-form"
+            id="add-form"
         >
+
+            <!-- TYPE -->
 
             <div class="field">
 
-                <label for="title">
-                    Title
+                <label for="media_type">
+                    Type
                 </label>
 
-                <input
-                    id="title"
-                    type="text"
-                    name="title"
-                    placeholder="Interstellar"
-                    autocomplete="off"
-                    required
+                <select
+                    id="media_type"
+                    name="media_type"
                 >
+
+                    <option value="Movie">
+                        🎬 Movie
+                    </option>
+
+                    <option value="Series">
+                        📺 Series
+                    </option>
+
+                </select>
 
             </div>
 
 
-            <div class="form-row">
+            <!-- SEARCH -->
 
-                <div class="field">
+            <div class="field search-field">
 
-                    <label for="rating">
-                        Your rating
-                    </label>
+                <label for="title">
+                    Search title
+                </label>
 
 
-                    <div class="input-rating">
+                <div class="search-input-wrap">
 
-                        <span>
-                            ★
-                        </span>
+                    <span class="search-icon">
+                        🔎
+                    </span>
 
-                        <input
-                            id="rating"
-                            type="number"
-                            name="rating"
-                            min="0"
-                            max="10"
-                            step="0.1"
-                            placeholder="9.5"
-                            required
-                        >
+                    <input
+                        id="title"
+                        type="text"
+                        name="title"
+                        placeholder="Search Interstellar..."
+                        autocomplete="off"
+                        required
+                    >
 
-                        <small>
-                            /10
-                        </small>
-
-                    </div>
+                    <button
+                        type="button"
+                        id="clear-search"
+                        class="clear-search"
+                        aria-label="Clear search"
+                    >
+                        ×
+                    </button>
 
                 </div>
 
 
-                <div class="field">
+                <div
+                    id="search-results"
+                    class="search-results"
+                ></div>
 
-                    <label for="media_type">
-                        Type
-                    </label>
+            </div>
 
-                    <select
-                        id="media_type"
-                        name="media_type"
+
+            <!-- EXACT TMDB ID -->
+
+            <input
+                type="hidden"
+                id="tmdb_id"
+                name="tmdb_id"
+                value=""
+            >
+
+
+            <!-- SELECTED PREVIEW -->
+
+            <div
+                id="selected-preview"
+                class="selected-preview"
+            >
+
+                <div class="selected-preview-empty">
+
+                    <div class="preview-empty-icon">
+                        🎬
+                    </div>
+
+                    <span>
+                        Search for a title and select
+                        a result to preview it here.
+                    </span>
+
+                </div>
+
+            </div>
+
+
+            <!-- RATING -->
+
+            <div class="field preview-rating-field">
+
+                <label for="rating">
+                    Your rating
+                </label>
+
+
+                <div class="input-rating">
+
+                    <span>
+                        ★
+                    </span>
+
+                    <input
+                        id="rating"
+                        type="number"
+                        name="rating"
+                        min="0"
+                        max="10"
+                        step="0.1"
+                        placeholder="9.5"
+                        required
                     >
 
-                        <option value="Movie">
-                            🎬 Movie
-                        </option>
-
-                        <option value="Series">
-                            📺 Series
-                        </option>
-
-                    </select>
+                    <small>
+                        /10
+                    </small>
 
                 </div>
 
@@ -266,6 +321,7 @@
             <button
                 type="submit"
                 class="primary-button"
+                id="add-button"
             >
 
                 <span>
@@ -283,9 +339,8 @@
 
         <div class="panel-hint">
 
-            TMDB automatically finds the
-            canonical title, poster, year
-            and description.
+            Search TMDB and select the exact title
+            before saving it to your library.
 
         </div>
 
@@ -344,15 +399,12 @@
 
     {% if recommendations %}
 
-
-    <!-- ================================================== -->
-    <!-- MOVIES -->
-    <!-- ================================================== -->
-
     <section class="recommendations-section">
 
 
-        <!-- MOVIE HEADING -->
+        <!-- ================================================= -->
+        <!-- MOVIES -->
+        <!-- ================================================= -->
 
         <div class="section-heading">
 
@@ -1621,18 +1673,647 @@
 
 <script>
 
-function toggleWhy(button) {
+/* ========================================================= */
+/* SEARCH ELEMENTS */
+/* ========================================================= */
+
+const titleInput =
+    document.getElementById(
+        "title"
+    );
+
+const mediaType =
+    document.getElementById(
+        "media_type"
+    );
+
+const tmdbIdInput =
+    document.getElementById(
+        "tmdb_id"
+    );
+
+const searchResults =
+    document.getElementById(
+        "search-results"
+    );
+
+const selectedPreview =
+    document.getElementById(
+        "selected-preview"
+    );
+
+const clearSearch =
+    document.getElementById(
+        "clear-search"
+    );
+
+
+let searchTimer = null;
+
+let currentResults = [];
+
+
+/* ========================================================= */
+/* SAFE HTML */
+/* ========================================================= */
+
+function escapeHtml(
+    value
+) {
+
+    const div =
+        document.createElement(
+            "div"
+        );
+
+    div.textContent =
+        value || "";
+
+    return div.innerHTML;
+}
+
+
+/* ========================================================= */
+/* SEARCH INPUT */
+/* ========================================================= */
+
+if (titleInput) {
+
+    titleInput.addEventListener(
+        "input",
+        function () {
+
+            const query =
+                titleInput.value.trim();
+
+            tmdbIdInput.value =
+                "";
+
+            if (
+                query.length < 2
+            ) {
+
+                searchResults.innerHTML =
+                    "";
+
+                searchResults.classList.remove(
+                    "show"
+                );
+
+                return;
+            }
+
+
+            clearTimeout(
+                searchTimer
+            );
+
+
+            searchTimer =
+                setTimeout(
+                    function () {
+
+                        performSearch(
+                            query
+                        );
+
+                    },
+                    300
+                );
+        }
+    );
+}
+
+
+/* ========================================================= */
+/* CHANGE MOVIE/SERIES */
+/* ========================================================= */
+
+if (mediaType) {
+
+    mediaType.addEventListener(
+        "change",
+        function () {
+
+            const query =
+                titleInput.value.trim();
+
+            tmdbIdInput.value =
+                "";
+
+            if (
+                query.length >= 2
+            ) {
+
+                performSearch(
+                    query
+                );
+            }
+        }
+    );
+}
+
+
+/* ========================================================= */
+/* PERFORM SEARCH */
+/* ========================================================= */
+
+async function performSearch(
+    query
+) {
+
+    searchResults.innerHTML = `
+
+        <div class="search-loading">
+
+            <span class="loading-spinner"></span>
+
+            Searching TMDB...
+
+        </div>
+
+    `;
+
+
+    searchResults.classList.add(
+        "show"
+    );
+
+
+    try {
+
+        const response =
+            await fetch(
+                `/api/search?q=${encodeURIComponent(query)}&media_type=${encodeURIComponent(mediaType.value)}`
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "Search failed"
+            );
+        }
+
+
+        const data =
+            await response.json();
+
+
+        currentResults =
+            data.results || [];
+
+
+        renderSearchResults(
+            currentResults
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            error
+        );
+
+
+        searchResults.innerHTML = `
+
+            <div class="search-empty">
+
+                Unable to search TMDB.
+
+            </div>
+
+        `;
+    }
+}
+
+
+/* ========================================================= */
+/* RENDER SEARCH RESULTS */
+/* ========================================================= */
+
+function renderSearchResults(
+    results
+) {
+
+    if (!results.length) {
+
+        searchResults.innerHTML = `
+
+            <div class="search-empty">
+
+                No results found.
+
+            </div>
+
+        `;
+
+        return;
+    }
+
+
+    searchResults.innerHTML =
+        results.map(
+            function (
+                item,
+                index
+            ) {
+
+                const year =
+                    item.year
+                    || "";
+
+
+                const poster =
+                    item.poster
+                    || "";
+
+
+                const rating =
+                    Number(
+                        item.vote_average
+                        || 0
+                    ).toFixed(1);
+
+
+                return `
+
+                    <button
+                        type="button"
+                        class="search-result-item"
+                        data-index="${index}"
+                    >
+
+                        <div class="search-result-poster">
+
+                            ${
+                                poster
+                                ?
+                                `
+                                <img
+                                    src="${poster}"
+                                    alt=""
+                                    loading="lazy"
+                                >
+                                `
+                                :
+                                `
+                                <div
+                                    class="search-result-placeholder"
+                                >
+                                    🎬
+                                </div>
+                                `
+                            }
+
+                        </div>
+
+
+                        <div class="search-result-info">
+
+                            <strong>
+                                ${escapeHtml(
+                                    item.title
+                                )}
+                            </strong>
+
+
+                            <div class="search-result-meta">
+
+                                ${
+                                    year
+                                    ?
+                                    `<span>${year}</span>`
+                                    :
+                                    ""
+                                }
+
+                                ${
+                                    year
+                                    ?
+                                    `<span>•</span>`
+                                    :
+                                    ""
+                                }
+
+                                <span>
+                                    ★ ${rating}
+                                </span>
+
+                            </div>
+
+
+                            <p>
+                                ${escapeHtml(
+                                    item.overview
+                                    ||
+                                    "No description available."
+                                )}
+                            </p>
+
+                        </div>
+
+
+                        <span
+                            class="search-result-arrow"
+                        >
+                            →
+                        </span>
+
+                    </button>
+
+                `;
+            }
+        ).join("");
+
+
+    document
+        .querySelectorAll(
+            ".search-result-item"
+        )
+        .forEach(
+            function (
+                button
+            ) {
+
+                button.addEventListener(
+                    "click",
+                    function () {
+
+                        const index =
+                            Number(
+                                button.dataset.index
+                            );
+
+
+                        selectSearchResult(
+                            currentResults[
+                                index
+                            ]
+                        );
+
+                    }
+                );
+
+            }
+        );
+}
+
+
+/* ========================================================= */
+/* SELECT RESULT */
+/* ========================================================= */
+
+function selectSearchResult(
+    item
+) {
+
+    if (!item) {
+        return;
+    }
+
+
+    tmdbIdInput.value =
+        item.tmdb_id;
+
+
+    titleInput.value =
+        item.title;
+
+
+    searchResults.classList.remove(
+        "show"
+    );
+
+
+    renderSelectedPreview(
+        item
+    );
+}
+
+
+/* ========================================================= */
+/* SELECTED PREVIEW */
+/* ========================================================= */
+
+function renderSelectedPreview(
+    item
+) {
+
+    const poster =
+        item.poster || "";
+
+
+    const year =
+        item.year || "";
+
+
+    const rating =
+        Number(
+            item.vote_average
+            || 0
+        ).toFixed(1);
+
+
+    selectedPreview.innerHTML = `
+
+        <div class="selected-preview-card">
+
+
+            <div class="selected-preview-poster">
+
+                ${
+                    poster
+                    ?
+                    `
+                    <img
+                        src="${poster}"
+                        alt="${escapeHtml(
+                            item.title
+                        )}"
+                    >
+                    `
+                    :
+                    `
+                    <div
+                        class="selected-preview-placeholder"
+                    >
+                        🎬
+                    </div>
+                    `
+                }
+
+            </div>
+
+
+            <div class="selected-preview-info">
+
+                <div class="selected-preview-label">
+                    SELECTED TITLE
+                </div>
+
+
+                <h3>
+                    ${escapeHtml(
+                        item.title
+                    )}
+                </h3>
+
+
+                <div class="selected-preview-meta">
+
+                    ${
+                        year
+                        ?
+                        `<span>${year}</span>`
+                        :
+                        ""
+                    }
+
+                    ${
+                        year
+                        ?
+                        `<span>•</span>`
+                        :
+                        ""
+                    }
+
+                    <span class="selected-tmdb-rating">
+                        ★ ${rating}
+                    </span>
+
+                </div>
+
+
+                <p>
+                    ${escapeHtml(
+                        item.overview
+                        ||
+                        "No description available."
+                    )}
+                </p>
+
+
+                <div class="selected-preview-badge">
+
+                    ${
+                        mediaType.value === "Movie"
+                        ?
+                        "🎬 Movie"
+                        :
+                        "📺 Series"
+                    }
+
+                    <span>
+                        •
+                    </span>
+
+                    TMDB #${item.tmdb_id}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    `;
+}
+
+
+/* ========================================================= */
+/* CLEAR SEARCH */
+/* ========================================================= */
+
+if (clearSearch) {
+
+    clearSearch.addEventListener(
+        "click",
+        function () {
+
+            titleInput.value =
+                "";
+
+            tmdbIdInput.value =
+                "";
+
+            searchResults.innerHTML =
+                "";
+
+            searchResults.classList.remove(
+                "show"
+            );
+
+
+            selectedPreview.innerHTML = `
+
+                <div
+                    class="selected-preview-empty"
+                >
+
+                    <div
+                        class="preview-empty-icon"
+                    >
+                        🎬
+                    </div>
+
+                    <span>
+                        Search for a title and
+                        select a result to preview
+                        it here.
+                    </span>
+
+                </div>
+
+            `;
+        }
+    );
+}
+
+
+/* ========================================================= */
+/* CLOSE SEARCH WHEN CLICKING OUTSIDE */
+/* ========================================================= */
+
+document.addEventListener(
+    "click",
+    function (event) {
+
+        if (
+            !event.target.closest(
+                ".search-field"
+            )
+        ) {
+
+            searchResults.classList.remove(
+                "show"
+            );
+        }
+    }
+);
+
+
+/* ========================================================= */
+/* WHY */
+/* ========================================================= */
+
+function toggleWhy(
+    button
+) {
 
     const panel =
         button.nextElementSibling;
+
 
     if (!panel) {
         return;
     }
 
+
     panel.classList.toggle(
         "show"
     );
+
 
     if (
         panel.classList.contains(
@@ -1649,7 +2330,6 @@ function toggleWhy(button) {
             "💡 Why this?";
 
     }
-
 }
 
 </script>
