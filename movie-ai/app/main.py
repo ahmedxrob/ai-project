@@ -17,7 +17,6 @@ from app.database import (
     get_all,
     add_movie,
     delete_movie,
-    movie_exists,
     add_recommendation_history,
     get_recent_recommendation_ids,
 )
@@ -47,14 +46,19 @@ init_database()
 # ============================================================
 
 RESULTS_PER_TYPE = 12
-RECENT_HISTORY_LIMIT = 40
-MIN_VOTE_COUNT = 20
+
+# Previous batches are blocked so the same results
+# cannot immediately come back.
+PREVIOUS_BATCH_SIZE = 24
+
+# Large candidate pool.
+MIN_VOTE_COUNT = 10
 
 CURRENT_YEAR = datetime.now().year
 
 
 # ============================================================
-# ENVIRONMENT
+# ENV
 # ============================================================
 
 def get_env(name: str) -> str:
@@ -97,7 +101,7 @@ def tmdb_get_details(
     token: str,
 ):
     endpoint = (
-        f"https://api.themoviedb.org/3/"
+        "https://api.themoviedb.org/3/"
         f"{'movie' if media_type == 'Movie' else 'tv'}"
         f"/{tmdb_id}"
     )
@@ -122,7 +126,7 @@ def tmdb_get_similar(
     page: int = 1,
 ):
     endpoint = (
-        f"https://api.themoviedb.org/3/"
+        "https://api.themoviedb.org/3/"
         f"{'movie' if media_type == 'Movie' else 'tv'}"
         f"/{tmdb_id}/similar"
     )
@@ -154,8 +158,8 @@ def tmdb_discover(
     sort_by="popularity.desc",
 ):
     endpoint = (
-        "https://api.themoviedb.org/3/"
-        f"discover/{'movie' if media_type == 'Movie' else 'tv'}"
+        "https://api.themoviedb.org/3/discover/"
+        f"{'movie' if media_type == 'Movie' else 'tv'}"
     )
 
     params = {
@@ -212,34 +216,6 @@ def tmdb_top_rated(
 
 
 # ============================================================
-# SPELLING
-# ============================================================
-
-def get_spelling_suggestions(title: str):
-
-    try:
-        response = requests.get(
-            "https://api.datamuse.com/words",
-            params={
-                "sp": title,
-                "max": 10,
-            },
-            timeout=5,
-        )
-
-        response.raise_for_status()
-
-        return [
-            item.get("word", "").strip()
-            for item in response.json()
-            if item.get("word", "").strip()
-        ]
-
-    except Exception:
-        return []
-
-
-# ============================================================
 # TMDB SEARCH
 # ============================================================
 
@@ -249,8 +225,8 @@ def tmdb_search(
     token: str,
 ):
     endpoint = (
-        "https://api.themoviedb.org/3/"
-        f"search/{'movie' if media_type == 'Movie' else 'tv'}"
+        "https://api.themoviedb.org/3/search/"
+        f"{'movie' if media_type == 'Movie' else 'tv'}"
     )
 
     return tmdb_request(
@@ -267,14 +243,60 @@ def tmdb_search(
     )
 
 
+# ============================================================
+# SPELLING
+# ============================================================
+
+def get_spelling_suggestions(title: str):
+
+    try:
+
+        response = requests.get(
+            "https://api.datamuse.com/words",
+            params={
+                "sp": title,
+                "max": 10,
+            },
+            timeout=5,
+        )
+
+        response.raise_for_status()
+
+        return [
+            item.get(
+                "word",
+                "",
+            ).strip()
+            for item in response.json()
+            if item.get(
+                "word",
+                "",
+            ).strip()
+        ]
+
+    except Exception:
+
+        return []
+
+
+# ============================================================
+# SEARCH SCORING
+# ============================================================
+
 def get_result_title(
     result,
     media_type,
 ):
     if media_type == "Movie":
-        return result.get("title", "")
+        return result.get(
+            "title",
+            "",
+        )
 
-    return result.get("name", "")
+    return result.get(
+        "name",
+        "",
+    )
 
 
 def search_score(
@@ -314,19 +336,24 @@ def normalise_tmdb_result(
     media_type,
 ):
     if media_type == "Movie":
+
         title = result.get(
             "title",
             "",
         )
+
         date = result.get(
             "release_date",
             "",
         )
+
     else:
+
         title = result.get(
             "name",
             "",
         )
+
         date = result.get(
             "first_air_date",
             "",
@@ -335,6 +362,7 @@ def normalise_tmdb_result(
     year = None
 
     if date:
+
         try:
             year = int(
                 date[:4]
@@ -348,6 +376,7 @@ def normalise_tmdb_result(
     poster = None
 
     if result.get("poster_path"):
+
         poster = (
             "https://image.tmdb.org/t/p/w500"
             + result["poster_path"]
@@ -356,6 +385,7 @@ def normalise_tmdb_result(
     backdrop = None
 
     if result.get("backdrop_path"):
+
         backdrop = (
             "https://image.tmdb.org/t/p/w1280"
             + result["backdrop_path"]
@@ -363,11 +393,18 @@ def normalise_tmdb_result(
 
     return {
         "title": title,
-        "tmdb_id": result.get("id"),
+        "tmdb_id": result.get(
+            "id"
+        ),
         "poster": poster,
         "backdrop": backdrop,
         "year": year,
-        "overview": result.get("overview") or "",
+        "overview": (
+            result.get(
+                "overview"
+            )
+            or ""
+        ),
         "vote_average": float(
             result.get(
                 "vote_average",
@@ -397,38 +434,39 @@ def normalise_tmdb_result(
 
 
 # ============================================================
-# SEARCH TMDB FOR A WATCHED TITLE
+# SEARCH WATCHED TITLE
 # ============================================================
 
 def search_tmdb(
-    title: str,
-    media_type: str,
+    title,
+    media_type,
 ):
     token = get_env(
         "TMDB_TOKEN"
     )
 
     if not token:
+
         print(
             "TMDB_TOKEN is not configured"
         )
+
         return None
 
-    print(
-        f"Searching TMDB for: "
-        f"{title} [{media_type}]"
-    )
-
     try:
+
         results = tmdb_search(
             title,
             media_type,
             token,
         )
+
     except requests.RequestException as error:
+
         print(
             f"TMDB request error: {error}"
         )
+
         return None
 
     best_result = None
@@ -450,6 +488,7 @@ def search_tmdb(
         )
 
         if score > best_score:
+
             best_score = score
             best_result = result
 
@@ -457,35 +496,31 @@ def search_tmdb(
         best_result
         and best_score >= 60
     ):
+
         return normalise_tmdb_result(
             best_result,
             media_type,
         )
 
-    suggestions = get_spelling_suggestions(
+    # Spelling fallback
+
+    for suggestion in get_spelling_suggestions(
         title
-    )
+    ):
 
-    print(
-        f"Spelling suggestions: "
-        f"{suggestions}"
-    )
-
-    for suggestion in suggestions:
-
-        if (
-            suggestion.lower()
-            == title.lower()
-        ):
+        if suggestion.lower() == title.lower():
             continue
 
         try:
+
             results = tmdb_search(
                 suggestion,
                 media_type,
                 token,
             )
+
         except requests.RequestException:
+
             continue
 
         best_result = None
@@ -507,6 +542,7 @@ def search_tmdb(
             )
 
             if score > best_score:
+
                 best_score = score
                 best_result = result
 
@@ -514,26 +550,17 @@ def search_tmdb(
             best_result
             and best_score >= 60
         ):
-            print(
-                f"Corrected title matched: "
-                f"{suggestion}"
-            )
 
             return normalise_tmdb_result(
                 best_result,
                 media_type,
             )
 
-    print(
-        f"No confident TMDB match for: "
-        f"{title}"
-    )
-
     return None
 
 
 # ============================================================
-# BUILD USER TASTE
+# USER TASTE
 # ============================================================
 
 def build_taste_profile(
@@ -544,8 +571,10 @@ def build_taste_profile(
     relevant = [
         movie
         for movie in watched
-        if movie["type"] == media_type
-        and movie["tmdb_id"]
+        if (
+            movie["type"] == media_type
+            and movie["tmdb_id"]
+        )
     ]
 
     relevant.sort(
@@ -555,7 +584,6 @@ def build_taste_profile(
         reverse=True,
     )
 
-    # Highest rated titles matter most.
     relevant = relevant[:8]
 
     genre_scores = {}
@@ -565,12 +593,15 @@ def build_taste_profile(
     for movie in relevant:
 
         try:
+
             details = tmdb_get_details(
                 movie["tmdb_id"],
                 media_type,
                 token,
             )
+
         except requests.RequestException:
+
             continue
 
         rating = float(
@@ -585,6 +616,7 @@ def build_taste_profile(
             "genres",
             [],
         ):
+
             genre_id = genre.get(
                 "id"
             )
@@ -592,7 +624,9 @@ def build_taste_profile(
             if genre_id is None:
                 continue
 
-            genre_scores[genre_id] = (
+            genre_scores[
+                genre_id
+            ] = (
                 genre_scores.get(
                     genre_id,
                     0,
@@ -604,7 +638,6 @@ def build_taste_profile(
             {
                 "id": movie["tmdb_id"],
                 "rating_weight": rating_weight,
-                "title": movie["title"],
             }
         )
 
@@ -621,31 +654,38 @@ def build_taste_profile(
 
 
 # ============================================================
-# CREATE CANDIDATE
+# CANDIDATE
 # ============================================================
 
-def make_candidate(item):
-    if "title" in item:
-        title = item.get(
-            "title",
-            "",
-        )
-        date = item.get(
-            "release_date",
-            "",
-        )
-    else:
+def make_candidate(
+    item,
+):
+    title = item.get(
+        "title"
+    )
+
+    if not title:
+
         title = item.get(
             "name",
             "",
         )
+
+    date = item.get(
+        "release_date"
+    )
+
+    if not date:
+
         date = item.get(
             "first_air_date",
             "",
         )
 
     return {
-        "id": item.get("id"),
+        "id": item.get(
+            "id"
+        ),
         "title": title,
         "date": date,
         "poster_path": item.get(
@@ -654,9 +694,12 @@ def make_candidate(item):
         "backdrop_path": item.get(
             "backdrop_path"
         ),
-        "overview": item.get(
-            "overview"
-        ) or "",
+        "overview": (
+            item.get(
+                "overview"
+            )
+            or ""
+        ),
         "vote_average": float(
             item.get(
                 "vote_average",
@@ -683,18 +726,19 @@ def make_candidate(item):
             [],
         ),
         "similarity": 0,
-        "genre_discovery": 0,
+        "genre_hits": 0,
     }
 
 
 # ============================================================
-# COLLECT LARGE CANDIDATE POOL
+# COLLECT CANDIDATES
 # ============================================================
 
 def collect_candidates(
     watched,
     media_type,
     token,
+    excluded_ids,
 ):
     profile = build_taste_profile(
         watched,
@@ -704,47 +748,37 @@ def collect_candidates(
 
     candidates = {}
 
-    watched_ids = {
-        movie["tmdb_id"]
-        for movie in watched
-        if (
-            movie["type"] == media_type
-            and movie["tmdb_id"]
-        )
-    }
-
-    recent_ids = set(
-        get_recent_recommendation_ids(
-            media_type,
-            RECENT_HISTORY_LIMIT,
-        )
-    )
-
-    excluded_ids = (
-        watched_ids
-        | recent_ids
-    )
-
-    # ========================================================
-    # 1. SIMILAR TITLES
-    # ========================================================
+    # --------------------------------------------------------
+    # Similar titles
+    # --------------------------------------------------------
 
     for source in profile["sources"]:
 
-        for page in (1, 2, 3):
+        pages = list(
+            range(1, 8)
+        )
+
+        random.shuffle(
+            pages
+        )
+
+        for page in pages[:4]:
 
             try:
-                similar = tmdb_get_similar(
+
+                results = tmdb_get_similar(
                     source["id"],
                     media_type,
                     token,
                     page,
                 )
+
             except requests.RequestException:
+
                 continue
 
-            for index, item in enumerate(
-                similar
+            for position, item in enumerate(
+                results
             ):
 
                 tmdb_id = item.get(
@@ -757,64 +791,73 @@ def collect_candidates(
                 if tmdb_id in excluded_ids:
                     continue
 
-                title = (
-                    item.get("title", "")
-                    if media_type == "Movie"
-                    else item.get("name", "")
-                )
-
-                if not title:
-                    continue
-
                 if tmdb_id not in candidates:
 
-                    candidates[tmdb_id] = (
-                        make_candidate(item)
+                    candidates[
+                        tmdb_id
+                    ] = make_candidate(
+                        item
                     )
 
-                rank_score = max(
-                    0.25,
+                # Similarity gets stronger for
+                # items appearing near the top.
+                similarity = max(
+                    0.15,
                     1
                     - (
-                        index * 0.025
+                        position
+                        * 0.025
                     ),
                 )
 
                 candidates[
                     tmdb_id
-                ]["similarity"] += (
+                ][
+                    "similarity"
+                ] += (
                     source[
                         "rating_weight"
                     ]
-                    * rank_score
+                    * similarity
                 )
 
-    # ========================================================
-    # 2. TOP GENRE DISCOVERY
-    # ========================================================
+    # --------------------------------------------------------
+    # Genre discovery
+    # --------------------------------------------------------
 
-    top_genres = [
+    genres = [
         genre_id
-        for genre_id, _score
-        in profile["genres"][:5]
+        for genre_id, _weight
+        in profile["genres"][:6]
     ]
 
-    for genre_id in top_genres:
+    for genre_id in genres:
 
-        for page in (1, 2):
+        pages = list(
+            range(1, 8)
+        )
+
+        random.shuffle(
+            pages
+        )
+
+        for page in pages[:3]:
 
             try:
-                discovered = tmdb_discover(
+
+                results = tmdb_discover(
                     media_type,
                     token,
                     [genre_id],
                     page,
                     "popularity.desc",
                 )
+
             except requests.RequestException:
+
                 continue
 
-            for item in discovered:
+            for item in results:
 
                 tmdb_id = item.get(
                     "id"
@@ -826,43 +869,49 @@ def collect_candidates(
                 if tmdb_id in excluded_ids:
                     continue
 
-                title = (
-                    item.get("title", "")
-                    if media_type == "Movie"
-                    else item.get("name", "")
-                )
-
-                if not title:
-                    continue
-
                 if tmdb_id not in candidates:
 
-                    candidates[tmdb_id] = (
-                        make_candidate(item)
+                    candidates[
+                        tmdb_id
+                    ] = make_candidate(
+                        item
                     )
 
                 candidates[
                     tmdb_id
-                ]["genre_discovery"] += 1
+                ][
+                    "genre_hits"
+                ] += 1
 
-    # ========================================================
-    # 3. POPULAR FALLBACK
-    # ========================================================
+    # --------------------------------------------------------
+    # Popular discovery
+    # --------------------------------------------------------
 
-    for page in (1, 2, 3, 4):
+    pages = list(
+        range(1, 20)
+    )
+
+    random.shuffle(
+        pages
+    )
+
+    for page in pages[:6]:
 
         try:
-            popular = tmdb_discover(
+
+            results = tmdb_discover(
                 media_type,
                 token,
                 None,
                 page,
                 "popularity.desc",
             )
+
         except requests.RequestException:
+
             continue
 
-        for item in popular:
+        for item in results:
 
             tmdb_id = item.get(
                 "id"
@@ -874,36 +923,40 @@ def collect_candidates(
             if tmdb_id in excluded_ids:
                 continue
 
-            title = (
-                item.get("title", "")
-                if media_type == "Movie"
-                else item.get("name", "")
-            )
-
-            if not title:
-                continue
-
             candidates.setdefault(
                 tmdb_id,
-                make_candidate(item),
+                make_candidate(
+                    item
+                ),
             )
 
-    # ========================================================
-    # 4. TOP RATED FALLBACK
-    # ========================================================
+    # --------------------------------------------------------
+    # Top rated
+    # --------------------------------------------------------
 
-    for page in (1, 2):
+    pages = list(
+        range(1, 10)
+    )
+
+    random.shuffle(
+        pages
+    )
+
+    for page in pages[:4]:
 
         try:
-            top_rated = tmdb_top_rated(
+
+            results = tmdb_top_rated(
                 media_type,
                 token,
                 page,
             )
+
         except requests.RequestException:
+
             continue
 
-        for item in top_rated:
+        for item in results:
 
             tmdb_id = item.get(
                 "id"
@@ -915,30 +968,24 @@ def collect_candidates(
             if tmdb_id in excluded_ids:
                 continue
 
-            title = (
-                item.get("title", "")
-                if media_type == "Movie"
-                else item.get("name", "")
-            )
-
-            if not title:
-                continue
-
             candidates.setdefault(
                 tmdb_id,
-                make_candidate(item),
+                make_candidate(
+                    item
+                ),
             )
 
     print(
         f"{media_type}: "
-        f"{len(candidates)} candidates collected"
+        f"{len(candidates)} candidates "
+        f"after exclusions"
     )
 
     return candidates, profile
 
 
 # ============================================================
-# SCORE FUNCTIONS
+# SCORING
 # ============================================================
 
 def genre_score(
@@ -962,12 +1009,13 @@ def genre_score(
     ]:
 
         if genre_id in candidate_genres:
+
             total += weight
 
     maximum = sum(
         weight
         for _, weight
-        in profile["genres"][:5]
+        in profile["genres"][:6]
     )
 
     if maximum <= 0:
@@ -975,7 +1023,7 @@ def genre_score(
 
     return min(
         total / maximum,
-        1.0,
+        1,
     )
 
 
@@ -1000,14 +1048,14 @@ def quality_score(
 
     rating_part = min(
         rating / 10,
-        1.0,
+        1,
     )
 
-    vote_confidence = min(
+    confidence = min(
         math.log1p(votes)
         /
         math.log1p(3000),
-        1.0,
+        1,
     )
 
     return (
@@ -1015,7 +1063,7 @@ def quality_score(
         * (
             0.45
             + 0.55
-            * vote_confidence
+            * confidence
         )
     )
 
@@ -1024,7 +1072,7 @@ def popularity_score(
     candidate,
     candidates,
 ):
-    all_values = [
+    values = [
         float(
             item.get(
                 "popularity",
@@ -1035,11 +1083,11 @@ def popularity_score(
         for item in candidates.values()
     ]
 
-    if not all_values:
+    if not values:
         return 0
 
     maximum = max(
-        all_values
+        values
     )
 
     if maximum <= 0:
@@ -1055,7 +1103,7 @@ def popularity_score(
 
     return min(
         value / maximum,
-        1.0,
+        1,
     )
 
 
@@ -1071,13 +1119,16 @@ def recency_score(
         return 0.5
 
     try:
+
         year = int(
             date[:4]
         )
+
     except (
         ValueError,
         TypeError,
     ):
+
         return 0.5
 
     age = max(
@@ -1106,7 +1157,7 @@ def score_candidate(
                 0,
             )
         ),
-        1.0,
+        1,
     )
 
     genres = genre_score(
@@ -1127,56 +1178,182 @@ def score_candidate(
         candidate,
     )
 
-    genre_discovery = min(
+    genre_hits = min(
         candidate.get(
-            "genre_discovery",
+            "genre_hits",
             0,
         )
         /
         3,
-        1.0,
+        1,
     )
 
-    score = (
-        similarity * 0.38
-        + genres * 0.27
+    base_score = (
+        similarity * 0.40
+        + genres * 0.25
         + quality * 0.18
-        + popularity * 0.12
-        + recency * 0.05
-        + genre_discovery * 0.04
+        + popularity * 0.10
+        + recency * 0.04
+        + genre_hits * 0.03
     )
 
-    # Small random factor so each refresh
-    # can produce a different set.
-    score += random.uniform(
+    # Strong random variation.
+    # This is deliberately large enough to
+    # change the ordering between refreshes.
+    random_score = random.uniform(
         0,
-        0.035,
+        0.20,
     )
 
-    candidate["score"] = score
+    candidate["score"] = (
+        base_score
+        + random_score
+    )
 
     return candidate
 
 
 # ============================================================
-# DIVERSITY
+# BUILD RANDOM BATCH
 # ============================================================
 
-def diversify(
-    candidates,
-    limit,
+def build_recommendations(
+    watched,
+    media_type,
 ):
-    ranked = sorted(
-        candidates,
+    token = get_env(
+        "TMDB_TOKEN"
+    )
+
+    if not token:
+
+        print(
+            "TMDB token missing"
+        )
+
+        return []
+
+    # --------------------------------------------------------
+    # Watched IDs
+    # --------------------------------------------------------
+
+    watched_ids = {
+        movie["tmdb_id"]
+        for movie in watched
+        if (
+            movie["type"] == media_type
+            and movie["tmdb_id"]
+        )
+    }
+
+    # --------------------------------------------------------
+    # Previous recommendations
+    #
+    # We intentionally block only recent results.
+    # This prevents immediate duplicates without
+    # permanently eliminating the entire TMDB library.
+    # --------------------------------------------------------
+
+    previous_ids = set(
+        get_recent_recommendation_ids(
+            media_type,
+            PREVIOUS_BATCH_SIZE,
+        )
+    )
+
+    excluded_ids = (
+        watched_ids
+        | previous_ids
+    )
+
+    print(
+        f"{media_type}: "
+        f"watched={len(watched_ids)}, "
+        f"previous={len(previous_ids)}"
+    )
+
+    # --------------------------------------------------------
+    # Generate candidate pool
+    # --------------------------------------------------------
+
+    candidates, profile = (
+        collect_candidates(
+            watched,
+            media_type,
+            token,
+            excluded_ids,
+        )
+    )
+
+    if not candidates:
+
+        # Emergency fallback:
+        # don't let the engine return nothing
+        # just because the previous batch is big.
+
+        print(
+            f"{media_type}: "
+            "strict pool empty, "
+            "using watched-only exclusion"
+        )
+
+        candidates, profile = (
+            collect_candidates(
+                watched,
+                media_type,
+                token,
+                watched_ids,
+            )
+        )
+
+    if not candidates:
+        return []
+
+    # --------------------------------------------------------
+    # SCORE
+    # --------------------------------------------------------
+
+    scored = [
+        score_candidate(
+            candidate,
+            profile,
+            candidates,
+        )
+        for candidate
+        in candidates.values()
+    ]
+
+    # --------------------------------------------------------
+    # Randomly choose from a large high-quality pool
+    # --------------------------------------------------------
+
+    scored.sort(
         key=lambda x: x["score"],
         reverse=True,
     )
+
+    pool_size = min(
+        100,
+        len(scored),
+    )
+
+    pool = scored[
+        :pool_size
+    ]
+
+    random.shuffle(
+        pool
+    )
+
+    # --------------------------------------------------------
+    # Diversity
+    # --------------------------------------------------------
 
     selected = []
 
     used_genres = set()
 
-    for candidate in ranked:
+    for candidate in pool:
 
         genres = set(
             candidate.get(
@@ -1191,7 +1368,7 @@ def diversify(
         )
 
         if (
-            len(selected) >= 4
+            len(selected) >= 5
             and overlap >= 3
         ):
             continue
@@ -1204,78 +1381,47 @@ def diversify(
             genres
         )
 
-        if len(selected) >= limit:
+        if len(selected) >= RESULTS_PER_TYPE:
             break
 
-    if len(selected) < limit:
+    # Fill remaining slots.
+
+    if len(selected) < RESULTS_PER_TYPE:
 
         selected_ids = {
-            item["id"]
-            for item in selected
+            x["id"]
+            for x in selected
         }
 
-        for candidate in ranked:
+        remaining = [
+            x
+            for x in scored
+            if x["id"]
+            not in selected_ids
+        ]
 
-            if candidate["id"] in selected_ids:
-                continue
+        random.shuffle(
+            remaining
+        )
+
+        for candidate in remaining:
 
             selected.append(
                 candidate
             )
 
-            if len(selected) >= limit:
+            if len(selected) >= RESULTS_PER_TYPE:
                 break
 
-    return selected
+    # Final random ordering.
 
-
-# ============================================================
-# FINAL RECOMMENDATION BUILDER
-# ============================================================
-
-def build_recommendations(
-    watched,
-    media_type,
-):
-    token = get_env(
-        "TMDB_TOKEN"
+    random.shuffle(
+        selected
     )
 
-    if not token:
-        return []
-
-    try:
-        candidates, profile = (
-            collect_candidates(
-                watched,
-                media_type,
-                token,
-            )
-        )
-    except requests.RequestException as error:
-        print(
-            f"Candidate collection error: "
-            f"{error}"
-        )
-        return []
-
-    if not candidates:
-        return []
-
-    scored = [
-        score_candidate(
-            candidate,
-            profile,
-            candidates,
-        )
-        for candidate
-        in candidates.values()
-    ]
-
-    selected = diversify(
-        scored,
-        RESULTS_PER_TYPE,
-    )
+    # --------------------------------------------------------
+    # Convert results
+    # --------------------------------------------------------
 
     results = []
 
@@ -1289,6 +1435,7 @@ def build_recommendations(
         year = None
 
         if date:
+
             try:
                 year = int(
                     date[:4]
@@ -1304,6 +1451,7 @@ def build_recommendations(
         if candidate.get(
             "poster_path"
         ):
+
             poster = (
                 "https://image.tmdb.org/t/p/w500"
                 + candidate[
@@ -1316,6 +1464,7 @@ def build_recommendations(
         if candidate.get(
             "backdrop_path"
         ):
+
             backdrop = (
                 "https://image.tmdb.org/t/p/w1280"
                 + candidate[
@@ -1342,14 +1491,19 @@ def build_recommendations(
             "popularity": candidate[
                 "popularity"
             ],
-            "score": candidate[
-                "score"
-            ],
         }
 
         results.append(
             result
         )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Save the selected batch AFTER
+    # selection is complete.
+    # --------------------------------------------------------
+
+    for result in results:
 
         add_recommendation_history(
             tmdb_id=result["tmdb_id"],
@@ -1357,8 +1511,18 @@ def build_recommendations(
             title=result["title"],
         )
 
+    print(
+        f"{media_type}: "
+        f"NEW BATCH = "
+        f"{len(results)} results"
+    )
+
     return results
 
+
+# ============================================================
+# GENERATE BOTH TYPES
+# ============================================================
 
 def generate_all_recommendations(
     watched,
@@ -1398,7 +1562,7 @@ def home(
         if movie["type"] == "Series"
     ]
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
@@ -1408,6 +1572,14 @@ def home(
             "recommendations": None,
         },
     )
+
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, max-age=0"
+    )
+
+    response.headers["Pragma"] = "no-cache"
+
+    return response
 
 
 # ============================================================
@@ -1430,6 +1602,7 @@ def add(
             "Series",
         )
     ):
+
         return RedirectResponse(
             "/",
             status_code=303,
@@ -1443,14 +1616,26 @@ def add(
     if tmdb_data:
 
         add_movie(
-            title=tmdb_data["title"],
+            title=tmdb_data[
+                "title"
+            ],
             rating=rating,
             media_type=media_type,
-            poster=tmdb_data.get("poster"),
-            backdrop=tmdb_data.get("backdrop"),
-            year=tmdb_data.get("year"),
-            overview=tmdb_data.get("overview"),
-            tmdb_id=tmdb_data.get("tmdb_id"),
+            poster=tmdb_data.get(
+                "poster"
+            ),
+            backdrop=tmdb_data.get(
+                "backdrop"
+            ),
+            year=tmdb_data.get(
+                "year"
+            ),
+            overview=tmdb_data.get(
+                "overview"
+            ),
+            tmdb_id=tmdb_data.get(
+                "tmdb_id"
+            ),
         )
 
     else:
@@ -1489,13 +1674,18 @@ def recommendations(
         if movie["type"] == "Series"
     ]
 
+    print(
+        "Generating completely new "
+        "recommendation batch..."
+    )
+
     recommendations_data = (
         generate_all_recommendations(
             movies
         )
     )
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
@@ -1506,9 +1696,20 @@ def recommendations(
         },
     )
 
+    # Absolutely prevent browser caching.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, max-age=0"
+    )
+
+    response.headers["Pragma"] = "no-cache"
+
+    response.headers["Expires"] = "0"
+
+    return response
+
 
 # ============================================================
-# MARK RECOMMENDATION AS WATCHED
+# MARK AS WATCHED
 # ============================================================
 
 @app.post(
@@ -1531,6 +1732,7 @@ def recommendation_watched(
         )
         or not tmdb_id
     ):
+
         return RedirectResponse(
             "/",
             status_code=303,
@@ -1545,6 +1747,7 @@ def recommendation_watched(
     if token:
 
         try:
+
             result = tmdb_get_details(
                 tmdb_id,
                 media_type,
@@ -1568,14 +1771,26 @@ def recommendation_watched(
     if tmdb_data:
 
         add_movie(
-            title=tmdb_data["title"],
+            title=tmdb_data[
+                "title"
+            ],
             rating=rating,
             media_type=media_type,
-            poster=tmdb_data.get("poster"),
-            backdrop=tmdb_data.get("backdrop"),
-            year=tmdb_data.get("year"),
-            overview=tmdb_data.get("overview"),
-            tmdb_id=tmdb_data.get("tmdb_id"),
+            poster=tmdb_data.get(
+                "poster"
+            ),
+            backdrop=tmdb_data.get(
+                "backdrop"
+            ),
+            year=tmdb_data.get(
+                "year"
+            ),
+            overview=tmdb_data.get(
+                "overview"
+            ),
+            tmdb_id=tmdb_data.get(
+                "tmdb_id"
+            ),
         )
 
     else:
@@ -1587,7 +1802,6 @@ def recommendation_watched(
             tmdb_id=tmdb_id,
         )
 
-    # Immediately generate a new batch.
     return RedirectResponse(
         "/recommendations",
         status_code=303,
@@ -1604,6 +1818,7 @@ def recommendation_watched(
 def delete(
     movie_id: int,
 ):
+
     delete_movie(
         movie_id
     )
