@@ -10,7 +10,6 @@ COPY app ./app
 
 COPY run.sh /run.sh
 
-# Remove Windows CRLF and UTF-8 BOM if present
 RUN sed -i 's/\r$//' /run.sh && \
     sed -i '1s/^\xEF\xBB\xBF//' /run.sh && \
     chmod +x /run.sh
