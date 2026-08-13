@@ -1,3 +1,4 @@
+```python
 import sqlite3
 from pathlib import Path
 
@@ -13,6 +14,7 @@ DB_PATH = DATA_DIR / "movies.db"
 
 
 def get_connection():
+
     connection = sqlite3.connect(
         DB_PATH
     )
@@ -43,10 +45,6 @@ def init_database():
         """
     )
 
-    # --------------------------------------------------------
-    # Upgrade an old database
-    # --------------------------------------------------------
-
     columns = connection.execute(
         "PRAGMA table_info(watched)"
     ).fetchall()
@@ -75,7 +73,6 @@ def init_database():
             )
 
     connection.commit()
-
     connection.close()
 
 
@@ -114,7 +111,6 @@ def movie_exists(
 
     result = None
 
-    # Exact match using TMDB ID + type.
     if tmdb_id and media_type:
 
         result = connection.execute(
@@ -131,7 +127,6 @@ def movie_exists(
             ),
         ).fetchone()
 
-    # Fallback using title + type.
     elif title and media_type:
 
         result = connection.execute(
@@ -163,9 +158,6 @@ def add_movie(
     overview=None,
     tmdb_id=None,
 ):
-    # --------------------------------------------------------
-    # Prevent duplicates.
-    # --------------------------------------------------------
 
     if movie_exists(
         title=title,
@@ -209,7 +201,6 @@ def add_movie(
     )
 
     connection.commit()
-
     connection.close()
 
     return True
@@ -228,5 +219,5 @@ def delete_movie(movie_id):
     )
 
     connection.commit()
-
     connection.close()
+```
