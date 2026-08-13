@@ -1,4 +1,3 @@
-```python id="q4bx6w"
 import sqlite3
 
 from pathlib import Path
@@ -349,4 +348,4 @@ def get_recent_recommendation_ids(
         row["tmdb_id"]
         for row in rows
     ]
-```
+
