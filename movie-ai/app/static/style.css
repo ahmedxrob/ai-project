@@ -11,20 +11,10 @@ html {
     --bg: #060608;
 
     --panel:
-        rgba(
-            18,
-            18,
-            23,
-            0.91
-        );
+        rgba(18, 18, 23, 0.91);
 
     --border:
-        rgba(
-            255,
-            255,
-            255,
-            0.08
-        );
+        rgba(255, 255, 255, 0.08);
 
     --text: #f7f7f8;
 
@@ -40,17 +30,9 @@ html {
 
     --green: #35d07f;
 
-    --blue: #60a5fa;
-
     --tmdb: #01b4e4;
-
-    --danger: #ef6b73;
 }
 
-
-/* ========================================================= */
-/* GLOBAL */
-/* ========================================================= */
 
 body {
 
@@ -79,9 +61,7 @@ body {
 button,
 input,
 select {
-
-    font:
-        inherit;
+    font: inherit;
 }
 
 
@@ -101,31 +81,12 @@ select {
 
         linear-gradient(
             180deg,
-            rgba(
-                4,
-                4,
-                6,
-                0.12
-            ),
-
-            rgba(
-                4,
-                4,
-                6,
-                0.60
-            ) 46%,
-
-            rgba(
-                6,
-                6,
-                8,
-                0.99
-            )
+            rgba(4,4,6,0.12),
+            rgba(4,4,6,0.60) 46%,
+            rgba(6,6,8,0.99)
         ),
 
-        url(
-            "/static/background.jpg"
-        );
+        url("/static/background.jpg");
 
     background-size:
         cover;
@@ -153,15 +114,9 @@ select {
     inset: 0;
 
     background:
-
         radial-gradient(
             circle at 45% 0%,
-            rgba(
-                229,
-                9,
-                20,
-                0.12
-            ),
+            rgba(229,9,20,0.12),
             transparent 30%
         );
 }
@@ -186,8 +141,6 @@ select {
     justify-content:
         space-between;
 
-    gap: 20px;
-
     height: 70px;
 
     padding:
@@ -195,20 +148,10 @@ select {
 
     border-bottom:
         1px solid
-        rgba(
-            255,
-            255,
-            255,
-            0.06
-        );
+        rgba(255,255,255,0.06);
 
     background:
-        rgba(
-            7,
-            7,
-            9,
-            0.78
-        );
+        rgba(7,7,9,0.78);
 
     backdrop-filter:
         blur(22px);
@@ -222,8 +165,7 @@ select {
 
     display: flex;
 
-    align-items:
-        center;
+    align-items: center;
 
     gap: 12px;
 }
@@ -233,15 +175,13 @@ select {
 
     display: grid;
 
-    place-items:
-        center;
+    place-items: center;
 
     width: 39px;
 
     height: 39px;
 
-    border-radius:
-        11px;
+    border-radius: 11px;
 
     background:
         linear-gradient(
@@ -252,12 +192,7 @@ select {
 
     box-shadow:
         0 10px 28px
-        rgba(
-            229,
-            9,
-            20,
-            0.28
-        );
+        rgba(229,9,20,0.28);
 
     font-size: 20px;
 }
@@ -265,7 +200,8 @@ select {
 
 .brand-text {
 
-    display: flex;
+    display:
+        flex;
 
     flex-direction:
         column;
@@ -281,7 +217,8 @@ select {
 
 .brand-text span {
 
-    margin-top: 2px;
+    margin-top:
+        2px;
 
     color:
         #666872;
@@ -299,12 +236,14 @@ select {
 
 .topbar-status {
 
-    display: flex;
+    display:
+        flex;
 
     align-items:
         center;
 
-    gap: 8px;
+    gap:
+        8px;
 
     color:
         #80828c;
@@ -316,9 +255,11 @@ select {
 
 .status-dot {
 
-    width: 7px;
+    width:
+        7px;
 
-    height: 7px;
+    height:
+        7px;
 
     border-radius:
         999px;
@@ -328,12 +269,7 @@ select {
 
     box-shadow:
         0 0 14px
-        rgba(
-            53,
-            208,
-            127,
-            0.75
-        );
+        rgba(53,208,127,0.75);
 }
 
 
@@ -423,12 +359,7 @@ select {
 
     text-shadow:
         0 14px 45px
-        rgba(
-            0,
-            0,
-            0,
-            0.60
-        );
+        rgba(0,0,0,0.60);
 }
 
 
@@ -515,12 +446,7 @@ select {
         32px;
 
     background:
-        rgba(
-            255,
-            255,
-            255,
-            0.12
-        );
+        rgba(255,255,255,0.12);
 }
 
 
@@ -551,12 +477,7 @@ select {
 
     box-shadow:
         0 22px 55px
-        rgba(
-            0,
-            0,
-            0,
-            0.30
-        );
+        rgba(0,0,0,0.30);
 
     backdrop-filter:
         blur(18px);
@@ -642,12 +563,7 @@ select {
         11px;
 
     background:
-        rgba(
-            255,
-            255,
-            255,
-            0.06
-        );
+        rgba(255,255,255,0.06);
 
     font-size:
         22px;
@@ -705,12 +621,7 @@ select {
 
     border:
         1px solid
-        rgba(
-            255,
-            255,
-            255,
-            0.09
-        );
+        rgba(255,255,255,0.09);
 
     border-radius:
         10px;
@@ -722,12 +633,7 @@ select {
         white;
 
     background:
-        rgba(
-            255,
-            255,
-            255,
-            0.045
-        );
+        rgba(255,255,255,0.045);
 
     font-size:
         14px;
@@ -745,29 +651,14 @@ select {
 .field select:focus {
 
     border-color:
-        rgba(
-            229,
-            9,
-            20,
-            0.85
-        );
+        rgba(229,9,20,0.85);
 
     background:
-        rgba(
-            255,
-            255,
-            255,
-            0.06
-        );
+        rgba(255,255,255,0.06);
 
     box-shadow:
         0 0 0 3px
-        rgba(
-            229,
-            9,
-            20,
-            0.10
-        );
+        rgba(229,9,20,0.10);
 }
 
 
@@ -803,23 +694,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            255,
-            255,
-            255,
-            0.09
-        );
+        rgba(255,255,255,0.09);
 
     border-radius:
         10px;
 
     background:
-        rgba(
-            255,
-            255,
-            255,
-            0.045
-        );
+        rgba(255,255,255,0.045);
 }
 
 
@@ -912,12 +793,7 @@ select {
 
     box-shadow:
         0 12px 32px
-        rgba(
-            229,
-            9,
-            20,
-            0.20
-        );
+        rgba(229,9,20,0.20);
 
     transition:
         transform 0.2s,
@@ -932,12 +808,7 @@ select {
 
     box-shadow:
         0 18px 40px
-        rgba(
-            229,
-            9,
-            20,
-            0.30
-        );
+        rgba(229,9,20,0.30);
 }
 
 
@@ -983,12 +854,7 @@ select {
 
     border:
         1px solid
-        rgba(
-            124,
-            58,
-            237,
-            0.20
-        );
+        rgba(124,58,237,0.20);
 
     border-radius:
         20px;
@@ -996,18 +862,8 @@ select {
     background:
         linear-gradient(
             135deg,
-            rgba(
-                124,
-                58,
-                237,
-                0.13
-            ),
-            rgba(
-                18,
-                18,
-                23,
-                0.92
-            )
+            rgba(124,58,237,0.13),
+            rgba(18,18,23,0.92)
         );
 }
 
@@ -1066,12 +922,7 @@ select {
 
     border:
         1px solid
-        rgba(
-            124,
-            58,
-            237,
-            0.38
-        );
+        rgba(124,58,237,0.38);
 
     border-radius:
         11px;
@@ -1094,12 +945,7 @@ select {
 
     box-shadow:
         0 12px 30px
-        rgba(
-            124,
-            58,
-            237,
-            0.22
-        );
+        rgba(124,58,237,0.22);
 
     transition:
         transform 0.2s,
@@ -1114,12 +960,7 @@ select {
 
     box-shadow:
         0 18px 38px
-        rgba(
-            124,
-            58,
-            237,
-            0.32
-        );
+        rgba(124,58,237,0.32);
 }
 
 
@@ -1134,7 +975,7 @@ select {
 
 
 /* ========================================================= */
-/* SECTION HEADING */
+/* SECTIONS */
 /* ========================================================= */
 
 .section-heading {
@@ -1179,6 +1020,13 @@ select {
 }
 
 
+.recommendations-section {
+
+    margin-top:
+        42px;
+}
+
+
 .series-section-heading {
 
     margin-top:
@@ -1187,15 +1035,8 @@ select {
 
 
 /* ========================================================= */
-/* RECOMMENDATIONS */
+/* RECOMMENDATION GRID */
 /* ========================================================= */
-
-.recommendations-section {
-
-    margin-top:
-        42px;
-}
-
 
 .recommendation-grid {
 
@@ -1217,7 +1058,7 @@ select {
 
 
 /* ========================================================= */
-/* RECOMMENDATION CARD */
+/* CARD */
 /* ========================================================= */
 
 .recommendation-card {
@@ -1227,32 +1068,17 @@ select {
 
     border:
         1px solid
-        rgba(
-            255,
-            255,
-            255,
-            0.07
-        );
+        rgba(255,255,255,0.07);
 
     border-radius:
         13px;
 
     background:
-        rgba(
-            18,
-            18,
-            23,
-            0.95
-        );
+        rgba(18,18,23,0.95);
 
     box-shadow:
         0 12px 34px
-        rgba(
-            0,
-            0,
-            0,
-            0.28
-        );
+        rgba(0,0,0,0.28);
 
     transition:
         transform 0.25s ease,
@@ -1267,21 +1093,11 @@ select {
         translateY(-7px);
 
     border-color:
-        rgba(
-            255,
-            255,
-            255,
-            0.15
-        );
+        rgba(255,255,255,0.15);
 
     box-shadow:
         0 22px 45px
-        rgba(
-            0,
-            0,
-            0,
-            0.50
-        );
+        rgba(0,0,0,0.50);
 }
 
 
@@ -1348,12 +1164,7 @@ select {
         linear-gradient(
             to bottom,
             transparent 52%,
-            rgba(
-                0,
-                0,
-                0,
-                0.82
-            )
+            rgba(0,0,0,0.82)
         );
 }
 
@@ -1425,11 +1236,11 @@ select {
             124,
             58,
             237,
-            0.85
+            0.88
         );
 
     color:
-        #f0e8ff;
+        #f3edff;
 
     border:
         1px solid
@@ -1437,7 +1248,7 @@ select {
             196,
             181,
             253,
-            0.22
+            0.25
         );
 
     box-shadow:
@@ -1446,7 +1257,7 @@ select {
             124,
             58,
             237,
-            0.24
+            0.25
         );
 }
 
@@ -1458,7 +1269,7 @@ select {
             1,
             180,
             228,
-            0.82
+            0.88
         );
 
     color:
@@ -1470,7 +1281,7 @@ select {
             125,
             218,
             245,
-            0.22
+            0.25
         );
 
     box-shadow:
@@ -1479,16 +1290,8 @@ select {
             1,
             180,
             228,
-            0.18
+            0.20
         );
-}
-
-
-.series-badge.ai-source,
-.series-badge.tmdb-source {
-
-    color:
-        white;
 }
 
 
@@ -1618,23 +1421,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            167,
-            139,
-            250,
-            0.18
-        );
+        rgba(167,139,250,0.18);
 
     border-radius:
         7px;
 
     background:
-        rgba(
-            124,
-            58,
-            237,
-            0.07
-        );
+        rgba(124,58,237,0.07);
 
     color:
         #b8a4ff;
@@ -1650,30 +1443,16 @@ select {
 
     box-shadow:
         none;
-
-    transition:
-        background 0.2s,
-        border-color 0.2s;
 }
 
 
 .why-button:hover {
 
     background:
-        rgba(
-            124,
-            58,
-            237,
-            0.15
-        );
+        rgba(124,58,237,0.15);
 
     border-color:
-        rgba(
-            167,
-            139,
-            250,
-            0.35
-        );
+        rgba(167,139,250,0.35);
 
     transform:
         none;
@@ -1696,23 +1475,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            124,
-            58,
-            237,
-            0.15
-        );
+        rgba(124,58,237,0.15);
 
     border-radius:
         8px;
 
     background:
-        rgba(
-            124,
-            58,
-            237,
-            0.07
-        );
+        rgba(124,58,237,0.07);
 
     color:
         #aaa6b7;
@@ -1774,23 +1543,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            1,
-            180,
-            228,
-            0.25
-        );
+        rgba(1,180,228,0.25);
 
     border-radius:
         6px;
 
     background:
-        rgba(
-            1,
-            180,
-            228,
-            0.07
-        );
+        rgba(1,180,228,0.07);
 
     color:
         #7ddaf5;
@@ -1803,30 +1562,16 @@ select {
 
     font-weight:
         900;
-
-    transition:
-        background 0.2s,
-        border-color 0.2s;
 }
 
 
 .tmdb-button:hover {
 
     background:
-        rgba(
-            1,
-            180,
-            228,
-            0.15
-        );
+        rgba(1,180,228,0.15);
 
     border-color:
-        rgba(
-            1,
-            180,
-            228,
-            0.45
-        );
+        rgba(1,180,228,0.45);
 }
 
 
@@ -1862,23 +1607,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            255,
-            255,
-            255,
-            0.08
-        );
+        rgba(255,255,255,0.08);
 
     border-radius:
         6px;
 
     background:
-        rgba(
-            255,
-            255,
-            255,
-            0.04
-        );
+        rgba(255,255,255,0.04);
 
     color:
         white;
@@ -1904,23 +1639,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            53,
-            208,
-            127,
-            0.20
-        );
+        rgba(53,208,127,0.20);
 
     border-radius:
         6px;
 
     background:
-        rgba(
-            53,
-            208,
-            127,
-            0.09
-        );
+        rgba(53,208,127,0.09);
 
     color:
         #8ee5ae;
@@ -1945,12 +1670,7 @@ select {
 .watched-button:hover {
 
     background:
-        rgba(
-            53,
-            208,
-            127,
-            0.18
-        );
+        rgba(53,208,127,0.18);
 
     color:
         #b8f2cb;
@@ -1993,23 +1713,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            239,
-            68,
-            68,
-            0.16
-        );
+        rgba(239,68,68,0.16);
 
     border-radius:
         7px;
 
     background:
-        rgba(
-            127,
-            29,
-            29,
-            0.08
-        );
+        rgba(127,29,29,0.08);
 
     color:
         #c9868b;
@@ -2025,31 +1735,16 @@ select {
 
     box-shadow:
         none;
-
-    transition:
-        background 0.2s,
-        border-color 0.2s,
-        color 0.2s;
 }
 
 
 .not-interested-button:hover {
 
     background:
-        rgba(
-            127,
-            29,
-            29,
-            0.18
-        );
+        rgba(127,29,29,0.18);
 
     border-color:
-        rgba(
-            239,
-            68,
-            68,
-            0.30
-        );
+        rgba(239,68,68,0.30);
 
     color:
         #f0a3a8;
@@ -2063,7 +1758,7 @@ select {
 
 
 /* ========================================================= */
-/* WATCHED LIBRARY */
+/* LIBRARY */
 /* ========================================================= */
 
 .library-section {
@@ -2105,32 +1800,17 @@ select {
 
     border:
         1px solid
-        rgba(
-            255,
-            255,
-            255,
-            0.07
-        );
+        rgba(255,255,255,0.07);
 
     border-radius:
         13px;
 
     background:
-        rgba(
-            18,
-            18,
-            23,
-            0.94
-        );
+        rgba(18,18,23,0.94);
 
     box-shadow:
         0 12px 35px
-        rgba(
-            0,
-            0,
-            0,
-            0.26
-        );
+        rgba(0,0,0,0.26);
 
     transition:
         transform 0.25s ease,
@@ -2144,12 +1824,7 @@ select {
         translateY(-4px);
 
     border-color:
-        rgba(
-            255,
-            255,
-            255,
-            0.13
-        );
+        rgba(255,255,255,0.13);
 }
 
 
@@ -2177,11 +1852,11 @@ select {
     height:
         100%;
 
-    display:
-        block;
-
     object-fit:
         cover;
+
+    display:
+        block;
 }
 
 
@@ -2221,9 +1896,6 @@ select {
 
     flex-wrap:
         wrap;
-
-    align-items:
-        center;
 
     gap:
         6px;
@@ -2293,23 +1965,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            255,
-            255,
-            255,
-            0.07
-        );
+        rgba(255,255,255,0.07);
 
     border-radius:
         6px;
 
     background:
-        rgba(
-            255,
-            255,
-            255,
-            0.035
-        );
+        rgba(255,255,255,0.035);
 
     color:
         #777984;
@@ -2331,20 +1993,10 @@ select {
 .remove-button:hover {
 
     background:
-        rgba(
-            127,
-            29,
-            29,
-            0.20
-        );
+        rgba(127,29,29,0.20);
 
     border-color:
-        rgba(
-            127,
-            29,
-            29,
-            0.40
-        );
+        rgba(127,29,29,0.40);
 
     color:
         #ef9a9a;
@@ -2369,23 +2021,13 @@ select {
 
     border:
         1px solid
-        rgba(
-            255,
-            255,
-            255,
-            0.06
-        );
+        rgba(255,255,255,0.06);
 
     border-radius:
         14px;
 
     background:
-        rgba(
-            18,
-            18,
-            23,
-            0.76
-        );
+        rgba(18,18,23,0.76);
 
     color:
         #6f717a;
@@ -2434,7 +2076,7 @@ footer {
 
         grid-template-columns:
             repeat(
-                5,
+                4,
                 minmax(
                     0,
                     1fr
@@ -2444,13 +2086,13 @@ footer {
 }
 
 
-@media (max-width: 1000px) {
+@media (max-width: 900px) {
 
     .recommendation-grid {
 
         grid-template-columns:
             repeat(
-                4,
+                3,
                 minmax(
                     0,
                     1fr
@@ -2488,11 +2130,13 @@ footer {
     }
 
     .topbar-status {
+
         display:
             none;
     }
 
     .page {
+
         width:
             94%;
     }
