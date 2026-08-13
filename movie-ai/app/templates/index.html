@@ -1,94 +1,856 @@
-<!-- ACTIONS -->
+```html
+<!DOCTYPE html>
+<html lang="en">
 
-<div class="recommendation-actions">
+<head>
 
-    <!-- RECOMMEND ANOTHER -->
+    <meta charset="UTF-8">
 
-    <a
-        href="/recommend/{{ 'movie' if recommendation.media_type == 'Movie' else 'series' }}"
-        class="secondary-button"
-    >
-        🔄 Recommend another
-    </a>
-
-
-    <!-- OPEN EXACT TMDB PAGE -->
-
-    {% if recommendation.tmdb_id %}
-
-    <a
-        href="https://www.themoviedb.org/{{ 'movie' if recommendation.media_type == 'Movie' else 'tv' }}/{{ recommendation.tmdb_id }}"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="secondary-button tmdb-button"
-    >
-        🎬 Open on TMDB
-    </a>
-
-    {% endif %}
-
-
-    <!-- I ALREADY WATCHED THIS -->
-
-    <form
-        action="/recommendation/watched"
-        method="post"
-        class="watched-form"
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
     >
 
-        <input
-            type="hidden"
-            name="title"
-            value="{{ recommendation.tmdb_title }}"
-        >
+    <meta
+        name="theme-color"
+        content="#070709"
+    >
 
-        <input
-            type="hidden"
-            name="media_type"
-            value="{{ recommendation.media_type }}"
-        >
+    <title>My Movie AI</title>
 
-        {% if recommendation.tmdb_id %}
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
 
-        <input
-            type="hidden"
-            name="tmdb_id"
-            value="{{ recommendation.tmdb_id }}"
-        >
+</head>
 
-        {% endif %}
+<body>
+
+<div class="site-background"></div>
 
 
-        <div class="watched-rating">
+<!-- ====================================================== -->
+<!-- TOPBAR -->
+<!-- ====================================================== -->
 
-            <label>
-                My rating
-            </label>
+<nav class="topbar">
 
-            <input
-                type="number"
-                name="rating"
-                min="0"
-                max="10"
-                step="0.1"
-                value="8"
-                required
-            >
+    <div class="brand">
+
+        <div class="brand-icon">
+            🎬
+        </div>
+
+        <div class="brand-text">
+
+            <strong>
+                My Movie AI
+            </strong>
 
             <span>
-                /10
+                your personal cinema
             </span>
 
         </div>
 
+    </div>
 
-        <button
-            type="submit"
-            class="watched-button"
-        >
-            ✅ I already watched this
-        </button>
 
-    </form>
+    <div class="topbar-status">
 
-</div>
+        <span class="status-dot"></span>
+
+        Personal Library
+
+    </div>
+
+</nav>
+
+
+<main class="page">
+
+
+    <!-- ================================================== -->
+    <!-- HERO -->
+    <!-- ================================================== -->
+
+    <section class="hero">
+
+        <div class="hero-content">
+
+            <div class="hero-kicker">
+                YOUR PRIVATE MOVIE COLLECTION
+            </div>
+
+            <h1>
+                What are you<br>
+                watching tonight?
+            </h1>
+
+            <p>
+                Track everything you've watched,
+                rate it, and let AI help you discover
+                your next favorite.
+            </p>
+
+            <div class="hero-stats">
+
+                <div class="stat">
+
+                    <strong>
+                        {{ movies|length }}
+                    </strong>
+
+                    <span>
+                        Watched
+                    </span>
+
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+
+                    <strong>
+                        🤖
+                    </strong>
+
+                    <span>
+                        AI Ready
+                    </span>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- ADD + AI -->
+    <!-- ================================================== -->
+
+    <section class="dashboard-grid">
+
+
+        <!-- ADD -->
+
+        <div class="panel add-panel">
+
+            <div class="panel-header">
+
+                <div>
+
+                    <span class="panel-label">
+                        LIBRARY
+                    </span>
+
+                    <h2>
+                        Add something you've watched
+                    </h2>
+
+                </div>
+
+                <div class="panel-icon">
+                    +
+                </div>
+
+            </div>
+
+
+            <form
+                action="/add"
+                method="post"
+                class="add-form"
+            >
+
+                <div class="field">
+
+                    <label for="title">
+                        Title
+                    </label>
+
+                    <input
+                        id="title"
+                        type="text"
+                        name="title"
+                        placeholder="Interstellar"
+                        autocomplete="off"
+                        required
+                    >
+
+                </div>
+
+
+                <div class="form-row">
+
+                    <div class="field">
+
+                        <label for="rating">
+                            Your rating
+                        </label>
+
+                        <div class="input-rating">
+
+                            <span>
+                                ★
+                            </span>
+
+                            <input
+                                id="rating"
+                                type="number"
+                                name="rating"
+                                min="0"
+                                max="10"
+                                step="0.1"
+                                placeholder="9.5"
+                                required
+                            >
+
+                            <small>
+                                / 10
+                            </small>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="field">
+
+                        <label for="media_type">
+                            Type
+                        </label>
+
+                        <select
+                            id="media_type"
+                            name="media_type"
+                        >
+
+                            <option value="Movie">
+                                🎬 Movie
+                            </option>
+
+                            <option value="Series">
+                                📺 Series
+                            </option>
+
+                        </select>
+
+                    </div>
+
+                </div>
+
+
+                <button
+                    type="submit"
+                    class="primary-button"
+                >
+
+                    <span>
+                        Add to collection
+                    </span>
+
+                    <span>
+                        →
+                    </span>
+
+                </button>
+
+            </form>
+
+
+            <div class="panel-hint">
+                We'll automatically find the title,
+                poster and information using TMDB.
+            </div>
+
+        </div>
+
+
+        <!-- AI -->
+
+        <div class="panel ai-panel">
+
+            <div class="ai-glow"></div>
+
+            <div class="panel-header">
+
+                <div>
+
+                    <span class="panel-label ai-label">
+                        AI DISCOVERY
+                    </span>
+
+                    <h2>
+                        Find your next watch
+                    </h2>
+
+                </div>
+
+                <div class="ai-icon">
+                    ✦
+                </div>
+
+            </div>
+
+
+            <p class="ai-description">
+                Gemini uses your ratings and avoids
+                titles you've already watched or
+                recently recommended.
+            </p>
+
+
+            <div class="recommend-buttons">
+
+                <a
+                    href="/recommend/movie"
+                    class="recommend-button movie-recommend"
+                >
+
+                    <span class="recommend-icon">
+                        🎬
+                    </span>
+
+                    <span class="recommend-text">
+
+                        <strong>
+                            Recommend a movie
+                        </strong>
+
+                        <small>
+                            Find something new
+                        </small>
+
+                    </span>
+
+                    <span class="recommend-arrow">
+                        →
+                    </span>
+
+                </a>
+
+
+                <a
+                    href="/recommend/series"
+                    class="recommend-button series-recommend"
+                >
+
+                    <span class="recommend-icon">
+                        📺
+                    </span>
+
+                    <span class="recommend-text">
+
+                        <strong>
+                            Recommend a series
+                        </strong>
+
+                        <small>
+                            Find your next binge
+                        </small>
+
+                    </span>
+
+                    <span class="recommend-arrow">
+                        →
+                    </span>
+
+                </a>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- AI RESULT -->
+    <!-- ================================================== -->
+
+    {% if recommendation %}
+
+    <section class="recommendation-result">
+
+        {% if recommendation.error %}
+
+        <div class="recommendation-error">
+
+            <div class="error-icon">
+                !
+            </div>
+
+            <div>
+
+                <strong>
+                    Recommendation unavailable
+                </strong>
+
+                <p>
+                    {{ recommendation.error }}
+                </p>
+
+            </div>
+
+        </div>
+
+        {% else %}
+
+        <div class="result-kicker">
+            GEMINI PICKED FOR YOU
+        </div>
+
+
+        <div class="result-card">
+
+
+            {% if recommendation.backdrop %}
+
+            <div
+                class="result-backdrop"
+                style="background-image: url('{{ recommendation.backdrop }}');"
+            ></div>
+
+            {% endif %}
+
+
+            <div class="result-overlay"></div>
+
+
+            <div class="result-content">
+
+
+                <!-- POSTER -->
+
+                {% if recommendation.poster %}
+
+                <img
+                    src="{{ recommendation.poster }}"
+                    alt="{{ recommendation.tmdb_title }}"
+                    class="result-poster"
+                    loading="lazy"
+                >
+
+                {% else %}
+
+                <div
+                    class="result-poster result-poster-placeholder"
+                >
+
+                    {% if recommendation.media_type == "Series" %}
+                        📺
+                    {% else %}
+                        🎬
+                    {% endif %}
+
+                </div>
+
+                {% endif %}
+
+
+                <!-- INFO -->
+
+                <div class="result-info">
+
+                    <div class="result-badge">
+                        🤖 AI RECOMMENDATION
+                    </div>
+
+
+                    <h2>
+                        {{ recommendation.tmdb_title }}
+                    </h2>
+
+
+                    <div class="result-meta">
+
+                        {% if recommendation.tmdb_year %}
+
+                        <span>
+                            📅 {{ recommendation.tmdb_year }}
+                        </span>
+
+                        <span class="meta-dot">
+                            •
+                        </span>
+
+                        {% endif %}
+
+
+                        <span>
+
+                            {% if recommendation.media_type == "Series" %}
+                                📺 Series
+                            {% else %}
+                                🎬 Movie
+                            {% endif %}
+
+                        </span>
+
+                    </div>
+
+
+                    {% if recommendation.reason %}
+
+                    <div class="why-box">
+
+                        <span>
+                            WHY YOU MIGHT LIKE IT
+                        </span>
+
+                        <p>
+                            {{ recommendation.reason }}
+                        </p>
+
+                    </div>
+
+                    {% endif %}
+
+
+                    {% if recommendation.overview %}
+
+                    <p class="result-overview">
+                        {{ recommendation.overview }}
+                    </p>
+
+                    {% endif %}
+
+
+                    <!-- ================================================= -->
+                    <!-- ACTIONS -->
+                    <!-- ================================================= -->
+
+                    <div class="recommendation-actions">
+
+
+                        <!-- RECOMMEND ANOTHER -->
+
+                        <a
+                            href="/recommend/{{ 'movie' if recommendation.media_type == 'Movie' else 'series' }}"
+                            class="secondary-button"
+                        >
+                            🔄 Recommend another
+                        </a>
+
+
+                        <!-- EXACT TMDB PAGE -->
+
+                        {% if recommendation.tmdb_id %}
+
+                        <a
+                            href="https://www.themoviedb.org/{{ 'movie' if recommendation.media_type == 'Movie' else 'tv' }}/{{ recommendation.tmdb_id }}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="secondary-button tmdb-button"
+                        >
+                            🎬 Open on TMDB
+                        </a>
+
+                        {% endif %}
+
+
+                        <!-- ALREADY WATCHED -->
+
+                        <form
+                            action="/recommendation/watched"
+                            method="post"
+                            class="watched-form"
+                        >
+
+                            <!-- Exact title -->
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ recommendation.tmdb_title }}"
+                            >
+
+
+                            <!-- Exact media type -->
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="{{ recommendation.media_type }}"
+                            >
+
+
+                            <!-- Exact TMDB ID -->
+
+                            {% if recommendation.tmdb_id %}
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ recommendation.tmdb_id }}"
+                            >
+
+                            {% endif %}
+
+
+                            <div class="watched-rating">
+
+                                <label>
+                                    My rating
+                                </label>
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <span>
+                                    /10
+                                </span>
+
+                            </div>
+
+
+                            <button
+                                type="submit"
+                                class="watched-button"
+                            >
+                                ✅ I already watched this
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        {% endif %}
+
+    </section>
+
+    {% endif %}
+
+
+    <!-- ================================================== -->
+    <!-- COLLECTION -->
+    <!-- ================================================== -->
+
+    <section class="collection-section">
+
+        <div class="collection-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    Watched
+                </h2>
+
+            </div>
+
+
+            <div class="collection-count">
+
+                <strong>
+                    {{ movies|length }}
+                </strong>
+
+                <span>
+                    titles
+                </span>
+
+            </div>
+
+        </div>
+
+
+        {% if movies %}
+
+        <div class="movie-grid">
+
+            {% for movie in movies %}
+
+            <article class="movie-card">
+
+
+                <!-- ART -->
+
+                <div class="movie-art">
+
+                    {% if movie["poster"] %}
+
+                    <img
+                        src="{{ movie['poster'] }}"
+                        alt="{{ movie['title'] }}"
+                        loading="lazy"
+                    >
+
+                    {% else %}
+
+                    <div class="poster-fallback">
+
+                        {% if movie["type"] == "Movie" %}
+                            🎬
+                        {% else %}
+                            📺
+                        {% endif %}
+
+                    </div>
+
+                    {% endif %}
+
+
+                    <div class="art-gradient"></div>
+
+
+                    <div class="type-badge">
+
+                        {% if movie["type"] == "Movie" %}
+                            🎬 Movie
+                        {% else %}
+                            📺 Series
+                        {% endif %}
+
+                    </div>
+
+                </div>
+
+
+                <!-- CONTENT -->
+
+                <div class="movie-card-content">
+
+                    <div class="movie-card-title-row">
+
+                        <h3>
+                            {{ movie["title"] }}
+                        </h3>
+
+                        <div class="rating-pill">
+                            ★
+                            {{ "%.1f"|format(movie["rating"]) }}
+                        </div>
+
+                    </div>
+
+
+                    <div class="movie-details">
+
+                        {% if movie["year"] %}
+
+                        <span>
+                            {{ movie["year"] }}
+                        </span>
+
+                        <span class="meta-dot">
+                            •
+                        </span>
+
+                        {% endif %}
+
+                        <span>
+                            {{ movie["type"] }}
+                        </span>
+
+                    </div>
+
+
+                    {% if movie["overview"] %}
+
+                    <p>
+                        {{ movie["overview"] }}
+                    </p>
+
+                    {% endif %}
+
+
+                    <!-- REMOVE -->
+
+                    <form
+                        action="/delete/{{ movie['id'] }}"
+                        method="post"
+                    >
+
+                        <button
+                            type="submit"
+                            class="remove-button"
+                        >
+                            Remove
+                        </button>
+
+                    </form>
+
+                </div>
+
+            </article>
+
+            {% endfor %}
+
+        </div>
+
+
+        {% else %}
+
+
+        <!-- EMPTY -->
+
+        <div class="empty-library">
+
+            <div class="empty-art">
+                🎬
+            </div>
+
+            <h3>
+                Your library is empty
+            </h3>
+
+            <p>
+                Add the first movie or series
+                you've watched.
+            </p>
+
+        </div>
+
+        {% endif %}
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- FOOTER -->
+    <!-- ================================================== -->
+
+    <footer>
+
+        <span>
+            My Movie AI
+        </span>
+
+        <span>
+            •
+        </span>
+
+        <span>
+            Movie information & artwork powered by TMDB
+        </span>
+
+    </footer>
+
+</main>
+
+</body>
+
+</html>
+```
