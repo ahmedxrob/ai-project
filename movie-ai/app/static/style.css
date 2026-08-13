@@ -1658,3 +1658,14 @@ footer {
         align-items: center;
     }
 }
+.tmdb-button {
+    border-color: rgba(1, 180, 228, 0.25);
+    background: rgba(1, 180, 228, 0.08);
+    color: #7ddaf5;
+}
+
+.tmdb-button:hover {
+    border-color: rgba(1, 180, 228, 0.45);
+    background: rgba(1, 180, 228, 0.15);
+    color: #b5edfa;
+}
