@@ -15,7 +15,9 @@
         content="#070709"
     >
 
-    <title>My Movie AI</title>
+    <title>
+        My Movie AI
+    </title>
 
     <link
         rel="stylesheet"
@@ -24,10 +26,15 @@
 
 </head>
 
+
 <body>
 
 <div class="site-background"></div>
 
+
+<!-- ====================================================== -->
+<!-- TOPBAR -->
+<!-- ====================================================== -->
 
 <nav class="topbar">
 
@@ -51,11 +58,12 @@
 
     </div>
 
+
     <div class="topbar-status">
 
         <span class="status-dot"></span>
 
-        Personal Library
+        TMDB Recommendation Engine
 
     </div>
 
@@ -65,14 +73,16 @@
 <main class="page">
 
 
+    <!-- ================================================== -->
     <!-- HERO -->
+    <!-- ================================================== -->
 
     <section class="hero">
 
         <div class="hero-content">
 
             <div class="hero-kicker">
-                YOUR PRIVATE MOVIE COLLECTION
+                YOUR PRIVATE CINEMA
             </div>
 
             <h1>
@@ -81,9 +91,9 @@
             </h1>
 
             <p>
-                Track everything you've watched,
-                rate it, and let AI help you discover
-                your next favorite.
+                Your recommendations are built from
+                what you watched, your ratings, similar
+                titles, genres and TMDB quality signals.
             </p>
 
             <div class="hero-stats">
@@ -105,11 +115,25 @@
                 <div class="stat">
 
                     <strong>
-                        🤖
+                        {{ watched_movies|length }}
                     </strong>
 
                     <span>
-                        AI Ready
+                        Movies
+                    </span>
+
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+
+                    <strong>
+                        {{ watched_series|length }}
+                    </strong>
+
+                    <span>
+                        Series
                     </span>
 
                 </div>
@@ -121,208 +145,186 @@
     </section>
 
 
-    <!-- ADD + AI -->
+    <!-- ================================================== -->
+    <!-- ADD -->
+    <!-- ================================================== -->
 
-    <section class="dashboard-grid">
+    <section class="panel add-panel">
+
+        <div class="panel-header">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    Add watched
+                </h2>
+
+            </div>
+
+            <div class="panel-icon">
+                +
+            </div>
+
+        </div>
 
 
-        <!-- ADD -->
+        <form
+            action="/add"
+            method="post"
+            class="add-form"
+        >
 
-        <div class="panel add-panel">
+            <div class="field">
 
-            <div class="panel-header">
+                <label for="title">
+                    Title
+                </label>
 
-                <div>
-
-                    <span class="panel-label">
-                        LIBRARY
-                    </span>
-
-                    <h2>
-                        Add something you've watched
-                    </h2>
-
-                </div>
-
-                <div class="panel-icon">
-                    +
-                </div>
+                <input
+                    id="title"
+                    type="text"
+                    name="title"
+                    placeholder="Interstellar"
+                    autocomplete="off"
+                    required
+                >
 
             </div>
 
 
-            <form
-                action="/add"
-                method="post"
-                class="add-form"
-            >
+            <div class="form-row">
 
                 <div class="field">
 
-                    <label for="title">
-                        Title
+                    <label for="rating">
+                        Your rating
                     </label>
 
-                    <input
-                        id="title"
-                        type="text"
-                        name="title"
-                        placeholder="Interstellar"
-                        autocomplete="off"
-                        required
-                    >
+                    <div class="input-rating">
 
-                </div>
+                        <span>
+                            ★
+                        </span>
 
-
-                <div class="form-row">
-
-                    <div class="field">
-
-                        <label for="rating">
-                            Your rating
-                        </label>
-
-                        <div class="input-rating">
-
-                            <span>
-                                ★
-                            </span>
-
-                            <input
-                                id="rating"
-                                type="number"
-                                name="rating"
-                                min="0"
-                                max="10"
-                                step="0.1"
-                                placeholder="9.5"
-                                required
-                            >
-
-                            <small>
-                                / 10
-                            </small>
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="field">
-
-                        <label for="media_type">
-                            Type
-                        </label>
-
-                        <select
-                            id="media_type"
-                            name="media_type"
+                        <input
+                            id="rating"
+                            type="number"
+                            name="rating"
+                            min="0"
+                            max="10"
+                            step="0.1"
+                            placeholder="9.5"
+                            required
                         >
 
-                            <option value="Movie">
-                                🎬 Movie
-                            </option>
-
-                            <option value="Series">
-                                📺 Series
-                            </option>
-
-                        </select>
+                        <small>
+                            /10
+                        </small>
 
                     </div>
 
                 </div>
 
 
-                <button
-                    type="submit"
-                    class="primary-button"
-                >
+                <div class="field">
 
-                    <span>
-                        Add to collection
-                    </span>
+                    <label for="media_type">
+                        Type
+                    </label>
 
-                    <span>
-                        →
-                    </span>
+                    <select
+                        id="media_type"
+                        name="media_type"
+                    >
 
-                </button>
+                        <option value="Movie">
+                            🎬 Movie
+                        </option>
 
-            </form>
+                        <option value="Series">
+                            📺 Series
+                        </option>
 
+                    </select>
 
-            <div class="panel-hint">
-                We'll automatically find the poster
-                and information using TMDB.
-            </div>
-
-        </div>
-
-
-        <!-- AI -->
-
-        <div class="panel ai-panel">
-
-            <div class="ai-glow"></div>
-
-            <div class="panel-header">
-
-                <div>
-
-                    <span class="panel-label ai-label">
-                        AI DISCOVERY
-                    </span>
-
-                    <h2>
-                        Find your next watch
-                    </h2>
-
-                </div>
-
-                <div class="ai-icon">
-                    ✦
                 </div>
 
             </div>
 
 
-            <p class="ai-description">
-                Get four movie recommendations and
-                four series recommendations at once,
-                based on your ratings.
-            </p>
-
-
-            <a
-                href="/recommendations"
-                class="batch-recommend-button"
+            <button
+                type="submit"
+                class="primary-button"
             >
 
-                <span class="batch-icon">
-                    ✦
+                <span>
+                    Add to collection
                 </span>
 
-                <span class="batch-text">
-
-                    <strong>
-                        Give me recommendations
-                    </strong>
-
-                    <small>
-                        4 movies + 4 series
-                    </small>
-
-                </span>
-
-                <span class="batch-arrow">
+                <span>
                     →
                 </span>
 
-            </a>
+            </button>
+
+        </form>
+
+
+        <div class="panel-hint">
+            TMDB automatically finds the correct title,
+            poster, year and description.
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- RECOMMENDATION CONTROL -->
+    <!-- ================================================== -->
+
+    <section class="recommend-control">
+
+        <div>
+
+            <span class="panel-label">
+                PERSONAL RECOMMENDATION ENGINE
+            </span>
+
+            <h2>
+                Find something new
+            </h2>
+
+            <p>
+                No AI request required. The engine compares
+                your highest-rated titles with TMDB's similar
+                and discovery data.
+            </p>
 
         </div>
+
+
+        <a
+            href="/recommendations"
+            class="generate-button"
+        >
+
+            <span>
+                ✦
+            </span>
+
+            <strong>
+                Get 12 Movies + 12 Series
+            </strong>
+
+            <span>
+                →
+            </span>
+
+        </a>
 
     </section>
 
@@ -336,40 +338,14 @@
     <section class="recommendations-section">
 
 
-        {% if recommendations.error %}
-
-        <div class="recommendation-error">
-
-            <div class="error-icon">
-                !
-            </div>
-
-            <div>
-
-                <strong>
-                    Recommendations unavailable
-                </strong>
-
-                <p>
-                    {{ recommendations.error }}
-                </p>
-
-            </div>
-
-        </div>
-
-
-        {% else %}
-
-
         <!-- MOVIES -->
 
-        <div class="recommendation-section-title">
+        <div class="section-heading">
 
             <div>
 
                 <span class="panel-label">
-                    AI PICKS
+                    PERSONALIZED PICKS
                 </span>
 
                 <h2>
@@ -379,7 +355,7 @@
             </div>
 
             <span>
-                {{ recommendations.movies|length }} picks
+                {{ recommendations.movies|length }} results
             </span>
 
         </div>
@@ -391,27 +367,29 @@
 
             {% for item in recommendations.movies %}
 
-            <article class="recommendation-movie-card">
+            <article class="recommendation-card">
 
-                <div class="recommendation-art">
+                <div class="recommendation-poster">
 
                     {% if item.poster %}
 
                     <img
                         src="{{ item.poster }}"
-                        alt="{{ item.tmdb_title }}"
+                        alt="{{ item.title }}"
                         loading="lazy"
                     >
 
                     {% else %}
 
-                    <div class="recommendation-placeholder">
+                    <div class="poster-placeholder">
                         🎬
                     </div>
 
                     {% endif %}
 
-                    <div class="recommendation-art-gradient"></div>
+
+                    <div class="poster-overlay"></div>
+
 
                     <div class="recommendation-type">
                         🎬 Movie
@@ -420,15 +398,11 @@
                 </div>
 
 
-                <div class="recommendation-card-content">
+                <div class="recommendation-content">
 
-                    <div class="recommendation-title-row">
-
-                        <h3>
-                            {{ item.tmdb_title }}
-                        </h3>
-
-                    </div>
+                    <h3>
+                        {{ item.title }}
+                    </h3>
 
 
                     <div class="recommendation-meta">
@@ -446,46 +420,39 @@
                         {% endif %}
 
                         <span>
-                            🎬 Movie
+                            ⭐ {{ "%.1f"|format(item.vote_average) }}
                         </span>
 
                     </div>
 
 
-                    {% if item.reason %}
-
-                    <p class="recommendation-reason">
-                        {{ item.reason }}
+                    <p>
+                        {{ item.overview }}
                     </p>
 
-                    {% endif %}
 
-
-                    <div class="recommendation-card-actions">
-
-                        {% if item.tmdb_id %}
+                    <div class="recommendation-actions">
 
                         <a
                             href="https://www.themoviedb.org/movie/{{ item.tmdb_id }}"
                             target="_blank"
                             rel="noopener noreferrer"
-                            class="card-tmdb-button"
+                            class="tmdb-button"
                         >
                             🎬 TMDB
                         </a>
-
-                        {% endif %}
 
 
                         <form
                             action="/recommendation/watched"
                             method="post"
+                            class="watched-inline"
                         >
 
                             <input
                                 type="hidden"
                                 name="title"
-                                value="{{ item.tmdb_title }}"
+                                value="{{ item.title }}"
                             >
 
                             <input
@@ -500,15 +467,22 @@
                                 value="{{ item.tmdb_id }}"
                             >
 
+
                             <input
-                                type="hidden"
+                                type="number"
                                 name="rating"
+                                min="0"
+                                max="10"
+                                step="0.1"
                                 value="8"
+                                required
+                                aria-label="Your rating"
                             >
+
 
                             <button
                                 type="submit"
-                                class="card-watched-button"
+                                class="watched-button"
                             >
                                 ✅ Watched
                             </button>
@@ -516,57 +490,6 @@
                         </form>
 
                     </div>
-
-
-                    <form
-                        action="/recommendation/watched"
-                        method="post"
-                        class="quick-rating-form"
-                    >
-
-                        <input
-                            type="hidden"
-                            name="title"
-                            value="{{ item.tmdb_title }}"
-                        >
-
-                        <input
-                            type="hidden"
-                            name="media_type"
-                            value="Movie"
-                        >
-
-                        <input
-                            type="hidden"
-                            name="tmdb_id"
-                            value="{{ item.tmdb_id }}"
-                        >
-
-                        <label>
-                            Rating
-                        </label>
-
-                        <input
-                            type="number"
-                            name="rating"
-                            min="0"
-                            max="10"
-                            step="0.1"
-                            value="8"
-                            required
-                        >
-
-                        <span>
-                            /10
-                        </span>
-
-                        <button
-                            type="submit"
-                        >
-                            Save
-                        </button>
-
-                    </form>
 
                 </div>
 
@@ -578,21 +501,21 @@
 
         {% else %}
 
-        <p class="no-recommendations">
-            No movie recommendations were found.
-        </p>
+        <div class="empty-recommendations">
+            No movie candidates found yet.
+        </div>
 
         {% endif %}
 
 
         <!-- SERIES -->
 
-        <div class="recommendation-section-title series-heading">
+        <div class="section-heading series-section-heading">
 
             <div>
 
                 <span class="panel-label">
-                    AI PICKS
+                    PERSONALIZED PICKS
                 </span>
 
                 <h2>
@@ -602,7 +525,7 @@
             </div>
 
             <span>
-                {{ recommendations.series|length }} picks
+                {{ recommendations.series|length }} results
             </span>
 
         </div>
@@ -614,44 +537,42 @@
 
             {% for item in recommendations.series %}
 
-            <article class="recommendation-movie-card">
+            <article class="recommendation-card">
 
-                <div class="recommendation-art">
+                <div class="recommendation-poster">
 
                     {% if item.poster %}
 
                     <img
                         src="{{ item.poster }}"
-                        alt="{{ item.tmdb_title }}"
+                        alt="{{ item.title }}"
                         loading="lazy"
                     >
 
                     {% else %}
 
-                    <div class="recommendation-placeholder">
+                    <div class="poster-placeholder">
                         📺
                     </div>
 
                     {% endif %}
 
-                    <div class="recommendation-art-gradient"></div>
 
-                    <div class="recommendation-type series-type">
+                    <div class="poster-overlay"></div>
+
+
+                    <div class="recommendation-type series-badge">
                         📺 Series
                     </div>
 
                 </div>
 
 
-                <div class="recommendation-card-content">
+                <div class="recommendation-content">
 
-                    <div class="recommendation-title-row">
-
-                        <h3>
-                            {{ item.tmdb_title }}
-                        </h3>
-
-                    </div>
+                    <h3>
+                        {{ item.title }}
+                    </h3>
 
 
                     <div class="recommendation-meta">
@@ -669,46 +590,39 @@
                         {% endif %}
 
                         <span>
-                            📺 Series
+                            ⭐ {{ "%.1f"|format(item.vote_average) }}
                         </span>
 
                     </div>
 
 
-                    {% if item.reason %}
-
-                    <p class="recommendation-reason">
-                        {{ item.reason }}
+                    <p>
+                        {{ item.overview }}
                     </p>
 
-                    {% endif %}
 
-
-                    <div class="recommendation-card-actions">
-
-                        {% if item.tmdb_id %}
+                    <div class="recommendation-actions">
 
                         <a
                             href="https://www.themoviedb.org/tv/{{ item.tmdb_id }}"
                             target="_blank"
                             rel="noopener noreferrer"
-                            class="card-tmdb-button"
+                            class="tmdb-button"
                         >
                             🎬 TMDB
                         </a>
-
-                        {% endif %}
 
 
                         <form
                             action="/recommendation/watched"
                             method="post"
+                            class="watched-inline"
                         >
 
                             <input
                                 type="hidden"
                                 name="title"
-                                value="{{ item.tmdb_title }}"
+                                value="{{ item.title }}"
                             >
 
                             <input
@@ -723,15 +637,22 @@
                                 value="{{ item.tmdb_id }}"
                             >
 
+
                             <input
-                                type="hidden"
+                                type="number"
                                 name="rating"
+                                min="0"
+                                max="10"
+                                step="0.1"
                                 value="8"
+                                required
+                                aria-label="Your rating"
                             >
+
 
                             <button
                                 type="submit"
-                                class="card-watched-button"
+                                class="watched-button"
                             >
                                 ✅ Watched
                             </button>
@@ -739,57 +660,6 @@
                         </form>
 
                     </div>
-
-
-                    <form
-                        action="/recommendation/watched"
-                        method="post"
-                        class="quick-rating-form"
-                    >
-
-                        <input
-                            type="hidden"
-                            name="title"
-                            value="{{ item.tmdb_title }}"
-                        >
-
-                        <input
-                            type="hidden"
-                            name="media_type"
-                            value="Series"
-                        >
-
-                        <input
-                            type="hidden"
-                            name="tmdb_id"
-                            value="{{ item.tmdb_id }}"
-                        >
-
-                        <label>
-                            Rating
-                        </label>
-
-                        <input
-                            type="number"
-                            name="rating"
-                            min="0"
-                            max="10"
-                            step="0.1"
-                            value="8"
-                            required
-                        >
-
-                        <span>
-                            /10
-                        </span>
-
-                        <button
-                            type="submit"
-                        >
-                            Save
-                        </button>
-
-                    </form>
 
                 </div>
 
@@ -801,11 +671,9 @@
 
         {% else %}
 
-        <p class="no-recommendations">
-            No series recommendations were found.
-        </p>
-
-        {% endif %}
+        <div class="empty-recommendations">
+            No series candidates found yet.
+        </div>
 
         {% endif %}
 
@@ -815,12 +683,12 @@
 
 
     <!-- ================================================== -->
-    <!-- COLLECTION -->
+    <!-- WATCHED MOVIES -->
     <!-- ================================================== -->
 
-    <section class="collection-section">
+    <section class="library-section">
 
-        <div class="collection-heading">
+        <div class="section-heading">
 
             <div>
 
@@ -829,36 +697,27 @@
                 </span>
 
                 <h2>
-                    Watched
+                    🎬 Watched Movies
                 </h2>
 
             </div>
 
-
-            <div class="collection-count">
-
-                <strong>
-                    {{ movies|length }}
-                </strong>
-
-                <span>
-                    titles
-                </span>
-
-            </div>
+            <span>
+                {{ watched_movies|length }}
+            </span>
 
         </div>
 
 
-        {% if movies %}
+        {% if watched_movies %}
 
-        <div class="movie-grid">
+        <div class="library-grid">
 
-            {% for movie in movies %}
+            {% for movie in watched_movies %}
 
-            <article class="movie-card">
+            <article class="library-card">
 
-                <div class="movie-art">
+                <div class="library-poster">
 
                     {% if movie["poster"] %}
 
@@ -870,52 +729,23 @@
 
                     {% else %}
 
-                    <div class="poster-fallback">
-
-                        {% if movie["type"] == "Movie" %}
-                            🎬
-                        {% else %}
-                            📺
-                        {% endif %}
-
+                    <div class="poster-placeholder">
+                        🎬
                     </div>
 
                     {% endif %}
 
-
-                    <div class="art-gradient"></div>
-
-
-                    <div class="type-badge">
-
-                        {% if movie["type"] == "Movie" %}
-                            🎬 Movie
-                        {% else %}
-                            📺 Series
-                        {% endif %}
-
-                    </div>
-
                 </div>
 
 
-                <div class="movie-card-content">
+                <div class="library-content">
 
-                    <div class="movie-card-title-row">
-
-                        <h3>
-                            {{ movie["title"] }}
-                        </h3>
-
-                        <div class="rating-pill">
-                            ★
-                            {{ "%.1f"|format(movie["rating"]) }}
-                        </div>
-
-                    </div>
+                    <h3>
+                        {{ movie["title"] }}
+                    </h3>
 
 
-                    <div class="movie-details">
+                    <div class="library-meta">
 
                         {% if movie["year"] %}
 
@@ -923,14 +753,14 @@
                             {{ movie["year"] }}
                         </span>
 
-                        <span class="meta-dot">
+                        <span>
                             •
                         </span>
 
                         {% endif %}
 
-                        <span>
-                            {{ movie["type"] }}
+                        <span class="user-rating">
+                            ★ {{ "%.1f"|format(movie["rating"]) }}/10
                         </span>
 
                     </div>
@@ -967,24 +797,136 @@
 
         </div>
 
+        {% else %}
+
+        <div class="empty-library">
+            No watched movies yet.
+        </div>
+
+        {% endif %}
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- WATCHED SERIES -->
+    <!-- ================================================== -->
+
+    <section class="library-section">
+
+        <div class="section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    📺 Watched Series
+                </h2>
+
+            </div>
+
+            <span>
+                {{ watched_series|length }}
+            </span>
+
+        </div>
+
+
+        {% if watched_series %}
+
+        <div class="library-grid">
+
+            {% for movie in watched_series %}
+
+            <article class="library-card">
+
+                <div class="library-poster">
+
+                    {% if movie["poster"] %}
+
+                    <img
+                        src="{{ movie['poster'] }}"
+                        alt="{{ movie['title'] }}"
+                        loading="lazy"
+                    >
+
+                    {% else %}
+
+                    <div class="poster-placeholder">
+                        📺
+                    </div>
+
+                    {% endif %}
+
+                </div>
+
+
+                <div class="library-content">
+
+                    <h3>
+                        {{ movie["title"] }}
+                    </h3>
+
+
+                    <div class="library-meta">
+
+                        {% if movie["year"] %}
+
+                        <span>
+                            {{ movie["year"] }}
+                        </span>
+
+                        <span>
+                            •
+                        </span>
+
+                        {% endif %}
+
+                        <span class="user-rating">
+                            ★ {{ "%.1f"|format(movie["rating"]) }}/10
+                        </span>
+
+                    </div>
+
+
+                    {% if movie["overview"] %}
+
+                    <p>
+                        {{ movie["overview"] }}
+                    </p>
+
+                    {% endif %}
+
+
+                    <form
+                        action="/delete/{{ movie['id'] }}"
+                        method="post"
+                    >
+
+                        <button
+                            type="submit"
+                            class="remove-button"
+                        >
+                            Remove
+                        </button>
+
+                    </form>
+
+                </div>
+
+            </article>
+
+            {% endfor %}
+
+        </div>
 
         {% else %}
 
         <div class="empty-library">
-
-            <div class="empty-art">
-                🎬
-            </div>
-
-            <h3>
-                Your library is empty
-            </h3>
-
-            <p>
-                Add the first movie or series
-                you've watched.
-            </p>
-
+            No watched series yet.
         </div>
 
         {% endif %}
@@ -1003,7 +945,7 @@
         </span>
 
         <span>
-            Movie information & artwork powered by TMDB
+            Recommendations powered by TMDB
         </span>
 
     </footer>
