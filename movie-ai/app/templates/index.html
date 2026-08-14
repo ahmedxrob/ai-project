@@ -1497,7 +1497,11 @@
 
             {% for movie in watched_movies %}
 
-            <article class="library-card">
+            <article
+                class="library-card library-clickable"
+                data-media-type="Movie"
+                data-tmdb-id="{{ movie['tmdb_id'] }}"
+            >
 
                 <div class="library-poster">
 
@@ -1625,7 +1629,11 @@
 
             {% for movie in watched_series %}
 
-            <article class="library-card">
+            <article
+                class="library-card library-clickable"
+                data-media-type="Series"
+                data-tmdb-id="{{ movie['tmdb_id'] }}"
+            >
 
                 <div class="library-poster">
 
@@ -2571,6 +2579,51 @@ document
 
                     window.location.href =
                         `${ingressPath}/title/${mediaType}/${tmdbId}`;
+                }
+            );
+
+        }
+    );
+
+
+/* ========================================================= */
+/* OPEN WATCHED LIBRARY DETAIL PAGE */
+/* ========================================================= */
+document
+    .querySelectorAll(
+        ".library-clickable"
+    )
+    .forEach(
+        function (card) {
+
+            card.addEventListener(
+                "click",
+                function (event) {
+
+                    /* The Remove button/form must keep working normally. */
+                    if (
+                        event.target.closest(
+                            "button, form, input, select, a"
+                        )
+                    ) {
+                        return;
+                    }
+
+                    const mediaType =
+                        card.dataset.mediaType;
+
+                    const tmdbId =
+                        card.dataset.tmdbId;
+
+                    if (!mediaType || !tmdbId) {
+                        return;
+                    }
+
+                    const ingressPath =
+                        document.body.dataset.ingressPath || "";
+
+                    window.location.href =
+                        `${ingressPath}/title/${mediaType}/${tmdbId}?match=100`;
                 }
             );
 
