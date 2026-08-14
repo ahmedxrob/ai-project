@@ -4231,3 +4231,57 @@ footer {
         min-width: 178px;
     }
 }
+
+/* ============================================================
+   AI-ONLY GENERATION LOADER
+   TMDB rails stay visible while Gemini works in background.
+   ============================================================ */
+
+.ai-generation-loading {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    min-height: 128px;
+    padding: 22px 24px;
+    border: 1px solid rgba(124,58,237,0.18);
+    border-radius: 14px;
+    background: linear-gradient(90deg, rgba(124,58,237,0.09), rgba(18,18,23,0.72));
+    color: #b8b2c6;
+}
+
+.ai-generation-loading strong {
+    display: block;
+    color: #eeeaf7;
+    font-size: 13px;
+    font-weight: 850;
+}
+
+.ai-generation-loading span {
+    display: block;
+    margin-top: 5px;
+    color: #85818f;
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.ai-generation-spinner {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    border: 3px solid rgba(255,255,255,0.09);
+    border-top-color: #8b5cf6;
+    border-right-color: #e50914;
+    border-radius: 50%;
+    animation: aiGenerationSpin .8s linear infinite;
+}
+
+@keyframes aiGenerationSpin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 600px) {
+    .ai-generation-loading {
+        min-height: 110px;
+        padding: 18px;
+    }
+}
