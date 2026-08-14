@@ -2038,10 +2038,10 @@ def title_detail(
     else:
         recent_scores = []
         for item in watched:
-            rating = float(item.get("rating") or 0)
+            rating = float(item["rating"] or 0)
             if rating < 7:
                 continue
-            overview = (item.get("overview") or "").strip()
+            overview = (item["overview"] or "").strip()
             if overview and detail.get("overview"):
                 score = fuzz.token_set_ratio(
                     overview.lower(),
@@ -2061,7 +2061,7 @@ def title_detail(
         tmdb_id,
     )
     detail["is_watched"] = bool(watched_item)
-    detail["user_rating"] = watched_item.get("rating") if watched_item else None
+    detail["user_rating"] = watched_item["rating"] if watched_item else None
 
     response = templates.TemplateResponse(
         request=request,
