@@ -1974,17 +1974,9 @@ def api_trending():
 @app.get("/api/search")
 def api_search(
     q: str = "",
-    media_type: str = "Movie",
 ):
 
     q = q.strip()
-
-    if media_type not in (
-        "Movie",
-        "Series",
-    ):
-
-        media_type = "Movie"
 
     if len(q) < 2:
 
@@ -1992,14 +1984,46 @@ def api_search(
             "results": []
         }
 
-    results = tmdb_live_search(
-        q,
-        media_type,
+    # Search Movies and TV at the same time.
+    # The frontend then automatically detects the selected type.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+
+        movie_future = executor.submit(
+            tmdb_live_search,
+            q,
+            "Movie",
+        )
+
+        series_future = executor.submit(
+            tmdb_live_search,
+            q,
+            "Series",
+        )
+
+        movie_results = movie_future.result()
+        series_results = series_future.result()
+
+    results = movie_results + series_results
+
+    # Put close title matches first while keeping the movie/series
+    # identity attached to every result.
+    query_lower = q.lower()
+
+    def search_score(item):
+        title = (item.get("title") or "").lower()
+        if title == query_lower:
+            return 1000
+        if title.startswith(query_lower):
+            return 900
+        return 800
+
+    results.sort(
+        key=search_score,
+        reverse=True,
     )
 
     return {
-        "results":
-            results
+        "results": results
     }
 
 
