@@ -1913,6 +1913,32 @@ if (closeSearchButton) {
 }
 
 
+/* Close the entire search panel when clicking outside it. */
+document.addEventListener(
+    "click",
+    function (event) {
+
+        if (!searchPanel) {
+            return;
+        }
+
+        if (!searchPanel.classList.contains("is-open")) {
+            return;
+        }
+
+        const clickedInsidePanel =
+            event.target.closest("#search-panel");
+
+        const clickedOpenButton =
+            event.target.closest("#open-search-button");
+
+        if (!clickedInsidePanel && !clickedOpenButton) {
+            closeSearchPanel();
+        }
+    }
+);
+
+
 /* Never reopen the search panel after a refresh. */
 if (window.history && "scrollRestoration" in window.history) {
     window.history.scrollRestoration = "manual";
