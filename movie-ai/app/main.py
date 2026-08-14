@@ -2098,6 +2098,42 @@ def add(
 
 
 # ============================================================
+# FIND JUST-ADDED LIBRARY ROW
+# ============================================================
+
+def find_library_row(tmdb_id, media_type, title):
+    rows = get_all()
+
+    matches = []
+
+    for row in rows:
+        if row["type"] != media_type:
+            continue
+
+        same_tmdb = (
+            tmdb_id is not None
+            and row["tmdb_id"] is not None
+            and int(row["tmdb_id"]) == int(tmdb_id)
+        )
+
+        same_title = (
+            str(row["title"] or "").strip().lower()
+            == str(title or "").strip().lower()
+        )
+
+        if same_tmdb or same_title:
+            matches.append(row)
+
+    if not matches:
+        return None
+
+    return max(
+        matches,
+        key=lambda row: int(row["id"] or 0),
+    )
+
+
+# ============================================================
 # AJAX ADD WATCHED
 # ============================================================
 
@@ -2164,9 +2200,16 @@ def api_add(
             "tmdb_url": None,
         }
 
+    library_row = find_library_row(
+        canonical.get("tmdb_id") or tmdb_id,
+        media_type,
+        canonical.get("title") or title,
+    )
+
     return {
         "ok": True,
         "item": {
+            "id": library_row["id"] if library_row else None,
             "title": canonical.get("title") or title,
             "tmdb_id": canonical.get("tmdb_id"),
             "year": canonical.get("year"),
@@ -2244,11 +2287,39 @@ def api_recommendation_watched(
             tmdb_id=tmdb_id,
         )
 
+    final_title = (
+        tmdb_data.get("title")
+        if tmdb_data
+        else title
+    )
+
+    library_row = find_library_row(
+        tmdb_id,
+        media_type,
+        final_title,
+    )
+
     return {
         "ok": True,
+        "id": library_row["id"] if library_row else None,
         "tmdb_id": tmdb_id,
-        "title": title,
+        "title": final_title,
         "media_type": media_type,
+        "poster": (
+            tmdb_data.get("poster")
+            if tmdb_data
+            else None
+        ),
+        "year": (
+            tmdb_data.get("year")
+            if tmdb_data
+            else None
+        ),
+        "overview": (
+            tmdb_data.get("overview")
+            if tmdb_data
+            else ""
+        ),
     }
 
 
