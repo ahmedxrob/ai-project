@@ -11,6 +11,13 @@ startup: application
 boot: auto
 init: false
 
+ingress: true
+ingress_port: 8099
+ingress_entry: /
+
+panel_icon: mdi:movie-open
+panel_title: Movie AI
+
 ports:
   8099/tcp: 8099
 
@@ -26,4 +33,3 @@ options:
 schema:
   tmdb_token: password
   gemini_api_key: password
-
