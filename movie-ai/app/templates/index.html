@@ -209,30 +209,6 @@
             data-ajax-add="true"
         >
 
-            <!-- TYPE -->
-
-            <div class="field">
-
-                <label for="media_type">
-                    Type
-                </label>
-
-                <select
-                    id="media_type"
-                    name="media_type"
-                >
-
-                    <option value="Movie">
-                        🎬 Movie
-                    </option>
-
-                    <option value="Series">
-                        📺 Series
-                    </option>
-
-                </select>
-
-            </div>
 
 
             <!-- SEARCH -->
@@ -2167,35 +2143,6 @@ if (titleInput) {
 
 
 /* ========================================================= */
-/* CHANGE MOVIE/SERIES */
-/* ========================================================= */
-
-if (mediaType) {
-
-    mediaType.addEventListener(
-        "change",
-        function () {
-
-            const query =
-                titleInput.value.trim();
-
-            tmdbIdInput.value =
-                "";
-
-            if (
-                query.length >= 2
-            ) {
-
-                performSearch(
-                    query
-                );
-            }
-        }
-    );
-}
-
-
-/* ========================================================= */
 /* PERFORM SEARCH */
 /* ========================================================= */
 
@@ -2225,7 +2172,7 @@ async function performSearch(
 
         const response =
             await fetch(
-                `${appUrl("/api/search")}?q=${encodeURIComponent(query)}&media_type=${encodeURIComponent(mediaType.value)}`
+                `${appUrl("/api/search")}?q=${encodeURIComponent(query)}`
             );
 
 
@@ -2378,6 +2325,10 @@ function renderSearchResults(
                                     ""
                                 }
 
+                                <span class="search-type-badge ${item.media_type === "Series" ? "search-series" : "search-movie"}">
+                                    ${item.media_type === "Series" ? "📺 SERIES" : "🎬 MOVIE"}
+                                </span>
+
                                 <span>
                                     ★ ${rating}
                                 </span>
@@ -2458,6 +2409,11 @@ function selectSearchResult(
     tmdbIdInput.value =
         item.tmdb_id;
 
+    // Automatically detect and store Movie vs Series.
+    if (mediaType) {
+        mediaType.value =
+            item.media_type || "Movie";
+    }
 
     titleInput.value =
         item.title;
@@ -2579,7 +2535,7 @@ function renderSelectedPreview(
                 <div class="selected-preview-badge">
 
                     ${
-                        mediaType.value === "Movie"
+                        item.media_type === "Movie"
                         ?
                         "🎬 Movie"
                         :
