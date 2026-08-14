@@ -3539,7 +3539,8 @@ footer {
     transition: opacity .45s ease, visibility .45s ease;
 }
 
-.recommendation-loader.hidden {
+.recommendation-loader.hidden,
+.recommendation-loader.loaded {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -3549,22 +3550,22 @@ footer {
     position: absolute;
     inset: 0;
     background:
-        linear-gradient(180deg, rgba(5,5,7,.28), rgba(5,5,7,.92)),
-        url('/static/background.jpg');
+        linear-gradient(180deg, rgba(5,5,7,.28), rgba(5,5,7,.90)),
+        url("/static/background.jpg");
     background-size: cover;
     background-position: center;
     filter: blur(2px);
     transform: scale(1.04);
-    opacity: .72;
+    opacity: .70;
 }
 
 .recommendation-loader-backdrop::after {
-    content: '';
+    content: "";
     position: absolute;
     inset: 0;
     background:
-        radial-gradient(circle at center, rgba(124,58,237,.16), transparent 34%),
-        radial-gradient(circle at 50% 75%, rgba(229,9,20,.10), transparent 35%);
+        radial-gradient(circle at center, rgba(124,58,237,.15), transparent 35%),
+        radial-gradient(circle at 50% 72%, rgba(229,9,20,.08), transparent 35%);
 }
 
 .recommendation-loader-card {
@@ -3594,7 +3595,7 @@ footer {
     background: linear-gradient(135deg, #ef233c, #97000d);
     box-shadow: 0 15px 45px rgba(229,9,20,.30);
     font-size: 31px;
-    animation: recommendationLoaderPulse 2s ease-in-out infinite;
+    animation: loaderPulse 2s ease-in-out infinite;
 }
 
 .recommendation-loader-spinner {
@@ -3605,7 +3606,7 @@ footer {
     border-top-color: #8b5cf6;
     border-right-color: #e50914;
     border-radius: 50%;
-    animation: recommendationLoaderSpin .8s linear infinite;
+    animation: loaderSpin .8s linear infinite;
 }
 
 .recommendation-loader-card h2 {
@@ -3639,7 +3640,7 @@ footer {
     border-radius: 999px;
     background: linear-gradient(90deg, #e50914, #8b5cf6, #01b4e4);
     box-shadow: 0 0 18px rgba(139,92,246,.55);
-    animation: recommendationLoaderProgress 1.8s ease-in-out infinite;
+    animation: loaderProgress 1.8s ease-in-out infinite;
 }
 
 .recommendation-loader-status {
@@ -3662,16 +3663,16 @@ footer {
     box-shadow: 0 0 10px rgba(53,208,127,.75);
 }
 
-@keyframes recommendationLoaderSpin {
+@keyframes loaderSpin {
     to { transform: rotate(360deg); }
 }
 
-@keyframes recommendationLoaderPulse {
+@keyframes loaderPulse {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.05); }
 }
 
-@keyframes recommendationLoaderProgress {
+@keyframes loaderProgress {
     0% { transform: translateX(-130%); }
     50% { transform: translateX(100%); }
     100% { transform: translateX(300%); }
@@ -3682,7 +3683,6 @@ footer {
         width: calc(100% - 30px);
         padding: 34px 22px;
     }
-
     .recommendation-loader-card h2 {
         font-size: 19px;
     }
