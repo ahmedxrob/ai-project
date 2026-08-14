@@ -1856,6 +1856,108 @@ def home(request: Request):
 
 
 # ============================================================
+# TRENDING NOW
+# ============================================================
+
+def get_trending_titles(media_type, limit=8):
+    """Return current TMDB daily trending titles, excluding watched/rejected items."""
+
+    token = get_env("TMDB_TOKEN")
+
+    if not token:
+        return []
+
+    endpoint = (
+        "https://api.themoviedb.org/3/trending/"
+        f"{'movie' if media_type == 'Movie' else 'tv'}/day"
+    )
+
+    try:
+        data = tmdb_request(
+            endpoint,
+            token,
+            {"language": "en-US"},
+        )
+
+        watched_ids = {
+            int(item["tmdb_id"])
+            for item in get_all()
+            if item["tmdb_id"] is not None
+            and item["type"] == media_type
+        }
+
+        rejected_ids = {
+            int(item_id)
+            for item_id in get_not_interested_ids(media_type)
+        }
+
+        blocked_ids = watched_ids | rejected_ids
+
+        output = []
+        seen = set()
+
+        for item in data.get("results", []):
+            tmdb_id = item.get("id")
+
+            if not tmdb_id:
+                continue
+
+            tmdb_id = int(tmdb_id)
+
+            if tmdb_id in blocked_ids or tmdb_id in seen:
+                continue
+
+            normalized = normalise_tmdb_result(
+                item,
+                media_type,
+            )
+
+            if not normalized.get("title"):
+                continue
+
+            normalized["source"] = "TRENDING"
+            normalized["reason"] = (
+                "Trending on TMDB right now."
+            )
+
+            output.append(normalized)
+            seen.add(tmdb_id)
+
+            if len(output) >= limit:
+                break
+
+        return output
+
+    except Exception as error:
+        print(
+            f"TMDB trending {media_type.lower()} error: {error}"
+        )
+        return []
+
+
+@app.get("/api/trending")
+def api_trending():
+    """Return separate current trending movie and TV rails."""
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        movie_future = executor.submit(
+            get_trending_titles,
+            "Movie",
+            8,
+        )
+        series_future = executor.submit(
+            get_trending_titles,
+            "Series",
+            8,
+        )
+
+        return {
+            "movies": movie_future.result(),
+            "series": series_future.result(),
+        }
+
+
+# ============================================================
 # LIVE SEARCH API
 # ============================================================
 
