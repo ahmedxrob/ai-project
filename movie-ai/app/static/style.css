@@ -3687,3 +3687,254 @@ footer {
         font-size: 19px;
     }
 }
+
+
+/* ============================================================
+   FINAL NETFLIX-STYLE DISCOVERY OVERRIDE
+   This block intentionally comes LAST so it overrides the
+   previous 8/6/4-column recommendation rules.
+   Watched library remains on the existing library grid.
+   ============================================================ */
+
+.page {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding-left: 34px;
+    padding-right: 34px;
+    padding-bottom: 100px;
+}
+
+.hero {
+    padding-left: 2.5%;
+    padding-right: 2.5%;
+}
+
+.recommendations-section,
+.source-section,
+.tmdb-section,
+.recommend-control {
+    width: 100%;
+}
+
+/* Netflix-style horizontal rails */
+.recommendation-grid {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    width: 100%;
+    gap: 22px !important;
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+    padding: 6px 8px 26px 4px !important;
+    scroll-behavior: smooth;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,.22) transparent;
+}
+
+.recommendation-grid::-webkit-scrollbar {
+    height: 7px;
+}
+
+.recommendation-grid::-webkit-scrollbar-track {
+    background: rgba(255,255,255,.035);
+    border-radius: 999px;
+}
+
+.recommendation-grid::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,.22);
+    border-radius: 999px;
+}
+
+.recommendation-grid::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,.35);
+}
+
+.recommendation-card {
+    flex: 0 0 250px !important;
+    width: 250px !important;
+    min-width: 250px !important;
+    scroll-snap-align: start;
+}
+
+.recommendation-poster {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+}
+
+.recommendation-content {
+    padding: 15px !important;
+}
+
+.recommendation-content > h3,
+.recommendation-title-row h3 {
+    font-size: 16px !important;
+}
+
+.recommendation-overview {
+    height: 62px !important;
+    font-size: 10px !important;
+}
+
+/* Larger / cleaner search */
+.search-input-wrap input {
+    height: 64px !important;
+    padding-left: 55px !important;
+    padding-right: 54px !important;
+    border-radius: 17px !important;
+    font-size: 16px !important;
+}
+
+.search-results {
+    width: 100%;
+    max-height: 600px;
+    border-radius: 20px !important;
+}
+
+.search-result-item {
+    min-height: 102px !important;
+    border-radius: 13px !important;
+}
+
+.search-result-poster {
+    width: 54px !important;
+    min-width: 54px !important;
+    height: 78px !important;
+}
+
+.selected-preview {
+    min-height: 235px !important;
+    border-radius: 18px !important;
+}
+
+.selected-preview-card {
+    min-height: 235px !important;
+}
+
+.selected-preview-poster {
+    width: 158px !important;
+    min-width: 158px !important;
+}
+
+.selected-preview-info {
+    padding: 22px !important;
+}
+
+.selected-preview-info h3 {
+    font-size: 27px !important;
+}
+
+/* Strong AI / TMDB distinction */
+.ai-heading {
+    background: linear-gradient(
+        90deg,
+        rgba(124,58,237,.12),
+        rgba(18,18,23,.82)
+    ) !important;
+}
+
+.tmdb-heading {
+    background: linear-gradient(
+        90deg,
+        rgba(1,180,228,.09),
+        rgba(18,18,23,.82)
+    ) !important;
+}
+
+.ai-card:hover {
+    border-color: rgba(167,139,250,.35) !important;
+    box-shadow:
+        0 30px 75px rgba(91,33,182,.20),
+        0 20px 60px rgba(0,0,0,.45) !important;
+}
+
+.tmdb-card:hover {
+    border-color: rgba(1,180,228,.34) !important;
+    box-shadow:
+        0 30px 75px rgba(1,100,125,.18),
+        0 20px 60px rgba(0,0,0,.45) !important;
+}
+
+/* Full-screen desktop */
+@media (min-width: 1600px) {
+    .page {
+        padding-left: 44px;
+        padding-right: 44px;
+    }
+
+    .recommendation-card {
+        flex-basis: 260px !important;
+        width: 260px !important;
+        min-width: 260px !important;
+    }
+
+    .recommendation-grid {
+        gap: 24px !important;
+    }
+}
+
+@media (min-width: 2000px) {
+    .page {
+        padding-left: 60px;
+        padding-right: 60px;
+    }
+
+    .recommendation-card {
+        flex-basis: 280px !important;
+        width: 280px !important;
+        min-width: 280px !important;
+    }
+
+    .recommendation-grid {
+        gap: 26px !important;
+    }
+}
+
+/* Keep watched library as a normal grid */
+.library-grid {
+    display: grid !important;
+}
+
+/* Mobile keeps the streaming rail instead of stacking */
+@media (max-width: 850px) {
+    .page {
+        padding-left: 18px;
+        padding-right: 18px;
+    }
+
+    .recommendation-card {
+        flex-basis: 225px !important;
+        width: 225px !important;
+        min-width: 225px !important;
+    }
+
+    .recommendation-grid {
+        gap: 16px !important;
+    }
+}
+
+@media (max-width: 600px) {
+    .page {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+
+    .recommendation-card {
+        flex-basis: 195px !important;
+        width: 195px !important;
+        min-width: 195px !important;
+    }
+
+    .recommendation-grid {
+        gap: 13px !important;
+        padding-bottom: 18px !important;
+    }
+}
+
+@media (max-width: 430px) {
+    .recommendation-card {
+        flex-basis: 178px !important;
+        width: 178px !important;
+        min-width: 178px !important;
+    }
+}
