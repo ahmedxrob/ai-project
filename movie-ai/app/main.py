@@ -7,7 +7,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -75,97 +75,59 @@ RECENT_HISTORY_LIMIT = 12
 
 
 # ============================================================
+# RECOMMENDATION BACKGROUND STATE
+# ============================================================
+
+recommendation_state = {
+    "status": "idle",
+    "data": None,
+    "error": None,
+}
+
+
+# ============================================================
+# BACKGROUND RECOMMENDATION JOB
+# ============================================================
+
+def run_recommendation_job():
+
+    global recommendation_state
+
+    try:
+
+        print("Background recommendation job started...")
+
+        recommendation_state["status"] = "loading"
+        recommendation_state["error"] = None
+
+        movies = get_all()
+
+        result = generate_recommendations(movies)
+
+        recommendation_state["data"] = result
+        recommendation_state["status"] = "ready"
+
+        print("Background recommendation job finished.")
+
+    except Exception as error:
+
+        print(
+            f"Background recommendation error: {error}"
+        )
+
+        recommendation_state["status"] = "error"
+        recommendation_state["error"] = str(error)
+
+
+# ============================================================
 # ENVIRONMENT
 # ============================================================
 
 def get_env(name: str) -> str:
-
     return os.getenv(
         name,
         ""
     ).strip()
-
-
-# ============================================================
-# INGRESS-AWARE PATH
-# ============================================================
-
-def get_ingress_path(
-    request: Request,
-) -> str:
-    """
-    Home Assistant Ingress sends X-Ingress-Path.
-
-    Example:
-
-        /app/28a4dad9_movie_ai
-
-    Direct access returns an empty string.
-    """
-
-    path = request.headers.get(
-        "x-ingress-path",
-        ""
-    )
-
-    if not path:
-        return ""
-
-    return path.rstrip("/")
-
-
-def build_app_url(
-    request: Request,
-    path: str = "",
-) -> str:
-    """
-    Builds URLs correctly for both:
-
-    Direct:
-        /recommendations
-
-    Ingress:
-        /app/28a4dad9_movie_ai/recommendations
-    """
-
-    ingress_path = get_ingress_path(
-        request
-    )
-
-    clean_path = (
-        path.strip("/")
-    )
-
-    if ingress_path:
-
-        if clean_path:
-            return (
-                f"{ingress_path}/"
-                f"{clean_path}"
-            )
-
-        return ingress_path
-
-    if clean_path:
-        return (
-            f"/{clean_path}"
-        )
-
-    return "/"
-
-
-def app_redirect(
-    request: Request,
-    path: str = "",
-):
-
-    return RedirectResponse(
-        build_app_url(
-            request,
-            path,
-        ),
-        status_code=303,
-    )
 
 
 # ============================================================
@@ -326,9 +288,16 @@ RULES:
 6. Never put a series in the movie list.
 7. Strongly prioritize titles rated 8/10 or higher.
 8. Use low ratings as negative taste signals.
-9. Consider genre, tone, themes, pacing,
-   storytelling, actors, directors,
-   franchises and audience appeal.
+9. Consider:
+   - genre
+   - tone
+   - themes
+   - pacing
+   - storytelling
+   - actors
+   - directors
+   - franchises
+   - audience appeal
 10. Include strong matches and interesting discoveries.
 11. Avoid returning only famous mainstream titles.
 12. Avoid overusing one franchise.
@@ -704,7 +673,7 @@ def normalise_tmdb_result(
 
 
 # ============================================================
-# TMDB SEARCH
+# TMDB EXACT SEARCH
 # ============================================================
 
 def tmdb_search(
@@ -806,21 +775,30 @@ def tmdb_search(
                 .lower()
             )
 
-            if requested == normalized:
+            if (
+                requested ==
+                normalized
+            ):
 
                 score = 100
 
             else:
 
-                score = max(
-                    fuzz.ratio(
-                        requested,
-                        normalized,
-                    ),
+                ratio = fuzz.ratio(
+                    requested,
+                    normalized,
+                )
+
+                token_score = (
                     fuzz.token_sort_ratio(
                         requested,
                         normalized,
-                    ) * 0.95,
+                    )
+                )
+
+                score = max(
+                    ratio,
+                    token_score * 0.95,
                 )
 
             if year and date:
@@ -868,7 +846,7 @@ def tmdb_search(
 
 
 # ============================================================
-# LIVE SEARCH
+# LIVE TMDB SEARCH
 # ============================================================
 
 def tmdb_live_search(
@@ -1021,7 +999,7 @@ def tmdb_get_details(
 
 
 # ============================================================
-# VERIFY AI RECOMMENDATIONS
+# VERIFY GEMINI RESULT
 # ============================================================
 
 def verify_recommendation(
@@ -1126,9 +1104,7 @@ def verify_all_recommendations(
 # UNIQUE
 # ============================================================
 
-def unique_results(
-    results,
-):
+def unique_results(results):
 
     seen = set()
     output = []
@@ -1660,17 +1636,17 @@ def generate_recommendations(
 
 # ============================================================
 # HOME
+#
+# Opening the normal URL automatically starts discovery.
 # ============================================================
 
 @app.get("/")
 @app.get("//")
-def home(
-    request: Request,
-):
+def home():
 
-    return app_redirect(
-        request,
-        "recommendations",
+    return RedirectResponse(
+        "/recommendations",
+        status_code=303,
     )
 
 
@@ -1716,7 +1692,6 @@ def api_search(
 
 @app.post("/add")
 def add(
-    request: Request,
     title: str = Form(...),
     rating: float = Form(...),
     media_type: str = Form(...),
@@ -1734,13 +1709,14 @@ def add(
         )
     ):
 
-        return app_redirect(
-            request,
-            "",
+        return RedirectResponse(
+            "/",
+            status_code=303,
         )
 
     tmdb_data = None
 
+    # Exact selected TMDB title.
     if tmdb_id:
 
         tmdb_data = tmdb_get_details(
@@ -1748,6 +1724,7 @@ def add(
             media_type,
         )
 
+    # Fallback for manually typed titles.
     if not tmdb_data:
 
         tmdb_data = tmdb_search(
@@ -1806,9 +1783,9 @@ def add(
                 media_type,
         )
 
-    return app_redirect(
-        request,
-        "",
+    return RedirectResponse(
+        "/",
+        status_code=303,
     )
 
 
@@ -1821,7 +1798,10 @@ def add(
 )
 def recommendations(
     request: Request,
+    background_tasks: BackgroundTasks,
 ):
+
+    global recommendation_state
 
     movies = get_all()
 
@@ -1837,48 +1817,82 @@ def recommendations(
         if item["type"] == "Series"
     ]
 
-    recommendations_data = (
-        generate_recommendations(
-            movies
-        )
-    )
+    # If the background job has completed, use the cached result
+    # and reset the state after rendering this page.
+    if recommendation_state["status"] == "ready":
 
-    response = (
-        templates.TemplateResponse(
+        recommendations_data = (
+            recommendation_state["data"]
+        )
+
+        response = templates.TemplateResponse(
             request=request,
             name="index.html",
             context={
-                "movies":
-                    movies,
-
-                "watched_movies":
-                    watched_movies,
-
-                "watched_series":
-                    watched_series,
-
-                "recommendations":
-                    recommendations_data,
+                "movies": movies,
+                "watched_movies": watched_movies,
+                "watched_series": watched_series,
+                "recommendations": recommendations_data,
+                "recommendations_loading": False,
             },
         )
+
+        recommendation_state = {
+            "status": "idle",
+            "data": None,
+            "error": None,
+        }
+
+    else:
+
+        # Start the expensive Gemini + TMDB work after the response
+        # is sent so the browser can immediately display the UI.
+        if recommendation_state["status"] not in (
+            "loading",
+        ):
+
+            recommendation_state = {
+                "status": "loading",
+                "data": None,
+                "error": None,
+            }
+
+            background_tasks.add_task(
+                run_recommendation_job
+            )
+
+        response = templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={
+                "movies": movies,
+                "watched_movies": watched_movies,
+                "watched_series": watched_series,
+                "recommendations": None,
+                "recommendations_loading": True,
+            },
+        )
+
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, max-age=0"
     )
-
-    response.headers[
-        "Cache-Control"
-    ] = (
-        "no-store, no-cache, "
-        "must-revalidate, max-age=0"
-    )
-
-    response.headers[
-        "Pragma"
-    ] = "no-cache"
-
-    response.headers[
-        "Expires"
-    ] = "0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
 
     return response
+
+
+# ============================================================
+# RECOMMENDATION STATUS
+# ============================================================
+
+@app.get("/api/recommendations/status")
+def recommendation_status():
+
+    return {
+        "status": recommendation_state["status"],
+        "error": recommendation_state["error"],
+    }
 
 
 # ============================================================
@@ -1889,7 +1903,6 @@ def recommendations(
     "/recommendation/watched"
 )
 def recommendation_watched(
-    request: Request,
     title: str = Form(...),
     rating: float = Form(...),
     media_type: str = Form(...),
@@ -1989,9 +2002,9 @@ def recommendation_watched(
                 tmdb_id,
         )
 
-    return app_redirect(
-        request,
-        "recommendations",
+    return RedirectResponse(
+        "/recommendations",
+        status_code=303,
     )
 
 
@@ -2003,7 +2016,6 @@ def recommendation_watched(
     "/recommendation/not-interested"
 )
 def recommendation_not_interested(
-    request: Request,
     title: str = Form(...),
     media_type: str = Form(...),
     tmdb_id: int = Form(...),
@@ -2027,9 +2039,9 @@ def recommendation_not_interested(
         f"TMDB={tmdb_id}"
     )
 
-    return app_redirect(
-        request,
-        "recommendations",
+    return RedirectResponse(
+        "/recommendations",
+        status_code=303,
     )
 
 
@@ -2041,7 +2053,6 @@ def recommendation_not_interested(
     "/delete/{movie_id}"
 )
 def delete(
-    request: Request,
     movie_id: int,
 ):
 
@@ -2049,8 +2060,7 @@ def delete(
         movie_id
     )
 
-    return app_redirect(
-        request,
-        "",
+    return RedirectResponse(
+        "/",
+        status_code=303,
     )
-
