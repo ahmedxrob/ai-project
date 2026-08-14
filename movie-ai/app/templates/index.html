@@ -42,46 +42,6 @@
 <div class="site-background"></div>
 
 
-<!-- ================================================== -->
-<!-- RECOMMENDATION LOADING SCREEN -->
-<!-- ================================================== -->
-
-{% if recommendations_loading %}
-<div
-    id="recommendation-loader"
-    class="recommendation-loader"
->
-    <div class="recommendation-loader-backdrop"></div>
-
-    <div class="recommendation-loader-card">
-
-        <div class="recommendation-loader-logo">
-            🎬
-        </div>
-
-        <div class="recommendation-loader-spinner"></div>
-
-        <h2>
-            Finding your next favorites
-        </h2>
-
-        <p id="recommendation-loader-text">
-            Analyzing your taste...
-        </p>
-
-        <div class="recommendation-loader-bar">
-            <div></div>
-        </div>
-
-        <div class="recommendation-loader-status">
-            <span></span>
-            Gemini + TMDB are working
-        </div>
-
-    </div>
-</div>
-{% endif %}
-
 
 <nav class="topbar">
 
@@ -548,7 +508,7 @@
     <!-- RECOMMENDATIONS -->
     <!-- ================================================== -->
 
-    {% if recommendations %}
+    {% if recommendations or tmdb_discoveries %}
 
     <section class="recommendations-section">
 
@@ -608,13 +568,13 @@
 
 
                 <span class="source-count">
-                    {{ recommendations.ai_movies|length }}
+                    {{ recommendations.ai_movies|length if recommendations else 0 }}
                 </span>
 
             </div>
 
 
-            {% if recommendations.ai_movies %}
+            {% if recommendations and recommendations.ai_movies %}
 
             <div class="recommendation-grid">
 
@@ -808,9 +768,19 @@
 
             {% else %}
 
+            {% if recommendations_loading %}
+            <div class="ai-generation-loading">
+                <div class="ai-generation-spinner"></div>
+                <div>
+                    <strong>AI is creating your movie picks...</strong>
+                    <span>Gemini is analyzing your ratings and finding personalized matches.</span>
+                </div>
+            </div>
+            {% else %}
             <div class="empty-recommendations">
                 No AI movie picks available.
             </div>
+            {% endif %}
 
             {% endif %}
 
@@ -847,17 +817,17 @@
 
 
                 <span class="source-count">
-                    {{ recommendations.tmdb_movies|length }}
+                    {{ recommendations.tmdb_movies|length if recommendations else (tmdb_discoveries.movies|length) }}
                 </span>
 
             </div>
 
 
-            {% if recommendations.tmdb_movies %}
+            {% if (recommendations and recommendations.tmdb_movies) or (not recommendations and tmdb_discoveries.movies) %}
 
             <div class="recommendation-grid">
 
-                {% for item in recommendations.tmdb_movies %}
+                {% for item in (recommendations.tmdb_movies if recommendations else tmdb_discoveries.movies) %}
 
                 <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
 
@@ -1111,13 +1081,13 @@
 
 
                 <span class="source-count">
-                    {{ recommendations.ai_series|length }}
+                    {{ recommendations.ai_series|length if recommendations else 0 }}
                 </span>
 
             </div>
 
 
-            {% if recommendations.ai_series %}
+            {% if recommendations and recommendations.ai_series %}
 
             <div class="recommendation-grid">
 
@@ -1311,9 +1281,19 @@
 
             {% else %}
 
+            {% if recommendations_loading %}
+            <div class="ai-generation-loading">
+                <div class="ai-generation-spinner"></div>
+                <div>
+                    <strong>AI is creating your series picks...</strong>
+                    <span>Gemini is analyzing your ratings and finding personalized matches.</span>
+                </div>
+            </div>
+            {% else %}
             <div class="empty-recommendations">
                 No AI series picks available.
             </div>
+            {% endif %}
 
             {% endif %}
 
@@ -1350,17 +1330,17 @@
 
 
                 <span class="source-count">
-                    {{ recommendations.tmdb_series|length }}
+                    {{ recommendations.tmdb_series|length if recommendations else (tmdb_discoveries.series|length) }}
                 </span>
 
             </div>
 
 
-            {% if recommendations.tmdb_series %}
+            {% if (recommendations and recommendations.tmdb_series) or (not recommendations and tmdb_discoveries.series) %}
 
             <div class="recommendation-grid">
 
-                {% for item in recommendations.tmdb_series %}
+                {% for item in (recommendations.tmdb_series if recommendations else tmdb_discoveries.series) %}
 
                 <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}">
 
@@ -1868,52 +1848,12 @@ function appUrl(path) {
 
 
 /* ========================================================= */
-/* RECOMMENDATION LOADER */
+/* AI STATUS POLLING */
 /* ========================================================= */
 
 {% if recommendations_loading %}
 
-const recommendationLoader =
-    document.getElementById(
-        "recommendation-loader"
-    );
-
-const recommendationLoaderText =
-    document.getElementById(
-        "recommendation-loader-text"
-    );
-
-const loaderMessages = [
-    "Analyzing your taste...",
-    "Checking your highest ratings...",
-    "Finding movies you'll love...",
-    "Finding series you'll love...",
-    "Asking Gemini for personalized picks...",
-    "Checking titles with TMDB...",
-    "Filtering watched and rejected titles...",
-    "Building your final recommendations..."
-];
-
-let loaderMessageIndex = 0;
-
-const loaderMessageTimer =
-    setInterval(
-        function () {
-
-            loaderMessageIndex =
-                (loaderMessageIndex + 1) % loaderMessages.length;
-
-            if (recommendationLoaderText) {
-                recommendationLoaderText.textContent =
-                    loaderMessages[loaderMessageIndex];
-            }
-
-        },
-        1700
-    );
-
-
-async function checkRecommendationStatus() {
+async function checkAIRecommendationStatus() {
 
     try {
 
@@ -1932,59 +1872,57 @@ async function checkRecommendationStatus() {
             return;
         }
 
-        const data =
-            await response.json();
+        const data = await response.json();
 
         if (data.status === "ready") {
-
-            clearInterval(loaderMessageTimer);
-
-            if (recommendationLoader) {
-                recommendationLoader.classList.add("hidden");
-            }
-
-            /*
-             * Reload once. The server now has the finished
-             * recommendations cached in recommendation_state,
-             * so it will render them immediately without
-             * running Gemini/TMDB a second time.
-             */
             window.location.reload();
-
             return;
         }
 
         if (data.status === "error") {
+            document
+                .querySelectorAll(".ai-generation-loading strong")
+                .forEach(function (element) {
+                    element.textContent =
+                        "AI recommendations could not be generated.";
+                });
 
-            clearInterval(loaderMessageTimer);
+            document
+                .querySelectorAll(".ai-generation-loading span")
+                .forEach(function (element) {
+                    element.textContent =
+                        "TMDB content is still available. Try Discover again.";
+                });
 
-            if (recommendationLoaderText) {
-                recommendationLoaderText.textContent =
-                    "Recommendation error. Refresh to try again.";
-            }
+            document
+                .querySelectorAll(".ai-generation-spinner")
+                .forEach(function (element) {
+                    element.style.animationPlayState = "paused";
+                    element.style.borderTopColor = "#e50914";
+                });
 
+            return;
         }
 
     } catch (error) {
 
         console.error(
-            "Recommendation status error:",
+            "AI recommendation status error:",
             error
         );
 
     }
 }
 
-checkRecommendationStatus();
+checkAIRecommendationStatus();
 
 const recommendationStatusTimer =
     setInterval(
-        checkRecommendationStatus,
+        checkAIRecommendationStatus,
         1500
     );
 
 {% endif %}
-
 
 
 
