@@ -264,6 +264,15 @@
                 value=""
             >
 
+            <!-- AUTO-DETECTED TYPE -->
+
+            <input
+                type="hidden"
+                id="media_type"
+                name="media_type"
+                value=""
+            >
+
 
             <!-- SELECTED PREVIEW -->
 
@@ -2172,7 +2181,7 @@ async function performSearch(
 
         const response =
             await fetch(
-                `${appUrl("/api/search")}?q=${encodeURIComponent(query)}`
+                `${appUrl("/api/search")}?q=${encodeURIComponent(query)}&search_all=1&_=${Date.now()}`
             );
 
 
@@ -2411,8 +2420,7 @@ function selectSearchResult(
 
     // Automatically detect and store Movie vs Series.
     if (mediaType) {
-        mediaType.value =
-            item.media_type || "Movie";
+        mediaType.value = item.media_type || "";
     }
 
     titleInput.value =
