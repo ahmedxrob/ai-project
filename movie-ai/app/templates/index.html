@@ -2200,7 +2200,6 @@ async function performSearch(
         currentResults =
             data.results || [];
 
-
         renderSearchResults(
             currentResults
         );
@@ -2280,6 +2279,7 @@ function renderSearchResults(
                         type="button"
                         class="search-result-item"
                         data-index="${index}"
+                        data-media-type="${item.media_type || ""}"
                     >
 
                         <div class="search-result-poster">
