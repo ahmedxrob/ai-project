@@ -3938,3 +3938,39 @@ footer {
         min-width: 178px !important;
     }
 }
+
+
+/* ============================================================
+   MATCH BADGE FOR RECOMMENDATION CARDS
+   ============================================================ */
+
+.recommendation-clickable {
+    cursor: pointer;
+}
+
+.match-badge {
+    position: absolute;
+    top: 11px;
+    right: 11px;
+    z-index: 3;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: rgba(6,6,9,.84);
+    border: 1px solid rgba(255,255,255,.12);
+    color: #ffffff;
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: .35px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.ai-card .match-badge {
+    border-color: rgba(196,181,253,.24);
+    box-shadow: 0 5px 18px rgba(124,58,237,.18);
+}
+
+.tmdb-card .match-badge {
+    border-color: rgba(125,218,245,.24);
+    box-shadow: 0 5px 18px rgba(1,180,228,.15);
+}
