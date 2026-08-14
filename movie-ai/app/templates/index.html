@@ -2162,39 +2162,65 @@ async function performSearch(
     searchResults.innerHTML = `
         <div class="search-loading">
             <span class="loading-spinner"></span>
-            Searching Movies + Series...
+            Searching movies and series...
         </div>
     `;
 
-    searchResults.classList.add("show");
+    searchResults.classList.add(
+        "show"
+    );
 
     try {
+
         const response = await fetch(
             `${appUrl("/api/search")}?q=${encodeURIComponent(query)}&_=${Date.now()}`,
-            { cache: "no-store" }
+            {
+                cache: "no-store"
+            }
         );
 
         if (!response.ok) {
-            throw new Error("Search failed");
+            throw new Error(
+                `Search failed (${response.status})`
+            );
         }
 
         const data = await response.json();
 
-        const movies = Array.isArray(data.movies) ? data.movies : [];
-        const series = Array.isArray(data.series) ? data.series : [];
+        const movies = Array.isArray(data.movies)
+            ? data.movies
+            : [];
+
+        const series = Array.isArray(data.series)
+            ? data.series
+            : [];
 
         currentResults = [
-            ...movies.map(item => ({ ...item, media_type: "Movie" })),
-            ...series.map(item => ({ ...item, media_type: "Series" })),
+            ...movies.map(item => ({
+                ...item,
+                media_type: "Movie"
+            })),
+            ...series.map(item => ({
+                ...item,
+                media_type: "Series"
+            }))
         ];
 
-        renderSearchResults(currentResults);
+        renderSearchResults(
+            currentResults
+        );
 
     } catch (error) {
-        console.error(error);
+
+        console.error(
+            "Search error:",
+            error
+        );
+
         searchResults.innerHTML = `
             <div class="search-empty">
                 Unable to search TMDB.
+                <small>${escapeHtml(error.message)}</small>
             </div>
         `;
     }
@@ -2205,69 +2231,124 @@ async function performSearch(
 /* RENDER SEARCH RESULTS */
 /* ========================================================= */
 
-function renderSearchResults(results) {
+function renderSearchResults(
+    results
+) {
 
     if (!results.length) {
+
         searchResults.innerHTML = `
             <div class="search-empty">
-                No results found.
+                No movies or series found.
             </div>
         `;
+
         return;
     }
 
-    searchResults.innerHTML = results.map(function(item, index) {
+    searchResults.innerHTML = results.map(
+        function(item, index) {
 
-        const year = item.year || "";
-        const poster = item.poster || "";
-        const rating = Number(item.vote_average || 0).toFixed(1);
-        const isSeries = item.media_type === "Series";
+            const year = item.year || "";
+            const poster = item.poster || "";
+            const rating = Number(
+                item.vote_average || 0
+            ).toFixed(1);
 
-        return `
-            <button
-                type="button"
-                class="search-result-item"
-                data-index="${index}"
-            >
-                <div class="search-result-poster">
-                    ${poster
-                        ? `<img src="${poster}" alt="" loading="lazy">`
-                        : `<div class="search-result-placeholder">${isSeries ? "📺" : "🎬"}</div>`
-                    }
-                </div>
+            const isSeries =
+                item.media_type === "Series";
 
-                <div class="search-result-info">
-                    <strong>${escapeHtml(item.title)}</strong>
-
-                    <div class="search-result-meta">
-                        ${year ? `<span>${year}</span><span>•</span>` : ""}
-                        <span class="search-type-badge ${isSeries ? "search-series" : "search-movie"}">
-                            ${isSeries ? "📺 SERIES" : "🎬 MOVIE"}
-                        </span>
-                        <span>★ ${rating}</span>
+            return `
+                <button
+                    type="button"
+                    class="search-result-item"
+                    data-index="${index}"
+                >
+                    <div class="search-result-poster">
+                        ${
+                            poster
+                                ? `
+                                    <img
+                                        src="${poster}"
+                                        alt=""
+                                        loading="lazy"
+                                    >
+                                `
+                                : `
+                                    <div class="search-result-placeholder">
+                                        ${isSeries ? "📺" : "🎬"}
+                                    </div>
+                                `
+                        }
                     </div>
 
-                    <p>
-                        ${escapeHtml(item.overview || "No description available.")}
-                    </p>
-                </div>
+                    <div class="search-result-info">
+                        <strong>
+                            ${escapeHtml(item.title)}
+                        </strong>
 
-                <span class="search-result-arrow">→</span>
-            </button>
-        `;
+                        <div class="search-result-meta">
+                            ${
+                                year
+                                    ? `<span>${year}</span><span>•</span>`
+                                    : ""
+                            }
 
-    }).join("");
+                            <span class="search-type-badge ${
+                                isSeries
+                                    ? "search-series"
+                                    : "search-movie"
+                            }">
+                                ${
+                                    isSeries
+                                        ? "📺 SERIES"
+                                        : "🎬 MOVIE"
+                                }
+                            </span>
+
+                            <span>
+                                ★ ${rating}
+                            </span>
+                        </div>
+
+                        <p>
+                            ${escapeHtml(
+                                item.overview ||
+                                "No description available."
+                            )}
+                        </p>
+                    </div>
+
+                    <span class="search-result-arrow">
+                        →
+                    </span>
+                </button>
+            `;
+        }
+    ).join("");
 
     document
-        .querySelectorAll(".search-result-item")
-        .forEach(function(button) {
+        .querySelectorAll(
+            ".search-result-item"
+        )
+        .forEach(
+            function(button) {
 
-            button.addEventListener("click", function() {
-                const index = Number(button.dataset.index);
-                selectSearchResult(currentResults[index]);
-            });
+                button.addEventListener(
+                    "click",
+                    function() {
 
-        });
+                        const index = Number(
+                            button.dataset.index
+                        );
+
+                        selectSearchResult(
+                            currentResults[index]
+                        );
+                    }
+                );
+            }
+        );
 }
 
 
@@ -2275,21 +2356,120 @@ function renderSearchResults(results) {
 /* SELECT RESULT */
 /* ========================================================= */
 
-function selectSearchResult(item) {
+function selectSearchResult(
+    item
+) {
 
-    if (!item) return;
-
-    tmdbIdInput.value = item.tmdb_id;
-
-    if (mediaType) {
-        mediaType.value = item.media_type;
+    if (!item) {
+        return;
     }
 
-    titleInput.value = item.title;
+    tmdbIdInput.value =
+        item.tmdb_id || "";
 
-    searchResults.classList.remove("show");
+    titleInput.value =
+        item.title || "";
 
-    renderSelectedPreview(item);
+    if (mediaType) {
+        mediaType.value =
+            item.media_type === "Series"
+                ? "Series"
+                : "Movie";
+    }
+
+    searchResults.classList.remove(
+        "show"
+    );
+
+    renderSelectedPreview(
+        item
+    );
+}
+
+
+/* ========================================================= */
+/* SELECTED PREVIEW */
+/* ========================================================= */
+
+function renderSelectedPreview(
+    item
+) {
+
+    const poster = item.poster || "";
+    const year = item.year || "";
+    const rating = Number(
+        item.vote_average || 0
+    ).toFixed(1);
+
+    const isSeries =
+        item.media_type === "Series";
+
+    selectedPreview.innerHTML = `
+        <div class="selected-preview-card">
+
+            <div class="selected-preview-poster">
+                ${
+                    poster
+                        ? `
+                            <img
+                                src="${poster}"
+                                alt="${escapeHtml(item.title)}"
+                            >
+                        `
+                        : `
+                            <div class="selected-preview-placeholder">
+                                ${isSeries ? "📺" : "🎬"}
+                            </div>
+                        `
+                }
+            </div>
+
+            <div class="selected-preview-info">
+
+                <div class="selected-preview-label">
+                    SELECTED TITLE
+                </div>
+
+                <h3>
+                    ${escapeHtml(item.title)}
+                </h3>
+
+                <div class="selected-preview-meta">
+                    ${
+                        year
+                            ? `<span>${year}</span><span>•</span>`
+                            : ""
+                    }
+
+                    <span>
+                        ${isSeries ? "📺 Series" : "🎬 Movie"}
+                    </span>
+
+                    <span class="selected-tmdb-rating">
+                        ★ ${rating}
+                    </span>
+                </div>
+
+                <p>
+                    ${escapeHtml(
+                        item.overview ||
+                        "No description available."
+                    )}
+                </p>
+
+                <div class="selected-preview-badge">
+                    ${
+                        isSeries
+                            ? "📺 SERIES"
+                            : "🎬 MOVIE"
+                    }
+                    <span>•</span>
+                    TMDB #${item.tmdb_id}
+                </div>
+
+            </div>
+        </div>
+    `;
 }
 
 
