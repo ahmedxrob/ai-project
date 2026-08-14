@@ -521,7 +521,7 @@
 
                 {% for item in recommendations.ai_movies %}
 
-                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}" data-match="{{ item.match_percentage|default(82) }}">
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
 
                     <div class="recommendation-poster">
 
@@ -760,7 +760,7 @@
 
                 {% for item in recommendations.tmdb_movies %}
 
-                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}" data-match="{{ item.match_percentage|default(82) }}">
+                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
 
                     <div class="recommendation-poster">
 
@@ -1024,7 +1024,7 @@
 
                 {% for item in recommendations.ai_series %}
 
-                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}" data-match="{{ item.match_percentage|default(82) }}">
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
 
                     <div class="recommendation-poster">
 
@@ -1263,7 +1263,7 @@
 
                 {% for item in recommendations.tmdb_series %}
 
-                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}" data-match="{{ item.match_percentage|default(72) }}">
+                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}">
 
                     <div class="recommendation-poster">
 
@@ -2562,9 +2562,6 @@ document
                     const tmdbId =
                         card.dataset.tmdbId;
 
-                    const match =
-                        card.dataset.match || "";
-
                     if (!mediaType || !tmdbId) {
                         return;
                     }
@@ -2572,13 +2569,8 @@ document
                     const ingressPath =
                         document.body.dataset.ingressPath || "";
 
-                    const query =
-                        match
-                        ? `?match=${encodeURIComponent(match)}`
-                        : "";
-
                     window.location.href =
-                        `${ingressPath}/title/${mediaType}/${tmdbId}${query}`;
+                        `${ingressPath}/title/${mediaType}/${tmdbId}`;
                 }
             );
 
