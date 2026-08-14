@@ -521,7 +521,7 @@
 
                 {% for item in recommendations.ai_movies %}
 
-                <article class="recommendation-card ai-card">
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}" data-match="{{ item.match_percentage|default(82) }}">
 
                     <div class="recommendation-poster">
 
@@ -547,6 +547,10 @@
 
                         <div class="source-badge ai-source">
                             🤖 AI PICK
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(82) }}% MATCH
                         </div>
 
                     </div>
@@ -756,7 +760,7 @@
 
                 {% for item in recommendations.tmdb_movies %}
 
-                <article class="recommendation-card tmdb-card">
+                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}" data-match="{{ item.match_percentage|default(82) }}">
 
                     <div class="recommendation-poster">
 
@@ -782,6 +786,10 @@
 
                         <div class="source-badge tmdb-source">
                             🔵 TMDB
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(72) }}% MATCH
                         </div>
 
                     </div>
@@ -1016,7 +1024,7 @@
 
                 {% for item in recommendations.ai_series %}
 
-                <article class="recommendation-card ai-card">
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}" data-match="{{ item.match_percentage|default(82) }}">
 
                     <div class="recommendation-poster">
 
@@ -1042,6 +1050,10 @@
 
                         <div class="source-badge ai-source">
                             🤖 AI PICK
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(82) }}% MATCH
                         </div>
 
                     </div>
@@ -1251,7 +1263,7 @@
 
                 {% for item in recommendations.tmdb_series %}
 
-                <article class="recommendation-card tmdb-card">
+                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}" data-match="{{ item.match_percentage|default(72) }}">
 
                     <div class="recommendation-poster">
 
@@ -1277,6 +1289,10 @@
 
                         <div class="source-badge tmdb-source">
                             🔵 TMDB
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(72) }}% MATCH
                         </div>
 
                     </div>
@@ -2516,6 +2532,58 @@ document.addEventListener(
         }
     }
 );
+
+
+/* ========================================================= */
+/* OPEN RECOMMENDATION DETAIL PAGE */
+/* ========================================================= */
+document
+    .querySelectorAll(
+        ".recommendation-clickable"
+    )
+    .forEach(
+        function (card) {
+
+            card.addEventListener(
+                "click",
+                function (event) {
+
+                    if (
+                        event.target.closest(
+                            "a, button, form, input, select"
+                        )
+                    ) {
+                        return;
+                    }
+
+                    const mediaType =
+                        card.dataset.mediaType;
+
+                    const tmdbId =
+                        card.dataset.tmdbId;
+
+                    const match =
+                        card.dataset.match || "";
+
+                    if (!mediaType || !tmdbId) {
+                        return;
+                    }
+
+                    const ingressPath =
+                        document.body.dataset.ingressPath || "";
+
+                    const query =
+                        match
+                        ? `?match=${encodeURIComponent(match)}`
+                        : "";
+
+                    window.location.href =
+                        `${ingressPath}/title/${mediaType}/${tmdbId}${query}`;
+                }
+            );
+
+        }
+    );
 
 
 /* ========================================================= */
