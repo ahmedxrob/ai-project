@@ -79,10 +79,93 @@ RECENT_HISTORY_LIMIT = 12
 # ============================================================
 
 def get_env(name: str) -> str:
+
     return os.getenv(
         name,
         ""
     ).strip()
+
+
+# ============================================================
+# INGRESS-AWARE PATH
+# ============================================================
+
+def get_ingress_path(
+    request: Request,
+) -> str:
+    """
+    Home Assistant Ingress sends X-Ingress-Path.
+
+    Example:
+
+        /app/28a4dad9_movie_ai
+
+    Direct access returns an empty string.
+    """
+
+    path = request.headers.get(
+        "x-ingress-path",
+        ""
+    )
+
+    if not path:
+        return ""
+
+    return path.rstrip("/")
+
+
+def build_app_url(
+    request: Request,
+    path: str = "",
+) -> str:
+    """
+    Builds URLs correctly for both:
+
+    Direct:
+        /recommendations
+
+    Ingress:
+        /app/28a4dad9_movie_ai/recommendations
+    """
+
+    ingress_path = get_ingress_path(
+        request
+    )
+
+    clean_path = (
+        path.strip("/")
+    )
+
+    if ingress_path:
+
+        if clean_path:
+            return (
+                f"{ingress_path}/"
+                f"{clean_path}"
+            )
+
+        return ingress_path
+
+    if clean_path:
+        return (
+            f"/{clean_path}"
+        )
+
+    return "/"
+
+
+def app_redirect(
+    request: Request,
+    path: str = "",
+):
+
+    return RedirectResponse(
+        build_app_url(
+            request,
+            path,
+        ),
+        status_code=303,
+    )
 
 
 # ============================================================
@@ -243,16 +326,9 @@ RULES:
 6. Never put a series in the movie list.
 7. Strongly prioritize titles rated 8/10 or higher.
 8. Use low ratings as negative taste signals.
-9. Consider:
-   - genre
-   - tone
-   - themes
-   - pacing
-   - storytelling
-   - actors
-   - directors
-   - franchises
-   - audience appeal
+9. Consider genre, tone, themes, pacing,
+   storytelling, actors, directors,
+   franchises and audience appeal.
 10. Include strong matches and interesting discoveries.
 11. Avoid returning only famous mainstream titles.
 12. Avoid overusing one franchise.
@@ -628,7 +704,7 @@ def normalise_tmdb_result(
 
 
 # ============================================================
-# TMDB EXACT SEARCH
+# TMDB SEARCH
 # ============================================================
 
 def tmdb_search(
@@ -730,30 +806,21 @@ def tmdb_search(
                 .lower()
             )
 
-            if (
-                requested ==
-                normalized
-            ):
+            if requested == normalized:
 
                 score = 100
 
             else:
 
-                ratio = fuzz.ratio(
-                    requested,
-                    normalized,
-                )
-
-                token_score = (
+                score = max(
+                    fuzz.ratio(
+                        requested,
+                        normalized,
+                    ),
                     fuzz.token_sort_ratio(
                         requested,
                         normalized,
-                    )
-                )
-
-                score = max(
-                    ratio,
-                    token_score * 0.95,
+                    ) * 0.95,
                 )
 
             if year and date:
@@ -801,7 +868,7 @@ def tmdb_search(
 
 
 # ============================================================
-# LIVE TMDB SEARCH
+# LIVE SEARCH
 # ============================================================
 
 def tmdb_live_search(
@@ -954,7 +1021,7 @@ def tmdb_get_details(
 
 
 # ============================================================
-# VERIFY GEMINI RESULT
+# VERIFY AI RECOMMENDATIONS
 # ============================================================
 
 def verify_recommendation(
@@ -1059,7 +1126,9 @@ def verify_all_recommendations(
 # UNIQUE
 # ============================================================
 
-def unique_results(results):
+def unique_results(
+    results,
+):
 
     seen = set()
     output = []
@@ -1591,17 +1660,17 @@ def generate_recommendations(
 
 # ============================================================
 # HOME
-#
-# Opening the normal URL automatically starts discovery.
 # ============================================================
 
 @app.get("/")
 @app.get("//")
-def home():
+def home(
+    request: Request,
+):
 
-    return RedirectResponse(
-        "/recommendations",
-        status_code=303,
+    return app_redirect(
+        request,
+        "recommendations",
     )
 
 
@@ -1647,6 +1716,7 @@ def api_search(
 
 @app.post("/add")
 def add(
+    request: Request,
     title: str = Form(...),
     rating: float = Form(...),
     media_type: str = Form(...),
@@ -1664,14 +1734,13 @@ def add(
         )
     ):
 
-        return RedirectResponse(
-            "/",
-            status_code=303,
+        return app_redirect(
+            request,
+            "",
         )
 
     tmdb_data = None
 
-    # Exact selected TMDB title.
     if tmdb_id:
 
         tmdb_data = tmdb_get_details(
@@ -1679,7 +1748,6 @@ def add(
             media_type,
         )
 
-    # Fallback for manually typed titles.
     if not tmdb_data:
 
         tmdb_data = tmdb_search(
@@ -1738,9 +1806,9 @@ def add(
                 media_type,
         )
 
-    return RedirectResponse(
-        "/",
-        status_code=303,
+    return app_redirect(
+        request,
+        "",
     )
 
 
@@ -1821,6 +1889,7 @@ def recommendations(
     "/recommendation/watched"
 )
 def recommendation_watched(
+    request: Request,
     title: str = Form(...),
     rating: float = Form(...),
     media_type: str = Form(...),
@@ -1920,9 +1989,9 @@ def recommendation_watched(
                 tmdb_id,
         )
 
-    return RedirectResponse(
-        "/recommendations",
-        status_code=303,
+    return app_redirect(
+        request,
+        "recommendations",
     )
 
 
@@ -1934,6 +2003,7 @@ def recommendation_watched(
     "/recommendation/not-interested"
 )
 def recommendation_not_interested(
+    request: Request,
     title: str = Form(...),
     media_type: str = Form(...),
     tmdb_id: int = Form(...),
@@ -1957,9 +2027,9 @@ def recommendation_not_interested(
         f"TMDB={tmdb_id}"
     )
 
-    return RedirectResponse(
-        "/recommendations",
-        status_code=303,
+    return app_redirect(
+        request,
+        "recommendations",
     )
 
 
@@ -1971,6 +2041,7 @@ def recommendation_not_interested(
     "/delete/{movie_id}"
 )
 def delete(
+    request: Request,
     movie_id: int,
 ):
 
@@ -1978,8 +2049,8 @@ def delete(
         movie_id
     )
 
-    return RedirectResponse(
-        "/",
-        status_code=303,
+    return app_redirect(
+        request,
+        "",
     )
 
