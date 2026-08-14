@@ -15,6 +15,10 @@
         content="#060608"
     >
 
+    <title>
+        My Movie AI
+    </title>
+
     <link
         rel="icon"
         type="image/svg+xml"
@@ -26,10 +30,6 @@
         href="/static/favicon.svg"
     >
 
-    <title>
-        My Movie AI
-    </title>
-
     <link
         rel="stylesheet"
         href="/static/style.css"
@@ -40,6 +40,47 @@
 <body>
 
 <div class="site-background"></div>
+
+
+<!-- ================================================== -->
+<!-- RECOMMENDATION LOADING SCREEN -->
+<!-- ================================================== -->
+
+{% if recommendations_loading %}
+<div
+    id="recommendation-loader"
+    class="recommendation-loader"
+>
+    <div class="recommendation-loader-backdrop"></div>
+
+    <div class="recommendation-loader-card">
+
+        <div class="recommendation-loader-logo">
+            🎬
+        </div>
+
+        <div class="recommendation-loader-spinner"></div>
+
+        <h2>
+            Finding your next favorites
+        </h2>
+
+        <p id="recommendation-loader-text">
+            Analyzing your taste...
+        </p>
+
+        <div class="recommendation-loader-bar">
+            <div></div>
+        </div>
+
+        <div class="recommendation-loader-status">
+            <span></span>
+            Gemini + TMDB are working
+        </div>
+
+    </div>
+</div>
+{% endif %}
 
 
 <nav class="topbar">
@@ -1685,6 +1726,125 @@
 <script>
 
 /* ========================================================= */
+/* RECOMMENDATION LOADER */
+/* ========================================================= */
+
+{% if recommendations_loading %}
+
+const recommendationLoader =
+    document.getElementById(
+        "recommendation-loader"
+    );
+
+const recommendationLoaderText =
+    document.getElementById(
+        "recommendation-loader-text"
+    );
+
+const loaderMessages = [
+    "Analyzing your taste...",
+    "Checking your highest ratings...",
+    "Finding movies you'll love...",
+    "Finding series you'll love...",
+    "Asking Gemini for personalized picks...",
+    "Checking titles with TMDB...",
+    "Filtering watched and rejected titles...",
+    "Building your final recommendations..."
+];
+
+let loaderMessageIndex = 0;
+
+const loaderMessageTimer =
+    setInterval(
+        function () {
+
+            loaderMessageIndex =
+                (loaderMessageIndex + 1) % loaderMessages.length;
+
+            if (recommendationLoaderText) {
+                recommendationLoaderText.textContent =
+                    loaderMessages[loaderMessageIndex];
+            }
+
+        },
+        1700
+    );
+
+
+async function checkRecommendationStatus() {
+
+    try {
+
+        const response =
+            await fetch(
+                "api/recommendations/status",
+                {
+                    cache: "no-store",
+                    headers: {
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        if (!response.ok) {
+            return;
+        }
+
+        const data =
+            await response.json();
+
+        if (data.status === "ready") {
+
+            clearInterval(loaderMessageTimer);
+
+            if (recommendationLoader) {
+                recommendationLoader.classList.add("hidden");
+            }
+
+            /*
+             * Reload once. The server now has the finished
+             * recommendations cached in recommendation_state,
+             * so it will render them immediately without
+             * running Gemini/TMDB a second time.
+             */
+            window.location.reload();
+
+            return;
+        }
+
+        if (data.status === "error") {
+
+            clearInterval(loaderMessageTimer);
+
+            if (recommendationLoaderText) {
+                recommendationLoaderText.textContent =
+                    "Recommendation error. Refresh to try again.";
+            }
+
+        }
+
+    } catch (error) {
+
+        console.error(
+            "Recommendation status error:",
+            error
+        );
+
+    }
+}
+
+checkRecommendationStatus();
+
+const recommendationStatusTimer =
+    setInterval(
+        checkRecommendationStatus,
+        1500
+    );
+
+{% endif %}
+
+
+/* ========================================================= */
 /* SEARCH ELEMENTS */
 /* ========================================================= */
 
@@ -2349,4 +2509,3 @@ function toggleWhy(
 </body>
 
 </html>
-
