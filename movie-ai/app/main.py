@@ -2021,8 +2021,9 @@ def title_detail(
     watched_item = next(
         (
             item for item in watched
-            if item.get("tmdb_id") == tmdb_id
-            and item.get("type") == media_type
+            if item["tmdb_id"] is not None
+            and int(item["tmdb_id"]) == int(tmdb_id)
+            and item["type"] == media_type
         ),
         None,
     )
