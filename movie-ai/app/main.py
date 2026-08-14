@@ -131,6 +131,42 @@ def get_env(name: str) -> str:
 
 
 # ============================================================
+# INGRESS-AWARE PATH
+# ============================================================
+
+def get_ingress_path(request: Request) -> str:
+
+    path = request.headers.get(
+        "x-ingress-path",
+        ""
+    )
+
+    if not path:
+        return ""
+
+    return path.rstrip("/")
+
+
+def build_app_url(request: Request, path: str = "") -> str:
+
+    ingress_path = get_ingress_path(request)
+    clean_path = path.strip("/")
+
+    if ingress_path:
+        return f"{ingress_path}/{clean_path}" if clean_path else ingress_path
+
+    return f"/{clean_path}" if clean_path else "/"
+
+
+def app_redirect(request: Request, path: str = ""):
+
+    return RedirectResponse(
+        build_app_url(request, path),
+        status_code=303,
+    )
+
+
+# ============================================================
 # GEMINI SCHEMA
 # ============================================================
 
@@ -1642,11 +1678,11 @@ def generate_recommendations(
 
 @app.get("/")
 @app.get("//")
-def home():
+def home(request: Request):
 
-    return RedirectResponse(
-        "/recommendations",
-        status_code=303,
+    return app_redirect(
+        request,
+        "recommendations",
     )
 
 
@@ -1692,6 +1728,7 @@ def api_search(
 
 @app.post("/add")
 def add(
+    request: Request,
     title: str = Form(...),
     rating: float = Form(...),
     media_type: str = Form(...),
@@ -1709,9 +1746,9 @@ def add(
         )
     ):
 
-        return RedirectResponse(
-            "/",
-            status_code=303,
+        return app_redirect(
+            request,
+            "",
         )
 
     tmdb_data = None
@@ -1783,9 +1820,9 @@ def add(
                 media_type,
         )
 
-    return RedirectResponse(
-        "/",
-        status_code=303,
+    return app_redirect(
+        request,
+        "",
     )
 
 
@@ -1834,6 +1871,7 @@ def recommendations(
                 "watched_series": watched_series,
                 "recommendations": recommendations_data,
                 "recommendations_loading": False,
+                "ingress_path": get_ingress_path(request),
             },
         )
 
@@ -1870,6 +1908,7 @@ def recommendations(
                 "watched_series": watched_series,
                 "recommendations": None,
                 "recommendations_loading": True,
+                "ingress_path": get_ingress_path(request),
             },
         )
 
@@ -1903,6 +1942,7 @@ def recommendation_status():
     "/recommendation/watched"
 )
 def recommendation_watched(
+    request: Request,
     title: str = Form(...),
     rating: float = Form(...),
     media_type: str = Form(...),
@@ -2002,9 +2042,9 @@ def recommendation_watched(
                 tmdb_id,
         )
 
-    return RedirectResponse(
-        "/recommendations",
-        status_code=303,
+    return app_redirect(
+        request,
+        "recommendations",
     )
 
 
@@ -2016,6 +2056,7 @@ def recommendation_watched(
     "/recommendation/not-interested"
 )
 def recommendation_not_interested(
+    request: Request,
     title: str = Form(...),
     media_type: str = Form(...),
     tmdb_id: int = Form(...),
@@ -2039,9 +2080,9 @@ def recommendation_not_interested(
         f"TMDB={tmdb_id}"
     )
 
-    return RedirectResponse(
-        "/recommendations",
-        status_code=303,
+    return app_redirect(
+        request,
+        "recommendations",
     )
 
 
@@ -2053,6 +2094,7 @@ def recommendation_not_interested(
     "/delete/{movie_id}"
 )
 def delete(
+    request: Request,
     movie_id: int,
 ):
 
@@ -2060,7 +2102,7 @@ def delete(
         movie_id
     )
 
-    return RedirectResponse(
-        "/",
-        status_code=303,
+    return app_redirect(
+        request,
+        "",
     )
