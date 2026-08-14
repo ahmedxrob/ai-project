@@ -37,7 +37,7 @@
 
 </head>
 
-<body>
+<body data-ingress-path="{{ ingress_path|default('') }}">
 
 <div class="site-background"></div>
 
@@ -1726,6 +1726,25 @@
 <script>
 
 /* ========================================================= */
+/* APP / INGRESS URL HELPER */
+/* ========================================================= */
+
+const appBase =
+    document.body.dataset.ingressPath || "";
+
+function appUrl(path) {
+
+    const cleanPath = path.startsWith("/")
+        ? path
+        : `/${path}`;
+
+    return appBase
+        ? `${appBase}${cleanPath}`
+        : cleanPath;
+}
+
+
+/* ========================================================= */
 /* RECOMMENDATION LOADER */
 /* ========================================================= */
 
@@ -1777,7 +1796,7 @@ async function checkRecommendationStatus() {
 
         const response =
             await fetch(
-                "api/recommendations/status",
+                appUrl("/api/recommendations/status"),
                 {
                     cache: "no-store",
                     headers: {
@@ -1842,6 +1861,41 @@ const recommendationStatusTimer =
     );
 
 {% endif %}
+
+
+
+
+/* ========================================================= */
+/* INGRESS-SAFE INTERNAL LINKS / FORMS */
+/* ========================================================= */
+
+document.addEventListener(
+    "DOMContentLoaded",
+    function () {
+
+        document
+            .querySelectorAll("a[href^='/'], form[action^='/']")
+            .forEach(function (element) {
+
+                const attribute =
+                    element.tagName === "FORM"
+                        ? "action"
+                        : "href";
+
+                const value =
+                    element.getAttribute(attribute);
+
+                if (!value || value.startsWith("/static/")) {
+                    return;
+                }
+
+                element.setAttribute(
+                    attribute,
+                    appUrl(value)
+                );
+            });
+    }
+);
 
 
 /* ========================================================= */
@@ -2015,7 +2069,7 @@ async function performSearch(
 
         const response =
             await fetch(
-                `/api/search?q=${encodeURIComponent(query)}&media_type=${encodeURIComponent(mediaType.value)}`
+                `${appUrl("/api/search")}?q=${encodeURIComponent(query)}&media_type=${encodeURIComponent(mediaType.value)}`
             );
 
 
