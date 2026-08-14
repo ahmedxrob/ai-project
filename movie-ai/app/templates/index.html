@@ -2166,56 +2166,80 @@ async function performSearch(
         </div>
     `;
 
-    searchResults.classList.add(
-        "show"
-    );
+    searchResults.classList.add("show");
+
+    const cacheBust = Date.now();
 
     try {
+        const base = appUrl("/api/search");
 
-        const response = await fetch(
-            `${appUrl("/api/search")}?q=${encodeURIComponent(query)}&_=${Date.now()}`,
-            {
-                cache: "no-store"
-            }
-        );
+        const [movieResponse, seriesResponse] =
+            await Promise.all([
+                fetch(
+                    `${base}?q=${encodeURIComponent(query)}&media_type=Movie&_=${cacheBust}`,
+                    { cache: "no-store" }
+                ),
+                fetch(
+                    `${base}?q=${encodeURIComponent(query)}&media_type=Series&_=${cacheBust + 1}`,
+                    { cache: "no-store" }
+                )
+            ]);
 
-        if (!response.ok) {
+        if (!movieResponse.ok || !seriesResponse.ok) {
             throw new Error(
-                `Search failed (${response.status})`
+                `Search failed (${movieResponse.status}/${seriesResponse.status})`
             );
         }
 
-        const data = await response.json();
+        const [movieData, seriesData] =
+            await Promise.all([
+                movieResponse.json(),
+                seriesResponse.json()
+            ]);
 
-        const movies = Array.isArray(data.movies)
-            ? data.movies
-            : [];
+        /*
+         * Support both versions of the backend:
+         *   old: { results: [...] }
+         *   new: { movies: [...], series: [...] }
+         */
+        let movies = Array.isArray(movieData.results)
+            ? movieData.results
+            : Array.isArray(movieData.movies)
+                ? movieData.movies
+                : [];
 
-        const series = Array.isArray(data.series)
-            ? data.series
-            : [];
+        let series = Array.isArray(seriesData.results)
+            ? seriesData.results
+            : Array.isArray(seriesData.series)
+                ? seriesData.series
+                : [];
 
-        currentResults = [
-            ...movies.map(item => ({
-                ...item,
-                media_type: "Movie"
-            })),
-            ...series.map(item => ({
-                ...item,
-                media_type: "Series"
-            }))
-        ];
+        movies = movies.map(item => ({
+            ...item,
+            media_type: "Movie"
+        }));
 
-        renderSearchResults(
-            currentResults
-        );
+        series = series.map(item => ({
+            ...item,
+            media_type: "Series"
+        }));
+
+        /* Remove accidental duplicate IDs within each type. */
+        const seen = new Set();
+        currentResults = [...movies, ...series].filter(item => {
+            const key = `${item.media_type}:${item.tmdb_id}`;
+            if (!item.tmdb_id || seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+
+        renderSearchResults(currentResults);
 
     } catch (error) {
 
-        console.error(
-            "Search error:",
-            error
-        );
+        console.error("Search error:", error);
 
         searchResults.innerHTML = `
             <div class="search-empty">
@@ -2225,7 +2249,6 @@ async function performSearch(
         `;
     }
 }
-
 
 /* ========================================================= */
 /* RENDER SEARCH RESULTS */
