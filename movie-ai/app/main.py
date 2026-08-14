@@ -2098,6 +2098,161 @@ def add(
 
 
 # ============================================================
+# AJAX ADD WATCHED
+# ============================================================
+
+@app.post("/api/add")
+def api_add(
+    title: str = Form(...),
+    rating: float = Form(...),
+    media_type: str = Form(...),
+    tmdb_id: Optional[int] = Form(None),
+):
+
+    title = title.strip()
+
+    if (
+        not title
+        or not 0 <= rating <= 10
+        or media_type not in ("Movie", "Series")
+    ):
+        return {
+            "ok": False,
+            "error": "Invalid title, rating or media type."
+        }
+
+    tmdb_data = None
+
+    if tmdb_id:
+        tmdb_data = tmdb_get_details(
+            tmdb_id,
+            media_type,
+        )
+
+    if not tmdb_data:
+        tmdb_data = tmdb_search(
+            title,
+            media_type,
+        )
+
+    if tmdb_data:
+        canonical = tmdb_data
+        add_movie(
+            title=canonical["title"],
+            rating=rating,
+            media_type=media_type,
+            poster=canonical.get("poster"),
+            backdrop=canonical.get("backdrop"),
+            year=canonical.get("year"),
+            overview=canonical.get("overview"),
+            tmdb_id=canonical.get("tmdb_id"),
+        )
+    else:
+        add_movie(
+            title=title,
+            rating=rating,
+            media_type=media_type,
+            tmdb_id=tmdb_id,
+        )
+        canonical = {
+            "title": title,
+            "tmdb_id": tmdb_id,
+            "year": None,
+            "poster": None,
+            "overview": "",
+            "vote_average": 0,
+            "tmdb_url": None,
+        }
+
+    return {
+        "ok": True,
+        "item": {
+            "title": canonical.get("title") or title,
+            "tmdb_id": canonical.get("tmdb_id"),
+            "year": canonical.get("year"),
+            "poster": canonical.get("poster"),
+            "overview": canonical.get("overview") or "",
+            "vote_average": canonical.get("vote_average", 0) or 0,
+            "media_type": media_type,
+            "rating": rating,
+        },
+    }
+
+
+# ============================================================
+# AJAX MARK RECOMMENDATION WATCHED
+# ============================================================
+
+@app.post("/api/recommendation/watched")
+def api_recommendation_watched(
+    title: str = Form(...),
+    rating: float = Form(...),
+    media_type: str = Form(...),
+    tmdb_id: int = Form(...),
+):
+
+    if media_type not in ("Movie", "Series"):
+        return {
+            "ok": False,
+            "error": "Invalid media type."
+        }
+
+    token = get_env("TMDB_TOKEN")
+    tmdb_data = None
+
+    if token:
+        try:
+            endpoint = (
+                "https://api.themoviedb.org/3/"
+                f"{'movie' if media_type == 'Movie' else 'tv'}"
+                f"/{tmdb_id}"
+            )
+
+            data = tmdb_request(
+                endpoint,
+                token,
+                {"language": "en-US"},
+            )
+
+            tmdb_data = normalise_tmdb_result(
+                data,
+                media_type,
+            )
+
+        except Exception as error:
+            print(
+                "TMDB AJAX watched lookup error: "
+                f"{error}"
+            )
+
+    if tmdb_data:
+        add_movie(
+            title=tmdb_data["title"],
+            rating=rating,
+            media_type=media_type,
+            poster=tmdb_data.get("poster"),
+            backdrop=tmdb_data.get("backdrop"),
+            year=tmdb_data.get("year"),
+            overview=tmdb_data.get("overview"),
+            tmdb_id=tmdb_data.get("tmdb_id"),
+        )
+    else:
+        add_movie(
+            title=title,
+            rating=rating,
+            media_type=media_type,
+            tmdb_id=tmdb_id,
+        )
+
+    return {
+        "ok": True,
+        "tmdb_id": tmdb_id,
+        "title": title,
+        "media_type": media_type,
+    }
+
+
+# ============================================================
 # TITLE DETAIL PAGE
 # ============================================================
 
