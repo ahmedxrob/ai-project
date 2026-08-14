@@ -446,6 +446,104 @@
 
 
     <!-- ================================================== -->
+    <!-- TRENDING NOW -->
+    <!-- ================================================== -->
+
+    <section
+        class="trending-section"
+        id="trending-now"
+    >
+
+        <div class="section-heading trending-section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    RIGHT NOW ON TMDB
+                </span>
+
+                <h2>
+                    🔥 Trending Now
+                </h2>
+
+            </div>
+
+            <span>
+                Today
+            </span>
+
+        </div>
+
+
+        <div class="trending-source">
+
+            <div class="source-heading trending-movie-heading">
+
+                <div>
+                    <span class="source-icon">
+                        🎬
+                    </span>
+
+                    <div>
+                        <h3>Trending Movies</h3>
+                        <p>Most popular movie activity on TMDB today</p>
+                    </div>
+                </div>
+
+                <span class="source-count" id="trending-movie-count">
+                    —
+                </span>
+
+            </div>
+
+            <div
+                class="trending-grid"
+                id="trending-movies"
+            >
+                <div class="trending-loading">
+                    Loading today's trending movies...
+                </div>
+            </div>
+
+        </div>
+
+
+        <div class="trending-source trending-series-source">
+
+            <div class="source-heading trending-series-heading">
+
+                <div>
+                    <span class="source-icon">
+                        📺
+                    </span>
+
+                    <div>
+                        <h3>Trending Series</h3>
+                        <p>Most popular TV activity on TMDB today</p>
+                    </div>
+                </div>
+
+                <span class="source-count" id="trending-series-count">
+                    —
+                </span>
+
+            </div>
+
+            <div
+                class="trending-grid"
+                id="trending-series"
+            >
+                <div class="trending-loading">
+                    Loading today's trending series...
+                </div>
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
     <!-- RECOMMENDATIONS -->
     <!-- ================================================== -->
 
@@ -2629,6 +2727,165 @@ document
 
         }
     );
+
+
+/* ========================================================= */
+/* TRENDING NOW */
+/* ========================================================= */
+
+function escapeHtml(value) {
+    const div = document.createElement("div");
+    div.textContent = value ?? "";
+    return div.innerHTML;
+}
+
+function renderTrendingRail(items, containerId, countId, mediaType) {
+    const container = document.getElementById(containerId);
+    const count = document.getElementById(countId);
+
+    if (!container) return;
+
+    if (count) {
+        count.textContent = items.length;
+    }
+
+    if (!items.length) {
+        container.innerHTML = `
+            <div class="trending-empty">
+                Nothing available right now.
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = items.map(function(item) {
+        const title = escapeHtml(item.title);
+        const overview = escapeHtml(item.overview || "");
+        const year = item.year ? escapeHtml(item.year) : "";
+        const rating = Number(item.vote_average || 0).toFixed(1);
+        const poster = item.poster
+            ? `<img src="${escapeHtml(item.poster)}" alt="${title}" loading="lazy">`
+            : `<div class="poster-placeholder">${mediaType === "Movie" ? "🎬" : "📺"}</div>`;
+
+        return `
+            <article
+                class="trending-card"
+                data-media-type="${mediaType}"
+                data-tmdb-id="${item.tmdb_id}"
+                tabindex="0"
+                role="link"
+                aria-label="Open ${title}"
+            >
+                <div class="trending-poster">
+                    ${poster}
+                    <div class="trending-poster-overlay"></div>
+                    <div class="trending-badge">🔥 TRENDING</div>
+                    <div class="trending-rank">
+                        #${items.indexOf(item) + 1}
+                    </div>
+                </div>
+
+                <div class="trending-content">
+                    <h3>${title}</h3>
+
+                    <div class="trending-meta">
+                        ${year ? `<span>${year}</span><span>•</span>` : ""}
+                        <span class="trending-rating">★ ${rating}</span>
+                    </div>
+
+                    ${overview ? `<p>${overview}</p>` : ""}
+                </div>
+            </article>
+        `;
+    }).join("");
+
+    container.querySelectorAll(".trending-card").forEach(function(card) {
+        function openCard() {
+            const type = card.dataset.mediaType;
+            const id = card.dataset.tmdbId;
+
+            if (!type || !id) return;
+
+            window.location.href = appUrl(
+                `/title/${type}/${id}`
+            );
+        }
+
+        card.addEventListener("click", function(event) {
+            if (event.target.closest("a, button, form, input, select")) return;
+            openCard();
+        });
+
+        card.addEventListener("keydown", function(event) {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openCard();
+            }
+        });
+    });
+}
+
+async function loadTrendingNow() {
+    try {
+        const response = await fetch(
+            appUrl("/api/trending"),
+            {
+                cache: "no-store",
+                headers: {
+                    "Accept": "application/json"
+                }
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `Trending request failed: ${response.status}`
+            );
+        }
+
+        const data = await response.json();
+
+        renderTrendingRail(
+            data.movies || [],
+            "trending-movies",
+            "trending-movie-count",
+            "Movie"
+        );
+
+        renderTrendingRail(
+            data.series || [],
+            "trending-series",
+            "trending-series-count",
+            "Series"
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Trending load error:",
+            error
+        );
+
+        const movieRail = document.getElementById(
+            "trending-movies"
+        );
+
+        const seriesRail = document.getElementById(
+            "trending-series"
+        );
+
+        const message = `
+            <div class="trending-empty">
+                Trending is temporarily unavailable.
+            </div>
+        `;
+
+        if (movieRail) movieRail.innerHTML = message;
+        if (seriesRail) seriesRail.innerHTML = message;
+    }
+}
+
+loadTrendingNow();
 
 
 /* ========================================================= */
