@@ -230,6 +230,7 @@
             method="post"
             class="add-form"
             id="add-form"
+            data-ajax-add="true"
         >
 
             <!-- TYPE -->
@@ -721,7 +722,7 @@
                             <form
                                 action="/recommendation/watched"
                                 method="post"
-                                class="watched-inline"
+                                class="watched-inline ajax-watched-form"
                             >
 
                                 <input
@@ -960,7 +961,7 @@
                             <form
                                 action="/recommendation/watched"
                                 method="post"
-                                class="watched-inline"
+                                class="watched-inline ajax-watched-form"
                             >
 
                                 <input
@@ -1224,7 +1225,7 @@
                             <form
                                 action="/recommendation/watched"
                                 method="post"
-                                class="watched-inline"
+                                class="watched-inline ajax-watched-form"
                             >
 
                                 <input
@@ -1463,7 +1464,7 @@
                             <form
                                 action="/recommendation/watched"
                                 method="post"
-                                class="watched-inline"
+                                class="watched-inline ajax-watched-form"
                             >
 
                                 <input
@@ -2926,6 +2927,179 @@ function toggleWhy(
 
     }
 }
+
+
+/* ========================================================= */
+/* AJAX ADD + WATCHED ACTIONS                               */
+/* ========================================================= */
+
+function showToast(message, type = "success") {
+    let toast = document.getElementById("movie-ai-toast");
+
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "movie-ai-toast";
+        toast.className = "movie-ai-toast";
+        document.body.appendChild(toast);
+    }
+
+    toast.className = `movie-ai-toast ${type}`;
+    toast.textContent = message;
+
+    requestAnimationFrame(() => {
+        toast.classList.add("show");
+    });
+
+    clearTimeout(window.movieAiToastTimer);
+    window.movieAiToastTimer = setTimeout(() => {
+        toast.classList.remove("show");
+    }, 2200);
+}
+
+
+/* ADD FROM SEARCH WITHOUT RELOADING */
+
+const addForm = document.getElementById("add-form");
+
+if (addForm) {
+    addForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
+
+        const submitButton = addForm.querySelector(".primary-button");
+        const originalText = submitButton ? submitButton.innerHTML : "";
+
+        if (submitButton) {
+            submitButton.disabled = true;
+            submitButton.innerHTML = `
+                <span>Adding to library...</span>
+                <span>✓</span>
+            `;
+        }
+
+        try {
+            const response = await fetch(
+                appUrl("/api/add"),
+                {
+                    method: "POST",
+                    body: new FormData(addForm),
+                    headers: { "Accept": "application/json" }
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                throw new Error(data.error || "Unable to add title.");
+            }
+
+            showToast(`✓ ${data.item?.title || titleInput.value} added to your library`);
+
+            titleInput.value = "";
+            tmdbIdInput.value = "";
+
+            if (searchResults) {
+                searchResults.innerHTML = "";
+                searchResults.classList.remove("show");
+            }
+
+            if (selectedPreview) {
+                selectedPreview.innerHTML = `
+                    <div class="selected-preview-empty">
+                        <div class="preview-empty-icon">✓</div>
+                        <span>Added successfully. Search for another title.</span>
+                    </div>
+                `;
+            }
+
+            const ratingInput = document.getElementById("rating");
+            if (ratingInput) ratingInput.value = "";
+
+        } catch (error) {
+            console.error("AJAX add error:", error);
+            showToast(error.message || "Unable to add title.", "error");
+        } finally {
+            if (submitButton) {
+                submitButton.disabled = false;
+                submitButton.innerHTML = originalText;
+            }
+        }
+    });
+}
+
+
+/* MARK RECOMMENDATION AS WATCHED WITHOUT RELOADING */
+
+document.addEventListener("submit", async function (event) {
+
+    const form = event.target.closest(".ajax-watched-form");
+
+    if (!form) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const card = form.closest(".recommendation-card");
+    const button = form.querySelector(".watched-button");
+    const originalText = button ? button.textContent : "✅ Watched";
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = "Saving...";
+    }
+
+    try {
+        const response = await fetch(
+            appUrl("/api/recommendation/watched"),
+            {
+                method: "POST",
+                body: new FormData(form),
+                headers: { "Accept": "application/json" }
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(
+                data.error || "Unable to save watched title."
+            );
+        }
+
+        if (card) {
+            card.style.transition =
+                "opacity .25s ease, transform .25s ease";
+            card.style.opacity = "0";
+            card.style.transform = "scale(.94) translateY(8px)";
+
+            setTimeout(() => card.remove(), 250);
+        }
+
+        showToast(`✓ ${data.title || "Title"} added to watched`);
+
+        if (card) {
+            const grid = card.closest(".recommendation-grid");
+            const sourceSection = grid?.closest(".source-section");
+            const count = sourceSection?.querySelector(".source-count");
+
+            if (count) {
+                const current = Number(count.textContent.trim()) || 0;
+                count.textContent = String(Math.max(0, current - 1));
+            }
+        }
+
+    } catch (error) {
+        console.error("AJAX watched error:", error);
+        showToast(
+            error.message || "Unable to save watched title.",
+            "error"
+        );
+
+        if (button) {
+            button.disabled = false;
+            button.textContent = originalText;
+        }
+    }
+});
 
 </script>
 
