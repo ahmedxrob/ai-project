@@ -81,6 +81,7 @@ recommendation_state = {
     "status": "idle",
     "data": None,
     "error": None,
+    "tmdb_data": None,
 }
 
 
@@ -92,6 +93,7 @@ recommendation_state = {
     "status": "idle",
     "data": None,
     "error": None,
+    "tmdb_data": None,
 }
 
 
@@ -99,30 +101,33 @@ recommendation_state = {
 # BACKGROUND RECOMMENDATION JOB
 # ============================================================
 
-def run_recommendation_job():
+def run_recommendation_job(prefetched_tmdb=None):
 
     global recommendation_state
 
     try:
 
-        print("Background recommendation job started...")
+        print("Background AI recommendation job started...")
 
         recommendation_state["status"] = "loading"
         recommendation_state["error"] = None
 
         movies = get_all()
 
-        result = generate_recommendations(movies)
+        result = generate_recommendations(
+            movies,
+            prefetched_tmdb=prefetched_tmdb,
+        )
 
         recommendation_state["data"] = result
         recommendation_state["status"] = "ready"
 
-        print("Background recommendation job finished.")
+        print("Background AI recommendation job finished.")
 
     except Exception as error:
 
         print(
-            f"Background recommendation error: {error}"
+            f"Background AI recommendation error: {error}"
         )
 
         recommendation_state["status"] = "error"
@@ -1603,6 +1608,7 @@ def tmdb_fallback(
 
 def generate_recommendations(
     watched,
+    prefetched_tmdb=None,
 ):
 
     print(
@@ -1729,22 +1735,26 @@ def generate_recommendations(
             "Gemini unavailable."
         )
 
-    tmdb_results = tmdb_fallback(
-        watched,
-        blocked_movie_ids=(
+    tmdb_results = (
+        prefetched_tmdb
+        if prefetched_tmdb is not None
+        else tmdb_fallback(
+            watched,
+            blocked_movie_ids=(
             blocked_movies
             | {
                 item["tmdb_id"]
                 for item in ai_movies
             }
         ),
-        blocked_series_ids=(
-            blocked_series
-            | {
-                item["tmdb_id"]
-                for item in ai_series
-            }
-        ),
+            blocked_series_ids=(
+                blocked_series
+                | {
+                    item["tmdb_id"]
+                    for item in ai_series
+                }
+            ),
+        )
     )
 
     tmdb_movies = filter_new_results(
@@ -2471,8 +2481,7 @@ def recommendations(
         if item["type"] == "Series"
     ]
 
-    # If the background job has completed, use the cached result
-    # and reset the state after rendering this page.
+    # Finished AI job: render the complete recommendation result.
     if recommendation_state["status"] == "ready":
 
         recommendations_data = (
@@ -2488,6 +2497,7 @@ def recommendations(
                 "watched_series": watched_series,
                 "recommendations": recommendations_data,
                 "recommendations_loading": False,
+                "tmdb_discoveries": None,
                 "ingress_path": get_ingress_path(request),
             },
         )
@@ -2496,25 +2506,34 @@ def recommendations(
             "status": "idle",
             "data": None,
             "error": None,
+            "tmdb_data": None,
         }
 
     else:
 
-        # Start the expensive Gemini + TMDB work after the response
-        # is sent so the browser can immediately display the UI.
-        if recommendation_state["status"] not in (
-            "loading",
-        ):
+        # Fetch TMDB discovery immediately so the user can see the
+        # page and TMDB rails while Gemini continues in the background.
+        tmdb_discoveries = recommendation_state.get("tmdb_data")
+
+        if tmdb_discoveries is None:
+            tmdb_discoveries = tmdb_fallback(movies)
+
+        if recommendation_state["status"] != "loading":
 
             recommendation_state = {
                 "status": "loading",
                 "data": None,
                 "error": None,
+                "tmdb_data": tmdb_discoveries,
             }
 
             background_tasks.add_task(
-                run_recommendation_job
+                run_recommendation_job,
+                tmdb_discoveries,
             )
+
+        else:
+            recommendation_state["tmdb_data"] = tmdb_discoveries
 
         response = templates.TemplateResponse(
             request=request,
@@ -2525,6 +2544,7 @@ def recommendations(
                 "watched_series": watched_series,
                 "recommendations": None,
                 "recommendations_loading": True,
+                "tmdb_discoveries": tmdb_discoveries,
                 "ingress_path": get_ingress_path(request),
             },
         )
