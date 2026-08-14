@@ -4,6 +4,8 @@ import random
 import time
 import requests
 
+from pathlib import Path
+
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
@@ -73,6 +75,14 @@ TMDB_SERIES_TARGET = 8
 
 RECENT_HISTORY_LIMIT = 12
 
+WATCHLIST_FILE = Path("/data/watchlist.json")
+
+recommendation_state = {
+    "status": "idle",
+    "data": None,
+    "error": None,
+}
+
 
 # ============================================================
 # RECOMMENDATION BACKGROUND STATE
@@ -117,6 +127,61 @@ def run_recommendation_job():
 
         recommendation_state["status"] = "error"
         recommendation_state["error"] = str(error)
+
+
+# ============================================================
+# WATCHLIST
+# ============================================================
+
+def load_watchlist():
+    try:
+        if WATCHLIST_FILE.exists():
+            data = json.loads(WATCHLIST_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+    except Exception as error:
+        print(f"Watchlist load error: {error}")
+    return []
+
+
+def save_watchlist(items):
+    try:
+        WATCHLIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        WATCHLIST_FILE.write_text(
+            json.dumps(items, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as error:
+        print(f"Watchlist save error: {error}")
+
+
+def watchlist_key(media_type, tmdb_id):
+    return f"{media_type}:{tmdb_id}"
+
+
+def is_in_watchlist(media_type, tmdb_id):
+    key = watchlist_key(media_type, tmdb_id)
+    return any(item.get("key") == key for item in load_watchlist())
+
+
+def toggle_watchlist_item(item):
+    items = load_watchlist()
+    key = watchlist_key(item["media_type"], item["tmdb_id"])
+    items = [x for x in items if x.get("key") != key]
+    if not item.get("remove", False):
+        items.append({
+            "key": key,
+            "tmdb_id": item["tmdb_id"],
+            "media_type": item["media_type"],
+            "title": item.get("title", ""),
+            "year": item.get("year"),
+            "poster": item.get("poster"),
+            "backdrop": item.get("backdrop"),
+            "overview": item.get("overview", ""),
+            "vote_average": item.get("vote_average", 0),
+        })
+    save_watchlist(items)
+    return not item.get("remove", False)
 
 
 # ============================================================
@@ -177,6 +242,8 @@ class RecommendationItem(BaseModel):
     year: Optional[int] = None
 
     reason: str
+
+    match_percentage: Optional[int] = None
 
 
 class RecommendationResponse(BaseModel):
@@ -343,7 +410,9 @@ RULES:
 16. Every title must be a real existing movie or series.
 17. Every title needs a personalized reason.
 18. Explain why the specific user may like the title.
-19. Return structured data only.
+19. Give a personalized match percentage from 55 to 99.
+20. The match percentage must reflect how strongly the title fits the user profile, not TMDB popularity.
+21. Return structured data only.
 
 RANDOMIZATION VALUE:
 {random_nonce}
@@ -705,6 +774,20 @@ def normalise_tmdb_result(
 
         "tmdb_url":
             tmdb_url,
+
+        "genres": [
+            g.get("name")
+            for g in result.get("genres", [])
+            if g.get("name")
+        ],
+
+        "cast": [],
+
+        "director": "",
+
+        "creators": [],
+
+        "similar": [],
     }
 
 
@@ -1035,6 +1118,90 @@ def tmdb_get_details(
 
 
 # ============================================================
+# TMDB DETAIL PAGE DATA
+# ============================================================
+
+def tmdb_get_detail_page(tmdb_id, media_type):
+    token = get_env("TMDB_TOKEN")
+    if not token:
+        return None
+
+    endpoint = (
+        "https://api.themoviedb.org/3/"
+        f"{'movie' if media_type == 'Movie' else 'tv'}"
+        f"/{tmdb_id}"
+    )
+
+    try:
+        data = tmdb_request(
+            endpoint,
+            token,
+            {
+                "language": "en-US",
+                "append_to_response": "credits,similar",
+            },
+        )
+
+        base = normalise_tmdb_result(data, media_type)
+
+        credits = data.get("credits", {}) or {}
+        cast = []
+        for person in credits.get("cast", [])[:12]:
+            cast.append({
+                "name": person.get("name", ""),
+                "character": person.get("character", ""),
+                "photo": (
+                    "https://image.tmdb.org/t/p/w185" + person["profile_path"]
+                    if person.get("profile_path") else None
+                ),
+            })
+
+        director = ""
+        if media_type == "Movie":
+            crew = credits.get("crew", []) or []
+            directors = [
+                p.get("name") for p in crew
+                if p.get("job") == "Director" and p.get("name")
+            ]
+            director = ", ".join(dict.fromkeys(directors[:3]))
+        else:
+            creators = [
+                p.get("name") for p in data.get("created_by", [])
+                if p.get("name")
+            ]
+            director = ", ".join(dict.fromkeys(creators[:3]))
+
+        similar = []
+        for item in (data.get("similar", {}) or {}).get("results", [])[:10]:
+            normalized = normalise_tmdb_result(item, media_type)
+            if normalized.get("tmdb_id"):
+                similar.append(normalized)
+
+        base.update({
+            "cast": cast,
+            "director": director,
+            "similar": similar,
+            "genres": [
+                g.get("name")
+                for g in data.get("genres", [])
+                if g.get("name")
+            ],
+            "runtime": data.get("runtime") if media_type == "Movie" else None,
+            "episodes": data.get("number_of_episodes") if media_type == "Series" else None,
+            "seasons": data.get("number_of_seasons") if media_type == "Series" else None,
+            "status": data.get("status", ""),
+            "tagline": data.get("tagline", ""),
+            "match_percentage": None,
+        })
+
+        return base
+
+    except Exception as error:
+        print(f"TMDB detail page error: {error}")
+        return None
+
+
+# ============================================================
 # VERIFY GEMINI RESULT
 # ============================================================
 
@@ -1060,6 +1227,7 @@ def verify_recommendation(
     )
 
     result["source"] = "AI"
+    result["match_percentage"] = max(55, min(99, int(item.match_percentage or 82)))
 
     return result
 
@@ -1386,9 +1554,10 @@ def tmdb_fallback(
                 )
 
                 result["source"] = "TMDB"
+                result["match_percentage"] = max(55, min(95, int(round(result.get("vote_average", 7.0) * 10 + 10))))
 
                 result["reason"] = (
-                    "TMDB discovery."
+                    "Selected as a TMDB discovery after excluding your watched and rejected titles."
                 )
 
                 if media_type == "Movie":
@@ -1823,6 +1992,125 @@ def add(
     return app_redirect(
         request,
         "",
+    )
+
+
+# ============================================================
+# TITLE DETAIL PAGE
+# ============================================================
+
+@app.get("/title/{media_type}/{tmdb_id}")
+def title_detail(
+    request: Request,
+    media_type: str,
+    tmdb_id: int,
+    match: Optional[int] = None,
+):
+    if media_type not in ("Movie", "Series"):
+        return app_redirect(request, "recommendations")
+
+    detail = tmdb_get_detail_page(
+        tmdb_id,
+        media_type,
+    )
+
+    if not detail:
+        return app_redirect(request, "recommendations")
+
+    watched = get_all()
+    watched_item = next(
+        (
+            item for item in watched
+            if item.get("tmdb_id") == tmdb_id
+            and item.get("type") == media_type
+        ),
+        None,
+    )
+
+    # Keep the recommendation card's match percentage when the user
+    # clicked from an AI/TMDB recommendation rail. For direct visits,
+    # calculate a fallback score from the user's library.
+    if match is not None:
+        match_percentage = max(1, min(99, int(match)))
+    elif watched_item:
+        match_percentage = 100
+    else:
+        recent_scores = []
+        for item in watched:
+            rating = float(item.get("rating") or 0)
+            if rating < 7:
+                continue
+            overview = (item.get("overview") or "").strip()
+            if overview and detail.get("overview"):
+                score = fuzz.token_set_ratio(
+                    overview.lower(),
+                    detail["overview"].lower(),
+                )
+                recent_scores.append(
+                    score * (0.65 + 0.35 * (rating / 10.0))
+                )
+        if recent_scores:
+            match_percentage = int(max(58, min(96, round(max(recent_scores) + 5))))
+        else:
+            match_percentage = int(max(60, min(88, round((detail.get("vote_average", 7) or 7) * 10))))
+
+    detail["match_percentage"] = match_percentage
+    detail["is_watchlisted"] = is_in_watchlist(
+        media_type,
+        tmdb_id,
+    )
+    detail["is_watched"] = bool(watched_item)
+    detail["user_rating"] = watched_item.get("rating") if watched_item else None
+
+    response = templates.TemplateResponse(
+        request=request,
+        name="detail.html",
+        context={
+            "detail": detail,
+            "media_type": media_type,
+            "ingress_path": get_ingress_path(request),
+        },
+    )
+
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+    return response
+
+
+# ============================================================
+# WATCHLIST TOGGLE
+# ============================================================
+
+@app.post("/watchlist/toggle")
+def watchlist_toggle(
+    request: Request,
+    tmdb_id: int = Form(...),
+    media_type: str = Form(...),
+    title: str = Form(...),
+    year: Optional[int] = Form(None),
+    poster: Optional[str] = Form(None),
+    backdrop: Optional[str] = Form(None),
+    overview: Optional[str] = Form(""),
+    vote_average: float = Form(0),
+    remove: bool = Form(False),
+):
+    toggle_watchlist_item({
+        "tmdb_id": tmdb_id,
+        "media_type": media_type,
+        "title": title,
+        "year": year,
+        "poster": poster,
+        "backdrop": backdrop,
+        "overview": overview or "",
+        "vote_average": vote_average,
+        "remove": remove,
+    })
+
+    return app_redirect(
+        request,
+        f"title/{media_type}/{tmdb_id}",
     )
 
 
