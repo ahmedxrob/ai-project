@@ -1,5 +1,5 @@
 name: My Movie AI
-version: "1.4"
+version: "1.4.0"
 slug: movie_ai
 description: Personal movie and series database with Gemini and TMDB recommendations
 url: https://github.com/ahmedxrob/ai-project
