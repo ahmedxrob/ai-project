@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -116,66 +116,59 @@
             </p>
 
 
-            <div class="hero-stats">
+            <div class="hero-stats" id="hero-stats">
 
                 <div class="stat">
-
-                    <strong>
+                    <strong id="stat-watched">
                         {{ movies|length }}
                     </strong>
-
-                    <span>
-                        Watched
-                    </span>
-
+                    <span>Watched</span>
                 </div>
-
 
                 <div class="stat-divider"></div>
 
-
                 <div class="stat">
-
-                    <strong>
+                    <strong id="stat-movies">
                         {{ watched_movies|length }}
                     </strong>
-
-                    <span>
-                        Movies
-                    </span>
-
+                    <span>Movies</span>
                 </div>
-
 
                 <div class="stat-divider"></div>
 
-
                 <div class="stat">
-
-                    <strong>
+                    <strong id="stat-series">
                         {{ watched_series|length }}
                     </strong>
-
-                    <span>
-                        Series
-                    </span>
-
+                    <span>Series</span>
                 </div>
-
 
                 <div class="stat-divider"></div>
 
+                <div class="stat">
+                    <strong id="stat-recommendations">
+                        {% if recommendations %}
+                            {{ (recommendations.ai_movies|length) + (recommendations.ai_series|length) + (recommendations.tmdb_movies|length) + (recommendations.tmdb_series|length) }}
+                        {% elif tmdb_discoveries %}
+                            {{ (tmdb_discoveries.movies|length) + (tmdb_discoveries.series|length) }}
+                        {% else %}
+                            0
+                        {% endif %}
+                    </strong>
+                    <span>Recommendations</span>
+                </div>
+
+                <div class="stat-divider"></div>
 
                 <div class="stat">
-
-                    <strong>
-                        {{ ai_statistics.total_generated|default(0) }}
+                    <strong id="stat-ai-generated">
+                        {% if recommendations %}
+                            {{ (recommendations.ai_movies|length) + (recommendations.ai_series|length) }}
+                        {% else %}
+                            0
+                        {% endif %}
                     </strong>
-
-                    <span>
-                        AI Generated
-                    </span>
-
+                    <span>AI Generated</span>
                 </div>
 
             </div>
@@ -2048,6 +2041,9 @@ const recommendationStatusTimer =
 
 
 
+updateHeroRecommendationStats();
+
+
 /* ========================================================= */
 /* INGRESS-SAFE INTERNAL LINKS / FORMS */
 /* ========================================================= */
@@ -2795,6 +2791,24 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
     });
 }
 
+function updateHeroRecommendationStats() {
+    const recommendationStat = document.getElementById("stat-recommendations");
+    const aiStat = document.getElementById("stat-ai-generated");
+
+    const aiCards = document.querySelectorAll(".recommendation-card.ai-card").length;
+    const tmdbCards = document.querySelectorAll(".recommendation-card.tmdb-card").length;
+    const trendingCards = document.querySelectorAll(".trending-card").length;
+
+    if (recommendationStat) {
+        recommendationStat.textContent = String(aiCards + tmdbCards + trendingCards);
+    }
+
+    if (aiStat) {
+        aiStat.textContent = String(aiCards);
+    }
+}
+
+
 async function loadTrendingNow() {
     try {
         const response = await fetch(
@@ -2828,6 +2842,8 @@ async function loadTrendingNow() {
             "trending-series-count",
             "Series"
         );
+
+        updateHeroRecommendationStats();
 
     } catch (error) {
 
@@ -3049,6 +3065,7 @@ function removeLiveRecommendationFromWatch(card) {
 
     setTimeout(() => {
         card.remove();
+        updateHeroRecommendationStats();
     }, 250);
 
     if (count) {
