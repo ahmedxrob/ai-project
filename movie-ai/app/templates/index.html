@@ -2769,7 +2769,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
 async function loadLifetimeStatistics() {
     try {
         const response = await fetch(
-            appUrl('/api/display-statistics'),
+            appUrl('/api/lifetime-statistics'),
             {
                 cache: 'no-store',
                 headers: { 'Accept': 'application/json' }
@@ -3240,91 +3240,96 @@ document.addEventListener("submit", async function (event) {
 
 
 /* ========================================================= */
-/* AJAX NOT INTERESTED — SAME REMOVE FLOW AS WATCHED         */
+/* AJAX NOT INTERESTED — SAVE + REMOVE SAME CARD AS WATCHED */
 /* ========================================================= */
 
-document
-    .querySelectorAll(".ajax-not-interested-button")
-    .forEach(function (button) {
+document.addEventListener("click", async function (event) {
 
-        button.addEventListener("click", async function (event) {
+    const button = event.target.closest(
+        ".ajax-not-interested-button"
+    );
 
-            event.preventDefault();
-            event.stopPropagation();
+    if (!button) {
+        return;
+    }
 
-            if (button.disabled) {
-                return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (button.disabled) {
+        return;
+    }
+
+    const form = button.closest(".not-interested-form");
+    const card = button.closest(".recommendation-card");
+
+    if (!form || !card) {
+        console.error("Not interested: form/card not found.");
+        return;
+    }
+
+    const originalText = button.textContent;
+
+    button.disabled = true;
+    button.textContent = "Removing...";
+
+    try {
+
+        const response = await fetch(
+            appUrl("/api/recommendation/not-interested"),
+            {
+                method: "POST",
+                body: new FormData(form),
+                headers: {
+                    "Accept": "application/json"
+                },
+                cache: "no-store"
             }
+        );
 
-            const form =
-                button.closest(".not-interested-form");
+        const text = await response.text();
+        let data;
 
-            const card =
-                form ? form.closest(".recommendation-card") : null;
+        try {
+            data = JSON.parse(text);
+        } catch (parseError) {
+            throw new Error(
+                `Server returned invalid response (${response.status}).`
+            );
+        }
 
-            if (!form || !card) {
-                return;
-            }
+        if (!response.ok || !data.ok) {
+            throw new Error(
+                data.error || "Unable to mark title as not interested."
+            );
+        }
 
-            const originalText = button.textContent;
+        /* Use exactly the same removal function as Watched. */
+        removeLiveRecommendationFromWatch(card);
 
-            button.disabled = true;
-            button.textContent = "Removing...";
+        showToast(
+            `✕ ${data.title || "Title"} removed from recommendations`
+        );
 
-            try {
+        loadLifetimeStatistics();
 
-                const response = await fetch(
-                    appUrl("/api/recommendation/not-interested"),
-                    {
-                        method: "POST",
-                        body: new FormData(form),
-                        headers: {
-                            "Accept": "application/json"
-                        },
-                        cache: "no-store"
-                    }
-                );
+    } catch (error) {
 
-                const data = await response.json();
+        console.error(
+            "AJAX not-interested error:",
+            error
+        );
 
-                if (!response.ok || !data.ok) {
-                    throw new Error(
-                        data.error ||
-                        "Unable to mark title as not interested."
-                    );
-                }
+        button.disabled = false;
+        button.textContent = originalText;
 
-                // EXACT SAME removal function used by Watched.
-                removeLiveRecommendationFromWatch(card);
-
-                showToast(
-                    `✕ ${data.title || "Title"} removed from recommendations`
-                );
-
-                if (typeof loadLifetimeStatistics === "function") {
-                    loadLifetimeStatistics();
-                }
-
-            } catch (error) {
-
-                console.error(
-                    "AJAX not-interested error:",
-                    error
-                );
-
-                button.disabled = false;
-                button.textContent = originalText;
-
-                showToast(
-                    error.message ||
-                    "Unable to mark title as not interested.",
-                    "error"
-                );
-            }
-
-        });
-
-    });
+        showToast(
+            error.message ||
+            "Unable to mark title as not interested.",
+            "error"
+        );
+    }
+});
 
 </script>
 
