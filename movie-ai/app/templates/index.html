@@ -35,6 +35,24 @@
         href="/static/style.css"
     >
 
+
+<style>
+.drag-scroll-rail {
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: pan-y;
+}
+
+.drag-scroll-rail:active {
+    cursor: grabbing;
+}
+
+.drag-scroll-rail img {
+    -webkit-user-drag: none;
+    user-drag: none;
+}
+</style>
 </head>
 
 <body data-ingress-path="{{ ingress_path|default('') }}">
@@ -3349,6 +3367,124 @@ document.addEventListener("submit", async function (event) {
     }
 
 }, true);
+
+
+/* ========================================================= */
+/* MOUSE / TOUCH DRAG FOR HORIZONTAL STREAMING RAILS        */
+/* ========================================================= */
+
+(function initRailDrag() {
+
+    const rails = document.querySelectorAll(
+        ".recommendation-grid, .trending-grid"
+    );
+
+    rails.forEach(function (rail) {
+
+        let isPointerDown = false;
+        let isDragging = false;
+        let startX = 0;
+        let startScrollLeft = 0;
+        let suppressNextClick = false;
+        let draggedDistance = 0;
+
+        rail.classList.add("drag-scroll-rail");
+
+        rail.addEventListener("pointerdown", function (event) {
+
+            /* Don't hijack buttons, forms, links or inputs. */
+            if (
+                event.target.closest(
+                    "a, button, form, input, select, textarea"
+                )
+            ) {
+                return;
+            }
+
+            /* Only start dragging with the primary mouse button. */
+            if (event.pointerType === "mouse" && event.button !== 0) {
+                return;
+            }
+
+            isPointerDown = true;
+            isDragging = false;
+            draggedDistance = 0;
+            startX = event.clientX;
+            startScrollLeft = rail.scrollLeft;
+
+            rail.setPointerCapture?.(event.pointerId);
+        });
+
+        rail.addEventListener("pointermove", function (event) {
+
+            if (!isPointerDown) {
+                return;
+            }
+
+            const deltaX = event.clientX - startX;
+            draggedDistance = Math.abs(deltaX);
+
+            /* Require a small movement before treating it as a drag. */
+            if (draggedDistance < 6) {
+                return;
+            }
+
+            isDragging = true;
+
+            /* Drag left => reveal cards on the right. */
+            rail.scrollLeft =
+                startScrollLeft - deltaX;
+
+            if (event.cancelable) {
+                event.preventDefault();
+            }
+        });
+
+        function finishDrag(event) {
+
+            if (!isPointerDown) {
+                return;
+            }
+
+            isPointerDown = false;
+
+            try {
+                rail.releasePointerCapture?.(event.pointerId);
+            } catch (_) {
+                /* Pointer capture may already have been released. */
+            }
+
+            if (isDragging && draggedDistance > 8) {
+                suppressNextClick = true;
+
+                /* Prevent the drag release from activating a card. */
+                setTimeout(function () {
+                    suppressNextClick = false;
+                }, 120);
+            }
+
+            isDragging = false;
+        }
+
+        rail.addEventListener("pointerup", finishDrag);
+        rail.addEventListener("pointercancel", finishDrag);
+        rail.addEventListener("pointerleave", function (event) {
+            if (event.pointerType === "mouse") {
+                finishDrag(event);
+            }
+        });
+
+        rail.addEventListener("click", function (event) {
+
+            if (suppressNextClick) {
+                event.preventDefault();
+                event.stopPropagation();
+                suppressNextClick = false;
+            }
+        }, true);
+    });
+
+})();
 
 </script>
 
