@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 from fastapi import FastAPI, Request, Form, BackgroundTasks
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
@@ -30,8 +30,9 @@ from app.database import (
     add_not_interested,
     get_not_interested_ids,
     get_display_statistics,
-    increment_recommendation_statistics,
-    increment_trending_statistics,
+    set_recommendation_statistics,
+    set_trending_statistics,
+    set_display_statistics,
 )
 
 
@@ -73,8 +74,8 @@ AI_SERIES_CANDIDATES = 30
 AI_MOVIES_TARGET = 8
 AI_SERIES_TARGET = 8
 
-TMDB_MOVIES_TARGET = 10
-TMDB_SERIES_TARGET = 10
+TMDB_MOVIES_TARGET = 8
+TMDB_SERIES_TARGET = 8
 
 RECENT_HISTORY_LIMIT = 12
 
@@ -109,7 +110,7 @@ def run_recommendation_job(prefetched_tmdb=None):
             prefetched_tmdb=prefetched_tmdb,
         )
 
-        increment_recommendation_statistics(
+        set_recommendation_statistics(
             ai_movies=len(result.get("ai_movies", [])),
             ai_series=len(result.get("ai_series", [])),
             tmdb_movies=len(result.get("tmdb_movies", [])),
@@ -1487,19 +1488,30 @@ def tmdb_fallback(
                 [],
             )
 
-    # Only fetch two pages per type. The final rail is capped at 10 items.
     jobs = [
         ("Movie", 1),
         ("Movie", 2),
+        ("Movie", 3),
+        ("Movie", 4),
+        ("Movie", 5),
+        ("Movie", 6),
+        ("Movie", 7),
+        ("Movie", 8),
         ("Series", 1),
         ("Series", 2),
+        ("Series", 3),
+        ("Series", 4),
+        ("Series", 5),
+        ("Series", 6),
+        ("Series", 7),
+        ("Series", 8),
     ]
 
     movies = []
     series = []
 
     with ThreadPoolExecutor(
-        max_workers=4
+        max_workers=16
     ) as executor:
 
         futures = [
@@ -1567,16 +1579,12 @@ def tmdb_fallback(
         series
     )
 
-    # TMDB discoveries also use the calculated match score,
-    # highest first. Keep the score meaningful rather than randomizing.
-    movies.sort(
-        key=lambda item: int(item.get("match_percentage") or 0),
-        reverse=True,
+    random.shuffle(
+        movies
     )
 
-    series.sort(
-        key=lambda item: int(item.get("match_percentage") or 0),
-        reverse=True,
+    random.shuffle(
+        series
     )
 
     return {
@@ -1689,15 +1697,12 @@ def generate_recommendations(
             blocked_series,
         )
 
-        # Best personalized matches first.
-        ai_movies.sort(
-            key=lambda item: int(item.get("match_percentage") or 0),
-            reverse=True,
+        random.shuffle(
+            ai_movies
         )
 
-        ai_series.sort(
-            key=lambda item: int(item.get("match_percentage") or 0),
-            reverse=True,
+        random.shuffle(
+            ai_series
         )
 
         ai_movies = ai_movies[
@@ -1953,13 +1958,9 @@ def api_trending():
         movies = movie_future.result()
         series = series_future.result()
 
-        increment_trending_statistics(
-            "Movie",
-            [item.get("tmdb_id") for item in movies],
-        )
-        increment_trending_statistics(
-            "Series",
-            [item.get("tmdb_id") for item in series],
+        set_trending_statistics(
+            trending_movies=len(movies),
+            trending_series=len(series),
         )
 
         return {
@@ -1974,6 +1975,26 @@ def api_trending():
 
 @app.get("/api/display-statistics")
 def api_display_statistics():
+    return get_display_statistics()
+
+
+@app.post("/api/display-statistics")
+def api_display_statistics_sync(
+    ai_movies: int = Form(0),
+    ai_series: int = Form(0),
+    tmdb_movies: int = Form(0),
+    tmdb_series: int = Form(0),
+    trending_movies: int = Form(0),
+    trending_series: int = Form(0),
+):
+    set_display_statistics(
+        ai_movies=ai_movies,
+        ai_series=ai_series,
+        tmdb_movies=tmdb_movies,
+        tmdb_series=tmdb_series,
+        trending_movies=trending_movies,
+        trending_series=trending_series,
+    )
     return get_display_statistics()
 
 
@@ -2510,7 +2531,7 @@ def recommendations(
                 "recommendations": recommendations_data,
                 "recommendations_loading": False,
                 "tmdb_discoveries": None,
-                "lifetime_statistics": get_display_statistics(),
+                "display_statistics": get_display_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
@@ -2530,6 +2551,15 @@ def recommendations(
 
         if tmdb_discoveries is None:
             tmdb_discoveries = tmdb_fallback(movies)
+
+        # While Gemini is still generating, the page already has TMDB discovery
+        # counts. Keep the DB-backed snapshot aligned with what is visible now.
+        set_recommendation_statistics(
+            ai_movies=0,
+            ai_series=0,
+            tmdb_movies=len(tmdb_discoveries.get("movies", [])),
+            tmdb_series=len(tmdb_discoveries.get("series", [])),
+        )
 
         if recommendation_state["status"] != "loading":
 
@@ -2558,7 +2588,7 @@ def recommendations(
                 "recommendations": None,
                 "recommendations_loading": True,
                 "tmdb_discoveries": tmdb_discoveries,
-                "lifetime_statistics": get_display_statistics(),
+                "display_statistics": get_display_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
@@ -2731,12 +2761,22 @@ def recommendation_not_interested(
         f"TMDB={tmdb_id}"
     )
 
-    return {
-        "ok": True,
-        "tmdb_id": tmdb_id,
-        "media_type": media_type,
-        "title": title,
-    }
+    # AJAX requests get JSON so the browser stays on the current page.
+    # Normal non-AJAX form submissions keep the old redirect behavior.
+    accept = (request.headers.get("accept") or "").lower()
+
+    if "application/json" in accept:
+        return JSONResponse({
+            "ok": True,
+            "tmdb_id": tmdb_id,
+            "media_type": media_type,
+            "title": title,
+        })
+
+    return app_redirect(
+        request,
+        "recommendations",
+    )
 
 
 # ============================================================
