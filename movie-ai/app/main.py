@@ -2775,6 +2775,46 @@ def recommendation_not_interested(
 
 
 # ============================================================
+# AJAX NOT INTERESTED
+# Same database action as the normal route, but returns JSON.
+# ============================================================
+
+@app.post("/api/recommendation/not-interested")
+def api_recommendation_not_interested(
+    title: str = Form(...),
+    media_type: str = Form(...),
+    tmdb_id: int = Form(...),
+):
+
+    if media_type not in ("Movie", "Series"):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "Invalid media type.",
+            },
+            status_code=400,
+        )
+
+    add_not_interested(
+        tmdb_id=tmdb_id,
+        media_type=media_type,
+        title=title,
+    )
+
+    print(
+        f"AJAX not interested: {title} "
+        f"[{media_type}] TMDB={tmdb_id}"
+    )
+
+    return JSONResponse({
+        "ok": True,
+        "tmdb_id": tmdb_id,
+        "media_type": media_type,
+        "title": title,
+    })
+
+
+# ============================================================
 # DELETE
 # ============================================================
 
