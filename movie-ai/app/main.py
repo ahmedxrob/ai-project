@@ -1975,6 +1975,11 @@ def api_trending():
 # DISPLAY STATISTICS API
 # ============================================================
 
+@app.get("/api/lifetime-statistics")
+def api_lifetime_statistics():
+    return get_lifetime_statistics()
+
+
 @app.get("/api/display-statistics")
 def api_display_statistics():
     return get_display_statistics()
