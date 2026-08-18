@@ -1,8 +1,8 @@
+import json
 import os
 import random
 import time
 import requests
-import json
 
 from pathlib import Path
 
@@ -1567,12 +1567,16 @@ def tmdb_fallback(
         series
     )
 
-    random.shuffle(
-        movies
+    # TMDB discoveries also use the calculated match score,
+    # highest first. Keep the score meaningful rather than randomizing.
+    movies.sort(
+        key=lambda item: int(item.get("match_percentage") or 0),
+        reverse=True,
     )
 
-    random.shuffle(
-        series
+    series.sort(
+        key=lambda item: int(item.get("match_percentage") or 0),
+        reverse=True,
     )
 
     return {
@@ -1685,12 +1689,15 @@ def generate_recommendations(
             blocked_series,
         )
 
-        random.shuffle(
-            ai_movies
+        # Best personalized matches first.
+        ai_movies.sort(
+            key=lambda item: int(item.get("match_percentage") or 0),
+            reverse=True,
         )
 
-        random.shuffle(
-            ai_series
+        ai_series.sort(
+            key=lambda item: int(item.get("match_percentage") or 0),
+            reverse=True,
         )
 
         ai_movies = ai_movies[
@@ -2724,10 +2731,12 @@ def recommendation_not_interested(
         f"TMDB={tmdb_id}"
     )
 
-    return app_redirect(
-        request,
-        "recommendations",
-    )
+    return {
+        "ok": True,
+        "tmdb_id": tmdb_id,
+        "media_type": media_type,
+        "title": title,
+    }
 
 
 # ============================================================
