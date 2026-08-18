@@ -716,7 +716,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form ajax-not-interested-form"
+                            class="not-interested-form"
                         >
 
                             <input
@@ -738,8 +738,8 @@
                             >
 
                             <button
-                                type="submit"
-                                class="not-interested-button"
+                                type="button"
+                                class="not-interested-button ajax-not-interested-button"
                             >
                                 ✕ Not interested
                             </button>
@@ -965,7 +965,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form ajax-not-interested-form"
+                            class="not-interested-form"
                         >
 
                             <input
@@ -987,8 +987,8 @@
                             >
 
                             <button
-                                type="submit"
-                                class="not-interested-button"
+                                type="button"
+                                class="not-interested-button ajax-not-interested-button"
                             >
                                 ✕ Not interested
                             </button>
@@ -1229,7 +1229,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form ajax-not-interested-form"
+                            class="not-interested-form"
                         >
 
                             <input
@@ -1251,8 +1251,8 @@
                             >
 
                             <button
-                                type="submit"
-                                class="not-interested-button"
+                                type="button"
+                                class="not-interested-button ajax-not-interested-button"
                             >
                                 ✕ Not interested
                             </button>
@@ -1478,7 +1478,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form ajax-not-interested-form"
+                            class="not-interested-form"
                         >
 
                             <input
@@ -1500,8 +1500,8 @@
                             >
 
                             <button
-                                type="submit"
-                                class="not-interested-button"
+                                type="button"
+                                class="not-interested-button ajax-not-interested-button"
                             >
                                 ✕ Not interested
                             </button>
@@ -3235,86 +3235,126 @@ document.addEventListener("submit", async function (event) {
 
 
 
-/* REMOVE NOT-INTERESTED RECOMMENDATION WITHOUT RELOADING */
+/* ========================================================= */
+/* AJAX NOT INTERESTED — NEVER NAVIGATE TO JSON RESPONSE    */
+/* ========================================================= */
 
-document.addEventListener("submit", async function (event) {
+document
+    .querySelectorAll(".ajax-not-interested-button")
+    .forEach(function (button) {
 
-    const form = event.target.closest(".ajax-not-interested-form");
+        button.addEventListener("click", async function (event) {
 
-    if (!form) return;
+            event.preventDefault();
+            event.stopPropagation();
 
-    event.preventDefault();
-    event.stopPropagation();
+            const form =
+                button.closest(".not-interested-form");
 
-    const card = form.closest(".recommendation-card");
-    const button = form.querySelector(".not-interested-button");
-    const originalText = button ? button.textContent : "✕ Not interested";
-
-    if (button) {
-        button.disabled = true;
-        button.textContent = "Removing...";
-    }
-
-    try {
-        const response = await fetch(
-            appUrl("/recommendation/not-interested"),
-            {
-                method: "POST",
-                body: new FormData(form),
-                headers: { "Accept": "application/json" }
+            if (!form) {
+                return;
             }
-        );
 
-        const data = await response.json();
+            const card =
+                form.closest(".recommendation-card");
 
-        if (!response.ok || !data.ok) {
-            throw new Error(
-                data.error || "Unable to mark title as not interested."
-            );
-        }
+            const originalText =
+                button.textContent;
 
-        if (card) {
-            const grid = card.closest(".recommendation-grid");
-            const sourceSection = grid?.closest(".source-section");
-            const count = sourceSection?.querySelector(".source-count");
+            button.disabled = true;
+            button.textContent = "Removing...";
 
-            card.style.transition =
-                "opacity .22s ease, transform .22s ease, max-height .22s ease";
-            card.style.opacity = "0";
-            card.style.transform = "scale(.94) translateY(8px)";
+            try {
 
-            setTimeout(() => {
-                card.remove();
+                const response = await fetch(
+                    appUrl("/recommendation/not-interested"),
+                    {
+                        method: "POST",
+                        body: new FormData(form),
+                        headers: {
+                            "Accept": "application/json"
+                        }
+                    }
+                );
 
-                if (count) {
-                    const current = Number(count.textContent.trim()) || 0;
-                    count.textContent = String(Math.max(0, current - 1));
+                if (!response.ok) {
+                    throw new Error(
+                        `Request failed: ${response.status}`
+                    );
                 }
 
-                if (grid && !grid.querySelector(".recommendation-card")) {
-                    const empty = document.createElement("div");
-                    empty.className = "empty-recommendations";
-                    empty.textContent = "No recommendations available in this rail.";
-                    grid.replaceWith(empty);
+                const data = await response.json();
+
+                if (!data.ok) {
+                    throw new Error(
+                        data.error ||
+                        "Unable to mark title as not interested."
+                    );
                 }
-            }, 220);
-        }
 
-        showToast(`✕ ${data.title || "Title"} removed from recommendations`);
+                if (card) {
 
-    } catch (error) {
-        console.error("AJAX not-interested error:", error);
-        showToast(
-            error.message || "Unable to mark title as not interested.",
-            "error"
-        );
+                    const grid =
+                        card.closest(".recommendation-grid");
 
-        if (button) {
-            button.disabled = false;
-            button.textContent = originalText;
-        }
-    }
-});
+                    const sourceSection =
+                        grid
+                            ? grid.closest(".source-section")
+                            : null;
+
+                    const count =
+                        sourceSection
+                            ? sourceSection.querySelector(".source-count")
+                            : null;
+
+                    card.style.transition =
+                        "opacity .22s ease, transform .22s ease";
+
+                    card.style.opacity = "0";
+                    card.style.transform =
+                        "scale(.95) translateY(8px)";
+
+                    setTimeout(function () {
+
+                        card.remove();
+
+                        if (count) {
+                            const current =
+                                Number(count.textContent.trim()) || 0;
+
+                            count.textContent = String(
+                                Math.max(0, current - 1)
+                            );
+                        }
+
+                        updateDisplayStatistics();
+
+                    }, 220);
+                }
+
+                showToast(
+                    `✕ ${data.title || "Title"} removed`
+                );
+
+            } catch (error) {
+
+                console.error(
+                    "AJAX not-interested error:",
+                    error
+                );
+
+                button.disabled = false;
+                button.textContent = originalText;
+
+                showToast(
+                    error.message ||
+                    "Unable to remove recommendation.",
+                    "error"
+                );
+            }
+        });
+    });
+
 </script>
 
 
