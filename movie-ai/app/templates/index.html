@@ -1,4 +1,4 @@
-!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -114,60 +114,38 @@
                 rate it, and let AI discover
                 your next favorite.
             </p>
-
-
-            <div class="hero-stats" id="hero-stats">
+            <div class="hero-stats">
 
                 <div class="stat">
-                    <strong id="stat-watched">
-                        {{ movies|length }}
-                    </strong>
+                    <strong>{{ movies|length }}</strong>
                     <span>Watched</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong id="stat-movies">
-                        {{ watched_movies|length }}
-                    </strong>
+                    <strong>{{ watched_movies|length }}</strong>
                     <span>Movies</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong id="stat-series">
-                        {{ watched_series|length }}
-                    </strong>
+                    <strong>{{ watched_series|length }}</strong>
                     <span>Series</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong id="stat-recommendations">
-                        {% if recommendations %}
-                            {{ (recommendations.ai_movies|length) + (recommendations.ai_series|length) + (recommendations.tmdb_movies|length) + (recommendations.tmdb_series|length) }}
-                        {% elif tmdb_discoveries %}
-                            {{ (tmdb_discoveries.movies|length) + (tmdb_discoveries.series|length) }}
-                        {% else %}
-                            0
-                        {% endif %}
-                    </strong>
+                    <strong id="header-recommendations-count">{{ display_statistics.recommendations|default(0) }}</strong>
                     <span>Recommendations</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong id="stat-ai-generated">
-                        {% if recommendations %}
-                            {{ (recommendations.ai_movies|length) + (recommendations.ai_series|length) }}
-                        {% else %}
-                            0
-                        {% endif %}
-                    </strong>
+                    <strong id="header-ai-generated-count">{{ display_statistics.ai_generated|default(0) }}</strong>
                     <span>AI Generated</span>
                 </div>
 
@@ -2041,9 +2019,6 @@ const recommendationStatusTimer =
 
 
 
-updateHeroRecommendationStats();
-
-
 /* ========================================================= */
 /* INGRESS-SAFE INTERNAL LINKS / FORMS */
 /* ========================================================= */
@@ -2791,23 +2766,72 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
     });
 }
 
-function updateHeroRecommendationStats() {
-    const recommendationStat = document.getElementById("stat-recommendations");
-    const aiStat = document.getElementById("stat-ai-generated");
+async function syncDisplayStatisticsFromPage() {
+    try {
+        const counts = {
+            ai_movies: document.querySelectorAll('.recommendation-card.ai-card[data-media-type="Movie"]').length,
+            ai_series: document.querySelectorAll('.recommendation-card.ai-card[data-media-type="Series"]').length,
+            tmdb_movies: document.querySelectorAll('.recommendation-card.tmdb-card[data-media-type="Movie"]').length,
+            tmdb_series: document.querySelectorAll('.recommendation-card.tmdb-card[data-media-type="Series"]').length,
+            trending_movies: document.querySelectorAll('.trending-card[data-media-type="Movie"]').length,
+            trending_series: document.querySelectorAll('.trending-card[data-media-type="Series"]').length,
+        };
 
-    const aiCards = document.querySelectorAll(".recommendation-card.ai-card").length;
-    const tmdbCards = document.querySelectorAll(".recommendation-card.tmdb-card").length;
-    const trendingCards = document.querySelectorAll(".trending-card").length;
+        const body = new URLSearchParams(counts);
 
-    if (recommendationStat) {
-        recommendationStat.textContent = String(aiCards + tmdbCards + trendingCards);
-    }
+        const response = await fetch(
+            appUrl('/api/display-statistics'),
+            {
+                method: 'POST',
+                body,
+                cache: 'no-store',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+                }
+            }
+        );
 
-    if (aiStat) {
-        aiStat.textContent = String(aiCards);
+        if (!response.ok) return;
+
+        const data = await response.json();
+        updateHeaderDisplayStatistics(data);
+    } catch (error) {
+        console.error('Display statistics sync error:', error);
     }
 }
 
+function updateHeaderDisplayStatistics(data) {
+    const recommendationsElement = document.getElementById('header-recommendations-count');
+    const aiElement = document.getElementById('header-ai-generated-count');
+
+    if (recommendationsElement && data) {
+        recommendationsElement.textContent = String(data.recommendations ?? 0);
+    }
+
+    if (aiElement && data) {
+        aiElement.textContent = String(data.ai_generated ?? 0);
+    }
+}
+
+async function loadDisplayStatistics() {
+    try {
+        const response = await fetch(
+            appUrl('/api/display-statistics'),
+            {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/json' }
+            }
+        );
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+        updateHeaderDisplayStatistics(data);
+    } catch (error) {
+        console.error('Display statistics load error:', error);
+    }
+}
 
 async function loadTrendingNow() {
     try {
@@ -2843,7 +2867,7 @@ async function loadTrendingNow() {
             "Series"
         );
 
-        updateHeroRecommendationStats();
+        await syncDisplayStatisticsFromPage();
 
     } catch (error) {
 
@@ -2872,6 +2896,7 @@ async function loadTrendingNow() {
 }
 
 loadTrendingNow();
+loadDisplayStatistics();
 
 
 /* ========================================================= */
@@ -3065,13 +3090,14 @@ function removeLiveRecommendationFromWatch(card) {
 
     setTimeout(() => {
         card.remove();
-        updateHeroRecommendationStats();
     }, 250);
 
     if (count) {
         const current = Number(count.textContent.trim()) || 0;
         count.textContent = String(Math.max(0, current - 1));
     }
+
+    setTimeout(syncDisplayStatisticsFromPage, 275);
 }
 
 /* ========================================================= */
@@ -3141,6 +3167,7 @@ if (addForm) {
             addLiveWatchedCard(data.item);
 
             showToast(`✓ ${data.item?.title || titleInput.value} added to your library`);
+            syncDisplayStatisticsFromPage();
 
             titleInput.value = "";
             tmdbIdInput.value = "";
@@ -3226,6 +3253,7 @@ document.addEventListener("submit", async function (event) {
         removeLiveRecommendationFromWatch(card);
 
         showToast(`✓ ${data.title || "Title"} added to watched`);
+        syncDisplayStatisticsFromPage();
 
     } catch (error) {
         console.error("AJAX watched error:", error);
