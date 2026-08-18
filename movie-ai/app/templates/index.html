@@ -716,7 +716,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form"
+                            class="not-interested-form ajax-not-interested-form"
                         >
 
                             <input
@@ -738,8 +738,8 @@
                             >
 
                             <button
-                                type="button"
-                                class="not-interested-button ajax-not-interested-button"
+                                type="submit"
+                                class="not-interested-button"
                             >
                                 ✕ Not interested
                             </button>
@@ -965,7 +965,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form"
+                            class="not-interested-form ajax-not-interested-form"
                         >
 
                             <input
@@ -987,8 +987,8 @@
                             >
 
                             <button
-                                type="button"
-                                class="not-interested-button ajax-not-interested-button"
+                                type="submit"
+                                class="not-interested-button"
                             >
                                 ✕ Not interested
                             </button>
@@ -1229,7 +1229,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form"
+                            class="not-interested-form ajax-not-interested-form"
                         >
 
                             <input
@@ -1251,8 +1251,8 @@
                             >
 
                             <button
-                                type="button"
-                                class="not-interested-button ajax-not-interested-button"
+                                type="submit"
+                                class="not-interested-button"
                             >
                                 ✕ Not interested
                             </button>
@@ -1478,7 +1478,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form"
+                            class="not-interested-form ajax-not-interested-form"
                         >
 
                             <input
@@ -1500,8 +1500,8 @@
                             >
 
                             <button
-                                type="button"
-                                class="not-interested-button ajax-not-interested-button"
+                                type="submit"
+                                class="not-interested-button"
                             >
                                 ✕ Not interested
                             </button>
@@ -3240,31 +3240,28 @@ document.addEventListener("submit", async function (event) {
 
 
 /* ========================================================= */
-/* AJAX NOT INTERESTED — SAVE + REMOVE SAME CARD AS WATCHED */
+/* ========================================================= */
+/* AJAX NOT INTERESTED — SAME SUBMIT FLOW AS WATCHED         */
 /* ========================================================= */
 
-document.addEventListener("click", async function (event) {
+document.addEventListener("submit", async function (event) {
 
-    const button = event.target.closest(
-        ".ajax-not-interested-button"
+    const form = event.target.closest(
+        ".ajax-not-interested-form"
     );
 
-    if (!button) {
+    if (!form) {
         return;
     }
 
     event.preventDefault();
     event.stopPropagation();
 
-    if (button.disabled) {
-        return;
-    }
+    const card = form.closest(".recommendation-card");
+    const button = form.querySelector(".not-interested-button");
 
-    const form = button.closest(".not-interested-form");
-    const card = button.closest(".recommendation-card");
-
-    if (!form || !card) {
-        console.error("Not interested: form/card not found.");
+    if (!card || !button) {
+        console.error("Not interested: card/button not found.");
         return;
     }
 
@@ -3287,24 +3284,16 @@ document.addEventListener("click", async function (event) {
             }
         );
 
-        const text = await response.text();
-        let data;
-
-        try {
-            data = JSON.parse(text);
-        } catch (parseError) {
-            throw new Error(
-                `Server returned invalid response (${response.status}).`
-            );
-        }
+        const data = await response.json();
 
         if (!response.ok || !data.ok) {
             throw new Error(
-                data.error || "Unable to mark title as not interested."
+                data.error ||
+                "Unable to mark title as not interested."
             );
         }
 
-        /* Use exactly the same removal function as Watched. */
+        /* EXACT same card-removal function used by Watched. */
         removeLiveRecommendationFromWatch(card);
 
         showToast(
