@@ -3061,7 +3061,11 @@ function removeLiveRecommendationFromWatch(card) {
         count.textContent = String(Math.max(0, current - 1));
     }
 
-    setTimeout(syncDisplayStatisticsFromPage, 275);
+    setTimeout(function () {
+        if (typeof loadLifetimeStatistics === "function") {
+            loadLifetimeStatistics();
+        }
+    }, 275);
 }
 
 /* ========================================================= */
@@ -3236,124 +3240,99 @@ document.addEventListener("submit", async function (event) {
 
 
 /* ========================================================= */
-/* AJAX NOT INTERESTED — NEVER NAVIGATE TO JSON RESPONSE    */
+/* AJAX NOT INTERESTED — SAME REMOVE FLOW AS WATCHED         */
 /* ========================================================= */
 
-document
-    .querySelectorAll(".ajax-not-interested-button")
-    .forEach(function (button) {
+document.addEventListener("click", async function (event) {
 
-        button.addEventListener("click", async function (event) {
+    const button = event.target.closest(".ajax-not-interested-button");
 
-            event.preventDefault();
-            event.stopPropagation();
+    if (!button) {
+        return;
+    }
 
-            const form =
-                button.closest(".not-interested-form");
+    event.preventDefault();
+    event.stopPropagation();
 
-            if (!form) {
-                return;
+    if (button.disabled) {
+        return;
+    }
+
+    const form = button.closest(".not-interested-form");
+
+    if (!form) {
+        return;
+    }
+
+    const card = form.closest(".recommendation-card");
+    const originalText = button.textContent;
+
+    button.disabled = true;
+    button.textContent = "Removing...";
+
+    try {
+
+        const response = await fetch(
+            appUrl("/recommendation/not-interested"),
+            {
+                method: "POST",
+                body: new FormData(form),
+                headers: {
+                    "Accept": "application/json",
+                    "X-Requested-With": "XMLHttpRequest"
+                },
+                cache: "no-store"
             }
+        );
 
-            const card =
-                form.closest(".recommendation-card");
+        const contentType =
+            response.headers.get("content-type") || "";
 
-            const originalText =
-                button.textContent;
+        if (!response.ok) {
+            throw new Error(`Request failed: ${response.status}`);
+        }
 
-            button.disabled = true;
-            button.textContent = "Removing...";
+        if (!contentType.includes("application/json")) {
+            throw new Error("Server returned a non-JSON response.");
+        }
 
-            try {
+        const data = await response.json();
 
-                const response = await fetch(
-                    appUrl("/recommendation/not-interested"),
-                    {
-                        method: "POST",
-                        body: new FormData(form),
-                        headers: {
-                            "Accept": "application/json"
-                        }
-                    }
-                );
+        if (!data.ok) {
+            throw new Error(
+                data.error ||
+                "Unable to mark title as not interested."
+            );
+        }
 
-                if (!response.ok) {
-                    throw new Error(
-                        `Request failed: ${response.status}`
-                    );
-                }
+        /* Exactly the same visual removal behavior as Watched. */
+        removeLiveRecommendationFromWatch(card);
 
-                const data = await response.json();
+        showToast(
+            `✕ ${data.title || "Title"} removed from recommendations`
+        );
 
-                if (!data.ok) {
-                    throw new Error(
-                        data.error ||
-                        "Unable to mark title as not interested."
-                    );
-                }
+        if (typeof loadLifetimeStatistics === "function") {
+            loadLifetimeStatistics();
+        }
 
-                if (card) {
+    } catch (error) {
 
-                    const grid =
-                        card.closest(".recommendation-grid");
+        console.error(
+            "AJAX not-interested error:",
+            error
+        );
 
-                    const sourceSection =
-                        grid
-                            ? grid.closest(".source-section")
-                            : null;
+        button.disabled = false;
+        button.textContent = originalText;
 
-                    const count =
-                        sourceSection
-                            ? sourceSection.querySelector(".source-count")
-                            : null;
-
-                    card.style.transition =
-                        "opacity .22s ease, transform .22s ease";
-
-                    card.style.opacity = "0";
-                    card.style.transform =
-                        "scale(.95) translateY(8px)";
-
-                    setTimeout(function () {
-
-                        card.remove();
-
-                        if (count) {
-                            const current =
-                                Number(count.textContent.trim()) || 0;
-
-                            count.textContent = String(
-                                Math.max(0, current - 1)
-                            );
-                        }
-
-                        updateDisplayStatistics();
-
-                    }, 220);
-                }
-
-                showToast(
-                    `✕ ${data.title || "Title"} removed`
-                );
-
-            } catch (error) {
-
-                console.error(
-                    "AJAX not-interested error:",
-                    error
-                );
-
-                button.disabled = false;
-                button.textContent = originalText;
-
-                showToast(
-                    error.message ||
-                    "Unable to remove recommendation.",
-                    "error"
-                );
-            }
-        });
-    });
+        showToast(
+            error.message ||
+            "Unable to mark title as not interested.",
+            "error"
+        );
+    }
+});
 
 </script>
 
