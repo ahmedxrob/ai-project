@@ -162,6 +162,22 @@
 
                 </div>
 
+
+                <div class="stat-divider"></div>
+
+
+                <div class="stat">
+
+                    <strong>
+                        {{ ai_statistics.total_generated|default(0) }}
+                    </strong>
+
+                    <span>
+                        AI Generated
+                    </span>
+
+                </div>
+
             </div>
 
         </div>
@@ -1094,7 +1110,7 @@
 
                 {% for item in recommendations.ai_series %}
 
-                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}">
 
                     <div class="recommendation-poster">
 
@@ -2580,15 +2596,15 @@ document.addEventListener(
     "click",
     function (event) {
 
-        if (
-            !event.target.closest(
-                ".search-field"
-            )
-        ) {
+        if (!searchPanel || !searchPanel.classList.contains("is-open")) {
+            return;
+        }
 
-            searchResults.classList.remove(
-                "show"
-            );
+        if (
+            !event.target.closest("#search-panel") &&
+            !event.target.closest("#open-search-button")
+        ) {
+            closeSearchPanel();
         }
     }
 );
