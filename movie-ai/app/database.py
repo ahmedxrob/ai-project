@@ -84,6 +84,60 @@ def init_database():
         ) VALUES (1, 0, 0, 0, 0, 0, 0)
     ''')
 
+    # Lifetime statistics. These never decrease when a watched title is removed.
+    connection.execute('''
+        CREATE TABLE IF NOT EXISTS lifetime_statistics (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            watched_total INTEGER NOT NULL DEFAULT 0,
+            movies_total INTEGER NOT NULL DEFAULT 0,
+            series_total INTEGER NOT NULL DEFAULT 0,
+            recommendations_total INTEGER NOT NULL DEFAULT 0,
+            ai_generated_total INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    row = connection.execute('''
+        SELECT id FROM lifetime_statistics WHERE id = 1
+    ''').fetchone()
+
+    if row is None:
+        watched_total = connection.execute(
+            'SELECT COUNT(*) AS c FROM watched'
+        ).fetchone()['c']
+        movies_total = connection.execute(
+            "SELECT COUNT(*) AS c FROM watched WHERE type = 'Movie'"
+        ).fetchone()['c']
+        series_total = connection.execute(
+            "SELECT COUNT(*) AS c FROM watched WHERE type = 'Series'"
+        ).fetchone()['c']
+        recommendations_total = connection.execute(
+            'SELECT COUNT(*) AS c FROM recommendation_history'
+        ).fetchone()['c']
+
+        connection.execute('''
+            INSERT INTO lifetime_statistics (
+                id, watched_total, movies_total, series_total,
+                recommendations_total, ai_generated_total
+            ) VALUES (1, ?, ?, ?, ?, 0)
+        ''', (
+            int(watched_total or 0),
+            int(movies_total or 0),
+            int(series_total or 0),
+            int(recommendations_total or 0),
+        ))
+
+    # Used to avoid counting the same Trending title repeatedly on the same day.
+    connection.execute('''
+        CREATE TABLE IF NOT EXISTS trending_seen (
+            day TEXT NOT NULL,
+            type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
+            tmdb_id INTEGER NOT NULL,
+            PRIMARY KEY (day, type, tmdb_id)
+        )
+    ''')
+
     # Upgrade old watched databases.
     columns = connection.execute('PRAGMA table_info(watched)').fetchall()
     existing_columns = {column['name'] for column in columns}
@@ -210,15 +264,8 @@ def add_movie(
                 tmdb_id = ?
             WHERE id = ?
         ''', (
-            final_title,
-            rating,
-            media_type,
-            final_poster,
-            final_backdrop,
-            final_year,
-            final_overview,
-            final_tmdb_id,
-            existing['id'],
+            final_title, rating, media_type, final_poster, final_backdrop,
+            final_year, final_overview, final_tmdb_id, existing['id'],
         ))
         connection.commit()
         connection.close()
@@ -226,31 +273,29 @@ def add_movie(
 
     cursor = connection.execute('''
         INSERT INTO watched (
-            title,
-            rating,
-            type,
-            poster,
-            backdrop,
-            year,
-            overview,
-            tmdb_id
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            title, rating, type, poster, backdrop, year, overview, tmdb_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        title,
-        rating,
-        media_type,
-        poster,
-        backdrop,
-        year,
-        overview,
-        tmdb_id,
+        title, rating, media_type, poster, backdrop, year, overview, tmdb_id,
     ))
+
+    connection.execute('''
+        UPDATE lifetime_statistics
+        SET
+            watched_total = watched_total + 1,
+            movies_total = movies_total + ?,
+            series_total = series_total + ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1
+    ''', (
+        1 if media_type == 'Movie' else 0,
+        1 if media_type == 'Series' else 0,
+    ))
+
     connection.commit()
     new_id = cursor.lastrowid
     connection.close()
     return new_id
-
 
 def delete_movie(movie_id):
     connection = get_connection()
@@ -336,167 +381,114 @@ def get_not_interested_ids(media_type):
 
 
 # ============================================================
-# DISPLAY STATISTICS
+# LIFETIME STATISTICS
 # ============================================================
 
-def _ensure_display_statistics_row(connection):
-    connection.execute('''
-        INSERT OR IGNORE INTO display_statistics (
-            id,
-            ai_movies,
-            ai_series,
-            tmdb_movies,
-            tmdb_series,
-            trending_movies,
-            trending_series
-        ) VALUES (1, 0, 0, 0, 0, 0, 0)
-    ''')
-
-
-def get_display_statistics():
+def get_lifetime_statistics():
     connection = get_connection()
-    _ensure_display_statistics_row(connection)
     row = connection.execute('''
         SELECT
-            ai_movies,
-            ai_series,
-            tmdb_movies,
-            tmdb_series,
-            trending_movies,
-            trending_series,
+            watched_total,
+            movies_total,
+            series_total,
+            recommendations_total,
+            ai_generated_total,
             updated_at
-        FROM display_statistics
+        FROM lifetime_statistics
         WHERE id = 1
         LIMIT 1
     ''').fetchone()
-    connection.commit()
     connection.close()
 
     if not row:
         return {
-            'ai_movies': 0,
-            'ai_series': 0,
-            'tmdb_movies': 0,
-            'tmdb_series': 0,
-            'trending_movies': 0,
-            'trending_series': 0,
-            'ai_generated': 0,
+            'watched': 0,
+            'movies': 0,
+            'series': 0,
             'recommendations': 0,
+            'ai_generated': 0,
             'updated_at': None,
         }
 
-    ai_movies = max(0, int(row['ai_movies'] or 0))
-    ai_series = max(0, int(row['ai_series'] or 0))
-    tmdb_movies = max(0, int(row['tmdb_movies'] or 0))
-    tmdb_series = max(0, int(row['tmdb_series'] or 0))
-    trending_movies = max(0, int(row['trending_movies'] or 0))
-    trending_series = max(0, int(row['trending_series'] or 0))
-
-    ai_generated = ai_movies + ai_series
-    recommendations = (
-        ai_generated
-        + tmdb_movies
-        + tmdb_series
-        + trending_movies
-        + trending_series
-    )
-
     return {
-        'ai_movies': ai_movies,
-        'ai_series': ai_series,
-        'tmdb_movies': tmdb_movies,
-        'tmdb_series': tmdb_series,
-        'trending_movies': trending_movies,
-        'trending_series': trending_series,
-        'ai_generated': ai_generated,
-        'recommendations': recommendations,
+        'watched': max(0, int(row['watched_total'] or 0)),
+        'movies': max(0, int(row['movies_total'] or 0)),
+        'series': max(0, int(row['series_total'] or 0)),
+        'recommendations': max(0, int(row['recommendations_total'] or 0)),
+        'ai_generated': max(0, int(row['ai_generated_total'] or 0)),
         'updated_at': row['updated_at'],
     }
 
 
-def set_recommendation_statistics(
-    ai_movies=0,
-    ai_series=0,
-    tmdb_movies=0,
-    tmdb_series=0,
-):
-    connection = get_connection()
-    _ensure_display_statistics_row(connection)
+def increment_recommendation_statistics(ai_movies=0, ai_series=0, tmdb_movies=0, tmdb_series=0):
+    recommendation_increment = (
+        max(0, int(ai_movies or 0))
+        + max(0, int(ai_series or 0))
+        + max(0, int(tmdb_movies or 0))
+        + max(0, int(tmdb_series or 0))
+    )
+    ai_increment = max(0, int(ai_movies or 0)) + max(0, int(ai_series or 0))
 
+    if recommendation_increment == 0 and ai_increment == 0:
+        return get_lifetime_statistics()
+
+    connection = get_connection()
     connection.execute('''
-        UPDATE display_statistics
+        UPDATE lifetime_statistics
         SET
-            ai_movies = ?,
-            ai_series = ?,
-            tmdb_movies = ?,
-            tmdb_series = ?,
+            recommendations_total = recommendations_total + ?,
+            ai_generated_total = ai_generated_total + ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = 1
-    ''', (
-        max(0, int(ai_movies or 0)),
-        max(0, int(ai_series or 0)),
-        max(0, int(tmdb_movies or 0)),
-        max(0, int(tmdb_series or 0)),
-    ))
+    ''', (recommendation_increment, ai_increment))
+    connection.commit()
+    connection.close()
+    return get_lifetime_statistics()
+
+
+def increment_trending_statistics(media_type, tmdb_ids):
+    # Count a Trending title at most once per UTC day, so refreshes do not inflate stats.
+    from datetime import datetime, timezone
+
+    day = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    connection = get_connection()
+    added = 0
+
+    for tmdb_id in tmdb_ids or []:
+        try:
+            tmdb_id = int(tmdb_id)
+        except (TypeError, ValueError):
+            continue
+
+        cursor = connection.execute('''
+            INSERT OR IGNORE INTO trending_seen (day, type, tmdb_id)
+            VALUES (?, ?, ?)
+        ''', (day, media_type, tmdb_id))
+        if cursor.rowcount:
+            added += 1
+
+    if added:
+        connection.execute('''
+            UPDATE lifetime_statistics
+            SET recommendations_total = recommendations_total + ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+        ''', (added,))
 
     connection.commit()
     connection.close()
+    return get_lifetime_statistics()
 
 
-def set_trending_statistics(
-    trending_movies=0,
-    trending_series=0,
-):
-    connection = get_connection()
-    _ensure_display_statistics_row(connection)
+# Backwards-compatible endpoint name used by the current frontend.
+def get_display_statistics():
+    return get_lifetime_statistics()
 
-    connection.execute('''
-        UPDATE display_statistics
-        SET
-            trending_movies = ?,
-            trending_series = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = 1
-    ''', (
-        max(0, int(trending_movies or 0)),
-        max(0, int(trending_series or 0)),
-    ))
+def set_recommendation_statistics(*args, **kwargs):
+    return get_lifetime_statistics()
 
-    connection.commit()
-    connection.close()
+def set_trending_statistics(*args, **kwargs):
+    return get_lifetime_statistics()
 
-
-def set_display_statistics(
-    ai_movies=0,
-    ai_series=0,
-    tmdb_movies=0,
-    tmdb_series=0,
-    trending_movies=0,
-    trending_series=0,
-):
-    """Replace the complete homepage display-statistics snapshot."""
-    connection = get_connection()
-    _ensure_display_statistics_row(connection)
-
-    connection.execute('''
-        UPDATE display_statistics
-        SET
-            ai_movies = ?,
-            ai_series = ?,
-            tmdb_movies = ?,
-            tmdb_series = ?,
-            trending_movies = ?,
-            trending_series = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = 1
-    ''', (
-        max(0, int(ai_movies or 0)),
-        max(0, int(ai_series or 0)),
-        max(0, int(tmdb_movies or 0)),
-        max(0, int(tmdb_series or 0)),
-        max(0, int(trending_movies or 0)),
-        max(0, int(trending_series or 0)),
-    ))
-
-    connection.commit()
-    connection.close()
+def set_display_statistics(*args, **kwargs):
+    return get_lifetime_statistics()
