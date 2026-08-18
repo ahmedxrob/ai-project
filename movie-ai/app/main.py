@@ -33,6 +33,9 @@ from app.database import (
     set_recommendation_statistics,
     set_trending_statistics,
     set_display_statistics,
+    get_lifetime_statistics,
+    increment_lifetime_recommendations,
+    increment_lifetime_trending,
 )
 
 
@@ -110,12 +113,13 @@ def run_recommendation_job(prefetched_tmdb=None):
             prefetched_tmdb=prefetched_tmdb,
         )
 
-        set_recommendation_statistics(
+        increment_lifetime_recommendations(
             ai_movies=len(result.get("ai_movies", [])),
             ai_series=len(result.get("ai_series", [])),
             tmdb_movies=len(result.get("tmdb_movies", [])),
             tmdb_series=len(result.get("tmdb_series", [])),
         )
+
 
         recommendation_state["data"] = result
         recommendation_state["status"] = "ready"
@@ -1958,10 +1962,8 @@ def api_trending():
         movies = movie_future.result()
         series = series_future.result()
 
-        set_trending_statistics(
-            trending_movies=len(movies),
-            trending_series=len(series),
-        )
+        increment_lifetime_trending("Movie", [item.get("tmdb_id") for item in movies])
+        increment_lifetime_trending("Series", [item.get("tmdb_id") for item in series])
 
         return {
             "movies": movies,
@@ -2532,6 +2534,7 @@ def recommendations(
                 "recommendations_loading": False,
                 "tmdb_discoveries": None,
                 "display_statistics": get_display_statistics(),
+                "lifetime_statistics": get_lifetime_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
@@ -2551,15 +2554,6 @@ def recommendations(
 
         if tmdb_discoveries is None:
             tmdb_discoveries = tmdb_fallback(movies)
-
-        # While Gemini is still generating, the page already has TMDB discovery
-        # counts. Keep the DB-backed snapshot aligned with what is visible now.
-        set_recommendation_statistics(
-            ai_movies=0,
-            ai_series=0,
-            tmdb_movies=len(tmdb_discoveries.get("movies", [])),
-            tmdb_series=len(tmdb_discoveries.get("series", [])),
-        )
 
         if recommendation_state["status"] != "loading":
 
@@ -2589,6 +2583,7 @@ def recommendations(
                 "recommendations_loading": True,
                 "tmdb_discoveries": tmdb_discoveries,
                 "display_statistics": get_display_statistics(),
+                "lifetime_statistics": get_lifetime_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
