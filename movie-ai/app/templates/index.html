@@ -117,35 +117,35 @@
             <div class="hero-stats">
 
                 <div class="stat">
-                    <strong>{{ movies|length }}</strong>
+                    <strong>{{ lifetime_statistics.watched|default(0) }}</strong>
                     <span>Watched</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong>{{ watched_movies|length }}</strong>
+                    <strong>{{ lifetime_statistics.movies|default(0) }}</strong>
                     <span>Movies</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong>{{ watched_series|length }}</strong>
+                    <strong>{{ lifetime_statistics.series|default(0) }}</strong>
                     <span>Series</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong id="header-recommendations-count">{{ display_statistics.recommendations|default(0) }}</strong>
+                    <strong id="header-recommendations-count">{{ lifetime_statistics.recommendations|default(0) }}</strong>
                     <span>Recommendations</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong id="header-ai-generated-count">{{ display_statistics.ai_generated|default(0) }}</strong>
+                    <strong id="header-ai-generated-count">{{ lifetime_statistics.ai_generated|default(0) }}</strong>
                     <span>AI Generated</span>
                 </div>
 
@@ -2766,55 +2766,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
     });
 }
 
-async function syncDisplayStatisticsFromPage() {
-    try {
-        const counts = {
-            ai_movies: document.querySelectorAll('.recommendation-card.ai-card[data-media-type="Movie"]').length,
-            ai_series: document.querySelectorAll('.recommendation-card.ai-card[data-media-type="Series"]').length,
-            tmdb_movies: document.querySelectorAll('.recommendation-card.tmdb-card[data-media-type="Movie"]').length,
-            tmdb_series: document.querySelectorAll('.recommendation-card.tmdb-card[data-media-type="Series"]').length,
-            trending_movies: document.querySelectorAll('.trending-card[data-media-type="Movie"]').length,
-            trending_series: document.querySelectorAll('.trending-card[data-media-type="Series"]').length,
-        };
-
-        const body = new URLSearchParams(counts);
-
-        const response = await fetch(
-            appUrl('/api/display-statistics'),
-            {
-                method: 'POST',
-                body,
-                cache: 'no-store',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-                }
-            }
-        );
-
-        if (!response.ok) return;
-
-        const data = await response.json();
-        updateHeaderDisplayStatistics(data);
-    } catch (error) {
-        console.error('Display statistics sync error:', error);
-    }
-}
-
-function updateHeaderDisplayStatistics(data) {
-    const recommendationsElement = document.getElementById('header-recommendations-count');
-    const aiElement = document.getElementById('header-ai-generated-count');
-
-    if (recommendationsElement && data) {
-        recommendationsElement.textContent = String(data.recommendations ?? 0);
-    }
-
-    if (aiElement && data) {
-        aiElement.textContent = String(data.ai_generated ?? 0);
-    }
-}
-
-async function loadDisplayStatistics() {
+async function loadLifetimeStatistics() {
     try {
         const response = await fetch(
             appUrl('/api/display-statistics'),
@@ -2827,11 +2779,23 @@ async function loadDisplayStatistics() {
         if (!response.ok) return;
 
         const data = await response.json();
-        updateHeaderDisplayStatistics(data);
+        const recommendationsElement = document.getElementById('header-recommendations-count');
+        const aiElement = document.getElementById('header-ai-generated-count');
+
+        if (recommendationsElement) {
+            recommendationsElement.textContent = String(data.recommendations ?? 0);
+        }
+
+        if (aiElement) {
+            aiElement.textContent = String(data.ai_generated ?? 0);
+        }
     } catch (error) {
-        console.error('Display statistics load error:', error);
+        console.error('Lifetime statistics load error:', error);
     }
 }
+
+loadLifetimeStatistics();
+
 
 async function loadTrendingNow() {
     try {
@@ -2867,7 +2831,7 @@ async function loadTrendingNow() {
             "Series"
         );
 
-        await syncDisplayStatisticsFromPage();
+        await loadLifetimeStatistics();
 
     } catch (error) {
 
@@ -3167,7 +3131,7 @@ if (addForm) {
             addLiveWatchedCard(data.item);
 
             showToast(`✓ ${data.item?.title || titleInput.value} added to your library`);
-            syncDisplayStatisticsFromPage();
+            loadLifetimeStatistics();
 
             titleInput.value = "";
             tmdbIdInput.value = "";
@@ -3253,7 +3217,7 @@ document.addEventListener("submit", async function (event) {
         removeLiveRecommendationFromWatch(card);
 
         showToast(`✓ ${data.title || "Title"} added to watched`);
-        syncDisplayStatisticsFromPage();
+        loadLifetimeStatistics();
 
     } catch (error) {
         console.error("AJAX watched error:", error);
