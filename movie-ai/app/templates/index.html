@@ -3385,14 +3385,14 @@ document.addEventListener("submit", async function (event) {
         let isDragging = false;
         let startX = 0;
         let startScrollLeft = 0;
-        let suppressNextClick = false;
         let draggedDistance = 0;
+        let activePointerId = null;
 
         rail.classList.add("drag-scroll-rail");
 
         rail.addEventListener("pointerdown", function (event) {
 
-            /* Don't hijack buttons, forms, links or inputs. */
+            /* Never hijack controls inside cards. */
             if (
                 event.target.closest(
                     "a, button, form, input, select, textarea"
@@ -3401,7 +3401,7 @@ document.addEventListener("submit", async function (event) {
                 return;
             }
 
-            /* Only start dragging with the primary mouse button. */
+            /* Left mouse button only. Touch/pen are always allowed. */
             if (event.pointerType === "mouse" && event.button !== 0) {
                 return;
             }
@@ -3409,85 +3409,84 @@ document.addEventListener("submit", async function (event) {
             isPointerDown = true;
             isDragging = false;
             draggedDistance = 0;
+            activePointerId = event.pointerId;
             startX = event.clientX;
             startScrollLeft = rail.scrollLeft;
 
-            rail.setPointerCapture?.(event.pointerId);
+            try {
+                rail.setPointerCapture(event.pointerId);
+            } catch (_) {}
         });
 
         rail.addEventListener("pointermove", function (event) {
 
-            if (!isPointerDown) {
+            if (!isPointerDown || event.pointerId !== activePointerId) {
                 return;
             }
 
             const deltaX = event.clientX - startX;
             draggedDistance = Math.abs(deltaX);
 
-            /* Require a small movement before treating it as a drag. */
-            if (draggedDistance < 6) {
+            if (draggedDistance < 5) {
                 return;
             }
 
             isDragging = true;
 
-            /* Drag left => reveal cards on the right. */
-            rail.scrollLeft =
-                startScrollLeft - deltaX;
+            /*
+             * Drag LEFT  -> scroll right  -> cards on the right appear.
+             * Drag RIGHT -> scroll left   -> cards on the left appear.
+             */
+            rail.scrollLeft = startScrollLeft - deltaX;
 
             if (event.cancelable) {
                 event.preventDefault();
             }
-        });
+        }, { passive: false });
+
+        rail.addEventListener("pointerup", finishDrag);
+        rail.addEventListener("pointercancel", finishDrag);
 
         function finishDrag(event) {
 
-            if (!isPointerDown) {
+            if (!isPointerDown || event.pointerId !== activePointerId) {
                 return;
             }
 
             isPointerDown = false;
 
             try {
-                rail.releasePointerCapture?.(event.pointerId);
-            } catch (_) {
-                /* Pointer capture may already have been released. */
-            }
+                if (rail.hasPointerCapture?.(event.pointerId)) {
+                    rail.releasePointerCapture(event.pointerId);
+                }
+            } catch (_) {}
 
-            if (isDragging && draggedDistance > 8) {
-                suppressNextClick = true;
+            if (isDragging && draggedDistance >= 5) {
+                /* Suppress the synthetic click caused by releasing the mouse. */
+                rail.dataset.dragJustFinished = "true";
 
-                /* Prevent the drag release from activating a card. */
                 setTimeout(function () {
-                    suppressNextClick = false;
-                }, 120);
+                    delete rail.dataset.dragJustFinished;
+                }, 80);
             }
 
             isDragging = false;
+            activePointerId = null;
         }
 
-        rail.addEventListener("pointerup", finishDrag);
-        rail.addEventListener("pointercancel", finishDrag);
-        rail.addEventListener("pointerleave", function (event) {
-            if (event.pointerType === "mouse") {
-                finishDrag(event);
-            }
-        });
-
+        /* Prevent a drag-release from opening a movie/series detail page. */
         rail.addEventListener("click", function (event) {
 
-            if (suppressNextClick) {
+            if (rail.dataset.dragJustFinished === "true") {
                 event.preventDefault();
                 event.stopPropagation();
-                suppressNextClick = false;
+                delete rail.dataset.dragJustFinished;
             }
         }, true);
     });
-
 })();
 
 </script>
-
 
 </body>
 
