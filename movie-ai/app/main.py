@@ -29,6 +29,10 @@ from app.database import (
     get_recent_recommendation_ids,
     add_not_interested,
     get_not_interested_ids,
+    get_display_statistics,
+    set_recommendation_statistics,
+    set_trending_statistics,
+    set_display_statistics,
 )
 
 
@@ -76,55 +80,6 @@ TMDB_SERIES_TARGET = 8
 RECENT_HISTORY_LIMIT = 12
 
 WATCHLIST_FILE = Path("/data/watchlist.json")
-AI_STATS_FILE = Path("/data/ai_statistics.json")
-
-
-def load_ai_statistics():
-    try:
-        if AI_STATS_FILE.exists():
-            data = json.loads(AI_STATS_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                movies = int(data.get("movies_generated", 0) or 0)
-                series = int(data.get("series_generated", 0) or 0)
-                return {
-                    "movies_generated": max(0, movies),
-                    "series_generated": max(0, series),
-                    "total_generated": max(0, movies) + max(0, series),
-                    "last_generated_at": data.get("last_generated_at"),
-                }
-    except Exception as error:
-        print(f"AI statistics load error: {error}")
-    return {
-        "movies_generated": 0,
-        "series_generated": 0,
-        "total_generated": 0,
-        "last_generated_at": None,
-    }
-
-
-def increment_ai_statistics(movies_count: int, series_count: int):
-    stats = load_ai_statistics()
-    movies = stats["movies_generated"] + max(0, int(movies_count or 0))
-    series = stats["series_generated"] + max(0, int(series_count or 0))
-    updated = {
-        "movies_generated": movies,
-        "series_generated": series,
-        "total_generated": movies + series,
-        "last_generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    try:
-        AI_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temp_file = AI_STATS_FILE.with_suffix(".tmp")
-        temp_file.write_text(json.dumps(updated, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp_file.replace(AI_STATS_FILE)
-    except Exception as error:
-        print(f"AI statistics save error: {error}")
-    return updated
-
-
-def get_ai_statistics():
-    return load_ai_statistics()
-
 recommendation_state = {
     "status": "idle",
     "data": None,
@@ -153,6 +108,13 @@ def run_recommendation_job(prefetched_tmdb=None):
         result = generate_recommendations(
             movies,
             prefetched_tmdb=prefetched_tmdb,
+        )
+
+        set_recommendation_statistics(
+            ai_movies=len(result.get("ai_movies", [])),
+            ai_series=len(result.get("ai_series", [])),
+            tmdb_movies=len(result.get("tmdb_movies", [])),
+            tmdb_series=len(result.get("tmdb_series", [])),
         )
 
         recommendation_state["data"] = result
@@ -603,21 +565,6 @@ def get_ai_recommendations(watched):
 
                 print(
                     f"{model}: Gemini success"
-                )
-
-                movie_count = len(result.movies)
-                series_count = len(result.series)
-
-                print(
-                    f"Gemini returned "
-                    f"{movie_count} movies "
-                    f"and "
-                    f"{series_count} series"
-                )
-
-                increment_ai_statistics(
-                    movies_count=movie_count,
-                    series_count=series_count,
                 )
 
                 return result
@@ -1103,6 +1050,9 @@ def tmdb_live_search(
                         normalized[
                             "tmdb_url"
                         ],
+
+                    "media_type":
+                        media_type,
                 }
             )
 
@@ -2005,10 +1955,47 @@ def api_trending():
             8,
         )
 
+        movies = movie_future.result()
+        series = series_future.result()
+
+        set_trending_statistics(
+            trending_movies=len(movies),
+            trending_series=len(series),
+        )
+
         return {
-            "movies": movie_future.result(),
-            "series": series_future.result(),
+            "movies": movies,
+            "series": series,
         }
+
+
+# ============================================================
+# DISPLAY STATISTICS API
+# ============================================================
+
+@app.get("/api/display-statistics")
+def api_display_statistics():
+    return get_display_statistics()
+
+
+@app.post("/api/display-statistics")
+def api_display_statistics_sync(
+    ai_movies: int = Form(0),
+    ai_series: int = Form(0),
+    tmdb_movies: int = Form(0),
+    tmdb_series: int = Form(0),
+    trending_movies: int = Form(0),
+    trending_series: int = Form(0),
+):
+    set_display_statistics(
+        ai_movies=ai_movies,
+        ai_series=ai_series,
+        tmdb_movies=tmdb_movies,
+        tmdb_series=tmdb_series,
+        trending_movies=trending_movies,
+        trending_series=trending_series,
+    )
+    return get_display_statistics()
 
 
 # ============================================================
@@ -2018,56 +2005,34 @@ def api_trending():
 @app.get("/api/search")
 def api_search(
     q: str = "",
+    media_type: str = "",
 ):
+    """Search exactly one media type. The frontend calls this twice,
+    once for Movie and once for Series, then combines the results."""
 
     q = q.strip()
 
     if len(q) < 2:
+        return {"results": []}
 
+    if media_type not in ("Movie", "Series"):
         return {
-            "results": []
+            "results": [],
+            "error": "media_type must be Movie or Series",
         }
 
-    # Search Movies and TV at the same time.
-    # The frontend then automatically detects the selected type.
-    with ThreadPoolExecutor(max_workers=2) as executor:
-
-        movie_future = executor.submit(
-            tmdb_live_search,
-            q,
-            "Movie",
-        )
-
-        series_future = executor.submit(
-            tmdb_live_search,
-            q,
-            "Series",
-        )
-
-        movie_results = movie_future.result()
-        series_results = series_future.result()
-
-    results = movie_results + series_results
-
-    # Put close title matches first while keeping the movie/series
-    # identity attached to every result.
-    query_lower = q.lower()
-
-    def search_score(item):
-        title = (item.get("title") or "").lower()
-        if title == query_lower:
-            return 1000
-        if title.startswith(query_lower):
-            return 900
-        return 800
-
-    results.sort(
-        key=search_score,
-        reverse=True,
+    results = tmdb_live_search(
+        q,
+        media_type,
     )
 
+    # Ensure every item explicitly carries its media type.
+    for item in results:
+        item["media_type"] = media_type
+
     return {
-        "results": results
+        "results": results,
+        "media_type": media_type,
     }
 
 
@@ -2566,7 +2531,7 @@ def recommendations(
                 "recommendations": recommendations_data,
                 "recommendations_loading": False,
                 "tmdb_discoveries": None,
-                "ai_statistics": get_ai_statistics(),
+                "display_statistics": get_display_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
@@ -2586,6 +2551,15 @@ def recommendations(
 
         if tmdb_discoveries is None:
             tmdb_discoveries = tmdb_fallback(movies)
+
+        # While Gemini is still generating, the page already has TMDB discovery
+        # counts. Keep the DB-backed snapshot aligned with what is visible now.
+        set_recommendation_statistics(
+            ai_movies=0,
+            ai_series=0,
+            tmdb_movies=len(tmdb_discoveries.get("movies", [])),
+            tmdb_series=len(tmdb_discoveries.get("series", [])),
+        )
 
         if recommendation_state["status"] != "loading":
 
@@ -2614,7 +2588,7 @@ def recommendations(
                 "recommendations": None,
                 "recommendations_loading": True,
                 "tmdb_discoveries": tmdb_discoveries,
-                "ai_statistics": get_ai_statistics(),
+                "display_statistics": get_display_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
