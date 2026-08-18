@@ -1,4 +1,3 @@
-import json
 import os
 import random
 import time
@@ -30,9 +29,8 @@ from app.database import (
     add_not_interested,
     get_not_interested_ids,
     get_display_statistics,
-    set_recommendation_statistics,
-    set_trending_statistics,
-    set_display_statistics,
+    increment_recommendation_statistics,
+    increment_trending_statistics,
 )
 
 
@@ -74,8 +72,8 @@ AI_SERIES_CANDIDATES = 30
 AI_MOVIES_TARGET = 8
 AI_SERIES_TARGET = 8
 
-TMDB_MOVIES_TARGET = 8
-TMDB_SERIES_TARGET = 8
+TMDB_MOVIES_TARGET = 10
+TMDB_SERIES_TARGET = 10
 
 RECENT_HISTORY_LIMIT = 12
 
@@ -110,7 +108,7 @@ def run_recommendation_job(prefetched_tmdb=None):
             prefetched_tmdb=prefetched_tmdb,
         )
 
-        set_recommendation_statistics(
+        increment_recommendation_statistics(
             ai_movies=len(result.get("ai_movies", [])),
             ai_series=len(result.get("ai_series", [])),
             tmdb_movies=len(result.get("tmdb_movies", [])),
@@ -1488,30 +1486,19 @@ def tmdb_fallback(
                 [],
             )
 
+    # Only fetch two pages per type. The final rail is capped at 10 items.
     jobs = [
         ("Movie", 1),
         ("Movie", 2),
-        ("Movie", 3),
-        ("Movie", 4),
-        ("Movie", 5),
-        ("Movie", 6),
-        ("Movie", 7),
-        ("Movie", 8),
         ("Series", 1),
         ("Series", 2),
-        ("Series", 3),
-        ("Series", 4),
-        ("Series", 5),
-        ("Series", 6),
-        ("Series", 7),
-        ("Series", 8),
     ]
 
     movies = []
     series = []
 
     with ThreadPoolExecutor(
-        max_workers=16
+        max_workers=4
     ) as executor:
 
         futures = [
@@ -1958,9 +1945,13 @@ def api_trending():
         movies = movie_future.result()
         series = series_future.result()
 
-        set_trending_statistics(
-            trending_movies=len(movies),
-            trending_series=len(series),
+        increment_trending_statistics(
+            "Movie",
+            [item.get("tmdb_id") for item in movies],
+        )
+        increment_trending_statistics(
+            "Series",
+            [item.get("tmdb_id") for item in series],
         )
 
         return {
@@ -1975,26 +1966,6 @@ def api_trending():
 
 @app.get("/api/display-statistics")
 def api_display_statistics():
-    return get_display_statistics()
-
-
-@app.post("/api/display-statistics")
-def api_display_statistics_sync(
-    ai_movies: int = Form(0),
-    ai_series: int = Form(0),
-    tmdb_movies: int = Form(0),
-    tmdb_series: int = Form(0),
-    trending_movies: int = Form(0),
-    trending_series: int = Form(0),
-):
-    set_display_statistics(
-        ai_movies=ai_movies,
-        ai_series=ai_series,
-        tmdb_movies=tmdb_movies,
-        tmdb_series=tmdb_series,
-        trending_movies=trending_movies,
-        trending_series=trending_series,
-    )
     return get_display_statistics()
 
 
@@ -2531,7 +2502,7 @@ def recommendations(
                 "recommendations": recommendations_data,
                 "recommendations_loading": False,
                 "tmdb_discoveries": None,
-                "display_statistics": get_display_statistics(),
+                "lifetime_statistics": get_display_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
@@ -2551,15 +2522,6 @@ def recommendations(
 
         if tmdb_discoveries is None:
             tmdb_discoveries = tmdb_fallback(movies)
-
-        # While Gemini is still generating, the page already has TMDB discovery
-        # counts. Keep the DB-backed snapshot aligned with what is visible now.
-        set_recommendation_statistics(
-            ai_movies=0,
-            ai_series=0,
-            tmdb_movies=len(tmdb_discoveries.get("movies", [])),
-            tmdb_series=len(tmdb_discoveries.get("series", [])),
-        )
 
         if recommendation_state["status"] != "loading":
 
@@ -2588,7 +2550,7 @@ def recommendations(
                 "recommendations": None,
                 "recommendations_loading": True,
                 "tmdb_discoveries": tmdb_discoveries,
-                "display_statistics": get_display_statistics(),
+                "lifetime_statistics": get_display_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
