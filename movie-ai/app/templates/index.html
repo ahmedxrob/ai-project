@@ -3240,67 +3240,96 @@ document.addEventListener("submit", async function (event) {
 
 
 /* ========================================================= */
-/* ========================================================= */
-/* AJAX NOT INTERESTED — SAME SUBMIT FLOW AS WATCHED         */
+/* AJAX NOT INTERESTED — SAME FLOW AS WATCHED                  */
 /* ========================================================= */
 
 document.addEventListener("submit", async function (event) {
 
-    const form = event.target.closest(
-        ".ajax-not-interested-form"
-    );
+    const form = event.target.closest(".ajax-not-interested-form");
 
     if (!form) {
         return;
     }
 
+    /* Stop the browser from navigating to the JSON/redirect response. */
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
 
     const card = form.closest(".recommendation-card");
     const button = form.querySelector(".not-interested-button");
 
     if (!card || !button) {
-        console.error("Not interested: card/button not found.");
         return;
     }
 
     const originalText = button.textContent;
-
     button.disabled = true;
     button.textContent = "Removing...";
 
     try {
 
+        /*
+         * Use the SAME form action already present in the HTML.
+         * This keeps the normal database endpoint intact and works
+         * whether the backend returns JSON or a redirect.
+         */
+        const action = form.getAttribute("action") || "/recommendation/not-interested";
+
         const response = await fetch(
-            appUrl("/api/recommendation/not-interested"),
+            appUrl(action),
             {
                 method: "POST",
                 body: new FormData(form),
                 headers: {
-                    "Accept": "application/json"
+                    "Accept": "application/json, text/html;q=0.9, */*;q=0.8"
                 },
-                cache: "no-store"
+                cache: "no-store",
+                redirect: "follow"
             }
         );
 
-        const data = await response.json();
-
-        if (!response.ok || !data.ok) {
+        if (!response.ok) {
             throw new Error(
-                data.error ||
-                "Unable to mark title as not interested."
+                `Not interested request failed: ${response.status}`
             );
         }
 
-        /* EXACT same card-removal function used by Watched. */
+        /*
+         * The current backend may return JSON, while an older backend
+         * may return the normal 303 redirect. Either is a successful
+         * database operation, so do not require JSON here.
+         */
+        let title = form.querySelector('[name="title"]')?.value || "Title";
+
+        const contentType =
+            response.headers.get("content-type") || "";
+
+        if (contentType.includes("application/json")) {
+            try {
+                const data = await response.json();
+
+                if (data && data.ok === false) {
+                    throw new Error(
+                        data.error || "Unable to mark title as not interested."
+                    );
+                }
+
+                title = data?.title || title;
+            } catch (jsonError) {
+                /* Successful HTTP response: keep the generic title. */
+                console.debug(
+                    "Not interested JSON parse skipped:",
+                    jsonError
+                );
+            }
+        }
+
+        /* EXACT SAME removal function used by Watched. */
         removeLiveRecommendationFromWatch(card);
 
         showToast(
-            `✕ ${data.title || "Title"} removed from recommendations`
+            `✕ ${title} removed from recommendations`
         );
-
-        loadLifetimeStatistics();
 
     } catch (error) {
 
@@ -3318,7 +3347,8 @@ document.addEventListener("submit", async function (event) {
             "error"
         );
     }
-});
+
+}, true);
 
 </script>
 
