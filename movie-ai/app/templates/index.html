@@ -716,7 +716,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form"
+                            class="not-interested-form ajax-not-interested-form"
                         >
 
                             <input
@@ -965,7 +965,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form"
+                            class="not-interested-form ajax-not-interested-form"
                         >
 
                             <input
@@ -1229,7 +1229,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form"
+                            class="not-interested-form ajax-not-interested-form"
                         >
 
                             <input
@@ -1478,7 +1478,7 @@
                         <form
                             action="/recommendation/not-interested"
                             method="post"
-                            class="not-interested-form"
+                            class="not-interested-form ajax-not-interested-form"
                         >
 
                             <input
@@ -3233,6 +3233,88 @@ document.addEventListener("submit", async function (event) {
     }
 });
 
+
+
+/* REMOVE NOT-INTERESTED RECOMMENDATION WITHOUT RELOADING */
+
+document.addEventListener("submit", async function (event) {
+
+    const form = event.target.closest(".ajax-not-interested-form");
+
+    if (!form) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const card = form.closest(".recommendation-card");
+    const button = form.querySelector(".not-interested-button");
+    const originalText = button ? button.textContent : "✕ Not interested";
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = "Removing...";
+    }
+
+    try {
+        const response = await fetch(
+            appUrl("/recommendation/not-interested"),
+            {
+                method: "POST",
+                body: new FormData(form),
+                headers: { "Accept": "application/json" }
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(
+                data.error || "Unable to mark title as not interested."
+            );
+        }
+
+        if (card) {
+            const grid = card.closest(".recommendation-grid");
+            const sourceSection = grid?.closest(".source-section");
+            const count = sourceSection?.querySelector(".source-count");
+
+            card.style.transition =
+                "opacity .22s ease, transform .22s ease, max-height .22s ease";
+            card.style.opacity = "0";
+            card.style.transform = "scale(.94) translateY(8px)";
+
+            setTimeout(() => {
+                card.remove();
+
+                if (count) {
+                    const current = Number(count.textContent.trim()) || 0;
+                    count.textContent = String(Math.max(0, current - 1));
+                }
+
+                if (grid && !grid.querySelector(".recommendation-card")) {
+                    const empty = document.createElement("div");
+                    empty.className = "empty-recommendations";
+                    empty.textContent = "No recommendations available in this rail.";
+                    grid.replaceWith(empty);
+                }
+            }, 220);
+        }
+
+        showToast(`✕ ${data.title || "Title"} removed from recommendations`);
+
+    } catch (error) {
+        console.error("AJAX not-interested error:", error);
+        showToast(
+            error.message || "Unable to mark title as not interested.",
+            "error"
+        );
+
+        if (button) {
+            button.disabled = false;
+            button.textContent = originalText;
+        }
+    }
+});
 </script>
 
 
