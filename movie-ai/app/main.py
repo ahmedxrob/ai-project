@@ -76,18 +76,54 @@ TMDB_SERIES_TARGET = 8
 RECENT_HISTORY_LIMIT = 12
 
 WATCHLIST_FILE = Path("/data/watchlist.json")
-
-recommendation_state = {
-    "status": "idle",
-    "data": None,
-    "error": None,
-    "tmdb_data": None,
-}
+AI_STATS_FILE = Path("/data/ai_statistics.json")
 
 
-# ============================================================
-# RECOMMENDATION BACKGROUND STATE
-# ============================================================
+def load_ai_statistics():
+    try:
+        if AI_STATS_FILE.exists():
+            data = json.loads(AI_STATS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                movies = int(data.get("movies_generated", 0) or 0)
+                series = int(data.get("series_generated", 0) or 0)
+                return {
+                    "movies_generated": max(0, movies),
+                    "series_generated": max(0, series),
+                    "total_generated": max(0, movies) + max(0, series),
+                    "last_generated_at": data.get("last_generated_at"),
+                }
+    except Exception as error:
+        print(f"AI statistics load error: {error}")
+    return {
+        "movies_generated": 0,
+        "series_generated": 0,
+        "total_generated": 0,
+        "last_generated_at": None,
+    }
+
+
+def increment_ai_statistics(movies_count: int, series_count: int):
+    stats = load_ai_statistics()
+    movies = stats["movies_generated"] + max(0, int(movies_count or 0))
+    series = stats["series_generated"] + max(0, int(series_count or 0))
+    updated = {
+        "movies_generated": movies,
+        "series_generated": series,
+        "total_generated": movies + series,
+        "last_generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    try:
+        AI_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = AI_STATS_FILE.with_suffix(".tmp")
+        temp_file.write_text(json.dumps(updated, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_file.replace(AI_STATS_FILE)
+    except Exception as error:
+        print(f"AI statistics save error: {error}")
+    return updated
+
+
+def get_ai_statistics():
+    return load_ai_statistics()
 
 recommendation_state = {
     "status": "idle",
@@ -569,11 +605,19 @@ def get_ai_recommendations(watched):
                     f"{model}: Gemini success"
                 )
 
+                movie_count = len(result.movies)
+                series_count = len(result.series)
+
                 print(
                     f"Gemini returned "
-                    f"{len(result.movies)} movies "
+                    f"{movie_count} movies "
                     f"and "
-                    f"{len(result.series)} series"
+                    f"{series_count} series"
+                )
+
+                increment_ai_statistics(
+                    movies_count=movie_count,
+                    series_count=series_count,
                 )
 
                 return result
@@ -2522,6 +2566,7 @@ def recommendations(
                 "recommendations": recommendations_data,
                 "recommendations_loading": False,
                 "tmdb_discoveries": None,
+                "ai_statistics": get_ai_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
@@ -2569,6 +2614,7 @@ def recommendations(
                 "recommendations": None,
                 "recommendations_loading": True,
                 "tmdb_discoveries": tmdb_discoveries,
+                "ai_statistics": get_ai_statistics(),
                 "ingress_path": get_ingress_path(request),
             },
         )
