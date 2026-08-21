@@ -2,7 +2,8 @@ FROM ghcr.io/home-assistant/base:latest
 
 RUN apk add --no-cache \
     python3 \
-    py3-pip
+    py3-pip \
+    jq
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --break-system-packages -r /tmp/requirements.txt
@@ -16,7 +17,7 @@ RUN wget -O /app/cloudflared https://github.com/cloudflare/cloudflared/releases/
     chmod +x /app/cloudflared
 
 LABEL \
-    io.hass.version="1.0.0" \
+    io.hass.version="2.0.0" \
     io.hass.type="app" \
     io.hass.arch="amd64"
 
