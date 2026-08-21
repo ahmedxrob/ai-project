@@ -1,5 +1,5 @@
 name: MUST Inverter
-version: "2.0.0"
+version: "2.0.1"
 slug: must_inverter
 description: Runs the MUST inverter Python service
 
