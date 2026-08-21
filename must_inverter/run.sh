@@ -1,11 +1,14 @@
 #!/usr/bin/with-contenv sh
 
-# Extract Telegram config
 CONFIG_PATH=/data/options.json
-BOT_TOKEN=$(jq --raw-output '.telegram_bot_token' $CONFIG_PATH)
-CHAT_ID=$(jq --raw-output '.telegram_chat_id' $CONFIG_PATH)
 
-echo "Starting inverter..."
+# Read configuration safely using jq
+if [ -f "$CONFIG_PATH" ]; then
+    BOT_TOKEN=$(jq --raw-output '.telegram_bot_token // empty' $CONFIG_PATH)
+    CHAT_ID=$(jq --raw-output '.telegram_chat_id // empty' $CONFIG_PATH)
+fi
+
+echo "Starting inverter service..."
 python3 /app/inverter.py &
 
 echo "Waiting for Home Assistant..."
@@ -56,13 +59,17 @@ do
             cat /tmp/ha_response.txt
             echo
 
-            curl -s \
-                "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-                -d chat_id="${CHAT_ID}" \
-                --data-urlencode "text=🌐 Home Assistant Link: $URL" \
-                > /dev/null
+            if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
+                curl -s \
+                    "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+                    -d chat_id="${CHAT_ID}" \
+                    --data-urlencode "text=🌐 Home Assistant Link: $URL" \
+                    > /dev/null
 
-            echo "Telegram notification sent."
+                echo "Telegram notification sent."
+            else
+                echo "Telegram credentials missing in configuration. Notification skipped."
+            fi
         fi
     done
 
