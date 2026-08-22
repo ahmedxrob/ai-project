@@ -2,6 +2,7 @@ from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, Response
 import asyncio
 import json
+import mimetypes
 import os
 import re
 import time
@@ -16,6 +17,17 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 AUDIO_EXTENSIONS = {'.mp3', '.flac', '.m4a', '.ogg', '.wav', '.opus', '.aac', '.alac'}
 MAX_CONCURRENT_DOWNLOADS = 3
+
+MEDIA_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+    ".alac": "audio/mp4",
+}
 
 DEFAULT_SETTINGS = {
     "audio_format": "mp3",
@@ -662,15 +674,33 @@ function toggleAudioStream(btn, streamUrl, type = 'search') {
     
     const audio = new Audio(streamUrl);
     activeAudio = audio;
+    
     audio.play().then(() => {
         btn.classList.remove('loading');
         btn.classList.add('playing');
         btn.innerHTML = `<span class="wave-bars"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></span> Playing`;
     }).catch(err => {
-        stopCurrentPreview();
-        btn.innerHTML = `❌ Error`;
-        setTimeout(() => { btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`; }, 2000);
+        if (!streamUrl.includes('transcode=true')) {
+            const transcodeUrl = streamUrl + (streamUrl.includes('?') ? '&' : '?') + 'transcode=true';
+            toggleAudioStream(btn, transcodeUrl, type);
+        } else {
+            stopCurrentPreview();
+            btn.innerHTML = `❌ Error`;
+            setTimeout(() => { btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`; }, 2000);
+        }
     });
+    
+    audio.onerror = () => {
+        if (!streamUrl.includes('transcode=true')) {
+            const transcodeUrl = streamUrl + (streamUrl.includes('?') ? '&' : '?') + 'transcode=true';
+            toggleAudioStream(btn, transcodeUrl, type);
+        } else {
+            stopCurrentPreview();
+            btn.innerHTML = `❌ Error`;
+            setTimeout(() => { btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`; }, 2000);
+        }
+    };
+    
     audio.onended = () => { stopCurrentPreview(); };
 }
 
@@ -919,8 +949,9 @@ function filterLibrary() {
         const card = document.createElement('div');
         card.className = 'result-card';
 
-        const coverUrl = "api/library/cover/" + encodeURIComponent(f.name);
-        const streamUrl = "api/library/stream/" + encodeURIComponent(f.name);
+        const encName = encodeURIComponent(f.name);
+        const coverUrl = "api/library/cover/" + encName;
+        const streamUrl = "api/library/stream/" + encName;
         const fallbackSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="110" height="65" viewBox="0 0 110 65"><rect width="100%" height="100%" fill="%231e293b"/><text x="50%" y="50%" fill="%239ca3af" font-size="20" text-anchor="middle" dominant-baseline="central">🎵</text></svg>`;
 
         card.innerHTML = `
@@ -1009,15 +1040,27 @@ async def get_library():
     }
 
 
-@app.get("/api/library/stream/{filename}")
-async def stream_library_file(filename: str):
+@app.get("/api/library/stream/{filename:path}")
+async def stream_library_file(filename: str, transcode: bool = Query(False)):
     file_path = DOWNLOAD_DIR / filename
-    if file_path.exists() and file_path.is_file():
-        return FileResponse(path=file_path, filename=filename)
-    raise HTTPException(status_code=404, detail="File not found")
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if transcode:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-i", str(file_path), "-vn", "-ab", "192k", "-f", "mp3", "pipe:1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        stdout, _ = await proc.communicate()
+        return Response(content=stdout, media_type="audio/mpeg")
+
+    ext = file_path.suffix.lower()
+    media_type = MEDIA_TYPES.get(ext, mimetypes.guess_type(file_path)[0] or "audio/mpeg")
+    return FileResponse(path=file_path, filename=filename, media_type=media_type)
 
 
-@app.get("/api/library/cover/{filename}")
+@app.get("/api/library/cover/{filename:path}")
 async def get_library_cover(filename: str):
     file_path = DOWNLOAD_DIR / filename
     if not file_path.exists() or not file_path.is_file():
@@ -1028,6 +1071,7 @@ async def get_library_cover(filename: str):
         "-y",
         "-i", str(file_path),
         "-map", "0:v:0",
+        "-c:v", "mjpeg",
         "-frames:v", "1",
         "-f", "image2pipe",
         "-"
@@ -1048,7 +1092,7 @@ async def get_library_cover(filename: str):
     return Response(content=svg_placeholder, media_type="image/svg+xml")
 
 
-@app.delete("/api/library/{filename}")
+@app.delete("/api/library/{filename:path}")
 async def delete_library_file(filename: str):
     file_path = DOWNLOAD_DIR / filename
     if file_path.exists() and file_path.is_file():
