@@ -1,19 +1,25 @@
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import urlparse
 import asyncio
 import json
 import os
 import re
-import shutil
-import subprocess
+import unicodedata
 import uuid
 
 import httpx
 
 
-app = FastAPI(title="Music Downloader")
+# ============================================================
+# APP
+# ============================================================
+
+app = FastAPI(
+    title="Music Downloader",
+    version="1.0.0"
+)
 
 
 # ============================================================
@@ -23,7 +29,10 @@ app = FastAPI(title="Music Downloader")
 DEEZER_SEARCH_URL = "https://api.deezer.com/search"
 
 DOWNLOAD_DIR = Path(
-    os.getenv("DOWNLOAD_DIR", "/downloads")
+    os.getenv(
+        "DOWNLOAD_DIR",
+        "/downloads"
+    )
 )
 
 DOWNLOAD_DIR.mkdir(
@@ -33,6 +42,13 @@ DOWNLOAD_DIR.mkdir(
 
 MAX_RESULTS = 25
 
+DOWNLOAD_TIMEOUT = int(
+    os.getenv(
+        "DOWNLOAD_TIMEOUT",
+        "600"
+    )
+)
+
 
 # ============================================================
 # HELPERS
@@ -40,13 +56,24 @@ MAX_RESULTS = 25
 
 def clean_filename(value: str) -> str:
     """
-    Make a safe filename for Linux/Windows-compatible storage.
+    Create a safe filename.
     """
 
-    value = value or "Unknown"
+    value = str(value or "Unknown")
+
+    value = unicodedata.normalize(
+        "NFKC",
+        value
+    )
 
     value = re.sub(
         r'[\\/:*?"<>|]',
+        "",
+        value
+    )
+
+    value = re.sub(
+        r"[\x00-\x1f]",
         "",
         value
     )
@@ -57,6 +84,8 @@ def clean_filename(value: str) -> str:
         value
     ).strip()
 
+    value = value.rstrip(".")
+
     if not value:
         value = "Unknown"
 
@@ -65,17 +94,29 @@ def clean_filename(value: str) -> str:
 
 def normalize_text(value: str) -> str:
     """
-    Normalize text for search ranking.
+    Normalize text while preserving Unicode letters.
     """
 
-    value = value or ""
+    value = str(value or "")
+
+    value = unicodedata.normalize(
+        "NFKD",
+        value
+    )
+
+    value = "".join(
+        char
+        for char in value
+        if not unicodedata.combining(char)
+    )
 
     value = value.lower()
 
     value = re.sub(
-        r"[^a-z0-9\s]",
+        r"[^\w\s]",
         " ",
-        value
+        value,
+        flags=re.UNICODE
     )
 
     value = re.sub(
@@ -92,7 +133,9 @@ def calculate_score(
     query: str
 ) -> float:
 
-    query_normalized = normalize_text(query)
+    query_normalized = normalize_text(
+        query
+    )
 
     title = normalize_text(
         item.get("title", "")
@@ -108,11 +151,11 @@ def calculate_score(
 
     score = 0.0
 
-    # Exact artist match is very important
+    # Exact artist
     if artist == query_normalized:
         score += 1000
 
-    # Exact title match
+    # Exact title
     if title == query_normalized:
         score += 900
 
@@ -124,22 +167,20 @@ def calculate_score(
     if title.startswith(query_normalized):
         score += 600
 
-    # Query appears in artist
+    # Artist contains query
     if query_normalized in artist:
         score += 400
 
-    # Query appears in title
+    # Title contains query
     if query_normalized in title:
         score += 350
 
-    # Query appears in album
+    # Album contains query
     if query_normalized in album:
         score += 100
 
-    # Individual words
-    query_words = query_normalized.split()
-
-    for word in query_words:
+    # Word matching
+    for word in query_normalized.split():
 
         if word in artist:
             score += 120
@@ -147,11 +188,17 @@ def calculate_score(
         if word in title:
             score += 80
 
-    # Deezer popularity/rank
+        if word in album:
+            score += 30
+
+    # Deezer rank
     try:
 
         rank = int(
-            item.get("rank", 0)
+            item.get(
+                "rank",
+                0
+            ) or 0
         )
 
         score += min(
@@ -159,10 +206,59 @@ def calculate_score(
             50
         )
 
-    except Exception:
+    except (
+        TypeError,
+        ValueError
+    ):
         pass
 
     return score
+
+
+def is_youtube_url(url: str) -> bool:
+    """
+    Validate YouTube URL.
+    """
+
+    try:
+
+        parsed = urlparse(
+            url
+        )
+
+        hostname = (
+            parsed.hostname
+            or ""
+        ).lower()
+
+        return hostname in {
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "youtu.be",
+            "www.youtu.be"
+        }
+
+    except Exception:
+
+        return False
+
+
+def json_error(
+    status_code: int,
+    message: str
+):
+    """
+    Always return a JSON error.
+    """
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": True,
+            "detail": message
+        }
+    )
 
 
 # ============================================================
@@ -173,6 +269,11 @@ async def deezer_search(
     query: str,
     limit: int = MAX_RESULTS
 ):
+
+    query = query.strip()
+
+    if not query:
+        return []
 
     params = {
         "q": query,
@@ -185,7 +286,8 @@ async def deezer_search(
     }
 
     async with httpx.AsyncClient(
-        timeout=20
+        timeout=20,
+        follow_redirects=True
     ) as client:
 
         response = await client.get(
@@ -196,22 +298,78 @@ async def deezer_search(
 
         response.raise_for_status()
 
-        data = response.json()
+        # Decode explicitly.
+        text = response.text
+
+        try:
+
+            data = json.loads(
+                text
+            )
+
+        except json.JSONDecodeError as error:
+
+            raise RuntimeError(
+                "Deezer returned invalid JSON: "
+                + str(error)
+            )
+
+    if not isinstance(
+        data,
+        dict
+    ):
+
+        raise RuntimeError(
+            "Unexpected Deezer response."
+        )
 
     results = []
 
-    for track in data.get(
+    tracks = data.get(
         "data",
         []
+    )
+
+    if not isinstance(
+        tracks,
+        list
     ):
 
-        artist_data = track.get(
-            "artist"
-        ) or {}
+        return []
 
-        album_data = track.get(
-            "album"
-        ) or {}
+    for track in tracks:
+
+        if not isinstance(
+            track,
+            dict
+        ):
+            continue
+
+        artist_data = (
+            track.get(
+                "artist"
+            )
+            or {}
+        )
+
+        album_data = (
+            track.get(
+                "album"
+            )
+            or {}
+        )
+
+        if not isinstance(
+            artist_data,
+            dict
+        ):
+            artist_data = {}
+
+        if not isinstance(
+            album_data,
+            dict
+        ):
+            album_data = {}
 
         result = {
 
@@ -219,23 +377,29 @@ async def deezer_search(
                 "id"
             ),
 
-            "title": track.get(
-                "title",
-                "Unknown"
+            "title": (
+                track.get(
+                    "title"
+                )
+                or "Unknown"
             ),
 
-            "artist": artist_data.get(
-                "name",
-                "Unknown Artist"
+            "artist": (
+                artist_data.get(
+                    "name"
+                )
+                or "Unknown Artist"
             ),
 
             "artist_id": artist_data.get(
                 "id"
             ),
 
-            "album": album_data.get(
-                "title",
-                "Unknown Album"
+            "album": (
+                album_data.get(
+                    "title"
+                )
+                or "Unknown Album"
             ),
 
             "album_id": album_data.get(
@@ -252,33 +416,53 @@ async def deezer_search(
                 0
             ),
 
-            "preview": track.get(
-                "preview"
+            "preview": (
+                track.get(
+                    "preview"
+                )
+                or ""
             ),
 
-            "deezer_url": track.get(
-                "link"
+            "deezer_url": (
+                track.get(
+                    "link"
+                )
+                or ""
             ),
 
-            "cover": album_data.get(
-                "cover_medium"
+            "cover": (
+                album_data.get(
+                    "cover_medium"
+                )
+                or ""
             ),
 
-            "cover_big": album_data.get(
-                "cover_big"
+            "cover_big": (
+                album_data.get(
+                    "cover_big"
+                )
+                or ""
             ),
 
-            "cover_xl": album_data.get(
-                "cover_xl"
+            "cover_xl": (
+                album_data.get(
+                    "cover_xl"
+                )
+                or ""
             ),
 
-            "isrc": track.get(
-                "isrc"
+            "isrc": (
+                track.get(
+                    "isrc"
+                )
+                or ""
             ),
 
-            "explicit": track.get(
-                "explicit_lyrics",
-                False
+            "explicit": bool(
+                track.get(
+                    "explicit_lyrics",
+                    False
+                )
             )
         }
 
@@ -292,7 +476,7 @@ async def deezer_search(
         )
 
     results.sort(
-        key=lambda x: x.get(
+        key=lambda item: item.get(
             "score",
             0
         ),
@@ -300,6 +484,348 @@ async def deezer_search(
     )
 
     return results
+
+
+# ============================================================
+# YOUTUBE SEARCH
+# ============================================================
+
+async def youtube_search(
+    artist: str,
+    title: str
+) -> str:
+
+    search_query = (
+        f"{artist} - {title}"
+    )
+
+    command = [
+
+        "yt-dlp",
+
+        "--flat-playlist",
+
+        "--skip-download",
+
+        "--no-warnings",
+
+        "--print",
+        "%(webpage_url)s",
+
+        f"ytsearch1:{search_query}"
+    ]
+
+    try:
+
+        process = (
+            await asyncio.create_subprocess_exec(
+
+                *command,
+
+                stdout=asyncio.subprocess.PIPE,
+
+                stderr=asyncio.subprocess.PIPE
+            )
+        )
+
+        stdout, stderr = (
+            await asyncio.wait_for(
+                process.communicate(),
+                timeout=60
+            )
+        )
+
+    except FileNotFoundError:
+
+        raise RuntimeError(
+            "yt-dlp is not installed."
+        )
+
+    except asyncio.TimeoutError:
+
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            "YouTube search timed out."
+        )
+
+    if process.returncode != 0:
+
+        error_text = (
+            stderr.decode(
+                "utf-8",
+                errors="replace"
+            ).strip()
+        )
+
+        raise RuntimeError(
+            "YouTube search failed: "
+            + error_text[-1000:]
+        )
+
+    output = (
+        stdout.decode(
+            "utf-8",
+            errors="replace"
+        )
+    )
+
+    for line in output.splitlines():
+
+        line = line.strip()
+
+        if is_youtube_url(
+            line
+        ):
+
+            return line
+
+    raise RuntimeError(
+        "No YouTube result found."
+    )
+
+
+# ============================================================
+# DOWNLOAD FROM YOUTUBE
+# ============================================================
+
+async def download_youtube_audio(
+    url: str,
+    artist: str = "",
+    title: str = ""
+) -> Path:
+
+    if not is_youtube_url(
+        url
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid YouTube URL."
+        )
+
+    job_id = uuid.uuid4().hex
+
+    artist_clean = clean_filename(
+        artist
+    )
+
+    title_clean = clean_filename(
+        title
+    )
+
+    if artist_clean and title_clean:
+
+        filename_base = (
+            f"{artist_clean} - "
+            f"{title_clean}"
+        )
+
+    elif title_clean:
+
+        filename_base = title_clean
+
+    else:
+
+        filename_base = job_id
+
+    filename_base = clean_filename(
+        filename_base
+    )
+
+    output_template = str(
+        DOWNLOAD_DIR /
+        f"{job_id}.%(ext)s"
+    )
+
+    command = [
+
+        "yt-dlp",
+
+        "--no-playlist",
+
+        "--no-warnings",
+
+        "--extract-audio",
+
+        "--audio-format",
+        "mp3",
+
+        "--audio-quality",
+        "192K",
+
+        "--prefer-ffmpeg",
+
+        "--no-progress",
+
+        "--newline",
+
+        "--restrict-filenames",
+
+        "-o",
+        output_template,
+
+        url
+    ]
+
+    try:
+
+        process = (
+            await asyncio.create_subprocess_exec(
+
+                *command,
+
+                stdout=asyncio.subprocess.PIPE,
+
+                stderr=asyncio.subprocess.PIPE
+            )
+        )
+
+    except FileNotFoundError:
+
+        raise HTTPException(
+            status_code=500,
+            detail="yt-dlp is not installed."
+        )
+
+    try:
+
+        stdout, stderr = (
+            await asyncio.wait_for(
+                process.communicate(),
+                timeout=DOWNLOAD_TIMEOUT
+            )
+        )
+
+    except asyncio.TimeoutError:
+
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+        try:
+            await process.wait()
+        except Exception:
+            pass
+
+        # Cleanup partial files
+        for file in DOWNLOAD_DIR.glob(
+            f"{job_id}.*"
+        ):
+
+            try:
+                file.unlink()
+            except Exception:
+                pass
+
+        raise HTTPException(
+            status_code=504,
+            detail="Download timed out."
+        )
+
+    stdout_text = stdout.decode(
+        "utf-8",
+        errors="replace"
+    )
+
+    stderr_text = stderr.decode(
+        "utf-8",
+        errors="replace"
+    )
+
+    if process.returncode != 0:
+
+        # Cleanup
+        for file in DOWNLOAD_DIR.glob(
+            f"{job_id}.*"
+        ):
+
+            try:
+                file.unlink()
+            except Exception:
+                pass
+
+        error_text = (
+            stderr_text.strip()
+            or stdout_text.strip()
+            or "Unknown yt-dlp error."
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "YouTube download failed: "
+                + error_text[-2000:]
+            )
+        )
+
+    # Prefer generated MP3
+    mp3_files = list(
+        DOWNLOAD_DIR.glob(
+            f"{job_id}.mp3"
+        )
+    )
+
+    if mp3_files:
+
+        source_file = mp3_files[0]
+
+    else:
+
+        # Look for any generated file
+        possible_files = [
+            file
+            for file in DOWNLOAD_DIR.glob(
+                f"{job_id}.*"
+            )
+            if file.is_file()
+        ]
+
+        if not possible_files:
+
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "yt-dlp completed successfully "
+                    "but no audio file was created."
+                )
+            )
+
+        source_file = possible_files[0]
+
+    # Rename to a user-friendly filename.
+    extension = source_file.suffix.lower()
+
+    final_file = (
+        DOWNLOAD_DIR /
+        f"{filename_base}{extension}"
+    )
+
+    # Avoid collisions
+    if final_file.exists():
+
+        final_file = (
+            DOWNLOAD_DIR /
+            f"{filename_base} "
+            f"({job_id[:8]})"
+            f"{extension}"
+        )
+
+    try:
+
+        source_file.rename(
+            final_file
+        )
+
+    except Exception:
+
+        final_file = source_file
+
+    return final_file
 
 
 # ============================================================
@@ -315,7 +841,7 @@ async def home():
     return """
 <!DOCTYPE html>
 
-<html>
+<html lang="en">
 
 <head>
 
@@ -357,10 +883,9 @@ body {
 
 .container {
 
-    max-width: 1000px;
+    max-width: 1100px;
 
-    margin:
-        0 auto;
+    margin: 0 auto;
 }
 
 h1 {
@@ -406,11 +931,11 @@ input {
 button {
 
     padding:
-        14px 20px;
+        12px 18px;
 
     border: none;
 
-    border-radius: 12px;
+    border-radius: 10px;
 
     background: #6366f1;
 
@@ -418,7 +943,7 @@ button {
 
     cursor: pointer;
 
-    font-size: 15px;
+    font-size: 14px;
 
     font-weight: bold;
 }
@@ -426,6 +951,13 @@ button {
 button:hover {
 
     background: #4f46e5;
+}
+
+button:disabled {
+
+    opacity: 0.5;
+
+    cursor: not-allowed;
 }
 
 .result {
@@ -447,15 +979,17 @@ button:hover {
 
 .cover {
 
-    width: 70px;
+    width: 75px;
 
-    height: 70px;
+    height: 75px;
 
     border-radius: 10px;
 
     object-fit: cover;
 
     background: #374151;
+
+    flex-shrink: 0;
 }
 
 .info {
@@ -501,6 +1035,10 @@ button:hover {
     gap: 8px;
 
     align-items: center;
+
+    flex-wrap: wrap;
+
+    justify-content: flex-end;
 }
 
 .preview {
@@ -513,6 +1051,11 @@ button:hover {
     background: #10b981;
 }
 
+.download:hover {
+
+    background: #059669;
+}
+
 audio {
 
     width: 180px;
@@ -523,6 +1066,35 @@ audio {
     color: #9ca3af;
 
     margin-bottom: 15px;
+
+    min-height: 20px;
+}
+
+.badge {
+
+    display: inline-block;
+
+    padding: 3px 7px;
+
+    border-radius: 6px;
+
+    background: #374151;
+
+    color: #d1d5db;
+
+    font-size: 11px;
+
+    margin-left: 5px;
+}
+
+.error {
+
+    color: #fca5a5;
+}
+
+.success {
+
+    color: #86efac;
 }
 
 @media(max-width: 700px) {
@@ -533,14 +1105,20 @@ audio {
 
     .result {
         align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .info {
+        width: calc(100% - 100px);
     }
 
     .actions {
-        flex-direction: column;
+        width: 100%;
+        justify-content: flex-start;
     }
 
     audio {
-        width: 140px;
+        width: 100%;
     }
 }
 
@@ -566,7 +1144,10 @@ Search artists, songs and albums.
     autocomplete="off"
 />
 
-<button onclick="searchMusic()">
+<button
+    id="searchButton"
+    onclick="searchMusic()"
+>
 🔍 Search
 </button>
 
@@ -580,6 +1161,36 @@ Search artists, songs and albums.
 
 
 <script>
+
+async function readApiResponse(response) {
+
+    const text =
+        await response.text();
+
+    if (!text) {
+
+        throw new Error(
+            "The server returned an empty response."
+        );
+    }
+
+    try {
+
+        return JSON.parse(text);
+
+    } catch(error) {
+
+        console.error(
+            "Invalid JSON response:",
+            text
+        );
+
+        throw new Error(
+            "Server returned invalid JSON."
+        );
+    }
+}
+
 
 async function searchMusic() {
 
@@ -595,6 +1206,9 @@ async function searchMusic() {
     const results =
         document.getElementById("results");
 
+    const button =
+        document.getElementById("searchButton");
+
     if (!query) {
 
         status.textContent =
@@ -603,27 +1217,46 @@ async function searchMusic() {
         return;
     }
 
+    status.className = "";
+
     status.textContent =
         "🔎 Searching...";
 
     results.innerHTML = "";
+
+    button.disabled = true;
 
     try {
 
         const response =
             await fetch(
                 "/api/search?q=" +
-                encodeURIComponent(query)
+                encodeURIComponent(query),
+                {
+                    headers: {
+                        "Accept":
+                            "application/json"
+                    }
+                }
             );
 
         const data =
-            await response.json();
+            await readApiResponse(
+                response
+            );
 
         if (!response.ok) {
 
             throw new Error(
                 data.detail ||
-                "Search failed"
+                "Search failed."
+            );
+        }
+
+        if (!Array.isArray(data)) {
+
+            throw new Error(
+                "The search API returned an unexpected response."
             );
         }
 
@@ -644,128 +1277,328 @@ async function searchMusic() {
             const item of data
         ) {
 
-            const div =
-                document.createElement(
-                    "div"
-                );
-
-            div.className =
-                "result";
-
-            const cover =
-                item.cover ||
-                "";
-
-            const preview =
-                item.preview ||
-                "";
-
-            div.innerHTML = `
-
-                <img
-                    class="cover"
-                    src="${escapeHtml(cover)}"
-                    onerror="
-                        this.style.visibility='hidden'
-                    "
-                >
-
-                <div class="info">
-
-                    <div class="title">
-                        ${escapeHtml(
-                            item.title
-                        )}
-                    </div>
-
-                    <div class="artist">
-                        👤 ${escapeHtml(
-                            item.artist
-                        )}
-                    </div>
-
-                    <div class="album">
-                        💿 ${escapeHtml(
-                            item.album
-                        )}
-                    </div>
-
-                </div>
-
-                <div class="actions">
-
-                    ${
-                        preview
-                        ?
-                        `
-                        <audio
-                            controls
-                            preload="none"
-                            src="${escapeHtml(
-                                preview
-                            )}"
-                        ></audio>
-                        `
-                        :
-                        ""
-                    }
-
-                    ${
-                        preview
-                        ?
-                        `
-                        <a
-                            href="${escapeHtml(
-                                preview
-                            )}"
-                            target="_blank"
-                        >
-                            <button class="preview">
-                                ▶ Preview
-                            </button>
-                        </a>
-                        `
-                        :
-                        ""
-                    }
-
-                    <button
-                        class="download"
-                        onclick="showDownloadInfo(
-                            ${item.id}
-                        )"
-                    >
-                        ⬇ Download
-                    </button>
-
-                </div>
-            `;
-
-            results.appendChild(
-                div
+            renderResult(
+                item,
+                results
             );
         }
 
     } catch(error) {
 
+        console.error(
+            error
+        );
+
+        status.className =
+            "error";
+
         status.textContent =
             "❌ " +
             error.message;
+
+    } finally {
+
+        button.disabled = false;
     }
 }
 
 
-function showDownloadInfo(id) {
+function renderResult(
+    item,
+    results
+) {
 
-    alert(
-        "To download audio, use the YouTube download endpoint with a video URL.\\n\\n" +
-        "Endpoint:\\n" +
-        "/api/download?url=YOUR_YOUTUBE_URL"
+    const div =
+        document.createElement(
+            "div"
+        );
+
+    div.className =
+        "result";
+
+    const cover =
+        item.cover_xl ||
+        item.cover_big ||
+        item.cover ||
+        "";
+
+    const preview =
+        item.preview ||
+        "";
+
+    const title =
+        item.title ||
+        "Unknown";
+
+    const artist =
+        item.artist ||
+        "Unknown Artist";
+
+    const album =
+        item.album ||
+        "Unknown Album";
+
+    const id =
+        Number(
+            item.id || 0
+        );
+
+    div.innerHTML = `
+
+        <img
+            class="cover"
+            src="${escapeHtml(cover)}"
+            alt=""
+            onerror="
+                this.style.visibility='hidden'
+            "
+        >
+
+        <div class="info">
+
+            <div class="title">
+                ${escapeHtml(title)}
+            </div>
+
+            <div class="artist">
+                👤 ${escapeHtml(artist)}
+            </div>
+
+            <div class="album">
+                💿 ${escapeHtml(album)}
+            </div>
+
+        </div>
+
+        <div class="actions">
+
+            ${
+                preview
+                ?
+                `
+                <audio
+                    controls
+                    preload="none"
+                    src="${escapeHtml(preview)}"
+                ></audio>
+                `
+                :
+                ""
+            }
+
+            ${
+                preview
+                ?
+                `
+                <a
+                    href="${escapeHtml(preview)}"
+                    target="_blank"
+                    rel="noopener"
+                >
+                    <button class="preview">
+                        ▶ Preview
+                    </button>
+                </a>
+                `
+                :
+                ""
+            }
+
+            <button
+                class="download"
+                data-id="${id}"
+            >
+                ⬇ Download
+            </button>
+
+        </div>
+    `;
+
+    const downloadButton =
+        div.querySelector(
+            ".download"
+        );
+
+    downloadButton.addEventListener(
+        "click",
+        function() {
+
+            downloadTrack(
+                title,
+                artist,
+                downloadButton
+            );
+
+        }
+    );
+
+    results.appendChild(
+        div
     );
 }
 
 
-function escapeHtml(text) {
+async function downloadTrack(
+    title,
+    artist,
+    button
+) {
+
+    const status =
+        document.getElementById(
+            "status"
+        );
+
+    button.disabled = true;
+
+    button.textContent =
+        "🔎 Finding...";
+
+    status.className = "";
+
+    status.textContent =
+        "🔎 Finding YouTube version of " +
+        artist +
+        " - " +
+        title +
+        "...";
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/download/search?" +
+                new URLSearchParams({
+                    artist: artist,
+                    title: title
+                })
+            );
+
+        const data =
+            await readApiResponse(
+                response
+            );
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Could not find the song."
+            );
+        }
+
+        if (!data.url) {
+
+            throw new Error(
+                "No YouTube result was found."
+            );
+        }
+
+        status.textContent =
+            "⬇ Downloading " +
+            artist +
+            " - " +
+            title +
+            "...";
+
+        button.textContent =
+            "⬇ Downloading...";
+
+        const downloadUrl =
+            "/api/download?" +
+            new URLSearchParams({
+                url: data.url,
+                artist: artist,
+                title: title
+            });
+
+        const downloadResponse =
+            await fetch(
+                downloadUrl
+            );
+
+        if (!downloadResponse.ok) {
+
+            const errorData =
+                await readApiResponse(
+                    downloadResponse
+                );
+
+            throw new Error(
+                errorData.detail ||
+                "Download failed."
+            );
+        }
+
+        const blob =
+            await downloadResponse.blob();
+
+        const blobUrl =
+            URL.createObjectURL(
+                blob
+            );
+
+        const link =
+            document.createElement(
+                "a"
+            );
+
+        link.href =
+            blobUrl;
+
+        link.download =
+            artist +
+            " - " +
+            title +
+            ".mp3";
+
+        document.body.appendChild(
+            link
+        );
+
+        link.click();
+
+        link.remove();
+
+        URL.revokeObjectURL(
+            blobUrl
+        );
+
+        status.className =
+            "success";
+
+        status.textContent =
+            "✅ Download complete: " +
+            artist +
+            " - " +
+            title;
+
+    } catch(error) {
+
+        console.error(
+            error
+        );
+
+        status.className =
+            "error";
+
+        status.textContent =
+            "❌ " +
+            error.message;
+
+    } finally {
+
+        button.disabled = false;
+
+        button.textContent =
+            "⬇ Download";
+    }
+}
+
+
+function escapeHtml(
+    text
+) {
 
     const div =
         document.createElement(
@@ -773,7 +1606,9 @@ function escapeHtml(text) {
         );
 
     div.textContent =
-        text || "";
+        String(
+            text || ""
+        );
 
     return div.innerHTML;
 }
@@ -808,7 +1643,9 @@ document
 # SEARCH API
 # ============================================================
 
-@app.get("/api/search")
+@app.get(
+    "/api/search"
+)
 async def search(
     q: str = Query(
         ...,
@@ -823,24 +1660,64 @@ async def search(
             MAX_RESULTS
         )
 
-        return results
+        return JSONResponse(
+            content=results
+        )
 
     except httpx.HTTPError as error:
 
-        raise HTTPException(
-            status_code=502,
-            detail=
-                "Deezer request failed: "
-                + str(error)
+        return json_error(
+            502,
+            "Deezer request failed: "
+            + str(error)
         )
 
     except Exception as error:
 
-        raise HTTPException(
-            status_code=500,
-            detail=
-                "Search failed: "
-                + str(error)
+        return json_error(
+            500,
+            "Search failed: "
+            + str(error)
+        )
+
+
+# ============================================================
+# FIND YOUTUBE VERSION
+# ============================================================
+
+@app.get(
+    "/api/download/search"
+)
+async def download_search(
+    artist: str = Query(
+        ...,
+        min_length=1
+    ),
+    title: str = Query(
+        ...,
+        min_length=1
+    )
+):
+
+    try:
+
+        url = await youtube_search(
+            artist,
+            title
+        )
+
+        return {
+            "success": True,
+            "url": url,
+            "artist": artist,
+            "title": title
+        }
+
+    except Exception as error:
+
+        return json_error(
+            500,
+            str(error)
         )
 
 
@@ -848,142 +1725,43 @@ async def search(
 # DOWNLOAD AUDIO
 # ============================================================
 
-@app.get("/api/download")
+@app.get(
+    "/api/download"
+)
 async def download_audio(
     url: str = Query(
         ...,
         min_length=1
+    ),
+    artist: str = Query(
+        "",
+        max_length=200
+    ),
+    title: str = Query(
+        "",
+        max_length=200
     )
 ):
 
-    """
-    Download audio from a public URL supported by yt-dlp.
-
-    Use only for content you are authorized to download.
-    """
-
-    if not (
-        url.startswith(
-            "https://www.youtube.com/"
-        )
-        or
-        url.startswith(
-            "https://youtube.com/"
-        )
-        or
-        url.startswith(
-            "https://youtu.be/"
-        )
-    ):
-
-        raise HTTPException(
-            status_code=400,
-            detail=
-                "Please provide a valid YouTube URL."
-        )
-
-    job_id = uuid.uuid4().hex
-
-    output_template = str(
-        DOWNLOAD_DIR /
-        f"{job_id}.%(ext)s"
-    )
-
-    command = [
-
-        "yt-dlp",
-
-        "--no-playlist",
-
-        "-x",
-
-        "--audio-format",
-        "mp3",
-
-        "--audio-quality",
-        "192K",
-
-        "--no-progress",
-
-        "--newline",
-
-        "-o",
-        output_template,
-
-        url
-    ]
-
     try:
 
-        process = await asyncio.create_subprocess_exec(
-
-            *command,
-
-            stdout=asyncio.subprocess.PIPE,
-
-            stderr=asyncio.subprocess.PIPE
+        file_path = (
+            await download_youtube_audio(
+                url=url,
+                artist=artist,
+                title=title
+            )
         )
-
-        stdout, stderr = await process.communicate()
-
-        if process.returncode != 0:
-
-            error_text = (
-                stderr.decode(
-                    "utf-8",
-                    errors="ignore"
-                )
-            )
-
-            raise HTTPException(
-                status_code=500,
-                detail=
-                    "Download failed: "
-                    + error_text[-2000:]
-            )
-
-        mp3_file = (
-            DOWNLOAD_DIR /
-            f"{job_id}.mp3"
-        )
-
-        if not mp3_file.exists():
-
-            # yt-dlp may have created
-            # another extension.
-
-            possible_files = list(
-                DOWNLOAD_DIR.glob(
-                    f"{job_id}.*"
-                )
-            )
-
-            if not possible_files:
-
-                raise HTTPException(
-                    status_code=500,
-                    detail=
-                        "Download completed but "
-                        "the MP3 file was not found."
-                )
-
-            mp3_file = possible_files[0]
 
         return FileResponse(
 
-            path=str(mp3_file),
+            path=str(
+                file_path
+            ),
 
             media_type="audio/mpeg",
 
-            filename=mp3_file.name
-        )
-
-    except FileNotFoundError:
-
-        raise HTTPException(
-            status_code=500,
-            detail=
-                "yt-dlp is not installed."
+            filename=file_path.name
         )
 
     except HTTPException:
@@ -992,11 +1770,10 @@ async def download_audio(
 
     except Exception as error:
 
-        raise HTTPException(
-            status_code=500,
-            detail=
-                "Download error: "
-                + str(error)
+        return json_error(
+            500,
+            "Download error: "
+            + str(error)
         )
 
 
@@ -1004,10 +1781,76 @@ async def download_audio(
 # HEALTH CHECK
 # ============================================================
 
-@app.get("/health")
+@app.get(
+    "/health"
+)
 async def health():
 
+    yt_dlp_available = False
+    ffmpeg_available = False
+
+    try:
+
+        process = (
+            await asyncio.create_subprocess_exec(
+
+                "yt-dlp",
+                "--version",
+
+                stdout=asyncio.subprocess.PIPE,
+
+                stderr=asyncio.subprocess.PIPE
+            )
+        )
+
+        await process.communicate()
+
+        yt_dlp_available = (
+            process.returncode == 0
+        )
+
+    except Exception:
+        pass
+
+    try:
+
+        process = (
+            await asyncio.create_subprocess_exec(
+
+                "ffmpeg",
+                "-version",
+
+                stdout=asyncio.subprocess.PIPE,
+
+                stderr=asyncio.subprocess.PIPE
+            )
+        )
+
+        await process.communicate()
+
+        ffmpeg_available = (
+            process.returncode == 0
+        )
+
+    except Exception:
+        pass
+
     return {
+
         "status": "ok",
-        "service": "music-downloader"
+
+        "service":
+            "music-downloader",
+
+        "yt_dlp":
+            yt_dlp_available,
+
+        "ffmpeg":
+            ffmpeg_available,
+
+        "download_directory":
+            str(DOWNLOAD_DIR),
+
+        "download_directory_exists":
+            DOWNLOAD_DIR.exists()
     }
