@@ -1,0 +1,26 @@
+name: Music Downloader
+version: "0.1.0"
+slug: music_downloader
+description: Search and manage music for Navidrome
+url: "https://github.com/ahmedxrob/ai-project"
+arch:
+  - amd64
+  - aarch64
+
+startup: services
+boot: auto
+
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:music
+panel_title: Music Downloader
+
+ports:
+  8099/tcp: 8099
+
+map:
+  - share:rw
+
+options: {}
+
+schema: {}
