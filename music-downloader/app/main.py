@@ -50,6 +50,10 @@ async def home():
             font-size: 16px;
         }
 
+        button:hover {
+            background: #4f46e5;
+        }
+
         .result {
             background: #1f2937;
             padding: 18px;
@@ -171,7 +175,9 @@ async function searchMusic() {
                 </div>
 
                 <div class="album">
-                    💿 ${escapeHtml(item.album)}
+                    💿 ${escapeHtml(
+                        item.album || "Album unknown"
+                    )}
                 </div>
             `;
 
@@ -179,6 +185,8 @@ async function searchMusic() {
         }
 
     } catch (error) {
+
+        console.error(error);
 
         status.textContent =
             "❌ " + error.message;
@@ -219,7 +227,9 @@ document
 
 
 @app.get("/api/search")
-async def search(q: str = Query(..., min_length=1)):
+async def search(
+    q: str = Query(..., min_length=1)
+):
 
     params = {
         "query": q,
@@ -283,6 +293,7 @@ async def search(q: str = Query(..., min_length=1)):
         album = ""
 
         if releases:
+
             album = releases[0].get(
                 "title",
                 ""
@@ -294,7 +305,9 @@ async def search(q: str = Query(..., min_length=1)):
                 "Unknown"
             ),
 
-            "artist": ", ".join(artists),
+            "artist": ", ".join(
+                artists
+            ),
 
             "album": album
         })
@@ -308,3 +321,27 @@ async def health():
     return {
         "status": "ok"
     }
+
+
+@app.get("/api/deezer-test")
+async def deezer_test():
+
+    url = "https://api.deezer.com/search"
+
+    params = {
+        "q": "moon stormy",
+        "limit": 10
+    }
+
+    async with httpx.AsyncClient(
+        timeout=20
+    ) as client:
+
+        response = await client.get(
+            url,
+            params=params
+        )
+
+        response.raise_for_status()
+
+        return response.json()
