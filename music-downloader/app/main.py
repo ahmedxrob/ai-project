@@ -15,15 +15,20 @@ async def home():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>Music Downloader</title>
 
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: Arial, sans-serif;
             background: #111827;
             color: white;
             margin: 0;
-            padding: 25px;
+            padding: 30px;
         }
 
         .container {
@@ -37,12 +42,12 @@ async def home():
 
         .subtitle {
             color: #9ca3af;
+            margin-bottom: 25px;
         }
 
         .search {
             display: flex;
             gap: 10px;
-            margin-top: 30px;
         }
 
         input {
@@ -51,6 +56,8 @@ async def home():
             border: none;
             border-radius: 10px;
             font-size: 16px;
+            background: #ffffff;
+            color: #111827;
         }
 
         button {
@@ -67,8 +74,13 @@ async def home():
             background: #4f46e5;
         }
 
+        #status {
+            margin-top: 20px;
+            color: #9ca3af;
+        }
+
         #results {
-            margin-top: 25px;
+            margin-top: 20px;
         }
 
         .result {
@@ -79,24 +91,28 @@ async def home():
         }
 
         .title {
-            font-size: 18px;
+            font-size: 19px;
             font-weight: bold;
         }
 
         .creator {
             color: #9ca3af;
-            margin-top: 6px;
+            margin-top: 8px;
         }
 
         .identifier {
             color: #6b7280;
             font-size: 13px;
             margin-top: 8px;
+            word-break: break-all;
         }
 
-        .status {
-            margin-top: 20px;
-            color: #9ca3af;
+        .error {
+            color: #f87171;
+        }
+
+        .loading {
+            color: #60a5fa;
         }
     </style>
 </head>
@@ -117,20 +133,20 @@ async def home():
             id="query"
             type="text"
             placeholder="Search artist, album or song..."
-            onkeydown="if(event.key === 'Enter') searchMusic()"
         >
 
-        <button onclick="searchMusic()">
+        <button id="searchButton" onclick="searchMusic()">
             🔍 Search
         </button>
 
     </div>
 
-    <div id="status" class="status"></div>
+    <div id="status"></div>
 
     <div id="results"></div>
 
 </div>
+
 
 <script>
 
@@ -139,61 +155,104 @@ async function searchMusic() {
     const query =
         document.getElementById("query").value.trim();
 
-    const results =
-        document.getElementById("results");
-
     const status =
         document.getElementById("status");
 
+    const results =
+        document.getElementById("results");
+
+    const button =
+        document.getElementById("searchButton");
+
+
     if (!query) {
+
+        status.className = "error";
         status.textContent =
-            "Enter something to search for.";
+            "Please enter something to search.";
+
         return;
     }
 
-    status.textContent = "Searching...";
+
+    status.className = "loading";
+    status.textContent = "🔎 Searching...";
+
     results.innerHTML = "";
+
+    button.disabled = true;
+
 
     try {
 
+        /*
+         * "./api/search" is important because
+         * Home Assistant uses an Ingress URL.
+         */
+
         const response = await fetch(
-            "/api/search?q=" +
+            "./api/search?q=" +
             encodeURIComponent(query)
         );
 
+
         const text = await response.text();
 
+
         if (!response.ok) {
-            throw new Error(text);
+
+            throw new Error(
+                "Server returned " +
+                response.status +
+                ": " +
+                text
+            );
         }
+
 
         let data;
 
         try {
+
             data = JSON.parse(text);
-        } catch (e) {
-            console.error("Server response:", text);
+
+        } catch (error) {
+
+            console.error(
+                "Server response:",
+                text
+            );
+
             throw new Error(
                 "Server returned invalid JSON."
             );
         }
 
+
         if (!Array.isArray(data)) {
+
             throw new Error(
-                "Unexpected response from server."
+                "Unexpected server response."
             );
         }
 
+
         if (data.length === 0) {
 
+            status.className = "";
             status.textContent =
                 "No results found.";
 
             return;
         }
 
+
+        status.className = "";
         status.textContent =
-            data.length + " results found.";
+            "🎵 " +
+            data.length +
+            " results found.";
+
 
         data.forEach(item => {
 
@@ -202,29 +261,42 @@ async function searchMusic() {
 
             card.className = "result";
 
+
             const title =
                 document.createElement("div");
 
             title.className = "title";
+
             title.textContent =
-                item.title || "Unknown title";
+                item.title ||
+                "Unknown title";
+
 
             const creator =
                 document.createElement("div");
 
             creator.className = "creator";
+
             creator.textContent =
-                item.creator || "Unknown creator";
+                item.creator ||
+                "Unknown creator";
+
 
             const identifier =
                 document.createElement("div");
 
-            identifier.className = "identifier";
+            identifier.className =
+                "identifier";
+
             identifier.textContent =
-                item.identifier || "";
+                item.identifier ||
+                "";
+
 
             card.appendChild(title);
+
             card.appendChild(creator);
+
             card.appendChild(identifier);
 
             results.appendChild(card);
@@ -235,10 +307,35 @@ async function searchMusic() {
 
         console.error(error);
 
+        status.className = "error";
+
         status.textContent =
-            "Error: " + error.message;
+            "❌ Error: " +
+            error.message;
+
+    } finally {
+
+        button.disabled = false;
+
     }
+
 }
+
+
+document
+    .getElementById("query")
+    .addEventListener(
+        "keydown",
+        function(event) {
+
+            if (event.key === "Enter") {
+
+                searchMusic();
+
+            }
+
+        }
+    );
 
 </script>
 
@@ -253,14 +350,36 @@ async def search_music(
 ):
 
     params = [
-        ("q", f"({q}) AND mediatype:audio"),
-        ("fl[]", "identifier"),
-        ("fl[]", "title"),
-        ("fl[]", "creator"),
-        ("rows", "25"),
-        ("page", "1"),
-        ("output", "json"),
+        (
+            "q",
+            f"({q}) AND mediatype:audio"
+        ),
+        (
+            "fl[]",
+            "identifier"
+        ),
+        (
+            "fl[]",
+            "title"
+        ),
+        (
+            "fl[]",
+            "creator"
+        ),
+        (
+            "rows",
+            "25"
+        ),
+        (
+            "page",
+            "1"
+        ),
+        (
+            "output",
+            "json"
+        )
     ]
+
 
     async with httpx.AsyncClient(
         timeout=30,
@@ -280,26 +399,41 @@ async def search_music(
 
         data = response.json()
 
+
     documents = (
         data
         .get("response", {})
         .get("docs", [])
     )
 
+
     results = []
+
 
     for item in documents:
 
         results.append({
+
             "identifier":
-                item.get("identifier", ""),
+                item.get(
+                    "identifier",
+                    ""
+                ),
 
             "title":
-                item.get("title", "Unknown title"),
+                item.get(
+                    "title",
+                    "Unknown title"
+                ),
 
             "creator":
-                item.get("creator", "")
+                item.get(
+                    "creator",
+                    ""
+                )
+
         })
+
 
     return results
 
