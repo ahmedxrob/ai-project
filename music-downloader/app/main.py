@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -94,6 +95,7 @@ async def download_worker():
         try:
             task["status"] = "downloading"
             task["step"] = "Downloading stream..."
+            task["last_updated"] = time.time() * 1000
             
             settings = load_settings()
             fmt = settings.get("audio_format", "mp3")
@@ -129,9 +131,8 @@ async def download_worker():
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            # Much more robust regex to catch all yt-dlp percentage and speed formats
             progress_regex = re.compile(r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%")
-            speed_regex = re.compile(r"at\s+([a-zA-Z0-9\.\/]+)")
+            speed_regex = re.compile(r"at\s+([~0-9a-zA-Z\.\/]+)")
 
             while True:
                 line = await process.stdout.readline()
@@ -142,15 +143,17 @@ async def download_worker():
                 pct_match = progress_regex.search(line_str)
                 if pct_match:
                     task["percent"] = float(pct_match.group(1))
+                    task["last_updated"] = time.time() * 1000
                     
                     spd_match = speed_regex.search(line_str)
                     if spd_match:
-                        task["speed"] = spd_match.group(1)
+                        task["speed"] = spd_match.group(1).replace("~", "")
                         
                 elif "[ExtractAudio]" in line_str or "[EmbedThumbnail]" in line_str or "[Metadata]" in line_str:
                     task["status"] = "processing"
                     task["step"] = "Embedding cover art & tags..."
                     task["percent"] = 92
+                    task["last_updated"] = time.time() * 1000
 
             await process.wait()
 
@@ -159,6 +162,7 @@ async def download_worker():
                 err_text = stderr_data.decode("utf-8", errors="ignore")
                 task["status"] = "error"
                 task["error"] = err_text[-300:]
+                task["last_updated"] = time.time() * 1000
                 task_queue.task_done()
                 continue
 
@@ -166,6 +170,7 @@ async def download_worker():
             if not possible_files:
                 task["status"] = "error"
                 task["error"] = "Downloaded file not found."
+                task["last_updated"] = time.time() * 1000
                 task_queue.task_done()
                 continue
 
@@ -175,6 +180,7 @@ async def download_worker():
             task["status"] = "processing"
             task["step"] = "Cleaning tags & metadata..."
             task["percent"] = 96
+            task["last_updated"] = time.time() * 1000
 
             clean_title = clean_filename(task["title"])
             cleaned_file = DOWNLOAD_DIR / f"clean_{task_id}{ext}"
@@ -215,16 +221,17 @@ async def download_worker():
             task["status"] = "completed"
             task["percent"] = 100
             task["step"] = "Ready"
+            task["last_updated"] = time.time() * 1000
 
         except Exception as err:
             task["status"] = "error"
             task["error"] = str(err)
+            task["last_updated"] = time.time() * 1000
         finally:
             task_queue.task_done()
             
-            # Auto-clear completed/errored tasks after 10 seconds to free memory
             async def clear_task():
-                await asyncio.sleep(10)
+                await asyncio.sleep(15)
                 TASKS.pop(task_id, None)
             asyncio.create_task(clear_task())
 
@@ -541,6 +548,9 @@ let libraryFilesSet = new Set();
 let activeAudio = null;
 let activePreviewBtn = null;
 
+function escapeHtml(t) { return (t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function escapeJs(t) { return (t || "").replace(/'/g, "\\'").replace(/"/g, '\\"'); }
+
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -657,13 +667,13 @@ async function searchMusic() {
             
             let actionHtml = isInLibrary ? `<div class="badge-library">✅ In Library</div>` : `
                 <button class="btn-preview" onclick="togglePreview(this, '${escapeJs(item.url)}')">▶ Preview</button>
-                <button class="btn-download" id="btn-${CSS.escape(item.id)}" onclick="startDownload('${item.url}', '${escapeJs(item.title)}', '${CSS.escape(item.id)}')">⬇️ Save</button>
+                <button class="btn-download" data-id="${item.id}" onclick="startDownload('${item.url}', '${escapeJs(item.title)}', '${item.id}')">⬇️ Save</button>
             `;
 
             card.innerHTML = `
                 <div class="thumb-wrapper"><img src="${item.thumbnail}" onerror="this.src='https://via.placeholder.com/110x65?text=Music'" /><span class="badge-duration">${item.duration_text}</span></div>
                 <div class="track-info"><div class="track-title">${escapeHtml(item.title)}</div><div class="track-artist">👤 ${escapeHtml(item.channel)}</div></div>
-                <div class="btn-group" id="btn-group-${CSS.escape(item.id)}">${actionHtml}</div>
+                <div class="btn-group" data-group-id="${item.id}">${actionHtml}</div>
             `;
             results.appendChild(card);
         });
@@ -673,7 +683,7 @@ async function searchMusic() {
 
 async function startDownload(url, title, elementId) {
     if (elementId) {
-        const btn = document.getElementById("btn-" + elementId);
+        const btn = document.querySelector(`button[data-id="${elementId}"]`);
         if (btn) { btn.disabled = true; btn.textContent = "⏳ Queued"; }
     }
     try {
@@ -683,7 +693,7 @@ async function startDownload(url, title, elementId) {
             body: JSON.stringify({ url, title, elementId })
         });
         clearTimeout(pollTimer);
-        pollTasks(); // Instantly update UI
+        pollTasks();
     } catch (e) { alert("Failed to enqueue download."); }
 }
 
@@ -712,54 +722,44 @@ async function pollTasks() {
         
         let libraryNeedsUpdate = false;
 
-        // 1. Instantly process newly completed tasks
         tasks.forEach(t => {
             if (t.status === 'completed' && !completedSet.has(t.id)) {
                 completedSet.add(t.id);
                 libraryNeedsUpdate = true;
                 
-                // Update the search button to show "In Library"
                 if (t.elementId) {
-                    const grp = document.getElementById("btn-group-" + t.elementId);
+                    const grp = document.querySelector(`div[data-group-id="${t.elementId}"]`);
                     if (grp) grp.innerHTML = `<div class="badge-library">✅ In Library</div>`;
                 }
             }
         });
 
-        // If something just finished, refresh the library background data instantly
         if (libraryNeedsUpdate) {
             await refreshLibraryCache();
-            // If the user is currently looking at the Library tab, redraw it
             if (document.getElementById('tab-library').classList.contains('active')) {
                 loadLibrary();
             }
         }
 
-        // 2. Separate active tasks from finished ones
         const activeOrQueued = tasks.filter(t => t.status === 'queued' || t.status === 'downloading' || t.status === 'processing');
-        
-        // Only show finished/error states for a quick 2 seconds before hiding
         const recentlyErrored = tasks.filter(t => t.status === 'error' && (Date.now() - t.last_updated < 4000));
         const recentlyCompleted = tasks.filter(t => t.status === 'completed' && (Date.now() - t.last_updated < 2000));
 
-        // Prioritize what to show in the main progress bar
         const displayTask = activeOrQueued.length > 0 ? activeOrQueued[0] : 
                             (recentlyErrored.length > 0 ? recentlyErrored[0] : 
                             (recentlyCompleted.length > 0 ? recentlyCompleted[0] : null));
 
         const panel = document.getElementById("progressPanel");
 
-        // If absolutely nothing is happening, hide the panel and poll slowly
         if (!displayTask) {
             panel.style.display = "none";
             pollTimer = setTimeout(pollTasks, 2500);
             return;
         }
 
-        // 3. Update Main Progress UI
         panel.style.display = "block";
         document.getElementById("progressTitle").textContent = (displayTask.status === 'error' ? "❌ Failed: " : "Downloading: ") + displayTask.title;
-        document.getElementById("progressPercent").textContent = displayTask.percent + "%";
+        document.getElementById("progressPercent").textContent = Math.round(displayTask.percent) + "%";
         document.getElementById("progressFill").style.width = displayTask.percent + "%";
         document.getElementById("progressSpeed").textContent = displayTask.speed || "";
         document.getElementById("progressStatus").textContent = displayTask.error || displayTask.step || "Queued...";
@@ -772,7 +772,6 @@ async function pollTasks() {
 
         updatePipelineStep(displayTask.status);
 
-        // 4. Update the "Up Next in Queue" list (strictly active/queued only)
         const remaining = activeOrQueued.slice(1);
         const container = document.getElementById("queueBadgeContainer");
         
@@ -787,18 +786,16 @@ async function pollTasks() {
             container.innerHTML = ""; 
         }
 
-        // Fast polling while active
         pollTimer = setTimeout(pollTasks, 400);
 
     } catch (e) {
-        // Fallback on error
         pollTimer = setTimeout(pollTasks, 3000);
     }
 }
 
 async function loadLibrary() {
     const list = document.getElementById('libraryList');
-    list.innerHTML = "Loading...";
+    list.innerHTML = `<div class="status-msg">Loading library...</div>`;
     try {
         const res = await fetch('api/library');
         const files = await res.json();
@@ -824,11 +821,9 @@ async function deleteFile(filename) {
     catch(e) { alert("Failed to delete file."); }
 }
 
-function escapeHtml(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
-function escapeJs(t) { return t.replace(/'/g, "\\'").replace(/"/g, '\\"'); }
-
 document.getElementById("searchBtn").addEventListener("click", searchMusic);
 document.getElementById("query").addEventListener("keydown", e => { if (e.key === "Enter") searchMusic(); });
+
 refreshLibraryCache();
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -931,11 +926,8 @@ async def enqueue_download(payload: dict = Body(...)):
         "speed": "",
         "step": "Waiting in queue...",
         "error": "",
-        "last_updated": 0
+        "last_updated": time.time() * 1000
     }
-    
-    import time
-    task_info["last_updated"] = time.time() * 1000
     
     TASKS[task_id] = task_info
     await task_queue.put(task_id)
@@ -944,14 +936,11 @@ async def enqueue_download(payload: dict = Body(...)):
 
 @app.get("/api/tasks")
 async def get_tasks():
-    import time
     now = time.time() * 1000
-    # Update timestamp for active tasks so frontend knows they are fresh
     for t in TASKS.values():
         if t["status"] in ["queued", "downloading", "processing"]:
             t["last_updated"] = now
             
-    # Return queue order (active/processing first, then queued, then recent completed)
     def sort_key(task):
         status_weight = {"downloading": 0, "processing": 1, "queued": 2, "completed": 3, "error": 4}
         return status_weight.get(task["status"], 99)
