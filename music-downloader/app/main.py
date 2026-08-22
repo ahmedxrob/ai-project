@@ -129,7 +129,9 @@ async def download_worker():
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            progress_regex = re.compile(r"\[download\]\s+(\d+\.\d+)%\s+of\s+\S+\s+at\s+(\S+)")
+            # Much more robust regex to catch all yt-dlp percentage and speed formats
+            progress_regex = re.compile(r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%")
+            speed_regex = re.compile(r"at\s+([a-zA-Z0-9\.\/]+)")
 
             while True:
                 line = await process.stdout.readline()
@@ -137,10 +139,14 @@ async def download_worker():
                     break
                 line_str = line.decode("utf-8", errors="ignore").strip()
 
-                match = progress_regex.search(line_str)
-                if match:
-                    task["percent"] = float(match.group(1))
-                    task["speed"] = match.group(2)
+                pct_match = progress_regex.search(line_str)
+                if pct_match:
+                    task["percent"] = float(pct_match.group(1))
+                    
+                    spd_match = speed_regex.search(line_str)
+                    if spd_match:
+                        task["speed"] = spd_match.group(1)
+                        
                 elif "[ExtractAudio]" in line_str or "[EmbedThumbnail]" in line_str or "[Metadata]" in line_str:
                     task["status"] = "processing"
                     task["step"] = "Embedding cover art & tags..."
@@ -529,10 +535,11 @@ input:checked + .slider:before { transform: translateX(22px); }
 </div>
 
 <script>
+let pollTimer = null;
+let completedSet = new Set();
 let libraryFilesSet = new Set();
 let activeAudio = null;
 let activePreviewBtn = null;
-let lastKnownTaskId = null;
 
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -675,6 +682,7 @@ async function startDownload(url, title, elementId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url, title, elementId })
         });
+        clearTimeout(pollTimer);
         pollTasks(); // Instantly update UI
     } catch (e) { alert("Failed to enqueue download."); }
 }
@@ -702,51 +710,90 @@ async function pollTasks() {
         const res = await fetch('api/tasks');
         const tasks = await res.json();
         
-        // Find tasks that need displaying
-        const relevantTasks = tasks.filter(t => t.status !== 'completed' && t.status !== 'error' || (Date.now() - t.last_updated < 5000));
+        let libraryNeedsUpdate = false;
+
+        // 1. Instantly process newly completed tasks
+        tasks.forEach(t => {
+            if (t.status === 'completed' && !completedSet.has(t.id)) {
+                completedSet.add(t.id);
+                libraryNeedsUpdate = true;
+                
+                // Update the search button to show "In Library"
+                if (t.elementId) {
+                    const grp = document.getElementById("btn-group-" + t.elementId);
+                    if (grp) grp.innerHTML = `<div class="badge-library">✅ In Library</div>`;
+                }
+            }
+        });
+
+        // If something just finished, refresh the library background data instantly
+        if (libraryNeedsUpdate) {
+            await refreshLibraryCache();
+            // If the user is currently looking at the Library tab, redraw it
+            if (document.getElementById('tab-library').classList.contains('active')) {
+                loadLibrary();
+            }
+        }
+
+        // 2. Separate active tasks from finished ones
+        const activeOrQueued = tasks.filter(t => t.status === 'queued' || t.status === 'downloading' || t.status === 'processing');
+        
+        // Only show finished/error states for a quick 2 seconds before hiding
+        const recentlyErrored = tasks.filter(t => t.status === 'error' && (Date.now() - t.last_updated < 4000));
+        const recentlyCompleted = tasks.filter(t => t.status === 'completed' && (Date.now() - t.last_updated < 2000));
+
+        // Prioritize what to show in the main progress bar
+        const displayTask = activeOrQueued.length > 0 ? activeOrQueued[0] : 
+                            (recentlyErrored.length > 0 ? recentlyErrored[0] : 
+                            (recentlyCompleted.length > 0 ? recentlyCompleted[0] : null));
+
         const panel = document.getElementById("progressPanel");
 
-        if (relevantTasks.length === 0) {
+        // If absolutely nothing is happening, hide the panel and poll slowly
+        if (!displayTask) {
             panel.style.display = "none";
-            if (lastKnownTaskId) { refreshLibraryCache(); lastKnownTaskId = null; }
+            pollTimer = setTimeout(pollTasks, 2500);
             return;
         }
 
+        // 3. Update Main Progress UI
         panel.style.display = "block";
-        const active = relevantTasks[0];
-        lastKnownTaskId = active.id;
-
-        document.getElementById("progressTitle").textContent = (active.status === 'error' ? "❌ Failed: " : "Downloading: ") + active.title;
-        document.getElementById("progressPercent").textContent = active.percent + "%";
-        document.getElementById("progressFill").style.width = active.percent + "%";
-        document.getElementById("progressSpeed").textContent = active.speed || "";
-        document.getElementById("progressStatus").textContent = active.error || active.step || "Queued...";
+        document.getElementById("progressTitle").textContent = (displayTask.status === 'error' ? "❌ Failed: " : "Downloading: ") + displayTask.title;
+        document.getElementById("progressPercent").textContent = displayTask.percent + "%";
+        document.getElementById("progressFill").style.width = displayTask.percent + "%";
+        document.getElementById("progressSpeed").textContent = displayTask.speed || "";
+        document.getElementById("progressStatus").textContent = displayTask.error || displayTask.step || "Queued...";
         
-        if (active.status === "error") {
+        if (displayTask.status === "error") {
             document.getElementById("progressFill").style.background = "var(--danger)";
         } else {
             document.getElementById("progressFill").style.background = "linear-gradient(90deg, var(--accent) 0%, #a855f7 100%)";
         }
 
-        updatePipelineStep(active.status);
+        updatePipelineStep(displayTask.status);
 
-        // Update queue
-        const remaining = relevantTasks.slice(1);
+        // 4. Update the "Up Next in Queue" list (strictly active/queued only)
+        const remaining = activeOrQueued.slice(1);
         const container = document.getElementById("queueBadgeContainer");
+        
         if (remaining.length > 0) {
             let html = `<div class="queue-container"><div class="queue-header-title">📋 Up Next in Queue (${remaining.length})</div>`;
-            remaining.forEach((item, idx) => { html += `<div class="queue-item"><span class="queue-item-title">🎵 ${escapeHtml(item.title)}</span><span class="queue-item-badge">⏳ #${idx + 1} Waiting</span></div>`; });
+            remaining.forEach((item, idx) => { 
+                html += `<div class="queue-item"><span class="queue-item-title">🎵 ${escapeHtml(item.title)}</span><span class="queue-item-badge">⏳ #${idx + 1} Waiting</span></div>`; 
+            });
             html += `</div>`;
             container.innerHTML = html;
-        } else { container.innerHTML = ""; }
-        
-        // Update Search button if finished
-        if (active.status === 'completed' && active.elementId) {
-            const grp = document.getElementById("btn-group-" + active.elementId);
-            if (grp) grp.innerHTML = `<div class="badge-library">✅ In Library</div>`;
+        } else { 
+            container.innerHTML = ""; 
         }
 
-    } catch (e) {}
+        // Fast polling while active
+        pollTimer = setTimeout(pollTasks, 400);
+
+    } catch (e) {
+        // Fallback on error
+        pollTimer = setTimeout(pollTasks, 3000);
+    }
 }
 
 async function loadLibrary() {
@@ -784,9 +831,9 @@ document.getElementById("searchBtn").addEventListener("click", searchMusic);
 document.getElementById("query").addEventListener("keydown", e => { if (e.key === "Enter") searchMusic(); });
 refreshLibraryCache();
 
-// Start background polling for queue survival
-setInterval(pollTasks, 2000);
-document.addEventListener("DOMContentLoaded", pollTasks);
+document.addEventListener("DOMContentLoaded", () => {
+    pollTasks();
+});
 </script>
 </body>
 </html>
