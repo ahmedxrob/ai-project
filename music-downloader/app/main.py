@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException, Body
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, Response, StreamingResponse
 import asyncio
 import json
 import mimetypes
@@ -64,7 +64,7 @@ def save_settings(data: dict):
 def clean_filename(value: str) -> str:
     value = value or "Unknown"
     value = re.sub(r'[\\/:*?"<>|]', "", value)
-    value = re.sub(r"\s+", " ", value).strip()
+    value = re.sub(r"\s+", " ", value).strip(" .")
     return (value[:180]) if value else "Unknown"
 
 
@@ -87,6 +87,21 @@ def format_size(size_bytes):
         return f"{mb:.1f} MB"
     except Exception:
         return "0 MB"
+
+
+def resolve_file(filename: str) -> Path:
+    clean_name = filename.strip()
+    file_path = DOWNLOAD_DIR / clean_name
+    if file_path.exists() and file_path.is_file():
+        return file_path
+    
+    # Fallback search for missing extensions or stripped spaces
+    matches = list(DOWNLOAD_DIR.glob(f"{clean_name}*"))
+    for match in matches:
+        if match.is_file():
+            return match
+            
+    raise HTTPException(status_code=404, detail="File not found")
 
 
 async def download_worker():
@@ -180,7 +195,7 @@ async def download_worker():
                 continue
 
             audio_file = possible_files[0]
-            ext = audio_file.suffix
+            ext = audio_file.suffix if audio_file.suffix else f".{fmt}"
 
             task["status"] = "processing"
             task["step"] = "Cleaning tags & metadata..."
@@ -196,6 +211,7 @@ async def download_worker():
                 "-i", str(audio_file),
                 "-map", "0",
                 "-c", "copy",
+                "-disposition:v:0", "attached_pic",
                 "-metadata", f"album={clean_title}",
                 "-metadata", "comment=",
                 "-metadata", "description=",
@@ -342,9 +358,7 @@ body {
     padding: 30px 20px;
 }
 .container { max-width: 980px; margin: 0 auto; }
-header {
-    display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 25px;
-}
+header { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 25px; }
 header h1 {
     font-size: 2.2rem; font-weight: 700; background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -0.02em;
@@ -707,7 +721,7 @@ function toggleAudioStream(btn, streamUrl, type = 'search') {
 function renderItems(data) {
     const results = document.getElementById("results");
     data.forEach(item => {
-        const cleanedTitle = (item.title || "Unknown").replace(/[\\\\/:*?"<>|]/g, "").replace(/\\s+/g, " ").trim().substring(0, 180).toLowerCase();
+        const cleanedTitle = (item.title || "Unknown").replace(/[\\\\/:*?"<>|]/g, "").replace(/\\s+/g, " ").trim().replace(/[ .]+$/, "").substring(0, 180).toLowerCase();
         const isInLibrary = libraryFilesSet.has(cleanedTitle);
 
         const card = document.createElement("div");
@@ -1042,35 +1056,38 @@ async def get_library():
 
 @app.get("/api/library/stream/{filename:path}")
 async def stream_library_file(filename: str, transcode: bool = Query(False)):
-    file_path = DOWNLOAD_DIR / filename
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+    file_path = resolve_file(filename)
 
     if transcode:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-i", str(file_path), "-vn", "-ab", "192k", "-f", "mp3", "pipe:1",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        stdout, _ = await proc.communicate()
-        return Response(content=stdout, media_type="audio/mpeg")
+        async def transcode_generator():
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-i", str(file_path), "-vn", "-ab", "192k", "-f", "mp3", "pipe:1",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            while True:
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+            await proc.wait()
+
+        return StreamingResponse(transcode_generator(), media_type="audio/mpeg")
 
     ext = file_path.suffix.lower()
     media_type = MEDIA_TYPES.get(ext, mimetypes.guess_type(file_path)[0] or "audio/mpeg")
-    return FileResponse(path=file_path, filename=filename, media_type=media_type)
+    return FileResponse(path=file_path, filename=file_path.name, media_type=media_type)
 
 
 @app.get("/api/library/cover/{filename:path}")
 async def get_library_cover(filename: str):
-    file_path = DOWNLOAD_DIR / filename
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+    file_path = resolve_file(filename)
     
     command = [
         "ffmpeg",
         "-y",
         "-i", str(file_path),
-        "-map", "0:v:0",
+        "-an",
         "-c:v", "mjpeg",
         "-frames:v", "1",
         "-f", "image2pipe",
@@ -1094,11 +1111,9 @@ async def get_library_cover(filename: str):
 
 @app.delete("/api/library/{filename:path}")
 async def delete_library_file(filename: str):
-    file_path = DOWNLOAD_DIR / filename
-    if file_path.exists() and file_path.is_file():
-        file_path.unlink()
-        return {"status": "deleted"}
-    raise HTTPException(status_code=404, detail="File not found")
+    file_path = resolve_file(filename)
+    file_path.unlink()
+    return {"status": "deleted"}
 
 
 @app.get("/api/search")
