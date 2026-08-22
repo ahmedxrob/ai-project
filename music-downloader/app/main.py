@@ -9,10 +9,12 @@ from pathlib import Path
 
 app = FastAPI(title="Navidrome Music Downloader")
 
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome_music"))
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome/music"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
+
+AUDIO_EXTENSIONS = {'.mp3', '.flac', '.m4a', '.ogg', '.wav', '.opus', '.aac', '.alac'}
 
 DEFAULT_SETTINGS = {
     "audio_format": "mp3",
@@ -175,7 +177,10 @@ body {
 .container { max-width: 980px; margin: 0 auto; }
 
 header {
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
     margin-bottom: 25px;
 }
 
@@ -486,7 +491,22 @@ input:checked + .slider:before { transform: translateX(22px); }
 <body>
 <div class="container">
     <header>
-        <h1>🎵 Navidrome Downloader Pro</h1>
+        <svg width="44" height="44" viewBox="0 0 512 512" style="flex-shrink: 0;">
+          <defs>
+            <linearGradient id="waveGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#00F2FE" />
+              <stop offset="100%" stop-color="#4FACFE" />
+            </linearGradient>
+          </defs>
+          <rect width="512" height="512" rx="112" fill="#0F172A" />
+          <rect x="112" y="216" width="24" height="80" rx="12" fill="url(#waveGrad)" opacity="0.4" />
+          <rect x="160" y="176" width="24" height="160" rx="12" fill="url(#waveGrad)" opacity="0.75" />
+          <rect x="328" y="176" width="24" height="160" rx="12" fill="url(#waveGrad)" opacity="0.75" />
+          <rect x="376" y="216" width="24" height="80" rx="12" fill="url(#waveGrad)" opacity="0.4" />
+          <path d="M 256 128 V 300 M 196 248 L 256 312 L 316 248" stroke="url(#waveGrad)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+          <path d="M 196 376 H 316" stroke="url(#waveGrad)" stroke-width="24" stroke-linecap="round" />
+        </svg>
+        <h1>Navidrome Downloader Pro</h1>
     </header>
 
     <div class="nav-tabs">
@@ -838,10 +858,11 @@ async def get_library():
     files = []
     for path in DOWNLOAD_DIR.iterdir():
         if path.is_file() and not path.name.startswith("."):
-            files.append({
-                "name": path.name,
-                "size": format_size(path.stat().st_size)
-            })
+            if path.suffix.lower() in AUDIO_EXTENSIONS:
+                files.append({
+                    "name": path.name,
+                    "size": format_size(path.stat().st_size)
+                })
     return sorted(files, key=lambda x: x["name"])
 
 
