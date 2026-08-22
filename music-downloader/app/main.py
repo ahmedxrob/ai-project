@@ -443,6 +443,12 @@ input:checked + .slider:before { transform: translateX(22px); }
     align-items: center; font-size: 0.9rem; color: var(--text-secondary);
 }
 .library-header-bar strong { color: #fff; }
+.btn-refresh {
+    background: rgba(255, 255, 255, 0.08); border: 1px solid var(--card-border); color: var(--text-primary);
+    padding: 6px 14px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+    transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-refresh:hover { background: rgba(99, 102, 241, 0.2); border-color: var(--accent); color: #fff; }
 @media(max-width: 640px) { .result-card { flex-direction: column; align-items: flex-start; } .thumb-wrapper { width: 100%; height: 140px; } .btn-group { width: 100%; justify-content: space-between; } .progress-steps { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -514,6 +520,7 @@ input:checked + .slider:before { transform: translateX(22px); }
         <div class="library-header-bar">
             <span>📁 Total Tracks: <strong id="libCountDetail">0</strong></span>
             <span>💾 Folder Size: <strong id="libFolderSize">0 MB</strong></span>
+            <button class="btn-refresh" onclick="loadLibrary()">🔄 Refresh</button>
         </div>
         <div id="libraryList" class="results-grid"></div>
     </div>
@@ -1020,8 +1027,8 @@ async def get_library_cover(filename: str):
         "ffmpeg",
         "-y",
         "-i", str(file_path),
-        "-an",
-        "-vcodec", "mjpeg",
+        "-map", "0:v:0",
+        "-frames:v", "1",
         "-f", "image2pipe",
         "-"
     ]
