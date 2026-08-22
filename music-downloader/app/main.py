@@ -16,7 +16,6 @@ async def home():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <title>Music Downloader</title>
 
     <style>
@@ -168,8 +167,8 @@ async def home():
     <div id="results"></div>
 
     <div class="notice">
-        ℹ️ MusicBrainz provides music metadata. Audio downloading
-        will be connected separately to sources that permit downloading.
+        Music metadata is provided by MusicBrainz.
+        Download functionality will be connected separately.
     </div>
 
 </div>
@@ -193,10 +192,8 @@ async function searchMusic() {
 
 
     if (!query) {
-
         status.textContent =
             "Enter an artist or song.";
-
         return;
     }
 
@@ -204,7 +201,7 @@ async function searchMusic() {
     button.disabled = true;
 
     status.textContent =
-        "🔎 Searching music...";
+        "🔎 Searching...";
 
     results.innerHTML = "";
 
@@ -233,6 +230,14 @@ async function searchMusic() {
 
         const data =
             JSON.parse(text);
+
+
+        if (!Array.isArray(data)) {
+
+            throw new Error(
+                "Invalid response from server."
+            );
+        }
 
 
         if (data.length === 0) {
@@ -266,8 +271,7 @@ async function searchMusic() {
                 "title";
 
             title.textContent =
-                "🎵 " +
-                item.title;
+                "🎵 " + item.title;
 
 
             const artist =
@@ -287,9 +291,9 @@ async function searchMusic() {
                 "album";
 
             album.textContent =
-                item.album ?
-                "💿 " + item.album :
-                "Album unknown";
+                item.album
+                ? "💿 " + item.album
+                : "Album unknown";
 
 
             const year =
@@ -299,19 +303,9 @@ async function searchMusic() {
                 "year";
 
             year.textContent =
-                item.year ?
-                "📅 " + item.year :
-                "";
-
-
-            const mbid =
-                document.createElement("div");
-
-            mbid.className =
-                "mbid";
-
-            mbid.textContent =
-                item.mbid;
+                item.year
+                ? "📅 " + item.year
+                : "";
 
 
             const download =
@@ -328,7 +322,7 @@ async function searchMusic() {
                 function() {
 
                     alert(
-                        "Download source will be connected next."
+                        "Download functionality will be added next."
                     );
 
                 };
@@ -338,7 +332,6 @@ async function searchMusic() {
             card.appendChild(artist);
             card.appendChild(album);
             card.appendChild(year);
-            card.appendChild(mbid);
             card.appendChild(download);
 
 
@@ -371,9 +364,7 @@ document
         function(event) {
 
             if (event.key === "Enter") {
-
                 searchMusic();
-
             }
 
         }
@@ -391,7 +382,6 @@ async def search_music(
     q: str = Query(..., min_length=1)
 ):
 
-    # Clean the user's search.
     query = re.sub(
         r"\s+",
         " ",
@@ -399,16 +389,8 @@ async def search_music(
     )
 
 
-    # MusicBrainz supports Lucene-style
-    # recording and artist searches.
-    mb_query = (
-        f'recording:"{query}" '
-        f'OR artist:"{query}"'
-    )
-
-
     params = {
-        "query": mb_query,
+        "query": f'recording:"{query}"',
         "fmt": "json",
         "limit": 25,
         "offset": 0
@@ -417,8 +399,7 @@ async def search_music(
 
     headers = {
         "User-Agent":
-        "HomeAssistant-Music-Downloader/0.1 "
-        "(https://github.com/ahmedxrob/ai-project)"
+            "HomeAssistant-Music-Downloader/0.1"
     }
 
 
@@ -438,11 +419,10 @@ async def search_music(
         data = response.json()
 
 
-    recordings =
-        data.get(
-            "recordings",
-            []
-        )
+    recordings = data.get(
+        "recordings",
+        []
+    )
 
 
     results = []
@@ -456,8 +436,7 @@ async def search_music(
         )
 
 
-        artist_names = []
-
+        artists = []
 
         for credit in recording.get(
             "artist-credit",
@@ -476,12 +455,12 @@ async def search_music(
                 )
 
                 if name:
-                    artist_names.append(name)
+                    artists.append(name)
 
 
         artist_name = (
-            ", ".join(artist_names)
-            if artist_names
+            ", ".join(artists)
+            if artists
             else "Unknown artist"
         )
 
@@ -493,53 +472,36 @@ async def search_music(
 
 
         album = ""
-
         year = ""
 
 
         if releases:
 
-            first_release =
-                releases[0]
+            first_release = releases[0]
 
-            album =
-                first_release.get(
-                    "title",
-                    ""
-                )
+            album = first_release.get(
+                "title",
+                ""
+            )
 
-            date =
-                first_release.get(
-                    "date",
-                    ""
-                )
+            date = first_release.get(
+                "date",
+                ""
+            )
 
             if date:
-
-                year =
-                    date[:4]
+                year = date[:4]
 
 
         results.append({
-
-            "title":
-                title,
-
-            "artist":
-                artist_name,
-
-            "album":
-                album,
-
-            "year":
-                year,
-
-            "mbid":
-                recording.get(
-                    "id",
-                    ""
-                )
-
+            "title": title,
+            "artist": artist_name,
+            "album": album,
+            "year": year,
+            "mbid": recording.get(
+                "id",
+                ""
+            )
         })
 
 
@@ -548,7 +510,6 @@ async def search_music(
 
 @app.get("/health")
 async def health():
-
     return {
         "status": "ok"
     }
