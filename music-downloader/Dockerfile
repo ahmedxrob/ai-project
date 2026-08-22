@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-RUN mkdir -p /downloads
+RUN mkdir -p /share/navidrome_music
 
 EXPOSE 8099
 
