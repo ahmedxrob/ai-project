@@ -35,11 +35,30 @@ DEFAULT_SETTINGS = {
     "embed_thumbnail": True,
     "embed_metadata": True,
     "max_results": 20,
-    "organize_by_artist": False
+    "organize_by_artist": False,
+    "poll_interval": 1500
 }
 
 TASKS = {}
 task_queue = asyncio.Queue()
+ACTIVE_PROCESSES = {}
+
+
+def normalize_duplicate_key(value: str) -> str:
+    value = Path(value or "").stem.lower()
+    value = re.sub(r"\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(ed)?|audio)\b", " ", value, flags=re.I)
+    value = re.sub(r"[^a-z0-9]+", "", value)
+    return value
+
+
+def get_all_audio_files():
+    return [p for p in DOWNLOAD_DIR.rglob("*")
+            if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in AUDIO_EXTENSIONS]
+
+
+def is_duplicate(title: str) -> bool:
+    key = normalize_duplicate_key(title)
+    return any(normalize_duplicate_key(p.name) == key for p in get_all_audio_files())
 
 
 def load_settings():
@@ -95,7 +114,7 @@ def resolve_file(filename: str) -> Path:
     if file_path.exists() and file_path.is_file():
         return file_path
     
-    matches = list(DOWNLOAD_DIR.glob(f"{clean_name}*"))
+    matches = list(DOWNLOAD_DIR.rglob(f"{Path(clean_name).name}*"))
     for match in matches:
         if match.is_file():
             return match
@@ -133,7 +152,6 @@ async def download_worker():
                 "--newline",
                 "--embed-subs",
                 "--sub-langs", "all,-live_chat",
-                "--parse-metadata", "title:%(album)s",
                 "-o", output_template,
             ]
 
@@ -149,6 +167,7 @@ async def download_worker():
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            ACTIVE_PROCESSES[task_id] = process
 
             progress_regex = re.compile(r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%")
             speed_regex = re.compile(r"at\s+([~0-9a-zA-Z\.\/]+)")
@@ -175,6 +194,13 @@ async def download_worker():
                     task["last_updated"] = time.time() * 1000
 
             await process.wait()
+            ACTIVE_PROCESSES.pop(task_id, None)
+
+            if task.get("cancel_requested"):
+                task["status"] = "cancelled"
+                task["step"] = "Cancelled"
+                task["last_updated"] = time.time() * 1000
+                continue
 
             if process.returncode != 0:
                 stderr_data = await process.stderr.read()
@@ -229,14 +255,21 @@ async def download_worker():
                 audio_file.unlink()
                 audio_file = cleaned_file
 
-            final_name = f"{clean_title}{ext}"
-            final_path = DOWNLOAD_DIR / final_name
+            if settings.get("organize_by_artist", False):
+                final_dir = DOWNLOAD_DIR / artist
+                final_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                final_dir = DOWNLOAD_DIR
 
-            if final_path.exists():
+            final_name = f"{clean_title}{ext}"
+            final_path = final_dir / final_name
+
+            if final_path.exists() or is_duplicate(clean_title):
                 final_name = f"{clean_title}_{task_id[:4]}{ext}"
-                final_path = DOWNLOAD_DIR / final_name
+                final_path = final_dir / final_name
 
             audio_file.rename(final_path)
+            task["final_name"] = str(final_path.relative_to(DOWNLOAD_DIR))
 
             task["status"] = "completed"
             task["percent"] = 100
@@ -250,10 +283,7 @@ async def download_worker():
         finally:
             task_queue.task_done()
             
-            async def clear_task():
-                await asyncio.sleep(15)
-                TASKS.pop(task_id, None)
-            asyncio.create_task(clear_task())
+            # Keep task history visible for the Downloads page. The frontend can clear it explicitly.
 
 
 @app.on_event("startup")
@@ -272,6 +302,7 @@ async def youtube_search(query: str, max_results: int, page: int = 1):
         "--dump-single-json",
         "--skip-download",
         "--no-warnings",
+        "--match-filter", "duration > 0",
         "--playlist-start", str(start_idx),
         "--playlist-end", str(end_idx),
         f"ytsearch{end_idx}:{query}",
@@ -330,7 +361,7 @@ async def home():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Navidrome Downloader Pro</title>
+<title>Xrob Music</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -598,10 +629,11 @@ input:checked + .slider:before { transform: translateX(22px); }
               <path d="M 256 128 V 300 M 196 248 L 256 312 L 316 248" stroke="url(#waveGrad)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none" />
               <path d="M 196 376 H 316" stroke="url(#waveGrad)" stroke-width="24" stroke-linecap="round" />
             </svg>
-            <h1>Navidrome</h1>
+            <h1>Xrob Music</h1>
         </div>
         <ul class="nav-list" role="tablist">
             <li><button class="nav-link active" id="btn-search" role="tab" aria-selected="true" aria-controls="tab-search" onclick="navigate('search')"><span>🔍</span> Search & Download</button></li>
+            <li><button class="nav-link" id="btn-downloads" role="tab" aria-selected="false" aria-controls="tab-downloads" onclick="navigate('downloads')"><span>⬇️</span> Downloads (<span id="queueCount">0</span>)</button></li>
             <li><button class="nav-link" id="btn-library" role="tab" aria-selected="false" aria-controls="tab-library" onclick="navigate('library')"><span>📂</span> Library (<span id="sideLibCount">0</span>)</button></li>
             <li><button class="nav-link" id="btn-settings" role="tab" aria-selected="false" aria-controls="tab-settings" onclick="navigate('settings')"><span>⚙️</span> Settings</button></li>
         </ul>
@@ -615,7 +647,7 @@ input:checked + .slider:before { transform: translateX(22px); }
                   <rect width="512" height="512" rx="112" fill="#0F172A" />
                   <path d="M 256 128 V 300 M 196 248 L 256 312 L 316 248" stroke="#4FACFE" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" fill="none" />
                 </svg>
-                <h1 style="font-size: 1.1rem;">Navidrome Pro</h1>
+                <h1 style="font-size: 1.1rem;">Xrob Music</h1>
             </div>
         </header>
 
@@ -640,11 +672,23 @@ input:checked + .slider:before { transform: translateX(22px); }
                 <div id="infiniteLoader" class="status-msg" style="display:none;">⏳ Loading more tracks...</div>
             </section>
 
-            <!-- TAB 2: LIBRARY -->
+            <!-- TAB 2: DOWNLOADS -->
+            <section id="tab-downloads" class="tab-content" role="tabpanel" aria-labelledby="btn-downloads">
+                <div class="library-header-bar">
+                    <span>⬇️ Active & Recent Downloads</span>
+                    <button class="btn-refresh" onclick="loadDownloads()">🔄 Refresh</button>
+                </div>
+                <div id="downloadsList" class="results-grid"></div>
+            </section>
+
+            <!-- TAB 3: LIBRARY -->
             <section id="tab-library" class="tab-content" role="tabpanel" aria-labelledby="btn-library">
                 <div class="search-card" style="margin-bottom: 16px;">
                     <label for="libSearchQuery" class="sr-only">Filter local tracks</label>
                     <input id="libSearchQuery" placeholder="🔍 Filter local library tracks..." autocomplete="off" oninput="filterLibrary()" />
+                </div>
+                <div class="library-header-bar">
+                    <span>🎵 Tracks: <strong id="statTracks">0</strong> · 👤 Artists: <strong id="statArtists">0</strong> · 💿 Albums: <strong id="statAlbums">0</strong></span>
                 </div>
                 <div class="library-header-bar">
                     <span>📁 Total Tracks: <strong id="libCountDetail">0</strong></span>
@@ -685,6 +729,10 @@ input:checked + .slider:before { transform: translateX(22px); }
                         <label class="switch"><input type="checkbox" id="set_meta"><span class="slider"></span></label>
                     </div>
                     <div class="setting-row">
+                        <div><div class="setting-label">Organize by Artist</div><div class="setting-desc">Save new tracks in Artist/Track folders</div></div>
+                        <label class="switch"><input type="checkbox" id="set_organize"><span class="slider"></span></label>
+                    </div>
+                    <div class="setting-row">
                         <div><div class="setting-label">Max Search Results</div><div class="setting-desc">Number of YouTube items returned per search page</div></div>
                         <input type="number" id="set_max_results" min="5" max="50" value="20" style="width:70px;">
                     </div>
@@ -699,6 +747,7 @@ input:checked + .slider:before { transform: translateX(22px); }
 <!-- Mobile Bottom Tab Navigation -->
 <nav class="bottom-nav" aria-label="Mobile Bottom Navigation">
     <button class="nav-link active" id="mob-btn-search" role="tab" aria-selected="true" aria-controls="tab-search" onclick="navigate('search')"><span>🔍</span> Search</button>
+    <button class="nav-link" id="mob-btn-downloads" role="tab" aria-selected="false" aria-controls="tab-downloads" onclick="navigate('downloads')"><span>⬇️</span> Downloads</button>
     <button class="nav-link" id="mob-btn-library" role="tab" aria-selected="false" aria-controls="tab-library" onclick="navigate('library')"><span>📂</span> Library (<span id="mobLibCount">0</span>)</button>
     <button class="nav-link" id="mob-btn-settings" role="tab" aria-selected="false" aria-controls="tab-settings" onclick="navigate('settings')"><span>⚙️</span> Settings</button>
 </nav>
@@ -751,10 +800,10 @@ function showToast(message) {
 /* Dynamic Dark Mode & Accessibility Helper */
 function toggleTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('navidrome_theme', theme);
+    localStorage.setItem('xrob_music_theme', theme);
 }
 
-const savedTheme = localStorage.getItem('navidrome_theme') || 'dark';
+const savedTheme = localStorage.getItem('xrob_music_theme') || 'dark';
 toggleTheme(savedTheme);
 
 /* Fast Navigation Structures & Deep Linking */
@@ -783,12 +832,13 @@ function switchTab(tab) {
     if (mobBtn) { mobBtn.classList.add('active'); mobBtn.setAttribute('aria-selected', 'true'); }
 
     if (tab === 'library') loadLibrary();
+    if (tab === 'downloads') loadDownloads();
     if (tab === 'settings') loadSettings();
 }
 
 function handleDeepLink() {
     const hash = window.location.hash.replace('#', '');
-    if (['search', 'library', 'settings'].includes(hash)) {
+    if (['search', 'downloads', 'library', 'settings'].includes(hash)) {
         switchTab(hash);
     } else {
         switchTab('search');
@@ -796,6 +846,12 @@ function handleDeepLink() {
 }
 
 window.addEventListener('hashchange', handleDeepLink);
+
+function normalizeKey(value) {
+    return (value || "").toLowerCase()
+        .replace(/\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(ed)?|audio)\b/gi, " ")
+        .replace(/[^a-z0-9]+/g, "");
+}
 
 function escapeHtml(t) { return (t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
@@ -808,7 +864,8 @@ async function loadSettings() {
         document.getElementById('set_thumb').checked = s.embed_thumbnail;
         document.getElementById('set_meta').checked = s.embed_metadata;
         document.getElementById('set_max_results').value = s.max_results || 20;
-        document.getElementById('set_theme').value = localStorage.getItem('navidrome_theme') || 'dark';
+        document.getElementById('set_organize').checked = !!s.organize_by_artist;
+        document.getElementById('set_theme').value = localStorage.getItem('xrob_music_theme') || 'dark';
     } catch(e) {}
 }
 
@@ -818,7 +875,8 @@ async function saveSettings() {
         audio_quality: document.getElementById('set_quality').value,
         embed_thumbnail: document.getElementById('set_thumb').checked,
         embed_metadata: document.getElementById('set_meta').checked,
-        max_results: parseInt(document.getElementById('set_max_results').value) || 20
+        max_results: parseInt(document.getElementById('set_max_results').value) || 20,
+        organize_by_artist: document.getElementById('set_organize').checked
     };
     const msg = document.getElementById('settingsMsg');
     msg.textContent = "Saving...";
@@ -836,8 +894,8 @@ async function refreshLibraryCache() {
         libraryFilesSet.clear();
         rawLibraryFiles = data.files || [];
         rawLibraryFiles.forEach(f => {
-            const baseName = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
-            libraryFilesSet.add(baseName.toLowerCase());
+            const baseName = f.name.substring(f.name.lastIndexOf('/') + 1, f.name.lastIndexOf('.')) || f.name;
+            libraryFilesSet.add(normalizeKey(baseName));
         });
         const count = rawLibraryFiles.length;
         if (document.getElementById('sideLibCount')) document.getElementById('sideLibCount').textContent = count;
@@ -910,7 +968,7 @@ function toggleAudioStream(btn, streamUrl, type = 'search') {
 function renderItems(data) {
     const results = document.getElementById("results");
     data.forEach(item => {
-        const cleanedTitle = (item.title || "Unknown").replace(/[\\\\/:*?"<>|]/g, "").replace(/\\s+/g, " ").trim().replace(/[ .]+$/, "").substring(0, 180).toLowerCase();
+        const cleanedTitle = normalizeKey(item.title || "Unknown");
         const isInLibrary = libraryFilesSet.has(cleanedTitle);
 
         const card = document.createElement("div");
@@ -949,7 +1007,7 @@ function renderItems(data) {
             dlBtn.setAttribute('data-id', item.id);
             dlBtn.setAttribute('aria-label', `Download ${titleHtml}`);
             dlBtn.innerHTML = '⬇️ Save';
-            dlBtn.onclick = () => startDownload(item.url, item.title, item.id);
+            dlBtn.onclick = () => startDownload(item.url, item.title, item.id, item.channel);
 
             btnGroup.appendChild(prevBtn);
             btnGroup.appendChild(dlBtn);
@@ -1016,7 +1074,7 @@ async function loadMoreResults() {
     }
 }
 
-async function startDownload(url, title, elementId) {
+async function startDownload(url, title, elementId, artist = 'Unknown Artist') {
     if (elementId) {
         const btn = document.querySelector(`button[data-id="${elementId}"]`);
         if (btn) { btn.disabled = true; btn.textContent = "⏳ Queued"; }
@@ -1025,7 +1083,7 @@ async function startDownload(url, title, elementId) {
         await fetch('api/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, title, elementId })
+            body: JSON.stringify({ url, title, elementId, artist })
         });
         clearTimeout(pollTimer);
         pollTasks();
@@ -1075,7 +1133,7 @@ async function pollTasks() {
         if (activeTasks.length === 0) {
             panel.style.display = "none";
             listContainer.innerHTML = "";
-            pollTimer = setTimeout(pollTasks, 2500);
+            pollTimer = setTimeout(pollTasks, 3000);
             return;
         }
 
@@ -1126,10 +1184,50 @@ async function pollTasks() {
             listContainer.insertAdjacentHTML('beforeend', itemHtml);
         });
 
-        pollTimer = setTimeout(pollTasks, 400);
+        pollTimer = setTimeout(pollTasks, 1500);
 
     } catch (e) {
         pollTimer = setTimeout(pollTasks, 3000);
+    }
+}
+
+async function loadStats() {
+    try {
+        const stats = await fetch('api/stats').then(r => r.json());
+        document.getElementById('statTracks').textContent = stats.tracks || 0;
+        document.getElementById('statArtists').textContent = stats.artists || 0;
+        document.getElementById('statAlbums').textContent = stats.albums || 0;
+    } catch(e) {}
+}
+
+async function cancelTask(taskId) {
+    await fetch(`api/tasks/${encodeURIComponent(taskId)}/cancel`, {method: 'POST'});
+    loadDownloads();
+}
+
+async function loadDownloads() {
+    const list = document.getElementById('downloadsList');
+    try {
+        const tasks = await fetch('api/tasks').then(r => r.json());
+        document.getElementById('queueCount').textContent =
+            tasks.filter(t => ['queued','downloading','processing'].includes(t.status)).length;
+        if (!tasks.length) {
+            list.innerHTML = '<div class="status-msg">No downloads yet.</div>';
+            return;
+        }
+        list.innerHTML = tasks.map(t => `
+            <div class="result-card">
+                <div class="track-info">
+                    <div class="track-title">${escapeHtml(t.title)}</div>
+                    <div class="track-artist">${escapeHtml(t.artist || 'Unknown Artist')} · ${escapeHtml(t.status)} · ${Math.round(t.percent || 0)}%</div>
+                    <div class="progress-track" style="margin-top:8px"><div class="progress-fill" style="width:${Math.round(t.percent || 0)}%"></div></div>
+                </div>
+                <div class="btn-group">
+                    ${['queued','downloading','processing'].includes(t.status) ? `<button class="btn-danger" onclick="cancelTask('${t.id}')">✕ Cancel</button>` : ''}
+                </div>
+            </div>`).join('');
+    } catch(e) {
+        list.innerHTML = '<div class="status-msg">Failed to load downloads.</div>';
     }
 }
 
@@ -1138,6 +1236,7 @@ async function loadLibrary() {
     list.innerHTML = `<div class="status-msg">Loading library...</div>`;
     try {
         await refreshLibraryCache();
+        await loadStats();
         filterLibrary();
     } catch(e) { list.innerHTML = `<div class="status-msg">Failed to load library.</div>`; }
 }
@@ -1192,6 +1291,7 @@ async function deleteFile(filename) {
     try {
         await fetch('api/library/' + encodeURIComponent(filename), { method: 'DELETE' });
         await refreshLibraryCache();
+        await loadStats();
         filterLibrary();
     } catch(e) { alert("Failed to delete file."); }
 }
@@ -1233,20 +1333,37 @@ async def update_settings(data: dict = Body(...)):
 async def get_library():
     files = []
     total_bytes = 0
-    for path in DOWNLOAD_DIR.iterdir():
-        if path.is_file() and not path.name.startswith("."):
-            if path.suffix.lower() in AUDIO_EXTENSIONS:
-                sz = path.stat().st_size
-                total_bytes += sz
-                files.append({
-                    "name": path.name,
-                    "size": format_size(sz),
-                    "bytes": sz
-                })
+    for path in get_all_audio_files():
+        sz = path.stat().st_size
+        total_bytes += sz
+        files.append({
+            "name": str(path.relative_to(DOWNLOAD_DIR)),
+            "size": format_size(sz),
+            "bytes": sz
+        })
     return {
         "files": sorted(files, key=lambda x: x["name"]),
         "total_size": format_size(total_bytes),
         "total_bytes": total_bytes
+    }
+
+
+
+@app.get("/api/stats")
+async def get_stats():
+    files = get_all_audio_files()
+    total_bytes = sum(p.stat().st_size for p in files)
+    artists = set()
+    albums = set()
+    for p in files:
+        rel = p.relative_to(DOWNLOAD_DIR)
+        if len(rel.parts) > 1:
+            artists.add(rel.parts[0])
+    return {
+        "tracks": len(files),
+        "artists": len(artists),
+        "albums": len(albums),
+        "total_size": format_size(total_bytes)
     }
 
 
@@ -1351,7 +1468,12 @@ async def preview_audio(url: str = Query(..., min_length=1)):
 async def enqueue_download(payload: dict = Body(...)):
     url = payload.get("url")
     title = payload.get("title", "Unknown")
+    artist = payload.get("artist", "Unknown Artist")
+    album = payload.get("album", "")
     element_id = payload.get("elementId", "")
+
+    if is_duplicate(title):
+        raise HTTPException(status_code=409, detail="This track already exists in your library.")
     
     if not url:
         raise HTTPException(status_code=400, detail="Missing URL")
@@ -1360,6 +1482,8 @@ async def enqueue_download(payload: dict = Body(...)):
     task_info = {
         "id": task_id,
         "title": title,
+        "artist": artist,
+        "album": album,
         "url": url,
         "elementId": element_id,
         "status": "queued",
@@ -1375,6 +1499,25 @@ async def enqueue_download(payload: dict = Body(...)):
     return {"status": "ok", "task_id": task_id}
 
 
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str):
+    task = TASKS.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task["status"] in ["completed", "cancelled"]:
+        return {"status": task["status"]}
+
+    task["cancel_requested"] = True
+    proc = ACTIVE_PROCESSES.get(task_id)
+    if proc and proc.returncode is None:
+        proc.terminate()
+    task["status"] = "cancelled"
+    task["step"] = "Cancelled"
+    task["last_updated"] = time.time() * 1000
+    return {"status": "cancelled"}
+
+
 @app.get("/api/tasks")
 async def get_tasks():
     now = time.time() * 1000
@@ -1383,7 +1526,7 @@ async def get_tasks():
             t["last_updated"] = now
             
     def sort_key(task):
-        status_weight = {"downloading": 0, "processing": 1, "queued": 2, "completed": 3, "error": 4}
+        status_weight = {"downloading": 0, "processing": 1, "queued": 2, "completed": 3, "error": 4, "cancelled": 5}
         return status_weight.get(task["status"], 99)
         
     sorted_tasks = sorted(list(TASKS.values()), key=sort_key)
