@@ -272,7 +272,7 @@ header h1 {
 
 .search-card button:hover { transform: translateY(-1px); }
 
-/* INTERACTIVE PROGRESS PANEL */
+/* PROGRESS PANEL */
 .progress-panel {
     background: var(--card-bg);
     backdrop-filter: blur(16px);
@@ -341,7 +341,6 @@ header h1 {
     transition: width 0.3s ease;
 }
 
-/* INTERACTIVE PIPELINE STEPS */
 .progress-steps {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -393,16 +392,54 @@ header h1 {
     color: var(--text-secondary);
 }
 
-.queue-badge {
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    color: #a5b4fc;
-    padding: 4px 10px;
-    border-radius: 8px;
+.queue-container {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.queue-header-title {
     font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 2px;
+}
+
+.queue-item {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--card-border);
+    padding: 8px 12px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.queue-item-title {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+}
+
+.queue-item-badge {
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    font-size: 0.72rem;
     font-weight: 600;
-    margin-top: 10px;
-    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
 }
 
 .progress-actions {
@@ -460,11 +497,62 @@ header h1 {
 
 .btn-group { display: flex; gap: 8px; align-items: center; }
 
-audio {
-    height: 36px;
-    max-width: 160px;
-    border-radius: 8px;
-    outline: none;
+/* CUSTOM PREVIEW PLAYER BUTTON STYLES */
+.btn-preview {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--card-border);
+    color: var(--text-primary);
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.btn-preview:hover {
+    background: rgba(99, 102, 241, 0.18);
+    border-color: rgba(99, 102, 241, 0.4);
+    color: #fff;
+}
+
+.btn-preview.playing {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(168, 85, 247, 0.3) 100%);
+    border-color: var(--accent);
+    color: #a5b4fc;
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.25);
+}
+
+.btn-preview.loading {
+    opacity: 0.7;
+    cursor: wait;
+}
+
+.wave-bars {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+}
+
+.wave-bar {
+    width: 2px;
+    height: 100%;
+    background-color: currentColor;
+    border-radius: 2px;
+    animation: waveBounce 0.8s ease-in-out infinite alternate;
+}
+
+.wave-bar:nth-child(2) { animation-delay: 0.2s; }
+.wave-bar:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes waveBounce {
+    0% { height: 20%; }
+    100% { height: 100%; }
 }
 
 .btn-secondary {
@@ -751,6 +839,8 @@ let currentEventSource = null;
 let downloadQueue = [];
 let activeDownload = null;
 let libraryFilesSet = new Set();
+let activeAudio = null;
+let activePreviewBtn = null;
 
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -818,6 +908,56 @@ async function refreshLibraryCache() {
     } catch(e) {}
 }
 
+function stopCurrentPreview() {
+    if (activeAudio) {
+        activeAudio.pause();
+        activeAudio = null;
+    }
+    if (activePreviewBtn) {
+        activePreviewBtn.classList.remove('playing', 'loading');
+        activePreviewBtn.innerHTML = `▶ Preview`;
+        activePreviewBtn = null;
+    }
+}
+
+function togglePreview(btn, url) {
+    if (activePreviewBtn === btn && activeAudio) {
+        if (activeAudio.paused) {
+            activeAudio.play();
+            btn.classList.add('playing');
+            btn.innerHTML = `<span class="wave-bars"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></span> Playing`;
+        } else {
+            activeAudio.pause();
+            btn.classList.remove('playing');
+            btn.innerHTML = `▶ Preview`;
+        }
+        return;
+    }
+
+    stopCurrentPreview();
+
+    activePreviewBtn = btn;
+    btn.classList.add('loading');
+    btn.innerHTML = `⏳ Loading...`;
+
+    const audio = new Audio("api/preview?url=" + encodeURIComponent(url));
+    activeAudio = audio;
+
+    audio.play().then(() => {
+        btn.classList.remove('loading');
+        btn.classList.add('playing');
+        btn.innerHTML = `<span class="wave-bars"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></span> Playing`;
+    }).catch(err => {
+        stopCurrentPreview();
+        btn.innerHTML = `❌ Error`;
+        setTimeout(() => { btn.innerHTML = `▶ Preview`; }, 2000);
+    });
+
+    audio.onended = () => {
+        stopCurrentPreview();
+    };
+}
+
 async function searchMusic() {
     const query = document.getElementById("query").value.trim();
     const statusMsg = document.getElementById("statusMsg");
@@ -826,6 +966,7 @@ async function searchMusic() {
 
     if (!query) return;
 
+    stopCurrentPreview();
     statusMsg.textContent = "🔍 Searching YouTube...";
     results.innerHTML = "";
     searchBtn.disabled = true;
@@ -856,7 +997,7 @@ async function searchMusic() {
                 actionHtml = `<div class="badge-library">✅ In Library</div>`;
             } else {
                 actionHtml = `
-                    <audio controls preload="none" src="api/preview?url=${encodeURIComponent(item.url)}"></audio>
+                    <button class="btn-preview" onclick="togglePreview(this, '${escapeJs(item.url)}')">▶ Preview</button>
                     <button class="btn-download" id="btn-${CSS.escape(item.id)}" onclick="startDownload('${item.url}', '${escapeJs(item.title)}', '${CSS.escape(item.id)}')">
                         ⬇️ Save
                     </button>
@@ -913,7 +1054,20 @@ function updatePipelineStep(stepName) {
 function updateQueueDisplay() {
     const container = document.getElementById("queueBadgeContainer");
     if (downloadQueue.length > 0) {
-        container.innerHTML = `<div class="queue-badge">📋 Queue: ${downloadQueue.length} track(s) waiting</div>`;
+        let html = `
+            <div class="queue-container">
+                <div class="queue-header-title">📋 Up Next in Queue (${downloadQueue.length})</div>
+        `;
+        downloadQueue.forEach((item, index) => {
+            html += `
+                <div class="queue-item">
+                    <span class="queue-item-title">🎵 ${escapeHtml(item.title)}</span>
+                    <span class="queue-item-badge">⏳ #${index + 1} Waiting</span>
+                </div>
+            `;
+        });
+        html += `</div>`;
+        container.innerHTML = html;
     } else {
         container.innerHTML = "";
     }
