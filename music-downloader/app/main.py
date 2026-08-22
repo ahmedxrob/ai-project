@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException, Body
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, Response
 import asyncio
 import json
 import os
@@ -15,7 +15,7 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 AUDIO_EXTENSIONS = {'.mp3', '.flac', '.m4a', '.ogg', '.wav', '.opus', '.aac', '.alac'}
-MAX_CONCURRENT_DOWNLOADS = 3  # Enables parallel multi-downloads
+MAX_CONCURRENT_DOWNLOADS = 3
 
 DEFAULT_SETTINGS = {
     "audio_format": "mp3",
@@ -26,16 +26,9 @@ DEFAULT_SETTINGS = {
     "organize_by_artist": False
 }
 
-# ============================================================
-# GLOBAL STATE (FOR BACKGROUND QUEUE)
-# ============================================================
 TASKS = {}
 task_queue = asyncio.Queue()
 
-
-# ============================================================
-# HELPERS & SETTINGS
-# ============================================================
 
 def load_settings():
     if SETTINGS_FILE.exists():
@@ -75,15 +68,14 @@ def format_duration(seconds):
 
 def format_size(size_bytes):
     try:
+        if size_bytes >= 1024 * 1024 * 1024:
+            gb = size_bytes / (1024 * 1024 * 1024)
+            return f"{gb:.2f} GB"
         mb = size_bytes / (1024 * 1024)
         return f"{mb:.1f} MB"
     except Exception:
         return "0 MB"
 
-
-# ============================================================
-# BACKGROUND WORKER (MULTI-DOWNLOAD WORKER POOL)
-# ============================================================
 
 async def download_worker():
     while True:
@@ -239,14 +231,9 @@ async def download_worker():
 
 @app.on_event("startup")
 async def startup_event():
-    # Spawns multiple worker instances for parallel downloads
     for _ in range(MAX_CONCURRENT_DOWNLOADS):
         asyncio.create_task(download_worker())
 
-
-# ============================================================
-# YOUTUBE SEARCH WITH PAGINATION
-# ============================================================
 
 async def youtube_search(query: str, max_results: int, page: int = 1):
     start_idx = (page - 1) * max_results + 1
@@ -307,10 +294,6 @@ async def youtube_search(query: str, max_results: int, page: int = 1):
     except json.JSONDecodeError:
         raise RuntimeError("YouTube returned invalid search data.")
 
-
-# ============================================================
-# FRONTEND UI
-# ============================================================
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
@@ -454,6 +437,12 @@ input:checked + .slider { background-color: var(--accent); }
 input:checked + .slider:before { transform: translateX(22px); }
 .save-btn { background: linear-gradient(135deg, var(--accent) 0%, #4338ca 100%); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 700; cursor: pointer; margin-top: 10px; }
 .status-msg { text-align: center; color: var(--text-secondary); margin: 15px 0; font-size: 0.9rem; }
+.library-header-bar {
+    background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--card-border);
+    border-radius: 16px; padding: 14px 20px; margin-bottom: 16px; display: flex; justify-content: space-between;
+    align-items: center; font-size: 0.9rem; color: var(--text-secondary);
+}
+.library-header-bar strong { color: #fff; }
 @media(max-width: 640px) { .result-card { flex-direction: column; align-items: flex-start; } .thumb-wrapper { width: 100%; height: 140px; } .btn-group { width: 100%; justify-content: space-between; } .progress-steps { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -519,6 +508,10 @@ input:checked + .slider:before { transform: translateX(22px); }
 
     <!-- TAB 2: LIBRARY -->
     <div id="tab-library" class="tab-content">
+        <div class="library-header-bar">
+            <span>📁 Total Tracks: <strong id="libCountDetail">0</strong></span>
+            <span>💾 Folder Size: <strong id="libFolderSize">0 MB</strong></span>
+        </div>
         <div id="libraryList" class="results-grid"></div>
     </div>
 
@@ -558,14 +551,12 @@ let libraryFilesSet = new Set();
 let activeAudio = null;
 let activePreviewBtn = null;
 
-// Infinite scroll state variables
 let currentPage = 1;
 let currentQuery = "";
 let isLoadingMore = false;
 let hasMoreResults = true;
 
 function escapeHtml(t) { return (t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
-function escapeJs(t) { return (t || "").replace(/'/g, "\\'").replace(/"/g, '\\"'); }
 
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -617,39 +608,56 @@ async function saveSettings() {
 async function refreshLibraryCache() {
     try {
         const res = await fetch('api/library');
-        const files = await res.json();
+        const data = await res.json();
         libraryFilesSet.clear();
-        files.forEach(f => {
+        data.files.forEach(f => {
             const baseName = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
             libraryFilesSet.add(baseName.toLowerCase());
         });
-        document.getElementById('libCount').textContent = files.length;
+        document.getElementById('libCount').textContent = data.files.length;
+        if (document.getElementById('libCountDetail')) document.getElementById('libCountDetail').textContent = data.files.length;
+        if (document.getElementById('libFolderSize')) document.getElementById('libFolderSize').textContent = data.total_size;
     } catch(e) {}
 }
 
 function stopCurrentPreview() {
     if (activeAudio) { activeAudio.pause(); activeAudio = null; }
-    if (activePreviewBtn) { activePreviewBtn.classList.remove('playing', 'loading'); activePreviewBtn.innerHTML = `▶ Preview`; activePreviewBtn = null; }
+    if (activePreviewBtn) {
+        activePreviewBtn.classList.remove('playing', 'loading');
+        activePreviewBtn.innerHTML = activePreviewBtn.dataset.type === 'library' ? `▶ Play` : `▶ Preview`;
+        activePreviewBtn = null;
+    }
 }
 
-function togglePreview(btn, url) {
+function toggleAudioStream(btn, streamUrl, type = 'search') {
     if (activePreviewBtn === btn && activeAudio) {
         if (activeAudio.paused) {
-            activeAudio.play(); btn.classList.add('playing');
+            activeAudio.play();
+            btn.classList.add('playing');
             btn.innerHTML = `<span class="wave-bars"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></span> Playing`;
-        } else { activeAudio.pause(); btn.classList.remove('playing'); btn.innerHTML = `▶ Preview`; }
+        } else {
+            activeAudio.pause();
+            btn.classList.remove('playing');
+            btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`;
+        }
         return;
     }
     stopCurrentPreview();
-    activePreviewBtn = btn; btn.classList.add('loading'); btn.innerHTML = `⏳ Loading...`;
-    const audio = new Audio("api/preview?url=" + encodeURIComponent(url));
+    btn.dataset.type = type;
+    activePreviewBtn = btn;
+    btn.classList.add('loading');
+    btn.innerHTML = `⏳ Loading...`;
+    
+    const audio = new Audio(streamUrl);
     activeAudio = audio;
     audio.play().then(() => {
-        btn.classList.remove('loading'); btn.classList.add('playing');
+        btn.classList.remove('loading');
+        btn.classList.add('playing');
         btn.innerHTML = `<span class="wave-bars"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></span> Playing`;
     }).catch(err => {
-        stopCurrentPreview(); btn.innerHTML = `❌ Error`;
-        setTimeout(() => { btn.innerHTML = `▶ Preview`; }, 2000);
+        stopCurrentPreview();
+        btn.innerHTML = `❌ Error`;
+        setTimeout(() => { btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`; }, 2000);
     });
     audio.onended = () => { stopCurrentPreview(); };
 }
@@ -662,17 +670,44 @@ function renderItems(data) {
 
         const card = document.createElement("div");
         card.className = "result-card";
-        
-        let actionHtml = isInLibrary ? `<div class="badge-library">✅ In Library</div>` : `
-            <button class="btn-preview" onclick="togglePreview(this, '${escapeJs(item.url)}')">▶ Preview</button>
-            <button class="btn-download" data-id="${item.id}" onclick="startDownload('${item.url}', '${escapeJs(item.title)}', '${item.id}')">⬇️ Save</button>
-        `;
+
+        const thumbUrl = escapeHtml(item.thumbnail);
+        const titleHtml = escapeHtml(item.title);
+        const artistHtml = escapeHtml(item.channel);
+        const durHtml = escapeHtml(item.duration_text);
 
         card.innerHTML = `
-            <div class="thumb-wrapper"><img src="${item.thumbnail}" onerror="this.src='https://via.placeholder.com/110x65?text=Music'" /><span class="badge-duration">${item.duration_text}</span></div>
-            <div class="track-info"><div class="track-title">${escapeHtml(item.title)}</div><div class="track-artist">👤 ${escapeHtml(item.channel)}</div></div>
-            <div class="btn-group" data-group-id="${item.id}">${actionHtml}</div>
+            <div class="thumb-wrapper">
+                <img src="${thumbUrl}" onerror="this.src='https://via.placeholder.com/110x65?text=Music'" />
+                <span class="badge-duration">${durHtml}</span>
+            </div>
+            <div class="track-info">
+                <div class="track-title">${titleHtml}</div>
+                <div class="track-artist">👤 ${artistHtml}</div>
+            </div>
+            <div class="btn-group" data-group-id="${item.id}"></div>
         `;
+
+        const btnGroup = card.querySelector('.btn-group');
+
+        if (isInLibrary) {
+            btnGroup.innerHTML = `<div class="badge-library">✅ In Library</div>`;
+        } else {
+            const prevBtn = document.createElement('button');
+            prevBtn.className = 'btn-preview';
+            prevBtn.innerHTML = '▶ Preview';
+            prevBtn.onclick = () => toggleAudioStream(prevBtn, "api/preview?url=" + encodeURIComponent(item.url), 'search');
+
+            const dlBtn = document.createElement('button');
+            dlBtn.className = 'btn-download';
+            dlBtn.setAttribute('data-id', item.id);
+            dlBtn.innerHTML = '⬇️ Save';
+            dlBtn.onclick = () => startDownload(item.url, item.title, item.id);
+
+            btnGroup.appendChild(prevBtn);
+            btnGroup.appendChild(dlBtn);
+        }
+
         results.appendChild(card);
     });
 }
@@ -852,18 +887,44 @@ async function loadLibrary() {
     list.innerHTML = `<div class="status-msg">Loading library...</div>`;
     try {
         const res = await fetch('api/library');
-        const files = await res.json();
+        const data = await res.json();
+        const files = data.files;
+
         document.getElementById('libCount').textContent = files.length;
+        if (document.getElementById('libCountDetail')) document.getElementById('libCountDetail').textContent = files.length;
+        if (document.getElementById('libFolderSize')) document.getElementById('libFolderSize').textContent = data.total_size;
 
         if (files.length === 0) { list.innerHTML = `<div class="status-msg">No files downloaded yet.</div>`; return; }
 
         list.innerHTML = "";
         files.forEach(f => {
-            const card = document.createElement('div'); card.className = 'result-card';
+            const card = document.createElement('div');
+            card.className = 'result-card';
+
+            const coverUrl = "api/library/cover/" + encodeURIComponent(f.name);
+            const streamUrl = "api/library/stream/" + encodeURIComponent(f.name);
+            const fallbackSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="110" height="65" viewBox="0 0 110 65"><rect width="100%" height="100%" fill="%231e293b"/><text x="50%" y="50%" fill="%239ca3af" font-size="20" text-anchor="middle" dominant-baseline="central">🎵</text></svg>`;
+
             card.innerHTML = `
-                <div class="track-info"><div class="track-title">🎵 ${escapeHtml(f.name)}</div><div class="track-artist">📦 ${f.size}</div></div>
-                <div class="btn-group"><button class="btn-danger" onclick="deleteFile('${escapeJs(f.name)}')">🗑 Delete</button></div>
+                <div class="thumb-wrapper">
+                    <img src="${coverUrl}" onerror="this.onerror=null; this.src='${fallbackSvg}'" />
+                </div>
+                <div class="track-info">
+                    <div class="track-title">${escapeHtml(f.name)}</div>
+                    <div class="track-artist">📦 ${f.size}</div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn-preview">▶ Play</button>
+                    <button class="btn-danger">🗑 Delete</button>
+                </div>
             `;
+
+            const playBtn = card.querySelector('.btn-preview');
+            playBtn.onclick = () => toggleAudioStream(playBtn, streamUrl, 'library');
+
+            const delBtn = card.querySelector('.btn-danger');
+            delBtn.onclick = () => deleteFile(f.name);
+
             list.appendChild(card);
         });
     } catch(e) { list.innerHTML = `<div class="status-msg">Failed to load library.</div>`; }
@@ -871,14 +932,16 @@ async function loadLibrary() {
 
 async function deleteFile(filename) {
     if (!confirm("Delete " + filename + "?")) return;
-    try { await fetch('api/library/' + encodeURIComponent(filename), { method: 'DELETE' }); refreshLibraryCache(); loadLibrary(); }
-    catch(e) { alert("Failed to delete file."); }
+    try {
+        await fetch('api/library/' + encodeURIComponent(filename), { method: 'DELETE' });
+        refreshLibraryCache();
+        loadLibrary();
+    } catch(e) { alert("Failed to delete file."); }
 }
 
 document.getElementById("searchBtn").addEventListener("click", searchMusic);
 document.getElementById("query").addEventListener("keydown", e => { if (e.key === "Enter") searchMusic(); });
 
-// Infinite scroll event listener
 window.addEventListener("scroll", () => {
     if (document.getElementById("tab-search").classList.contains("active")) {
         if ((window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 500)) {
@@ -898,10 +961,6 @@ document.addEventListener("DOMContentLoaded", () => {
 """
 
 
-# ============================================================
-# API ENDPOINTS
-# ============================================================
-
 @app.get("/api/settings")
 async def get_settings():
     return load_settings()
@@ -915,14 +974,61 @@ async def update_settings(data: dict = Body(...)):
 @app.get("/api/library")
 async def get_library():
     files = []
+    total_bytes = 0
     for path in DOWNLOAD_DIR.iterdir():
         if path.is_file() and not path.name.startswith("."):
             if path.suffix.lower() in AUDIO_EXTENSIONS:
+                sz = path.stat().st_size
+                total_bytes += sz
                 files.append({
                     "name": path.name,
-                    "size": format_size(path.stat().st_size)
+                    "size": format_size(sz),
+                    "bytes": sz
                 })
-    return sorted(files, key=lambda x: x["name"])
+    return {
+        "files": sorted(files, key=lambda x: x["name"]),
+        "total_size": format_size(total_bytes),
+        "total_bytes": total_bytes
+    }
+
+
+@app.get("/api/library/stream/{filename}")
+async def stream_library_file(filename: str):
+    file_path = DOWNLOAD_DIR / filename
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(path=file_path, filename=filename)
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+@app.get("/api/library/cover/{filename}")
+async def get_library_cover(filename: str):
+    file_path = DOWNLOAD_DIR / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i", str(file_path),
+        "-an",
+        "-vcodec", "mjpeg",
+        "-f", "image2pipe",
+        "-"
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await process.communicate()
+        if process.returncode == 0 and len(stdout) > 0:
+            return Response(content=stdout, media_type="image/jpeg")
+    except Exception:
+        pass
+
+    svg_placeholder = """<svg xmlns="http://www.w3.org/2000/svg" width="110" height="65" viewBox="0 0 110 65"><rect width="100%" height="100%" fill="#1e293b"/><text x="50%" y="50%" fill="#9ca3af" font-size="20" text-anchor="middle" dominant-baseline="central">🎵</text></svg>"""
+    return Response(content=svg_placeholder, media_type="image/svg+xml")
 
 
 @app.delete("/api/library/{filename}")
