@@ -338,7 +338,7 @@ async def home():
 :root {
     --bg-main: #0b0f19;
     --card-bg: rgba(22, 30, 46, 0.8);
-    --card-border: rgba(255, 255, 255, 0.08);
+    --card-border: rgba(255, 255, 255, 0.12);
     --accent: #6366f1;
     --accent-hover: #4f46e5;
     --accent-glow: rgba(99, 102, 241, 0.35);
@@ -347,108 +347,189 @@ async def home():
     --text-primary: #f3f4f6;
     --text-secondary: #9ca3af;
     --input-bg: rgba(15, 23, 42, 0.85);
+    --focus-ring: #a5b4fc;
 }
+
+[data-theme="light"] {
+    --bg-main: #f1f5f9;
+    --card-bg: rgba(255, 255, 255, 0.85);
+    --card-border: rgba(0, 0, 0, 0.1);
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+    --accent-glow: rgba(79, 70, 229, 0.2);
+    --success: #059669;
+    --danger: #dc2626;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --input-bg: #ffffff;
+    --focus-ring: #4338ca;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+
+*:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
 body {
-    background: radial-gradient(circle at top, #1e1b4b 0%, #0b0f19 50%, #05070c 100%);
-    background-attachment: fixed;
+    background: var(--bg-main);
     color: var(--text-primary);
     min-height: 100vh;
-    padding: 30px 20px;
+    display: flex;
+    font-size: 1rem;
+    transition: background-color 0.3s, color 0.3s;
 }
-.container { max-width: 980px; margin: 0 auto; }
-header { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 25px; }
-header h1 {
-    font-size: 2.2rem; font-weight: 700; background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -0.02em;
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
-.nav-tabs {
-    display: flex; justify-content: center; gap: 8px; margin-bottom: 25px; background: var(--card-bg);
-    padding: 6px; border-radius: 16px; border: 1px solid var(--card-border); backdrop-filter: blur(12px);
+
+/* App Shell Layout */
+.app-shell { display: flex; width: 100%; min-height: 100vh; }
+
+/* Side Navigation Drawer (Desktop) */
+.side-nav {
+    width: 260px;
+    background: var(--card-bg);
+    border-right: 1px solid var(--card-border);
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    backdrop-filter: blur(12px);
 }
-.tab-btn {
-    background: transparent; border: none; color: var(--text-secondary); padding: 10px 24px;
-    border-radius: 12px; font-weight: 600; font-size: 0.9rem; cursor: pointer; transition: all 0.2s;
+
+.side-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
-.tab-btn:hover { color: #fff; }
-.tab-btn.active { background: var(--accent); color: #fff; box-shadow: 0 4px 12px var(--accent-glow); }
+
+.side-brand h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.nav-list { display: flex; flex-direction: column; gap: 8px; list-style: none; }
+
+.nav-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition: all 0.2s;
+    background: transparent;
+    border: none;
+    width: 100%;
+    cursor: pointer;
+    text-align: left;
+}
+
+.nav-link:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.05); }
+.nav-link.active { background: var(--accent); color: #fff; box-shadow: 0 4px 12px var(--accent-glow); }
+
+/* Main Content Area */
+.main-content {
+    flex: 1;
+    padding: 30px 24px 90px 24px;
+    max-width: 1000px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* Mobile Header & Bottom Navigation */
+.mobile-header { display: none; align-items: center; justify-content: space-between; padding: 16px 20px; background: var(--card-bg); border-bottom: 1px solid var(--card-border); }
+.bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--card-bg); border-top: 1px solid var(--card-border); padding: 8px; backdrop-filter: blur(16px); z-index: 100; justify-content: space-around; }
+.bottom-nav .nav-link { flex-direction: column; gap: 4px; padding: 8px; font-size: 0.75rem; align-items: center; justify-content: center; text-align: center; }
+
+@media (max-width: 768px) {
+    .app-shell { flex-direction: column; }
+    .side-nav { display: none; }
+    .mobile-header { display: flex; }
+    .bottom-nav { display: flex; }
+    .main-content { padding: 20px 16px 100px 16px; }
+}
+
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+
 .search-card {
     background: var(--card-bg); backdrop-filter: blur(16px); border: 1px solid var(--card-border);
-    padding: 12px; border-radius: 20px; display: flex; gap: 10px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    padding: 12px; border-radius: 20px; display: flex; gap: 10px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
     margin-bottom: 25px;
 }
 .search-card input {
     flex: 1; background: var(--input-bg); border: 1px solid var(--card-border); padding: 14px 18px;
-    border-radius: 14px; color: #fff; font-size: 1rem; outline: none; transition: all 0.2s;
+    border-radius: 14px; color: var(--text-primary); font-size: 1rem; outline: none; transition: all 0.2s;
 }
-.search-card input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
 .search-card button {
     background: linear-gradient(135deg, var(--accent) 0%, #4338ca 100%); color: #fff; border: none;
     padding: 0 26px; border-radius: 14px; font-weight: 600; font-size: 0.95rem; cursor: pointer;
     transition: all 0.2s; box-shadow: 0 4px 15px var(--accent-glow);
 }
 .search-card button:hover { transform: translateY(-1px); }
+
 .progress-panel {
     background: var(--card-bg); backdrop-filter: blur(16px); border: 1px solid var(--card-border);
-    border-radius: 20px; padding: 22px; margin-bottom: 25px; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    animation: fadeIn 0.3s ease;
+    border-radius: 20px; padding: 22px; margin-bottom: 25px; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.2);
 }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .progress-title { font-size: 0.92rem; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80%; }
-.progress-right-header { display: flex; align-items: center; gap: 12px; }
 .progress-percent { font-size: 0.9rem; font-weight: 700; color: var(--accent); }
-.progress-track {
-    width: 100%; height: 8px; background: rgba(255, 255, 255, 0.08); border-radius: 10px; overflow: hidden; margin-bottom: 12px;
-}
-.progress-fill {
-    height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent) 0%, #a855f7 100%);
-    border-radius: 10px; transition: width 0.3s ease;
-}
-.progress-steps {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; background: rgba(15, 23, 42, 0.6);
-    padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.04);
-}
+.progress-track { width: 100%; height: 8px; background: rgba(255, 255, 255, 0.1); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+.progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent) 0%, #a855f7 100%); border-radius: 10px; transition: width 0.3s ease; }
+.progress-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; background: var(--input-bg); padding: 8px 10px; border-radius: 10px; border: 1px solid var(--card-border); }
 .step-item { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); font-weight: 500; }
-.step-dot { width: 7px; height: 7px; border-radius: 50%; background: #374151; transition: all 0.3s; flex-shrink: 0; }
-.step-item.active { color: #fff; font-weight: 600; }
-.step-item.active .step-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulseDot 1.2s infinite alternate; }
+.step-dot { width: 7px; height: 7px; border-radius: 50%; background: #374151; flex-shrink: 0; }
+.step-item.active { color: var(--text-primary); font-weight: 600; }
+.step-item.active .step-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .step-item.completed { color: var(--success); font-weight: 600; }
 .step-item.completed .step-dot { background: var(--success); }
-@keyframes pulseDot { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(1.3); opacity: 1; } }
 .progress-details { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-secondary); }
+
 .results-grid { display: flex; flex-direction: column; gap: 12px; }
 .result-card { background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--card-border); border-radius: 16px; padding: 12px 16px; display: flex; align-items: center; gap: 16px; transition: all 0.2s; }
-.result-card:hover { border-color: rgba(255, 255, 255, 0.18); transform: translateY(-1px); }
-.thumb-wrapper { position: relative; width: 110px; height: 65px; border-radius: 10px; overflow: hidden; flex-shrink: 0; background: #1e293b; }
+.result-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.thumb-wrapper { position: relative; width: 110px; height: 65px; border-radius: 10px; overflow: hidden; flex-shrink: 0; background: var(--input-bg); }
 .thumb-wrapper img { width: 100%; height: 100%; object-fit: cover; }
-.badge-duration { position: absolute; bottom: 4px; right: 4px; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(4px); padding: 2px 5px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+.badge-duration { position: absolute; bottom: 4px; right: 4px; background: rgba(0, 0, 0, 0.75); color: #fff; padding: 2px 5px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
 .track-info { flex: 1; min-width: 0; }
 .track-title { font-size: 0.98rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
 .track-artist { font-size: 0.85rem; color: var(--text-secondary); }
 .btn-group { display: flex; gap: 8px; align-items: center; }
-.btn-preview { background: rgba(255, 255, 255, 0.06); border: 1px solid var(--card-border); color: var(--text-primary); padding: 8px 14px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease; user-select: none; }
-.btn-preview:hover { background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.4); color: #fff; }
-.btn-preview.playing { background: linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(168, 85, 247, 0.3) 100%); border-color: var(--accent); color: #a5b4fc; box-shadow: 0 0 12px rgba(99, 102, 241, 0.25); }
-.btn-preview.loading { opacity: 0.7; cursor: wait; }
-.wave-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
-.wave-bar { width: 2px; height: 100%; background-color: currentColor; border-radius: 2px; animation: waveBounce 0.8s ease-in-out infinite alternate; }
-.wave-bar:nth-child(2) { animation-delay: 0.2s; }
-.wave-bar:nth-child(3) { animation-delay: 0.4s; }
-@keyframes waveBounce { 0% { height: 20%; } 100% { height: 100%; } }
+
+.btn-preview { background: rgba(255, 255, 255, 0.06); border: 1px solid var(--card-border); color: var(--text-primary); padding: 8px 14px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease; }
+.btn-preview:hover { background: var(--accent); color: #fff; }
+.btn-preview.playing { background: var(--accent); color: #fff; }
+
 .btn-download { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; border: none; padding: 8px 16px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25); transition: all 0.2s; }
 .btn-download:disabled { background: #374151; color: var(--text-secondary); cursor: not-allowed; box-shadow: none; }
-.badge-library { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #6ee7b7; padding: 6px 12px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 4px; }
-.btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5; padding: 8px 14px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer; }
-.btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+.badge-library { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 6px 12px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 4px; }
+.btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 8px 14px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer; }
+.btn-danger:hover { background: var(--danger); color: #fff; }
+
 .settings-card { background: var(--card-bg); backdrop-filter: blur(16px); border: 1px solid var(--card-border); border-radius: 20px; padding: 25px; display: flex; flex-direction: column; gap: 20px; }
-.setting-row { display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+.setting-row { display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px; border-bottom: 1px solid var(--card-border); }
 .setting-row:last-child { border-bottom: none; padding-bottom: 0; }
 .setting-label { font-weight: 600; font-size: 0.95rem; }
 .setting-desc { font-size: 0.82rem; color: var(--text-secondary); margin-top: 2px; }
-select, input[type="number"] { background: var(--input-bg); border: 1px solid var(--card-border); color: #fff; padding: 8px 12px; border-radius: 10px; outline: none; font-size: 0.9rem; }
+select, input[type="number"] { background: var(--input-bg); border: 1px solid var(--card-border); color: var(--text-primary); padding: 8px 12px; border-radius: 10px; outline: none; font-size: 0.9rem; }
+
 .switch { position: relative; display: inline-block; width: 46px; height: 24px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #374151; transition: .3s; border-radius: 24px; }
@@ -457,103 +538,170 @@ input:checked + .slider { background-color: var(--accent); }
 input:checked + .slider:before { transform: translateX(22px); }
 .save-btn { background: linear-gradient(135deg, var(--accent) 0%, #4338ca 100%); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 700; cursor: pointer; margin-top: 10px; }
 .status-msg { text-align: center; color: var(--text-secondary); margin: 15px 0; font-size: 0.9rem; }
+
 .library-header-bar {
     background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--card-border);
     border-radius: 16px; padding: 14px 20px; margin-bottom: 16px; display: flex; justify-content: space-between;
     align-items: center; font-size: 0.9rem; color: var(--text-secondary);
 }
-.library-header-bar strong { color: #fff; }
+.library-header-bar strong { color: var(--text-primary); }
 .btn-refresh {
     background: rgba(255, 255, 255, 0.08); border: 1px solid var(--card-border); color: var(--text-primary);
     padding: 6px 14px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer;
     transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px;
 }
-.btn-refresh:hover { background: rgba(99, 102, 241, 0.2); border-color: var(--accent); color: #fff; }
+.btn-refresh:hover { background: var(--accent); color: #fff; }
+
+/* Toast Notifications Container */
+#toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.toast {
+    background: var(--card-bg);
+    border: 1px solid var(--accent);
+    color: var(--text-primary);
+    padding: 12px 18px;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
 @media(max-width: 640px) { .result-card { flex-direction: column; align-items: flex-start; } .thumb-wrapper { width: 100%; height: 140px; } .btn-group { width: 100%; justify-content: space-between; } .progress-steps { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
-<div class="container">
-    <header>
-        <svg width="44" height="44" viewBox="0 0 512 512" style="flex-shrink: 0;">
-          <defs><linearGradient id="waveGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00F2FE" /><stop offset="100%" stop-color="#4FACFE" /></linearGradient></defs>
-          <rect width="512" height="512" rx="112" fill="#0F172A" />
-          <rect x="112" y="216" width="24" height="80" rx="12" fill="url(#waveGrad)" opacity="0.4" />
-          <rect x="160" y="176" width="24" height="160" rx="12" fill="url(#waveGrad)" opacity="0.75" />
-          <rect x="328" y="176" width="24" height="160" rx="12" fill="url(#waveGrad)" opacity="0.75" />
-          <rect x="376" y="216" width="24" height="80" rx="12" fill="url(#waveGrad)" opacity="0.4" />
-          <path d="M 256 128 V 300 M 196 248 L 256 312 L 316 248" stroke="url(#waveGrad)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-          <path d="M 196 376 H 316" stroke="url(#waveGrad)" stroke-width="24" stroke-linecap="round" />
-        </svg>
-        <h1>Navidrome Downloader Pro</h1>
-    </header>
 
-    <div class="nav-tabs">
-        <button class="tab-btn active" onclick="switchTab('search')">🔍 Search & Download</button>
-        <button class="tab-btn" onclick="switchTab('library')">📂 Library (<span id="libCount">0</span>)</button>
-        <button class="tab-btn" onclick="switchTab('settings')">⚙️ Settings</button>
-    </div>
+<div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
-    <!-- TAB 1: SEARCH -->
-    <div id="tab-search" class="tab-content active">
-        <div class="search-card">
-            <input id="query" placeholder="Search track, artist, or album..." autocomplete="off" />
-            <button id="searchBtn" type="button">Search</button>
+<div class="app-shell">
+    <!-- Desktop Side Navigation -->
+    <nav class="side-nav" aria-label="Main Navigation">
+        <div class="side-brand">
+            <svg width="36" height="36" viewBox="0 0 512 512" aria-hidden="true">
+              <defs><linearGradient id="waveGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00F2FE" /><stop offset="100%" stop-color="#4FACFE" /></linearGradient></defs>
+              <rect width="512" height="512" rx="112" fill="#0F172A" />
+              <rect x="112" y="216" width="24" height="80" rx="12" fill="url(#waveGrad)" opacity="0.4" />
+              <rect x="160" y="176" width="24" height="160" rx="12" fill="url(#waveGrad)" opacity="0.75" />
+              <rect x="328" y="176" width="24" height="160" rx="12" fill="url(#waveGrad)" opacity="0.75" />
+              <rect x="376" y="216" width="24" height="80" rx="12" fill="url(#waveGrad)" opacity="0.4" />
+              <path d="M 256 128 V 300 M 196 248 L 256 312 L 316 248" stroke="url(#waveGrad)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+              <path d="M 196 376 H 316" stroke="url(#waveGrad)" stroke-width="24" stroke-linecap="round" />
+            </svg>
+            <h1>Navidrome</h1>
         </div>
+        <ul class="nav-list" role="tablist">
+            <li><button class="nav-link active" id="btn-search" role="tab" aria-selected="true" aria-controls="tab-search" onclick="navigate('search')"><span>🔍</span> Search & Download</button></li>
+            <li><button class="nav-link" id="btn-library" role="tab" aria-selected="false" aria-controls="tab-library" onclick="navigate('library')"><span>📂</span> Library (<span id="sideLibCount">0</span>)</button></li>
+            <li><button class="nav-link" id="btn-settings" role="tab" aria-selected="false" aria-controls="tab-settings" onclick="navigate('settings')"><span>⚙️</span> Settings</button></li>
+        </ul>
+    </nav>
 
-        <div class="progress-panel" id="progressPanel" style="display:none;">
-            <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 14px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
-                ⚡ Active Downloads
+    <!-- App Content Shell -->
+    <div style="flex: 1; display: flex; flex-direction: column;">
+        <header class="mobile-header">
+            <div class="side-brand">
+                <svg width="30" height="30" viewBox="0 0 512 512" aria-hidden="true">
+                  <rect width="512" height="512" rx="112" fill="#0F172A" />
+                  <path d="M 256 128 V 300 M 196 248 L 256 312 L 316 248" stroke="#4FACFE" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                </svg>
+                <h1 style="font-size: 1.1rem;">Navidrome Pro</h1>
             </div>
-            <div id="activeDownloadsList" style="display: flex; flex-direction: column; gap: 14px;"></div>
-        </div>
+        </header>
 
-        <div id="statusMsg" class="status-msg"></div>
-        <div id="results" class="results-grid"></div>
-        <div id="infiniteLoader" class="status-msg" style="display:none;">⏳ Loading more tracks...</div>
-    </div>
+        <main class="main-content" id="main-content">
+            <!-- TAB 1: SEARCH -->
+            <section id="tab-search" class="tab-content active" role="tabpanel" aria-labelledby="btn-search">
+                <div class="search-card">
+                    <label for="query" class="sr-only">Search tracks, artists, or albums</label>
+                    <input id="query" placeholder="Search track, artist, or album..." autocomplete="off" />
+                    <button id="searchBtn" type="button" aria-label="Execute search">Search</button>
+                </div>
 
-    <!-- TAB 2: LIBRARY -->
-    <div id="tab-library" class="tab-content">
-        <div class="search-card" style="margin-bottom: 16px;">
-            <input id="libSearchQuery" placeholder="🔍 Filter local library tracks..." autocomplete="off" oninput="filterLibrary()" />
-        </div>
-        <div class="library-header-bar">
-            <span>📁 Total Tracks: <strong id="libCountDetail">0</strong></span>
-            <span>💾 Folder Size: <strong id="libFolderSize">0 MB</strong></span>
-            <button class="btn-refresh" onclick="loadLibrary()">🔄 Refresh</button>
-        </div>
-        <div id="libraryList" class="results-grid"></div>
-    </div>
+                <div class="progress-panel" id="progressPanel" style="display:none;" aria-live="polite">
+                    <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 14px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                        ⚡ Active Downloads
+                    </div>
+                    <div id="activeDownloadsList" style="display: flex; flex-direction: column; gap: 14px;"></div>
+                </div>
 
-    <!-- TAB 3: SETTINGS -->
-    <div id="tab-settings" class="tab-content">
-        <div class="settings-card">
-            <div class="setting-row">
-                <div><div class="setting-label">Audio Format</div><div class="setting-desc">Preferred output audio format for downloads</div></div>
-                <select id="set_format"><option value="mp3">MP3</option><option value="flac">FLAC (Lossless)</option><option value="m4a">M4A (AAC)</option><option value="opus">OPUS</option></select>
-            </div>
-            <div class="setting-row">
-                <div><div class="setting-label">Audio Quality / Bitrate</div><div class="setting-desc">Bitrate target for lossy formats</div></div>
-                <select id="set_quality"><option value="320K">320 Kbps</option><option value="256K">256 Kbps</option><option value="192K">192 Kbps</option><option value="128K">128 Kbps</option></select>
-            </div>
-            <div class="setting-row">
-                <div><div class="setting-label">Embed Album Art</div><div class="setting-desc">Embed cover art into audio files</div></div>
-                <label class="switch"><input type="checkbox" id="set_thumb"><span class="slider"></span></label>
-            </div>
-            <div class="setting-row">
-                <div><div class="setting-label">Embed Metadata Tags</div><div class="setting-desc">Write ID3 tags into the file</div></div>
-                <label class="switch"><input type="checkbox" id="set_meta"><span class="slider"></span></label>
-            </div>
-            <div class="setting-row">
-                <div><div class="setting-label">Max Search Results</div><div class="setting-desc">Number of YouTube items returned per search page</div></div>
-                <input type="number" id="set_max_results" min="5" max="50" value="20" style="width:70px;">
-            </div>
-            <button class="save-btn" onclick="saveSettings()">Save Settings</button>
-            <div id="settingsMsg" class="status-msg"></div>
-        </div>
+                <div id="statusMsg" class="status-msg" aria-live="polite"></div>
+                <div id="results" class="results-grid" aria-live="polite"></div>
+                <div id="infiniteLoader" class="status-msg" style="display:none;">⏳ Loading more tracks...</div>
+            </section>
+
+            <!-- TAB 2: LIBRARY -->
+            <section id="tab-library" class="tab-content" role="tabpanel" aria-labelledby="btn-library">
+                <div class="search-card" style="margin-bottom: 16px;">
+                    <label for="libSearchQuery" class="sr-only">Filter local tracks</label>
+                    <input id="libSearchQuery" placeholder="🔍 Filter local library tracks..." autocomplete="off" oninput="filterLibrary()" />
+                </div>
+                <div class="library-header-bar">
+                    <span>📁 Total Tracks: <strong id="libCountDetail">0</strong></span>
+                    <span>💾 Folder Size: <strong id="libFolderSize">0 MB</strong></span>
+                    <button class="btn-refresh" onclick="loadLibrary()" aria-label="Refresh library files">🔄 Refresh</button>
+                </div>
+                <div id="libraryList" class="results-grid" aria-live="polite"></div>
+            </section>
+
+            <!-- TAB 3: SETTINGS -->
+            <section id="tab-settings" class="tab-content" role="tabpanel" aria-labelledby="btn-settings">
+                <div class="settings-card">
+                    <div class="setting-row">
+                        <div><div class="setting-label">Theme Support</div><div class="setting-desc">Switch between Dark and Light mode</div></div>
+                        <select id="set_theme" onchange="toggleTheme(this.value)">
+                            <option value="dark">Dark Mode</option>
+                            <option value="light">Light Mode</option>
+                        </select>
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Desktop Notifications</div><div class="setting-desc">Alert when downloads finish successfully</div></div>
+                        <button class="btn-refresh" onclick="requestNotificationPermission()">Enable Notifications</button>
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Audio Format</div><div class="setting-desc">Preferred output audio format for downloads</div></div>
+                        <select id="set_format"><option value="mp3">MP3</option><option value="flac">FLAC (Lossless)</option><option value="m4a">M4A (AAC)</option><option value="opus">OPUS</option></select>
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Audio Quality / Bitrate</div><div class="setting-desc">Bitrate target for lossy formats</div></div>
+                        <select id="set_quality"><option value="320K">320 Kbps</option><option value="256K">256 Kbps</option><option value="192K">192 Kbps</option><option value="128K">128 Kbps</option></select>
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Embed Album Art</div><div class="setting-desc">Embed cover art into audio files</div></div>
+                        <label class="switch"><input type="checkbox" id="set_thumb"><span class="slider"></span></label>
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Embed Metadata Tags</div><div class="setting-desc">Write ID3 tags into the file</div></div>
+                        <label class="switch"><input type="checkbox" id="set_meta"><span class="slider"></span></label>
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Max Search Results</div><div class="setting-desc">Number of YouTube items returned per search page</div></div>
+                        <input type="number" id="set_max_results" min="5" max="50" value="20" style="width:70px;">
+                    </div>
+                    <button class="save-btn" onclick="saveSettings()">Save Settings</button>
+                    <div id="settingsMsg" class="status-msg"></div>
+                </div>
+            </section>
+        </main>
     </div>
 </div>
+
+<!-- Mobile Bottom Tab Navigation -->
+<nav class="bottom-nav" aria-label="Mobile Bottom Navigation">
+    <button class="nav-link active" id="mob-btn-search" role="tab" aria-selected="true" aria-controls="tab-search" onclick="navigate('search')"><span>🔍</span> Search</button>
+    <button class="nav-link" id="mob-btn-library" role="tab" aria-selected="false" aria-controls="tab-library" onclick="navigate('library')"><span>📂</span> Library (<span id="mobLibCount">0</span>)</button>
+    <button class="nav-link" id="mob-btn-settings" role="tab" aria-selected="false" aria-controls="tab-settings" onclick="navigate('settings')"><span>⚙️</span> Settings</button>
+</nav>
 
 <script>
 let pollTimer = null;
@@ -568,25 +716,88 @@ let currentQuery = "";
 let isLoadingMore = false;
 let hasMoreResults = true;
 
-function escapeHtml(t) { return (t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
-
-function switchTab(tab) {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    
-    if (tab === 'search') {
-        document.querySelectorAll('.tab-btn')[0].classList.add('active');
-        document.getElementById('tab-search').classList.add('active');
-    } else if (tab === 'library') {
-        document.querySelectorAll('.tab-btn')[1].classList.add('active');
-        document.getElementById('tab-library').classList.add('active');
-        loadLibrary();
-    } else if (tab === 'settings') {
-        document.querySelectorAll('.tab-btn')[2].classList.add('active');
-        document.getElementById('tab-settings').classList.add('active');
-        loadSettings();
+/* Notifications API Integration */
+function requestNotificationPermission() {
+    if ("Notification" in window) {
+        Notification.requestPermission().then(permission => {
+            if (permission === "granted") {
+                showToast("✅ Notifications enabled!");
+            } else {
+                showToast("⚠️ Notification permission denied.");
+            }
+        });
     }
 }
+
+function notifyTrackComplete(title) {
+    showToast(`🎉 Track ready: ${title}`);
+    if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("Track Installed Successfully!", {
+            body: `${title} is now downloaded and ready in your library.`,
+            icon: "https://via.placeholder.com/64?text=🎵"
+        });
+    }
+}
+
+function showToast(message) {
+    const container = document.getElementById("toast-container");
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+}
+
+/* Dynamic Dark Mode & Accessibility Helper */
+function toggleTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('navidrome_theme', theme);
+}
+
+const savedTheme = localStorage.getItem('navidrome_theme') || 'dark';
+toggleTheme(savedTheme);
+
+/* Fast Navigation Structures & Deep Linking */
+function navigate(tab, updateHash = true) {
+    if (updateHash) {
+        window.location.hash = tab;
+    }
+    switchTab(tab);
+}
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.nav-link').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+    });
+
+    const activeContent = document.getElementById(`tab-${tab}`);
+    if (activeContent) {
+        activeContent.classList.add('active');
+    }
+
+    const sideBtn = document.getElementById(`btn-${tab}`);
+    const mobBtn = document.getElementById(`mob-btn-${tab}`);
+    if (sideBtn) { sideBtn.classList.add('active'); sideBtn.setAttribute('aria-selected', 'true'); }
+    if (mobBtn) { mobBtn.classList.add('active'); mobBtn.setAttribute('aria-selected', 'true'); }
+
+    if (tab === 'library') loadLibrary();
+    if (tab === 'settings') loadSettings();
+}
+
+function handleDeepLink() {
+    const hash = window.location.hash.replace('#', '');
+    if (['search', 'library', 'settings'].includes(hash)) {
+        switchTab(hash);
+    } else {
+        switchTab('search');
+    }
+}
+
+window.addEventListener('hashchange', handleDeepLink);
+
+function escapeHtml(t) { return (t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
 async function loadSettings() {
     try {
@@ -597,6 +808,7 @@ async function loadSettings() {
         document.getElementById('set_thumb').checked = s.embed_thumbnail;
         document.getElementById('set_meta').checked = s.embed_metadata;
         document.getElementById('set_max_results').value = s.max_results || 20;
+        document.getElementById('set_theme').value = localStorage.getItem('navidrome_theme') || 'dark';
     } catch(e) {}
 }
 
@@ -627,8 +839,10 @@ async function refreshLibraryCache() {
             const baseName = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
             libraryFilesSet.add(baseName.toLowerCase());
         });
-        document.getElementById('libCount').textContent = rawLibraryFiles.length;
-        if (document.getElementById('libCountDetail')) document.getElementById('libCountDetail').textContent = rawLibraryFiles.length;
+        const count = rawLibraryFiles.length;
+        if (document.getElementById('sideLibCount')) document.getElementById('sideLibCount').textContent = count;
+        if (document.getElementById('mobLibCount')) document.getElementById('mobLibCount').textContent = count;
+        if (document.getElementById('libCountDetail')) document.getElementById('libCountDetail').textContent = count;
         if (document.getElementById('libFolderSize')) document.getElementById('libFolderSize').textContent = data.total_size;
     } catch(e) {}
 }
@@ -647,7 +861,7 @@ function toggleAudioStream(btn, streamUrl, type = 'search') {
         if (activeAudio.paused) {
             activeAudio.play();
             btn.classList.add('playing');
-            btn.innerHTML = `<span class="wave-bars"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></span> Playing`;
+            btn.innerHTML = `⏸ Pause`;
         } else {
             activeAudio.pause();
             btn.classList.remove('playing');
@@ -667,7 +881,7 @@ function toggleAudioStream(btn, streamUrl, type = 'search') {
     audio.play().then(() => {
         btn.classList.remove('loading');
         btn.classList.add('playing');
-        btn.innerHTML = `<span class="wave-bars"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></span> Playing`;
+        btn.innerHTML = `⏸ Pause`;
     }).catch(err => {
         if (!streamUrl.includes('transcode=true')) {
             const transcodeUrl = streamUrl + (streamUrl.includes('?') ? '&' : '?') + 'transcode=true';
@@ -709,7 +923,7 @@ function renderItems(data) {
 
         card.innerHTML = `
             <div class="thumb-wrapper">
-                <img src="${thumbUrl}" onerror="this.src='https://via.placeholder.com/110x65?text=Music'" />
+                <img src="${thumbUrl}" alt="Cover art for ${titleHtml}" onerror="this.src='https://via.placeholder.com/110x65?text=Music'" />
                 <span class="badge-duration">${durHtml}</span>
             </div>
             <div class="track-info">
@@ -726,12 +940,14 @@ function renderItems(data) {
         } else {
             const prevBtn = document.createElement('button');
             prevBtn.className = 'btn-preview';
+            prevBtn.setAttribute('aria-label', `Preview ${titleHtml}`);
             prevBtn.innerHTML = '▶ Preview';
             prevBtn.onclick = () => toggleAudioStream(prevBtn, "api/preview?url=" + encodeURIComponent(item.url), 'search');
 
             const dlBtn = document.createElement('button');
             dlBtn.className = 'btn-download';
             dlBtn.setAttribute('data-id', item.id);
+            dlBtn.setAttribute('aria-label', `Download ${titleHtml}`);
             dlBtn.innerHTML = '⬇️ Save';
             dlBtn.onclick = () => startDownload(item.url, item.title, item.id);
 
@@ -828,6 +1044,9 @@ async function pollTasks() {
                 completedSet.add(t.id);
                 libraryNeedsUpdate = true;
                 
+                // Trigger Web Notification & Toast
+                notifyTrackComplete(t.title);
+
                 if (t.elementId) {
                     const grp = document.querySelector(`div[data-group-id="${t.elementId}"]`);
                     if (grp) grp.innerHTML = `<div class="badge-library">✅ In Library</div>`;
@@ -880,7 +1099,7 @@ async function pollTasks() {
             }
 
             const itemHtml = `
-                <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--card-border); padding: 14px; border-radius: 12px;">
+                <div style="background: var(--input-bg); border: 1px solid var(--card-border); padding: 14px; border-radius: 12px;">
                     <div class="progress-header">
                         <span class="progress-title">${isError ? "❌ " : "🎵 "}${escapeHtml(task.title)}</span>
                         <div class="progress-right-header">
@@ -946,15 +1165,15 @@ function filterLibrary() {
 
         card.innerHTML = `
             <div class="thumb-wrapper">
-                <img src="${coverUrl}" onerror="this.onerror=null; this.src='${fallbackSvg}'" />
+                <img src="${coverUrl}" alt="Album cover for ${escapeHtml(f.name)}" onerror="this.onerror=null; this.src='${fallbackSvg}'" />
             </div>
             <div class="track-info">
                 <div class="track-title">${escapeHtml(f.name)}</div>
                 <div class="track-artist">📦 ${f.size}</div>
             </div>
             <div class="btn-group">
-                <button class="btn-preview">▶ Play</button>
-                <button class="btn-danger">🗑 Delete</button>
+                <button class="btn-preview" aria-label="Play ${escapeHtml(f.name)}">▶ Play</button>
+                <button class="btn-danger" aria-label="Delete ${escapeHtml(f.name)}">🗑 Delete</button>
             </div>
         `;
 
@@ -991,6 +1210,7 @@ window.addEventListener("scroll", () => {
 refreshLibraryCache();
 
 document.addEventListener("DOMContentLoaded", () => {
+    handleDeepLink();
     pollTasks();
 });
 </script>
