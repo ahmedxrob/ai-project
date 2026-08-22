@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -22,7 +23,8 @@ DEFAULT_SETTINGS = {
     "embed_thumbnail": True,
     "embed_metadata": True,
     "max_results": 20,
-    "organize_by_artist": False
+    "organize_by_artist": False,
+    "normalize_audio": False
 }
 
 
@@ -69,6 +71,9 @@ def format_duration(seconds):
 def format_size(size_bytes):
     try:
         mb = size_bytes / (1024 * 1024)
+        if mb > 1024:
+            gb = mb / 1024
+            return f"{gb:.2f} GB"
         return f"{mb:.1f} MB"
     except Exception:
         return "0 MB"
@@ -79,14 +84,21 @@ def format_size(size_bytes):
 # ============================================================
 
 async def youtube_search(query: str, max_results: int):
+    # If the query is a direct URL, handle it specially or pass to yt-dlp flat playlist
+    is_url = query.startswith("http://") or query.startswith("https://")
+    
     command = [
         "yt-dlp",
         "--flat-playlist",
         "--dump-single-json",
         "--skip-download",
         "--no-warnings",
-        f"ytsearch{max_results}:{query}",
     ]
+    
+    if is_url:
+        command.append(query)
+    else:
+        command.append(f"ytsearch{max_results}:{query}")
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -104,7 +116,12 @@ async def youtube_search(query: str, max_results: int):
         data = json.loads(stdout.decode("utf-8", errors="ignore"))
         results = []
 
-        for item in data.get("entries", []):
+        entries = data.get("entries", [])
+        # If it's a single video URL rather than playlist/search
+        if not entries and "id" in data:
+            entries = [data]
+
+        for item in entries:
             if not item:
                 continue
             
@@ -122,7 +139,7 @@ async def youtube_search(query: str, max_results: int):
                 "duration": duration,
                 "duration_text": format_duration(duration),
                 "thumbnail": item.get("thumbnail") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
-                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "url": item.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}",
             })
 
         return results
@@ -227,7 +244,7 @@ header h1 {
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
-/* SEARCH TAB */
+/* SEARCH & URL CARDS */
 .search-card {
     background: var(--card-bg);
     backdrop-filter: blur(16px);
@@ -237,7 +254,7 @@ header h1 {
     display: flex;
     gap: 10px;
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-    margin-bottom: 25px;
+    margin-bottom: 15px;
 }
 
 .search-card input {
@@ -271,6 +288,75 @@ header h1 {
 }
 
 .search-card button:hover { transform: translateY(-1px); }
+
+.url-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--card-border);
+    padding: 12px;
+    border-radius: 20px;
+    display: flex;
+    gap: 10px;
+    margin-bottom: 25px;
+}
+
+.url-card input {
+    flex: 1;
+    background: var(--input-bg);
+    border: 1px solid var(--card-border);
+    padding: 12px 16px;
+    border-radius: 14px;
+    color: #fff;
+    font-size: 0.92rem;
+    outline: none;
+}
+
+.url-card button {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #fff;
+    border: none;
+    padding: 0 20px;
+    border-radius: 14px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+/* STORAGE WIDGET */
+.storage-widget {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.storage-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.storage-bar-bg {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.storage-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent) 0%, #10b981 100%);
+    border-radius: 10px;
+    transition: width 0.4s ease;
+}
 
 /* INTERACTIVE PROGRESS PANEL */
 .progress-panel {
@@ -486,6 +572,27 @@ header h1 {
     font-size: 0.82rem;
     cursor: pointer;
     box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+    transition: all 0.2s;
+}
+
+.btn-download:disabled {
+    background: #374151;
+    color: var(--text-secondary);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.badge-library {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #6ee7b7;
+    padding: 6px 12px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.82rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .btn-danger {
@@ -607,6 +714,11 @@ input:checked + .slider:before { transform: translateX(22px); }
             <button id="searchBtn" type="button">Search</button>
         </div>
 
+        <div class="url-card">
+            <input id="directUrl" placeholder="Or paste YouTube video / playlist URL directly..." autocomplete="off" />
+            <button id="directUrlBtn" type="button" onclick="downloadDirectUrl()">📥 Download URL</button>
+        </div>
+
         <div class="progress-panel" id="progressPanel">
             <div class="progress-header">
                 <span class="progress-title" id="progressTitle">Downloading...</span>
@@ -625,7 +737,7 @@ input:checked + .slider:before { transform: translateX(22px); }
                     <span class="step-dot"></span> 1. Downloading Stream
                 </div>
                 <div class="step-item" id="stepProcess">
-                    <span class="step-dot"></span> 2. Cleaning Tags & Album
+                    <span class="step-dot"></span> 2. Cleaning Tags & Artwork
                 </div>
                 <div class="step-item" id="stepDone">
                     <span class="step-dot"></span> 3. Ready for Navidrome
@@ -650,6 +762,15 @@ input:checked + .slider:before { transform: translateX(22px); }
 
     <!-- TAB 2: LIBRARY -->
     <div id="tab-library" class="tab-content">
+        <div class="storage-widget" id="storageWidget">
+            <div class="storage-header">
+                <span id="storageText">Storage: Loading...</span>
+                <span id="storagePercent">0%</span>
+            </div>
+            <div class="storage-bar-bg">
+                <div class="storage-bar-fill" id="storageFill"></div>
+            </div>
+        </div>
         <div id="libraryList" class="results-grid"></div>
     </div>
 
@@ -706,6 +827,17 @@ input:checked + .slider:before { transform: translateX(22px); }
 
             <div class="setting-row">
                 <div>
+                    <div class="setting-label">Audio Normalization (Loudness)</div>
+                    <div class="setting-desc">Standardize track volume levels using ffmpeg loudnorm</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="set_normalize">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="setting-row">
+                <div>
                     <div class="setting-label">Max Search Results</div>
                     <div class="setting-desc">Number of YouTube items returned per search</div>
                 </div>
@@ -722,6 +854,7 @@ input:checked + .slider:before { transform: translateX(22px); }
 let currentEventSource = null;
 let downloadQueue = [];
 let activeDownload = null;
+let libraryFilesSet = new Set();
 
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -734,6 +867,7 @@ function switchTab(tab) {
         document.querySelectorAll('.tab-btn')[1].classList.add('active');
         document.getElementById('tab-library').classList.add('active');
         loadLibrary();
+        loadDiskSpace();
     } else if (tab === 'settings') {
         document.querySelectorAll('.tab-btn')[2].classList.add('active');
         document.getElementById('tab-settings').classList.add('active');
@@ -749,6 +883,7 @@ async function loadSettings() {
         document.getElementById('set_quality').value = s.audio_quality || '320K';
         document.getElementById('set_thumb').checked = s.embed_thumbnail;
         document.getElementById('set_meta').checked = s.embed_metadata;
+        document.getElementById('set_normalize').checked = s.normalize_audio;
         document.getElementById('set_max_results').value = s.max_results || 20;
     } catch(e) {}
 }
@@ -759,6 +894,7 @@ async function saveSettings() {
         audio_quality: document.getElementById('set_quality').value,
         embed_thumbnail: document.getElementById('set_thumb').checked,
         embed_metadata: document.getElementById('set_meta').checked,
+        normalize_audio: document.getElementById('set_normalize').checked,
         max_results: parseInt(document.getElementById('set_max_results').value) || 20
     };
     const msg = document.getElementById('settingsMsg');
@@ -776,6 +912,29 @@ async function saveSettings() {
     }
 }
 
+async function refreshLibraryCache() {
+    try {
+        const res = await fetch('api/library');
+        const files = await res.json();
+        libraryFilesSet.clear();
+        files.forEach(f => {
+            const baseName = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
+            libraryFilesSet.add(baseName.toLowerCase());
+        });
+        document.getElementById('libCount').textContent = files.length;
+    } catch(e) {}
+}
+
+async function loadDiskSpace() {
+    try {
+        const res = await fetch('api/disk-space');
+        const data = await res.json();
+        document.getElementById('storageText').textContent = `Storage: ${data.used} used / ${data.free} free (Total: ${data.total})`;
+        document.getElementById('storagePercent').textContent = data.percent + '%';
+        document.getElementById('storageFill').style.width = data.percent + '%';
+    } catch(e) {}
+}
+
 async function searchMusic() {
     const query = document.getElementById("query").value.trim();
     const statusMsg = document.getElementById("statusMsg");
@@ -787,6 +946,8 @@ async function searchMusic() {
     statusMsg.textContent = "🔍 Searching YouTube...";
     results.innerHTML = "";
     searchBtn.disabled = true;
+
+    await refreshLibraryCache();
 
     try {
         const response = await fetch("api/search?q=" + encodeURIComponent(query));
@@ -801,8 +962,24 @@ async function searchMusic() {
         statusMsg.textContent = "";
 
         data.forEach(item => {
+            const cleanedTitle = cleanFilenameJs(item.title).toLowerCase();
+            const isInLibrary = libraryFilesSet.has(cleanedTitle);
+
             const card = document.createElement("div");
             card.className = "result-card";
+            
+            let actionHtml = '';
+            if (isInLibrary) {
+                actionHtml = `<div class="badge-library">✅ In Library</div>`;
+            } else {
+                actionHtml = `
+                    <a class="btn-secondary" href="${item.url}" target="_blank">Preview</a>
+                    <button class="btn-download" id="btn-${CSS.escape(item.id)}" onclick="startDownload('${item.url}', '${escapeJs(item.title)}', '${CSS.escape(item.id)}')">
+                        ⬇️ Save
+                    </button>
+                `;
+            }
+
             card.innerHTML = `
                 <div class="thumb-wrapper">
                     <img src="${item.thumbnail}" onerror="this.src='https://via.placeholder.com/110x65?text=Music'" />
@@ -813,10 +990,7 @@ async function searchMusic() {
                     <div class="track-artist">👤 ${escapeHtml(item.channel)}</div>
                 </div>
                 <div class="btn-group">
-                    <a class="btn-secondary" href="${item.url}" target="_blank">Preview</a>
-                    <button class="btn-download" onclick="startDownload('${item.url}', '${escapeJs(item.title)}')">
-                        ⬇️ Save
-                    </button>
+                    ${actionHtml}
                 </div>
             `;
             results.appendChild(card);
@@ -826,6 +1000,21 @@ async function searchMusic() {
     } finally {
         searchBtn.disabled = false;
     }
+}
+
+function downloadDirectUrl() {
+    const urlInput = document.getElementById("directUrl");
+    const url = urlInput.value.trim();
+    if (!url) return;
+    
+    // Extract title or use default based on URL
+    const title = "Direct Download " + Math.random().toString(36.substring(2, 7));
+    startDownload(url, title, null);
+    urlInput.value = "";
+}
+
+function cleanFilenameJs(val) {
+    return (val || "Unknown").replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim().substring(0, 180);
 }
 
 function updatePipelineStep(stepName) {
@@ -868,8 +1057,16 @@ function dismissProgressPanel() {
     }
 }
 
-function startDownload(url, title) {
-    downloadQueue.push({ url, title });
+function startDownload(url, title, elementId) {
+    if (elementId) {
+        const btn = document.getElementById("btn-" + elementId);
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = "⏳ Queued";
+        }
+    }
+
+    downloadQueue.push({ url, title, elementId });
     updateQueueDisplay();
 
     if (!activeDownload) {
@@ -922,11 +1119,22 @@ function processNextQueueItem() {
             updatePipelineStep('download');
         } else if (data.type === "status") {
             pStatus.textContent = data.message;
-            if (data.message.includes("Cleaning") || data.message.includes("Embedding")) {
-                pPercent.textContent = "92%";
-                pFill.style.width = "92%";
-                updatePipelineStep('process');
-            }
+            pPercent.textContent = "92%";
+            pFill.style.width = "92%";
+            pSpeed.textContent = "Processing";
+            updatePipelineStep('process');
+
+            let tick = 92;
+            const procInterval = setInterval(() => {
+                if (tick < 98) {
+                    tick += 1;
+                    pPercent.textContent = tick + "%";
+                    pFill.style.width = tick + "%";
+                } else {
+                    clearInterval(procInterval);
+                }
+            }, 600);
+
         } else if (data.type === "complete") {
             pPercent.textContent = "100%";
             pFill.style.width = "100%";
@@ -935,9 +1143,18 @@ function processNextQueueItem() {
             updatePipelineStep('done');
             pActions.style.display = "flex";
             currentEventSource.close();
-            loadLibraryCount();
+            refreshLibraryCache();
 
-            // Automatically proceed to the next item in queue after 1.5 seconds
+            if (activeDownload && activeDownload.elementId) {
+                const btn = document.getElementById("btn-" + activeDownload.elementId);
+                if (btn) {
+                    const parent = btn.parentElement;
+                    if (parent) {
+                        parent.innerHTML = `<div class="badge-library">✅ In Library</div>`;
+                    }
+                }
+            }
+
             setTimeout(processNextQueueItem, 1500);
         } else if (data.type === "error") {
             pStatus.textContent = "❌ Error: " + data.message;
@@ -987,19 +1204,13 @@ async function loadLibrary() {
     }
 }
 
-async function loadLibraryCount() {
-    try {
-        const res = await fetch('api/library');
-        const files = await res.json();
-        document.getElementById('libCount').textContent = files.length;
-    } catch(e) {}
-}
-
 async function deleteFile(filename) {
     if (!confirm("Delete " + filename + "?")) return;
     try {
         await fetch('api/library/' + encodeURIComponent(filename), { method: 'DELETE' });
+        refreshLibraryCache();
         loadLibrary();
+        loadDiskSpace();
     } catch(e) {
         alert("Failed to delete file.");
     }
@@ -1015,7 +1226,8 @@ function escapeJs(text) {
 
 document.getElementById("searchBtn").addEventListener("click", searchMusic);
 document.getElementById("query").addEventListener("keydown", e => { if (e.key === "Enter") searchMusic(); });
-loadLibraryCount();
+document.getElementById("directUrl").addEventListener("keydown", e => { if (e.key === "Enter") downloadDirectUrl(); });
+refreshLibraryCache();
 </script>
 </body>
 </html>
@@ -1034,6 +1246,20 @@ async def get_settings():
 @app.post("/api/settings")
 async def update_settings(data: dict = Body(...)):
     return save_settings(data)
+
+
+@app.get("/api/disk-space")
+async def get_disk_space():
+    try:
+        usage = shutil.disk_usage(DOWNLOAD_DIR)
+        return {
+            "total": format_size(usage.total),
+            "used": format_size(usage.used),
+            "free": format_size(usage.free),
+            "percent": round((usage.used / usage.total) * 100, 1)
+        }
+    except Exception:
+        return {"total": "Unknown", "used": "Unknown", "free": "Unknown", "percent": 0}
 
 
 @app.get("/api/library")
@@ -1073,7 +1299,7 @@ async def download_stream(
     url: str = Query(..., min_length=1),
     title: str = Query("Unknown", min_length=1)
 ):
-    if not (url.startswith("https://www.youtube.com/") or url.startswith("https://youtube.com/") or url.startswith("https://youtu.be/")):
+    if not (url.startswith("https://www.youtube.com/") or url.startswith("https://youtube.com/") or url.startswith("https://youtu.be/") or url.startswith("http://")):
         raise HTTPException(status_code=400, detail="Invalid YouTube URL.")
 
     settings = load_settings()
@@ -1081,6 +1307,7 @@ async def download_stream(
     quality = settings.get("audio_quality", "320K")
     embed_thumb = settings.get("embed_thumbnail", True)
     embed_meta = settings.get("embed_metadata", True)
+    normalize = settings.get("normalize_audio", False)
 
     async def event_generator():
         job_id = uuid.uuid4().hex
@@ -1146,21 +1373,28 @@ async def download_stream(
             audio_file = possible_files[0]
             ext = audio_file.suffix
 
-            data = json.dumps({"type": "status", "message": "Cleaning description & setting album..."})
+            data = json.dumps({"type": "status", "message": "Cleaning tags & metadata..."})
             yield f"data: {data}\n\n"
 
             cleaned_file = DOWNLOAD_DIR / f"clean_{job_id}{ext}"
+            
             clean_command = [
                 "ffmpeg",
                 "-y",
                 "-i", str(audio_file),
-                "-c", "copy",
-                "-metadata", "album=Iceberg",
+            ]
+            
+            if normalize:
+                clean_command.extend(["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"])
+            else:
+                clean_command.extend(["-c", "copy"])
+
+            clean_command.extend([
                 "-metadata", "comment=",
                 "-metadata", "description=",
                 "-metadata", "purl=",
                 str(cleaned_file)
-            ]
+            ])
 
             process_clean = await asyncio.create_subprocess_exec(
                 *clean_command,
@@ -1173,7 +1407,12 @@ async def download_stream(
                 audio_file.unlink()
                 audio_file = cleaned_file
 
-            clean_title = clean_filename(title)
+            # If title is generic (from direct URL), try to extract real title from metadata or fallback
+            extracted_title = title
+            if title.startswith("Direct Download"):
+                extracted_title = audio_file.stem.replace(job_id, "").strip("_") or "Unknown"
+
+            clean_title = clean_filename(extracted_title)
             final_name = f"{clean_title}{ext}"
             final_path = DOWNLOAD_DIR / final_name
 
