@@ -1,72 +1,107 @@
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse
 import httpx
+import yt_dlp
+import os
 import re
+import asyncio
+from pathlib import Path
 
-app = FastAPI()
+app = FastAPI(title="Music Downloader")
+
+# ---------------------------------------------------------
+# CONFIG
+# ---------------------------------------------------------
 
 DEEZER_SEARCH_URL = "https://api.deezer.com/search"
 
+# Change this if you want another music folder.
+# For your Navidrome setup this can be:
+# /share/navidrome/music
+DOWNLOAD_DIR = Path("/downloads")
 
-def clean(value):
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def normalize(value):
-    value = clean(value).lower()
-    value = re.sub(r"[^\w\s]", " ", value)
-    value = re.sub(r"\s+", " ", value)
-    return value.strip()
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def score_result(item, query):
-    q = normalize(query)
-    title = normalize(item.get("title"))
-    artist = normalize(item.get("artist"))
-    album = normalize(item.get("album"))
+# ---------------------------------------------------------
+# HELPERS
+# ---------------------------------------------------------
 
-    score = 0
+def clean_filename(text: str) -> str:
+    """
+    Make a safe filename.
+    """
 
-    if title == q:
-        score += 1000
+    text = text or "Unknown"
 
-    if artist == q:
-        score += 900
+    text = re.sub(r'[<>:"/\\|?*]', "", text)
 
-    if q in title:
-        score += 500
+    text = text.replace("\n", " ")
+    text = text.replace("\r", " ")
 
-    if q in artist:
-        score += 450
+    text = re.sub(r"\s+", " ", text)
 
-    for word in q.split():
-        if word in title:
-            score += 100
+    return text.strip()[:180]
 
-        if word in artist:
-            score += 80
 
-        if word in album:
-            score += 30
+def format_duration(seconds):
+    """
+    Convert seconds into MM:SS.
+    """
 
-    rank = item.get("rank", 0)
+    if not seconds:
+        return "Unknown"
 
-    try:
-        score += min(int(rank) / 10000, 50)
-    except Exception:
-        pass
+    minutes = int(seconds) // 60
+    secs = int(seconds) % 60
 
-    return score
+    return f"{minutes}:{secs:02d}"
 
+
+def normalize_result(track):
+    """
+    Convert Deezer track response into our own consistent format.
+    """
+
+    artist = track.get("artist") or {}
+    album = track.get("album") or {}
+
+    return {
+        "id": track.get("id"),
+        "title": track.get("title") or "Unknown",
+        "artist": artist.get("name") or "Unknown artist",
+        "artist_id": artist.get("id"),
+        "album": album.get("title") or "Unknown album",
+        "album_id": album.get("id"),
+        "duration": track.get("duration") or 0,
+        "duration_text": format_duration(track.get("duration")),
+        "rank": track.get("rank") or 0,
+        "isrc": track.get("isrc"),
+        "cover": album.get("cover_big")
+                 or album.get("cover_medium")
+                 or album.get("cover")
+                 or "",
+        "artist_image": artist.get("picture_big")
+                        or artist.get("picture_medium")
+                        or "",
+        "deezer_url": track.get("link") or "",
+        "preview": track.get("preview") or "",
+        "source": "deezer",
+    }
+
+
+# ---------------------------------------------------------
+# HOME PAGE
+# ---------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
 
     return """
 <!DOCTYPE html>
+
 <html>
+
 <head>
 
 <meta charset="UTF-8">
@@ -85,136 +120,192 @@ async def home():
 }
 
 body {
+
     margin: 0;
+
     padding: 30px;
-    background: #111827;
+
+    background:
+        linear-gradient(
+            135deg,
+            #0f172a,
+            #111827
+        );
+
     color: white;
-    font-family: Arial, sans-serif;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
 }
 
 .container {
+
     max-width: 1000px;
+
     margin: auto;
 }
 
 h1 {
+
+    font-size: 32px;
+
     margin-bottom: 5px;
 }
 
 .subtitle {
+
     color: #9ca3af;
+
     margin-bottom: 25px;
 }
 
 .search {
+
     display: flex;
+
     gap: 10px;
-    margin-bottom: 25px;
+
+    margin-bottom: 20px;
 }
 
 input {
+
     flex: 1;
+
     padding: 15px;
-    border: 0;
-    border-radius: 10px;
+
+    border: none;
+
+    border-radius: 12px;
+
     background: #1f2937;
+
     color: white;
+
     font-size: 16px;
+
     outline: none;
 }
 
 button {
-    border: 0;
-    border-radius: 10px;
-    padding: 12px 18px;
+
+    border: none;
+
+    border-radius: 12px;
+
+    padding: 14px 20px;
+
     background: #6366f1;
+
     color: white;
+
+    font-size: 15px;
+
     cursor: pointer;
+
     font-weight: bold;
 }
 
 button:hover {
+
     background: #4f46e5;
 }
 
-button:disabled {
-    opacity: 0.5;
-}
-
 .result {
+
     display: flex;
-    align-items: center;
+
     gap: 15px;
+
+    align-items: center;
+
     background: #1f2937;
+
     padding: 14px;
-    margin-bottom: 10px;
-    border-radius: 12px;
+
+    margin-top: 10px;
+
+    border-radius: 14px;
 }
 
 .cover {
-    width: 75px;
-    height: 75px;
-    object-fit: cover;
+
+    width: 70px;
+
+    height: 70px;
+
     border-radius: 10px;
+
+    object-fit: cover;
+
     background: #374151;
+
+    flex-shrink: 0;
 }
 
 .info {
+
     flex: 1;
+
     min-width: 0;
 }
 
 .title {
-    font-size: 18px;
+
+    font-size: 17px;
+
     font-weight: bold;
+
+    white-space: nowrap;
+
+    overflow: hidden;
+
+    text-overflow: ellipsis;
 }
 
 .artist {
+
     color: #a78bfa;
+
     margin-top: 5px;
 }
 
 .album {
+
     color: #9ca3af;
-    margin-top: 4px;
+
+    margin-top: 3px;
+
+    font-size: 14px;
 }
 
-.duration {
+.meta {
+
     color: #6b7280;
-    margin-top: 4px;
+
     font-size: 13px;
-}
 
-.actions {
-    display: flex;
-    gap: 8px;
-}
-
-.preview {
-    background: #374151;
+    margin-top: 4px;
 }
 
 .download {
+
     background: #10b981;
+
+    white-space: nowrap;
 }
 
 .download:hover {
+
     background: #059669;
 }
 
-audio {
-    width: 100%;
-    margin-top: 10px;
-}
-
 #status {
-    color: #9ca3af;
-    margin-bottom: 15px;
-}
 
-.empty {
-    text-align: center;
-    padding: 40px;
+    margin: 15px 0;
+
     color: #9ca3af;
 }
 
@@ -232,19 +323,15 @@ audio {
         align-items: flex-start;
     }
 
-    .result .actions {
-        flex-direction: column;
-    }
-
-    .cover {
-        width: 60px;
-        height: 60px;
+    .download {
+        padding: 10px;
     }
 }
 
 </style>
 
 </head>
+
 
 <body>
 
@@ -253,25 +340,23 @@ audio {
 <h1>🎵 Music Downloader</h1>
 
 <div class="subtitle">
-Search artists, songs and albums.
+Search music and download it to your server.
 </div>
+
 
 <div class="search">
 
 <input
     id="query"
-    placeholder="Search music..."
-    autocomplete="off"
+    placeholder="Search song, artist or album..."
 >
 
-<button
-    id="searchButton"
-    onclick="searchMusic()"
->
+<button onclick="searchMusic()">
 🔍 Search
 </button>
 
 </div>
+
 
 <div id="status"></div>
 
@@ -279,15 +364,16 @@ Search artists, songs and albums.
 
 </div>
 
+
 <script>
-
-let currentAudio = null;
-
 
 async function searchMusic() {
 
-    const input =
-        document.getElementById("query");
+    const query =
+        document
+        .getElementById("query")
+        .value
+        .trim();
 
     const status =
         document.getElementById("status");
@@ -295,18 +381,11 @@ async function searchMusic() {
     const results =
         document.getElementById("results");
 
-    const button =
-        document.getElementById("searchButton");
-
-
-    const query =
-        input.value.trim();
-
 
     if (!query) {
 
         status.textContent =
-            "Enter a song or artist.";
+            "Enter something to search.";
 
         return;
     }
@@ -316,8 +395,6 @@ async function searchMusic() {
         "🔎 Searching...";
 
     results.innerHTML = "";
-
-    button.disabled = true;
 
 
     try {
@@ -342,21 +419,11 @@ async function searchMusic() {
         }
 
 
-        if (!Array.isArray(data)) {
-
-            throw new Error(
-                "Invalid server response"
-            );
-        }
-
-
-        if (data.length === 0) {
+        if (!data.results ||
+            data.results.length === 0) {
 
             status.textContent =
-                "No music found.";
-
-            results.innerHTML =
-                '<div class="empty">🎵 No results found</div>';
+                "❌ No music found.";
 
             return;
         }
@@ -364,11 +431,11 @@ async function searchMusic() {
 
         status.textContent =
             "🎵 " +
-            data.length +
+            data.results.length +
             " results";
 
 
-        data.forEach(function(item) {
+        for (const item of data.results) {
 
             const div =
                 document.createElement("div");
@@ -377,197 +444,153 @@ async function searchMusic() {
                 "result";
 
 
-            const title =
-                escapeHtml(
-                    item.title ||
-                    "Unknown"
-                );
-
-
-            const artist =
-                escapeHtml(
-                    item.artist ||
-                    "Unknown artist"
-                );
-
-
-            const album =
-                escapeHtml(
-                    item.album ||
-                    "Album unknown"
-                );
-
-
             const cover =
-                item.cover || "";
-
-
-            const duration =
-                formatDuration(
-                    item.duration
-                );
+                item.cover ||
+                "";
 
 
             div.innerHTML = `
 
-<img
-    class="cover"
-    src="${cover}"
-    onerror="this.style.display='none'"
->
+                <img
+                    class="cover"
+                    src="${escapeHtml(cover)}"
+                    onerror="
+                        this.style.visibility='hidden'
+                    "
+                >
 
-<div class="info">
+                <div class="info">
 
-<div class="title">
-🎵 ${title}
-</div>
+                    <div class="title">
+                        ${escapeHtml(item.title)}
+                    </div>
 
-<div class="artist">
-👤 ${artist}
-</div>
+                    <div class="artist">
+                        👤 ${escapeHtml(item.artist)}
+                    </div>
 
-<div class="album">
-💿 ${album}
-</div>
+                    <div class="album">
+                        💿 ${escapeHtml(item.album)}
+                    </div>
 
-<div class="duration">
-⏱ ${duration}
-</div>
+                    <div class="meta">
+                        ⏱ ${escapeHtml(item.duration_text)}
+                        &nbsp; • &nbsp;
+                        Deezer rank:
+                        ${item.rank || "N/A"}
+                    </div>
 
-<div id="preview-${item.id}"></div>
+                </div>
 
-</div>
-
-<div class="actions">
-
-<button
-    class="preview"
-    onclick='previewTrack(${JSON.stringify(item)})'
->
-▶️ Preview
-</button>
-
-<button
-    class="download"
-    onclick='downloadTrack(${JSON.stringify(item)})'
->
-⬇️ Download
-</button>
-
-</div>
-
-`;
+                <button
+                    class="download"
+                    onclick='downloadTrack(${JSON.stringify(item)})'
+                >
+                    ⬇️ Download
+                </button>
+            `;
 
 
             results.appendChild(div);
+        }
 
-        });
+    }
 
+    catch(error) {
 
-    } catch(error) {
+        console.error(error);
 
         status.textContent =
             "❌ " +
             error.message;
-
-    } finally {
-
-        button.disabled = false;
     }
 }
 
 
-function previewTrack(item) {
+async function downloadTrack(item) {
 
-    if (!item.preview) {
-
-        alert(
-            "No preview available."
-        );
-
-        return;
-    }
+    const status =
+        document.getElementById("status");
 
 
-    if (currentAudio) {
-
-        currentAudio.pause();
-
-        currentAudio = null;
-    }
-
-
-    const container =
-        document.getElementById(
-            "preview-" + item.id
-        );
-
-
-    if (!container) {
-        return;
-    }
-
-
-    container.innerHTML = `
-
-<audio
-    controls
-    autoplay
->
-<source
-    src="${item.preview}"
-    type="audio/mpeg"
->
-</audio>
-
-`;
-
-
-    currentAudio =
-        container.querySelector("audio");
-}
-
-
-function downloadTrack(item) {
-
-    alert(
-        "Download will be connected next.\\n\\n" +
+    status.textContent =
+        "⏳ Finding and downloading: " +
         item.artist +
         " - " +
-        item.title
-    );
-}
+        item.title;
 
 
-function formatDuration(seconds) {
+    try {
 
-    if (!seconds) {
-        return "--:--";
+        const response =
+            await fetch(
+                "/api/download",
+                {
+
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            title: item.title,
+                            artist: item.artist,
+                            album: item.album
+                        })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Download failed"
+            );
+        }
+
+
+        status.textContent =
+            "✅ Downloaded: " +
+            data.filename;
+
+
+        /*
+         * Start browser download.
+         */
+
+        const link =
+            document.createElement("a");
+
+        link.href =
+            data.download_url;
+
+        link.download =
+            data.filename;
+
+        document.body.appendChild(link);
+
+        link.click();
+
+        link.remove();
+
     }
 
+    catch(error) {
 
-    seconds =
-        Number(seconds);
+        console.error(error);
 
-
-    const minutes =
-        Math.floor(
-            seconds / 60
-        );
-
-
-    const remaining =
-        Math.floor(
-            seconds % 60
-        );
-
-
-    return (
-        minutes +
-        ":" +
-        String(remaining)
-            .padStart(2, "0")
-    );
+        status.textContent =
+            "❌ " +
+            error.message;
+    }
 }
 
 
@@ -601,9 +624,14 @@ document
 </script>
 
 </body>
+
 </html>
 """
 
+
+# ---------------------------------------------------------
+# DEEZER SEARCH
+# ---------------------------------------------------------
 
 @app.get("/api/search")
 async def search(
@@ -614,135 +642,606 @@ async def search(
     )
 ):
 
-    query = q.strip()
-
-
     params = {
-        "q": query,
+        "q": q,
         "limit": 50
     }
 
 
     headers = {
+
         "User-Agent":
-            "MusicDownloader/1.0"
+            "MusicDownloader/1.0",
+
+        "Accept":
+            "application/json"
     }
 
 
-    async with httpx.AsyncClient(
-        timeout=30
-    ) as client:
+    try:
 
-        response = await client.get(
-            DEEZER_SEARCH_URL,
-            params=params,
-            headers=headers
+        async with httpx.AsyncClient(
+            timeout=20,
+            follow_redirects=True
+        ) as client:
+
+            response =
+                await client.get(
+                    DEEZER_SEARCH_URL,
+                    params=params,
+                    headers=headers
+                )
+
+
+            response.raise_for_status()
+
+
+            content_type =
+                response.headers.get(
+                    "content-type",
+                    ""
+                ).lower()
+
+
+            if "json" not in content_type:
+
+                raise HTTPException(
+                    status_code=502,
+                    detail=
+                    "Deezer returned a non-JSON response."
+                )
+
+
+            data =
+                response.json()
+
+
+    except httpx.HTTPError as error:
+
+        raise HTTPException(
+            status_code=502,
+            detail=
+            f"Deezer request failed: {error}"
         )
 
-        response.raise_for_status()
 
-        data = response.json()
+    except ValueError:
+
+        raise HTTPException(
+            status_code=502,
+            detail=
+            "Deezer returned invalid JSON."
+        )
+
+
+    tracks =
+        data.get("data", [])
 
 
     results = []
 
 
-    for track in data.get("data", []):
+    seen = set()
 
-        artist_data = track.get(
-            "artist",
-            {}
+
+    for track in tracks:
+
+        item =
+            normalize_result(track)
+
+
+        # Remove duplicate tracks.
+
+        unique_key = (
+            item["id"],
+            item["artist"],
+            item["title"]
         )
 
 
-        album_data = track.get(
-            "album",
-            {}
-        )
+        if unique_key in seen:
+            continue
 
 
-        item = {
-
-            "id": track.get("id"),
-
-            "title": clean(
-                track.get("title")
-            ),
-
-            "artist": clean(
-                artist_data.get("name")
-            ),
-
-            "album": clean(
-                album_data.get("title")
-            ),
-
-            "duration": track.get(
-                "duration",
-                0
-            ),
-
-            "rank": track.get(
-                "rank",
-                0
-            ),
-
-            "preview": track.get(
-                "preview"
-            ),
-
-            "cover": album_data.get(
-                "cover_medium"
-            ),
-
-            "deezer_url": track.get(
-                "link"
-            )
-        }
+        seen.add(unique_key)
 
 
         results.append(item)
 
 
-    results.sort(
-        key=lambda item:
-            score_result(
-                item,
-                query
+    return {
+
+        "query": q,
+
+        "total":
+            data.get(
+                "total",
+                len(results)
             ),
-        reverse=True
-    )
+
+        "results":
+            results
+
+    }
 
 
-    # Remove duplicates
-    unique = []
+# ---------------------------------------------------------
+# YOUTUBE SEARCH
+# ---------------------------------------------------------
 
-    seen = set()
+def youtube_search(query: str):
+
+    """
+    Search YouTube using yt-dlp.
+
+    This does NOT download the video.
+    It only finds candidate videos.
+    """
+
+    options = {
+
+        "quiet": True,
+
+        "no_warnings": True,
+
+        "skip_download": True,
+
+        "extract_flat": True,
+
+        "noplaylist": True,
+
+        "default_search":
+            "ytsearch5",
+
+    }
 
 
-    for item in results:
+    with yt_dlp.YoutubeDL(options) as ydl:
 
-        key = (
-            normalize(item["title"]),
-            normalize(item["artist"])
+        info =
+            ydl.extract_info(
+                f"ytsearch5:{query}",
+                download=False
+            )
+
+
+    entries =
+        info.get("entries", [])
+
+
+    return [
+        entry
+        for entry in entries
+        if entry
+    ]
+
+
+def choose_youtube_result(
+    entries,
+    title,
+    artist
+):
+
+    """
+    Pick the most likely matching YouTube result.
+    """
+
+    target =
+        f"{artist} {title}".lower()
+
+
+    target_words =
+        set(
+            re.findall(
+                r"[a-z0-9]+",
+                target
+            )
         )
 
 
-        if key in seen:
-            continue
+    best = None
+
+    best_score = -1
 
 
-        seen.add(key)
+    for entry in entries:
 
-        unique.append(item)
+        entry_title =
+            entry.get(
+                "title",
+                ""
+            )
 
 
-    return unique[:50]
+        entry_channel =
+            entry.get(
+                "channel",
+                ""
+            )
 
+
+        text =
+            (
+                entry_title +
+                " " +
+                entry_channel
+            ).lower()
+
+
+        words =
+            set(
+                re.findall(
+                    r"[a-z0-9]+",
+                    text
+                )
+            )
+
+
+        score =
+            len(
+                target_words &
+                words
+            )
+
+
+        # Prefer exact title pieces.
+
+        if title.lower() in text:
+
+            score += 5
+
+
+        if artist.lower() in text:
+
+            score += 5
+
+
+        if score > best_score:
+
+            best_score = score
+
+            best = entry
+
+
+    return best
+
+
+# ---------------------------------------------------------
+# DOWNLOAD
+# ---------------------------------------------------------
+
+@app.post("/api/download")
+async def download(payload: dict):
+
+    title =
+        str(
+            payload.get(
+                "title",
+                ""
+            )
+        ).strip()
+
+
+    artist =
+        str(
+            payload.get(
+                "artist",
+                ""
+            )
+        ).strip()
+
+
+    album =
+        str(
+            payload.get(
+                "album",
+                ""
+            )
+        ).strip()
+
+
+    if not title or not artist:
+
+        raise HTTPException(
+            status_code=400,
+            detail=
+            "Missing title or artist."
+        )
+
+
+    search_query =
+        f"{artist} {title}"
+
+
+    try:
+
+        entries =
+            await asyncio.to_thread(
+                youtube_search,
+                search_query
+            )
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=
+            f"YouTube search failed: {error}"
+        )
+
+
+    if not entries:
+
+        raise HTTPException(
+            status_code=404,
+            detail=
+            "No matching YouTube result found."
+        )
+
+
+    selected =
+        choose_youtube_result(
+            entries,
+            title,
+            artist
+        )
+
+
+    if not selected:
+
+        raise HTTPException(
+            status_code=404,
+            detail=
+            "Could not find a matching video."
+        )
+
+
+    video_url =
+        selected.get("url")
+
+
+    if not video_url:
+
+        video_id =
+            selected.get("id")
+
+        if video_id:
+
+            video_url =
+                f"https://www.youtube.com/watch?v={video_id}"
+
+
+    if not video_url:
+
+        raise HTTPException(
+            status_code=500,
+            detail=
+            "YouTube result has no URL."
+        )
+
+
+    safe_artist =
+        clean_filename(artist)
+
+
+    safe_title =
+        clean_filename(title)
+
+
+    filename =
+        f"{safe_artist} - {safe_title}"
+
+
+    output_template =
+        str(
+            DOWNLOAD_DIR /
+            (
+                filename +
+                ".%(ext)s"
+            )
+        )
+
+
+    ydl_options = {
+
+        "format":
+            "bestaudio/best",
+
+        "outtmpl":
+            output_template,
+
+        "noplaylist":
+            True,
+
+        "quiet":
+            True,
+
+        "no_warnings":
+            True,
+
+        "postprocessors": [
+
+            {
+
+                "key":
+                    "FFmpegExtractAudio",
+
+                "preferredcodec":
+                    "mp3",
+
+                "preferredquality":
+                    "192"
+
+            }
+
+        ],
+
+        "postprocessor_args": [
+
+            "-id3v2_version",
+            "3"
+
+        ],
+
+        "writethumbnail":
+            False,
+
+        "addmetadata":
+            True,
+
+    }
+
+
+    try:
+
+        await asyncio.to_thread(
+            run_ytdlp_download,
+            video_url,
+            ydl_options
+        )
+
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=
+            f"Download failed: {error}"
+        )
+
+
+    final_file =
+        DOWNLOAD_DIR /
+        (
+            filename +
+            ".mp3"
+        )
+
+
+    if not final_file.exists():
+
+        # Sometimes yt-dlp sanitizes the filename.
+        # Find the newest MP3 instead.
+
+        candidates =
+            list(
+                DOWNLOAD_DIR.glob(
+                    "*.mp3"
+                )
+            )
+
+
+        if candidates:
+
+            final_file =
+                max(
+                    candidates,
+                    key=lambda p:
+                        p.stat().st_mtime
+                )
+
+        else:
+
+            raise HTTPException(
+                status_code=500,
+                detail=
+                "Download completed but MP3 was not found."
+            )
+
+
+    return {
+
+        "success":
+            True,
+
+        "filename":
+            final_file.name,
+
+        "artist":
+            artist,
+
+        "title":
+            title,
+
+        "album":
+            album,
+
+        "youtube_url":
+            video_url,
+
+        "download_url":
+            f"/api/file/{final_file.name}"
+
+    }
+
+
+def run_ytdlp_download(
+    video_url,
+    options
+):
+
+    with yt_dlp.YoutubeDL(options) as ydl:
+
+        ydl.download(
+            [video_url]
+        )
+
+
+# ---------------------------------------------------------
+# SERVE DOWNLOADED FILE
+# ---------------------------------------------------------
+
+@app.get("/api/file/{filename}")
+async def get_file(filename: str):
+
+    safe_name =
+        os.path.basename(filename)
+
+
+    file_path =
+        DOWNLOAD_DIR /
+        safe_name
+
+
+    if not file_path.exists():
+
+        raise HTTPException(
+            status_code=404,
+            detail="File not found."
+        )
+
+
+    return FileResponse(
+
+        path=file_path,
+
+        filename=file_path.name,
+
+        media_type="audio/mpeg"
+
+    )
+
+
+# ---------------------------------------------------------
+# HEALTH
+# ---------------------------------------------------------
 
 @app.get("/health")
 async def health():
 
     return {
-        "status": "ok"
+
+        "status":
+            "ok",
+
+        "deezer":
+            True,
+
+        "yt_dlp":
+            True,
+
+        "download_directory":
+            str(DOWNLOAD_DIR)
+
     }
