@@ -1,9 +1,8 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 import httpx
-import re
 
-app = FastAPI(title="Music Downloader")
+app = FastAPI()
 
 MUSICBRAINZ_URL = "https://musicbrainz.org/ws/2/recording"
 
@@ -16,77 +15,46 @@ async def home():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>Music Downloader</title>
 
     <style>
-        * {
-            box-sizing: border-box;
-        }
-
         body {
             margin: 0;
-            padding: 25px;
-            font-family: Arial, sans-serif;
+            padding: 30px;
             background: #111827;
             color: white;
+            font-family: Arial, sans-serif;
         }
 
         .container {
-            max-width: 1000px;
+            max-width: 900px;
             margin: auto;
         }
 
-        h1 {
-            margin-bottom: 5px;
-        }
-
-        .subtitle {
-            color: #9ca3af;
-            margin-bottom: 25px;
-        }
-
-        .search {
-            display: flex;
-            gap: 10px;
-        }
-
         input {
-            flex: 1;
-            padding: 15px;
-            border: none;
+            width: 70%;
+            padding: 14px;
+            border: 0;
             border-radius: 10px;
             font-size: 16px;
         }
 
         button {
-            padding: 15px 22px;
-            border: none;
+            padding: 14px 20px;
+            border: 0;
             border-radius: 10px;
             background: #6366f1;
             color: white;
-            font-size: 16px;
             cursor: pointer;
-        }
-
-        button:hover {
-            background: #4f46e5;
-        }
-
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        #status {
-            margin-top: 20px;
-            color: #9ca3af;
+            font-size: 16px;
         }
 
         .result {
             background: #1f2937;
-            border-radius: 14px;
             padding: 18px;
-            margin-top: 12px;
+            margin-top: 15px;
+            border-radius: 12px;
         }
 
         .title {
@@ -95,42 +63,18 @@ async def home():
         }
 
         .artist {
-            margin-top: 7px;
-            color: #c4b5fd;
+            color: #a78bfa;
+            margin-top: 6px;
         }
 
         .album {
-            margin-top: 5px;
             color: #9ca3af;
+            margin-top: 6px;
         }
 
-        .year {
-            margin-top: 5px;
-            color: #6b7280;
-        }
-
-        .mbid {
-            margin-top: 8px;
-            color: #4b5563;
-            font-size: 12px;
-        }
-
-        .download {
-            margin-top: 15px;
-            background: #10b981;
-        }
-
-        .download:hover {
-            background: #059669;
-        }
-
-        .notice {
+        #status {
             margin-top: 20px;
-            padding: 15px;
-            border-radius: 10px;
-            background: #1e293b;
-            color: #94a3b8;
-            font-size: 14px;
+            color: #9ca3af;
         }
     </style>
 </head>
@@ -141,38 +85,24 @@ async def home():
 
     <h1>🎵 Music Downloader</h1>
 
-    <div class="subtitle">
-        Search artists, songs and albums.
-    </div>
+    <p>Search artists, songs and albums.</p>
 
-    <div class="search">
-
+    <div>
         <input
             id="query"
-            type="text"
-            placeholder="Search song or artist..."
+            placeholder="Search music..."
         >
 
-        <button
-            id="searchButton"
-            onclick="searchMusic()"
-        >
+        <button onclick="searchMusic()">
             🔍 Search
         </button>
-
     </div>
 
     <div id="status"></div>
 
     <div id="results"></div>
 
-    <div class="notice">
-        Music metadata is provided by MusicBrainz.
-        Download functionality will be connected separately.
-    </div>
-
 </div>
-
 
 <script>
 
@@ -187,24 +117,16 @@ async function searchMusic() {
     const results =
         document.getElementById("results");
 
-    const button =
-        document.getElementById("searchButton");
-
-
     if (!query) {
         status.textContent =
-            "Enter an artist or song.";
+            "Enter a song or artist.";
         return;
     }
-
-
-    button.disabled = true;
 
     status.textContent =
         "🔎 Searching...";
 
     results.innerHTML = "";
-
 
     try {
 
@@ -213,147 +135,66 @@ async function searchMusic() {
             encodeURIComponent(query)
         );
 
-
-        const text =
-            await response.text();
-
+        const data = await response.json();
 
         if (!response.ok) {
-
             throw new Error(
-                response.status +
-                ": " +
-                text
+                data.detail || "Search failed"
             );
         }
-
-
-        const data =
-            JSON.parse(text);
-
-
-        if (!Array.isArray(data)) {
-
-            throw new Error(
-                "Invalid response from server."
-            );
-        }
-
 
         if (data.length === 0) {
 
             status.textContent =
-                "No music found.";
+                "No results found.";
 
             return;
         }
 
-
         status.textContent =
-            "🎵 " +
-            data.length +
-            " results";
+            "🎵 " + data.length + " results";
 
+        for (const item of data) {
 
-        data.forEach(item => {
-
-            const card =
+            const div =
                 document.createElement("div");
 
-            card.className =
-                "result";
+            div.className = "result";
 
+            div.innerHTML = `
+                <div class="title">
+                    🎵 ${escapeHtml(item.title)}
+                </div>
 
-            const title =
-                document.createElement("div");
+                <div class="artist">
+                    👤 ${escapeHtml(item.artist)}
+                </div>
 
-            title.className =
-                "title";
+                <div class="album">
+                    💿 ${escapeHtml(item.album)}
+                </div>
+            `;
 
-            title.textContent =
-                "🎵 " + item.title;
-
-
-            const artist =
-                document.createElement("div");
-
-            artist.className =
-                "artist";
-
-            artist.textContent =
-                item.artist;
-
-
-            const album =
-                document.createElement("div");
-
-            album.className =
-                "album";
-
-            album.textContent =
-                item.album
-                ? "💿 " + item.album
-                : "Album unknown";
-
-
-            const year =
-                document.createElement("div");
-
-            year.className =
-                "year";
-
-            year.textContent =
-                item.year
-                ? "📅 " + item.year
-                : "";
-
-
-            const download =
-                document.createElement("button");
-
-            download.className =
-                "download";
-
-            download.textContent =
-                "⬇️ Download";
-
-
-            download.onclick =
-                function() {
-
-                    alert(
-                        "Download functionality will be added next."
-                    );
-
-                };
-
-
-            card.appendChild(title);
-            card.appendChild(artist);
-            card.appendChild(album);
-            card.appendChild(year);
-            card.appendChild(download);
-
-
-            results.appendChild(card);
-
-        });
-
+            results.appendChild(div);
+        }
 
     } catch (error) {
 
-        console.error(error);
-
         status.textContent =
-            "❌ Error: " +
-            error.message;
-
-    } finally {
-
-        button.disabled = false;
-
+            "❌ " + error.message;
     }
+}
 
+
+function escapeHtml(text) {
+
+    const div =
+        document.createElement("div");
+
+    div.textContent =
+        text || "";
+
+    return div.innerHTML;
 }
 
 
@@ -378,34 +219,21 @@ document
 
 
 @app.get("/api/search")
-async def search_music(
-    q: str = Query(..., min_length=1)
-):
-
-    query = re.sub(
-        r"\s+",
-        " ",
-        q.strip()
-    )
-
+async def search(q: str = Query(..., min_length=1)):
 
     params = {
-        "query": f'recording:"{query}"',
+        "query": q,
         "fmt": "json",
-        "limit": 25,
-        "offset": 0
+        "limit": 25
     }
-
 
     headers = {
         "User-Agent":
-            "HomeAssistant-Music-Downloader/0.1"
+            "MusicDownloader/0.1"
     }
 
-
     async with httpx.AsyncClient(
-        timeout=30,
-        follow_redirects=True
+        timeout=30
     ) as client:
 
         response = await client.get(
@@ -418,23 +246,12 @@ async def search_music(
 
         data = response.json()
 
-
-    recordings = data.get(
-        "recordings",
-        []
-    )
-
-
     results = []
 
-
-    for recording in recordings:
-
-        title = recording.get(
-            "title",
-            "Unknown"
-        )
-
+    for recording in data.get(
+        "recordings",
+        []
+    ):
 
         artists = []
 
@@ -446,70 +263,48 @@ async def search_music(
             if isinstance(credit, dict):
 
                 artist = credit.get(
-                    "artist",
-                    {}
+                    "artist"
                 )
 
-                name = artist.get(
-                    "name"
-                )
+                if artist:
 
-                if name:
-                    artists.append(name)
+                    name = artist.get(
+                        "name"
+                    )
 
-
-        artist_name = (
-            ", ".join(artists)
-            if artists
-            else "Unknown artist"
-        )
-
+                    if name:
+                        artists.append(name)
 
         releases = recording.get(
             "release-list",
             []
         )
 
-
         album = ""
-        year = ""
-
 
         if releases:
-
-            first_release = releases[0]
-
-            album = first_release.get(
+            album = releases[0].get(
                 "title",
                 ""
             )
 
-            date = first_release.get(
-                "date",
-                ""
-            )
-
-            if date:
-                year = date[:4]
-
-
         results.append({
-            "title": title,
-            "artist": artist_name,
-            "album": album,
-            "year": year,
-            "mbid": recording.get(
-                "id",
-                ""
-            )
-        })
+            "title": recording.get(
+                "title",
+                "Unknown"
+            ),
 
+            "artist": ", ".join(artists),
+
+            "album": album
+        })
 
     return results
 
 
 @app.get("/health")
 async def health():
+
     return {
         "status": "ok"
     }
