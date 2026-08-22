@@ -9,7 +9,7 @@ import time
 import uuid
 from pathlib import Path
 
-app = FastAPI(title="Navidrome Music Downloader")
+app = FastAPI(title="Xrob Music")
 
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome/music"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
