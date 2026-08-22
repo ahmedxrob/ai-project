@@ -508,6 +508,9 @@ input:checked + .slider:before { transform: translateX(22px); }
 
     <!-- TAB 2: LIBRARY -->
     <div id="tab-library" class="tab-content">
+        <div class="search-card" style="margin-bottom: 16px;">
+            <input id="libSearchQuery" placeholder="🔍 Filter local library tracks..." autocomplete="off" oninput="filterLibrary()" />
+        </div>
         <div class="library-header-bar">
             <span>📁 Total Tracks: <strong id="libCountDetail">0</strong></span>
             <span>💾 Folder Size: <strong id="libFolderSize">0 MB</strong></span>
@@ -548,6 +551,7 @@ input:checked + .slider:before { transform: translateX(22px); }
 let pollTimer = null;
 let completedSet = new Set();
 let libraryFilesSet = new Set();
+let rawLibraryFiles = [];
 let activeAudio = null;
 let activePreviewBtn = null;
 
@@ -610,12 +614,13 @@ async function refreshLibraryCache() {
         const res = await fetch('api/library');
         const data = await res.json();
         libraryFilesSet.clear();
-        data.files.forEach(f => {
+        rawLibraryFiles = data.files || [];
+        rawLibraryFiles.forEach(f => {
             const baseName = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
             libraryFilesSet.add(baseName.toLowerCase());
         });
-        document.getElementById('libCount').textContent = data.files.length;
-        if (document.getElementById('libCountDetail')) document.getElementById('libCountDetail').textContent = data.files.length;
+        document.getElementById('libCount').textContent = rawLibraryFiles.length;
+        if (document.getElementById('libCountDetail')) document.getElementById('libCountDetail').textContent = rawLibraryFiles.length;
         if (document.getElementById('libFolderSize')) document.getElementById('libFolderSize').textContent = data.total_size;
     } catch(e) {}
 }
@@ -886,56 +891,61 @@ async function loadLibrary() {
     const list = document.getElementById('libraryList');
     list.innerHTML = `<div class="status-msg">Loading library...</div>`;
     try {
-        const res = await fetch('api/library');
-        const data = await res.json();
-        const files = data.files;
-
-        document.getElementById('libCount').textContent = files.length;
-        if (document.getElementById('libCountDetail')) document.getElementById('libCountDetail').textContent = files.length;
-        if (document.getElementById('libFolderSize')) document.getElementById('libFolderSize').textContent = data.total_size;
-
-        if (files.length === 0) { list.innerHTML = `<div class="status-msg">No files downloaded yet.</div>`; return; }
-
-        list.innerHTML = "";
-        files.forEach(f => {
-            const card = document.createElement('div');
-            card.className = 'result-card';
-
-            const coverUrl = "api/library/cover/" + encodeURIComponent(f.name);
-            const streamUrl = "api/library/stream/" + encodeURIComponent(f.name);
-            const fallbackSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="110" height="65" viewBox="0 0 110 65"><rect width="100%" height="100%" fill="%231e293b"/><text x="50%" y="50%" fill="%239ca3af" font-size="20" text-anchor="middle" dominant-baseline="central">🎵</text></svg>`;
-
-            card.innerHTML = `
-                <div class="thumb-wrapper">
-                    <img src="${coverUrl}" onerror="this.onerror=null; this.src='${fallbackSvg}'" />
-                </div>
-                <div class="track-info">
-                    <div class="track-title">${escapeHtml(f.name)}</div>
-                    <div class="track-artist">📦 ${f.size}</div>
-                </div>
-                <div class="btn-group">
-                    <button class="btn-preview">▶ Play</button>
-                    <button class="btn-danger">🗑 Delete</button>
-                </div>
-            `;
-
-            const playBtn = card.querySelector('.btn-preview');
-            playBtn.onclick = () => toggleAudioStream(playBtn, streamUrl, 'library');
-
-            const delBtn = card.querySelector('.btn-danger');
-            delBtn.onclick = () => deleteFile(f.name);
-
-            list.appendChild(card);
-        });
+        await refreshLibraryCache();
+        filterLibrary();
     } catch(e) { list.innerHTML = `<div class="status-msg">Failed to load library.</div>`; }
+}
+
+function filterLibrary() {
+    const list = document.getElementById('libraryList');
+    const q = (document.getElementById('libSearchQuery').value || "").toLowerCase().trim();
+
+    const filtered = rawLibraryFiles.filter(f => f.name.toLowerCase().includes(q));
+
+    if (filtered.length === 0) {
+        list.innerHTML = `<div class="status-msg">${rawLibraryFiles.length === 0 ? "No files downloaded yet." : "No matching tracks found."}</div>`;
+        return;
+    }
+
+    list.innerHTML = "";
+    filtered.forEach(f => {
+        const card = document.createElement('div');
+        card.className = 'result-card';
+
+        const coverUrl = "api/library/cover/" + encodeURIComponent(f.name);
+        const streamUrl = "api/library/stream/" + encodeURIComponent(f.name);
+        const fallbackSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="110" height="65" viewBox="0 0 110 65"><rect width="100%" height="100%" fill="%231e293b"/><text x="50%" y="50%" fill="%239ca3af" font-size="20" text-anchor="middle" dominant-baseline="central">🎵</text></svg>`;
+
+        card.innerHTML = `
+            <div class="thumb-wrapper">
+                <img src="${coverUrl}" onerror="this.onerror=null; this.src='${fallbackSvg}'" />
+            </div>
+            <div class="track-info">
+                <div class="track-title">${escapeHtml(f.name)}</div>
+                <div class="track-artist">📦 ${f.size}</div>
+            </div>
+            <div class="btn-group">
+                <button class="btn-preview">▶ Play</button>
+                <button class="btn-danger">🗑 Delete</button>
+            </div>
+        `;
+
+        const playBtn = card.querySelector('.btn-preview');
+        playBtn.onclick = () => toggleAudioStream(playBtn, streamUrl, 'library');
+
+        const delBtn = card.querySelector('.btn-danger');
+        delBtn.onclick = () => deleteFile(f.name);
+
+        list.appendChild(card);
+    });
 }
 
 async function deleteFile(filename) {
     if (!confirm("Delete " + filename + "?")) return;
     try {
         await fetch('api/library/' + encodeURIComponent(filename), { method: 'DELETE' });
-        refreshLibraryCache();
-        loadLibrary();
+        await refreshLibraryCache();
+        filterLibrary();
     } catch(e) { alert("Failed to delete file."); }
 }
 
