@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 import asyncio
 import json
 import os
@@ -9,7 +9,6 @@ from pathlib import Path
 
 app = FastAPI(title="Music Downloader")
 
-# Save to the Home Assistant share folder
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome_music"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -24,11 +23,7 @@ def clean_filename(value: str) -> str:
     value = value or "Unknown"
     value = re.sub(r'[\\/:*?"<>|]', "", value)
     value = re.sub(r"\s+", " ", value).strip()
-
-    if not value:
-        value = "Unknown"
-
-    return value[:180]
+    return (value[:180]) if value else "Unknown"
 
 
 def format_duration(seconds):
@@ -108,190 +103,447 @@ async def youtube_search(query: str):
 async def home():
     return """
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Music Downloader</title>
+<title>Navidrome Music Downloader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-* { box-sizing: border-box; }
-body { margin: 0; padding: 30px; background: linear-gradient(135deg, #111827, #0f172a); color: white; font-family: Arial, Helvetica, sans-serif; }
-.container { max-width: 1100px; margin: 0 auto; }
-h1 { margin-bottom: 5px; }
-.subtitle { color: #9ca3af; margin-bottom: 25px; }
-.search-box { display: flex; gap: 10px; margin-bottom: 20px; }
-input { flex: 1; padding: 15px; border: none; border-radius: 12px; background: #1f2937; color: white; font-size: 16px; outline: none; }
-button { padding: 14px 20px; border: none; border-radius: 12px; background: #6366f1; color: white; cursor: pointer; font-size: 15px; font-weight: bold; }
-button:hover { opacity: 0.9; }
-button:disabled { opacity: 0.5; cursor: wait; }
-.result { display: flex; align-items: center; gap: 15px; background: #1f2937; padding: 12px; margin-top: 10px; border-radius: 14px; }
-.cover { width: 110px; height: 70px; border-radius: 10px; object-fit: cover; background: #374151; flex-shrink: 0; }
-.info { flex: 1; min-width: 0; }
-.title { font-size: 17px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.artist { color: #a78bfa; margin-top: 5px; }
-.duration { color: #9ca3af; margin-top: 4px; font-size: 14px; }
-.actions { display: flex; gap: 8px; align-items: center; }
-.open { background: #374151; }
-.download { background: #10b981; }
-#status { color: #9ca3af; margin-bottom: 15px; }
-.progress { width: 100%; height: 6px; background: #374151; border-radius: 10px; overflow: hidden; margin-top: 10px; display: none; }
-.progress-bar { height: 100%; width: 0%; background: #10b981; transition: width 0.2s; }
-@media(max-width: 700px) {
-    body { padding: 15px; }
-    .result { align-items: flex-start; flex-wrap: wrap; }
-    .cover { width: 80px; height: 60px; }
-    .actions { width: 100%; justify-content: flex-end; }
+:root {
+    --bg-main: #0b0f19;
+    --card-bg: rgba(22, 30, 46, 0.75);
+    --card-border: rgba(255, 255, 255, 0.08);
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --accent-glow: rgba(99, 102, 241, 0.35);
+    --success: #10b981;
+    --text-primary: #f3f4f6;
+    --text-secondary: #9ca3af;
+    --input-bg: rgba(15, 23, 42, 0.8);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+
+body {
+    background: radial-gradient(circle at top, #1e1b4b 0%, #0b0f19 50%, #05070c 100%);
+    background-attachment: fixed;
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 40px 20px;
+}
+
+.container { max-width: 960px; margin: 0 auto; }
+
+header {
+    text-align: center;
+    margin-bottom: 35px;
+}
+
+header h1 {
+    font-size: 2.4rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+}
+
+header p {
+    color: var(--text-secondary);
+    font-size: 0.98rem;
+}
+
+.search-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--card-border);
+    padding: 12px;
+    border-radius: 20px;
+    display: flex;
+    gap: 10px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    margin-bottom: 30px;
+}
+
+.search-card input {
+    flex: 1;
+    background: var(--input-bg);
+    border: 1px solid var(--card-border);
+    padding: 16px 20px;
+    border-radius: 14px;
+    color: #fff;
+    font-size: 1rem;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.search-card input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.search-card button {
+    background: linear-gradient(135deg, var(--accent) 0%, #4338ca 100%);
+    color: #fff;
+    border: none;
+    padding: 0 28px;
+    border-radius: 14px;
+    font-weight: 600;
+    font-size: 0.98rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 15px var(--accent-glow);
+}
+
+.search-card button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px var(--accent-glow);
+}
+
+.search-card button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.progress-panel {
+    background: var(--card-bg);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 25px;
+    display: none;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.progress-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.progress-percent {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.progress-track {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent) 0%, #a855f7 100%);
+    border-radius: 10px;
+    transition: width 0.3s ease;
+}
+
+.progress-details {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.results-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.result-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    transition: all 0.25s ease;
+}
+
+.result-card:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+}
+
+.thumb-wrapper {
+    position: relative;
+    width: 120px;
+    height: 72px;
+    border-radius: 10px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: #1e293b;
+}
+
+.thumb-wrapper img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.badge-duration {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.track-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.track-title {
+    font-size: 1.02rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+
+.track-artist {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-group {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-secondary {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--card-border);
+    color: var(--text-primary);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
+.btn-secondary:hover { background: rgba(255, 255, 255, 0.12); }
+
+.btn-download {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #fff;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-download:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
+}
+
+.status-msg {
+    text-align: center;
+    color: var(--text-secondary);
+    margin: 20px 0;
+    font-size: 0.95rem;
+}
+
+@media(max-width: 640px) {
+    .result-card { flex-direction: column; align-items: flex-start; }
+    .thumb-wrapper { width: 100%; height: 160px; }
+    .btn-group { width: 100%; justify-content: flex-end; margin-top: 8px; }
 }
 </style>
 </head>
 <body>
 <div class="container">
-<h1>🎵 Music Downloader</h1>
-<div class="subtitle">Search YouTube music and download directly to Navidrome folder.</div>
-<div class="search-box">
-<input id="query" placeholder="Search song or artist..." autocomplete="off" />
-<button id="searchButton" type="button">🔍 Search</button>
-</div>
-<div id="status"></div>
-<div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
-<div id="results"></div>
+    <header>
+        <h1>🎵 Navidrome Downloader</h1>
+        <p>Search music, embed cover art & tags, and save directly to your server</p>
+    </header>
+
+    <div class="search-card">
+        <input id="query" placeholder="Search track, artist, or album..." autocomplete="off" />
+        <button id="searchBtn" type="button">Search</button>
+    </div>
+
+    <div class="progress-panel" id="progressPanel">
+        <div class="progress-header">
+            <span class="progress-title" id="progressTitle">Downloading...</span>
+            <span class="progress-percent" id="progressPercent">0%</span>
+        </div>
+        <div class="progress-track">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-details">
+            <span id="progressStatus">Initializing download...</span>
+            <span id="progressSpeed">-- MB/s</span>
+        </div>
+    </div>
+
+    <div id="statusMsg" class="status-msg"></div>
+    <div id="results" class="results-grid"></div>
 </div>
 
 <script>
+let currentEventSource = null;
+
 async function searchMusic() {
-    const input = document.getElementById("query");
-    const status = document.getElementById("status");
+    const query = document.getElementById("query").value.trim();
+    const statusMsg = document.getElementById("statusMsg");
     const results = document.getElementById("results");
-    const searchButton = document.getElementById("searchButton");
-    const query = input.value.trim();
+    const searchBtn = document.getElementById("searchBtn");
 
-    if (!query) {
-        status.textContent = "Enter a song or artist.";
-        return;
-    }
+    if (!query) return;
 
-    status.textContent = "🔎 Searching YouTube...";
+    statusMsg.textContent = "🔍 Searching YouTube...";
     results.innerHTML = "";
-    searchButton.disabled = true;
+    searchBtn.disabled = true;
 
     try {
-        const apiUrl = "api/search?q=" + encodeURIComponent(query);
-        const response = await fetch(apiUrl, {
-            method: "GET",
-            headers: { "Accept": "application/json" }
-        });
-
-        const text = await response.text();
-        if (!response.ok) throw new Error("Server error: " + text.substring(0, 300));
+        const response = await fetch("api/search?q=" + encodeURIComponent(query));
+        if (!response.ok) throw new Error("Search failed");
         
-        const data = JSON.parse(text);
-        if (!Array.isArray(data)) throw new Error("Invalid search response.");
+        const data = await response.json();
         if (data.length === 0) {
-            status.textContent = "No results found.";
+            statusMsg.textContent = "No results found.";
             return;
         }
 
-        status.textContent = "🎵 " + data.length + " results";
+        statusMsg.textContent = "";
 
         data.forEach(item => {
-            const div = document.createElement("div");
-            div.className = "result";
+            const card = document.createElement("div");
+            card.className = "result-card";
 
-            const image = document.createElement("img");
-            image.className = "cover";
-            image.src = item.thumbnail || "";
-            image.onerror = function() { this.src = "https://via.placeholder.com/110x70?text=Music"; };
-
-            const info = document.createElement("div");
-            info.className = "info";
-            
-            const title = document.createElement("div");
-            title.className = "title";
-            title.textContent = item.title || "Unknown";
-
-            const artist = document.createElement("div");
-            artist.className = "artist";
-            artist.textContent = "👤 " + (item.channel || "Unknown Artist");
-
-            const duration = document.createElement("div");
-            duration.className = "duration";
-            duration.textContent = "⏱ " + (item.duration_text || "0:00");
-
-            info.appendChild(title);
-            info.appendChild(artist);
-            info.appendChild(duration);
-
-            const actions = document.createElement("div");
-            actions.className = "actions";
-
-            const youtubeButton = document.createElement("button");
-            youtubeButton.className = "open";
-            youtubeButton.textContent = "▶ YouTube";
-            youtubeButton.onclick = function() { window.open(item.url, "_blank"); };
-
-            const downloadButton = document.createElement("button");
-            downloadButton.className = "download";
-            downloadButton.textContent = "⬇ Download to Server";
-            downloadButton.onclick = function() { downloadMusic(item.url, item.title); };
-
-            actions.appendChild(youtubeButton);
-            actions.appendChild(downloadButton);
-            div.appendChild(image);
-            div.appendChild(info);
-            div.appendChild(actions);
-            results.appendChild(div);
+            card.innerHTML = `
+                <div class="thumb-wrapper">
+                    <img src="${item.thumbnail}" onerror="this.src='https://via.placeholder.com/120x72?text=Music'" />
+                    <span class="badge-duration">${item.duration_text}</span>
+                </div>
+                <div class="track-info">
+                    <div class="track-title">${escapeHtml(item.title)}</div>
+                    <div class="track-artist">👤 ${escapeHtml(item.channel)}</div>
+                </div>
+                <div class="btn-group">
+                    <a class="btn-secondary" href="${item.url}" target="_blank">Preview</a>
+                    <button class="btn-download" onclick="startDownload('${item.url}', '${escapeJs(item.title)}')">
+                        ⬇️ Save
+                    </button>
+                </div>
+            `;
+            results.appendChild(card);
         });
-    } catch (error) {
-        console.error(error);
-        status.textContent = "❌ " + error.message;
+    } catch (err) {
+        statusMsg.textContent = "❌ " + err.message;
     } finally {
-        searchButton.disabled = false;
+        searchBtn.disabled = false;
     }
 }
 
-async function downloadMusic(url, title) {
-    const status = document.getElementById("status");
-    const progress = document.getElementById("progress");
-    const progressBar = document.getElementById("progressBar");
+function startDownload(url, title) {
+    if (currentEventSource) {
+        currentEventSource.close();
+    }
 
-    status.textContent = "⬇️ Downloading to Home Assistant...";
-    progress.style.display = "block";
-    progressBar.style.width = "10%";
+    const panel = document.getElementById("progressPanel");
+    const pTitle = document.getElementById("progressTitle");
+    const pPercent = document.getElementById("progressPercent");
+    const pFill = document.getElementById("progressFill");
+    const pStatus = document.getElementById("progressStatus");
+    const pSpeed = document.getElementById("progressSpeed");
 
-    try {
-        // We now send the title back to the API so it knows what to name the file!
-        const apiUrl = "api/download?url=" + encodeURIComponent(url) + "&title=" + encodeURIComponent(title);
-        
-        const response = await fetch(apiUrl);
-        progressBar.style.width = "70%";
+    panel.style.display = "block";
+    pTitle.textContent = "Downloading: " + title;
+    pPercent.textContent = "0%";
+    pFill.style.width = "0%";
+    pStatus.textContent = "Connecting...";
+    pSpeed.textContent = "";
 
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error("Download failed: " + text.substring(0, 500));
+    const apiUrl = "api/download-stream?url=" + encodeURIComponent(url) + "&title=" + encodeURIComponent(title);
+    currentEventSource = new EventSource(apiUrl);
+
+    currentEventSource.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+
+        if (data.type === "progress") {
+            pPercent.textContent = data.percent + "%";
+            pFill.style.width = data.percent + "%";
+            pSpeed.textContent = data.speed || "";
+            pStatus.textContent = "Downloading audio stream...";
+        } else if (data.type === "status") {
+            pStatus.textContent = data.message;
+            if (data.message.includes("Embedding")) {
+                pPercent.textContent = "95%";
+                pFill.style.width = "95%";
+            }
+        } else if (data.type === "complete") {
+            pPercent.textContent = "100%";
+            pFill.style.width = "100%";
+            pStatus.textContent = "✅ Saved: " + data.file;
+            pSpeed.textContent = "";
+            currentEventSource.close();
+        } else if (data.type === "error") {
+            pStatus.textContent = "❌ Error: " + data.message;
+            currentEventSource.close();
         }
+    };
 
-        const data = await response.json();
-        progressBar.style.width = "100%";
-
-        status.textContent = "✅ Saved to Navidrome folder: " + data.file;
-
-        setTimeout(() => {
-            progress.style.display = "none";
-            progressBar.style.width = "0%";
-        }, 5000);
-
-    } catch (error) {
-        console.error(error);
-        progress.style.display = "none";
-        progressBar.style.width = "0%";
-        status.textContent = "❌ " + error.message;
-    }
+    currentEventSource.onerror = function() {
+        pStatus.textContent = "❌ Download connection failed.";
+        currentEventSource.close();
+    };
 }
 
-document.getElementById("searchButton").addEventListener("click", searchMusic);
-document.getElementById("query").addEventListener("keydown", function(event) {
-    if (event.key === "Enter") searchMusic();
-});
+function escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function escapeJs(text) {
+    return text.replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+document.getElementById("searchBtn").addEventListener("click", searchMusic);
+document.getElementById("query").addEventListener("keydown", e => { if (e.key === "Enter") searchMusic(); });
 </script>
 </body>
 </html>
@@ -312,79 +564,94 @@ async def search(q: str = Query(..., min_length=1)):
 
 
 # ============================================================
-# DOWNLOAD API
+# REAL-TIME STREAMING DOWNLOAD API
 # ============================================================
 
-@app.get("/api/download")
-async def download_audio(
+@app.get("/api/download-stream")
+async def download_stream(
     url: str = Query(..., min_length=1),
-    title: str = Query("Unknown", min_length=1)  # Receive the title here
+    title: str = Query("Unknown", min_length=1)
 ):
     if not (url.startswith("https://www.youtube.com/") or url.startswith("https://youtube.com/") or url.startswith("https://youtu.be/")):
         raise HTTPException(status_code=400, detail="Invalid YouTube URL.")
 
-    # We download as a UUID first to prevent errors if you download two songs at once
-    job_id = uuid.uuid4().hex
-    output_template = str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")
+    async def event_generator():
+        job_id = uuid.uuid4().hex
+        output_template = str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")
 
-    command = [
-        "yt-dlp",
-        "--no-playlist",
-        "-x",
-        "--audio-format", "mp3",
-        "--audio-quality", "192K",
-        "--no-progress",
-        "--newline",
-        "-o", output_template,
-        url,
-    ]
+        command = [
+            "yt-dlp",
+            "--no-playlist",
+            "-x",
+            "--audio-format", "mp3",
+            "--audio-quality", "192K",
+            "--embed-thumbnail",
+            "--add-metadata",
+            "--newline",
+            "-o", output_template,
+            url,
+        ]
 
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
 
-        stdout, stderr = await process.communicate()
+            progress_regex = re.compile(r"\[download\]\s+(\d+\.\d+)%\s+of\s+\S+\s+at\s+(\S+)")
 
-        if process.returncode != 0:
-            error_text = stderr.decode("utf-8", errors="ignore")
-            raise HTTPException(status_code=500, detail="Download failed: " + error_text[-2000:])
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                line_str = line.decode("utf-8", errors="ignore").strip()
 
-        possible_files = list(DOWNLOAD_DIR.glob(f"{job_id}.*"))
+                match = progress_regex.search(line_str)
+                if match:
+                    percent = float(match.group(1))
+                    speed = match.group(2)
+                    data = json.dumps({"type": "progress", "percent": percent, "speed": speed})
+                    yield f"data: {data}\n\n"
+                elif "[ExtractAudio]" in line_str or "[EmbedThumbnail]" in line_str or "[Metadata]" in line_str:
+                    data = json.dumps({"type": "status", "message": "Embedding cover art & ID3 metadata tags..."})
+                    yield f"data: {data}\n\n"
 
-        if not possible_files:
-            raise HTTPException(status_code=500, detail="Download completed but no audio file was found.")
+            await process.wait()
 
-        audio_file = possible_files[0]
-        ext = audio_file.suffix  # gets '.mp3'
-        
-        # Clean the title we received from the frontend
-        clean_title = clean_filename(title)
-        final_name = f"{clean_title}{ext}"
-        final_path = DOWNLOAD_DIR / final_name
-        
-        # If a song with this exact name already exists, append a short hash to prevent overwriting
-        if final_path.exists():
-            final_name = f"{clean_title}_{job_id[:4]}{ext}"
+            if process.returncode != 0:
+                stderr_data = await process.stderr.read()
+                err_text = stderr_data.decode("utf-8", errors="ignore")
+                data = json.dumps({"type": "error", "message": err_text[-300:]})
+                yield f"data: {data}\n\n"
+                return
+
+            possible_files = list(DOWNLOAD_DIR.glob(f"{job_id}.*"))
+            if not possible_files:
+                data = json.dumps({"type": "error", "message": "Downloaded file not found."})
+                yield f"data: {data}\n\n"
+                return
+
+            audio_file = possible_files[0]
+            ext = audio_file.suffix
+            clean_title = clean_filename(title)
+            final_name = f"{clean_title}{ext}"
             final_path = DOWNLOAD_DIR / final_name
 
-        # Rename it from the UUID to the actual Song Title
-        audio_file.rename(final_path)
+            if final_path.exists():
+                final_name = f"{clean_title}_{job_id[:4]}{ext}"
+                final_path = DOWNLOAD_DIR / final_name
 
-        return {
-            "status": "success",
-            "message": "Saved to server",
-            "file": final_name
-        }
+            audio_file.rename(final_path)
 
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="yt-dlp is not installed.")
-    except HTTPException:
-        raise
-    except Exception as error:
-        raise HTTPException(status_code=500, detail="Download error: " + str(error))
+            data = json.dumps({"type": "complete", "file": final_name})
+            yield f"data: {data}\n\n"
+
+        except Exception as err:
+            data = json.dumps({"type": "error", "message": str(err)})
+            yield f"data: {data}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # ============================================================
@@ -393,7 +660,4 @@ async def download_audio(
 
 @app.get("/health")
 async def health():
-    return {
-        "status": "ok",
-        "service": "music-downloader",
-    }
+    return {"status": "ok", "service": "music-downloader"}
