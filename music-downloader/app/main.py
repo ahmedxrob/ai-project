@@ -15,6 +15,7 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 AUDIO_EXTENSIONS = {'.mp3', '.flac', '.m4a', '.ogg', '.wav', '.opus', '.aac', '.alac'}
+MAX_CONCURRENT_DOWNLOADS = 3  # Enables parallel multi-downloads
 
 DEFAULT_SETTINGS = {
     "audio_format": "mp3",
@@ -81,7 +82,7 @@ def format_size(size_bytes):
 
 
 # ============================================================
-# BACKGROUND WORKER
+# BACKGROUND WORKER (MULTI-DOWNLOAD WORKER POOL)
 # ============================================================
 
 async def download_worker():
@@ -235,23 +236,31 @@ async def download_worker():
                 TASKS.pop(task_id, None)
             asyncio.create_task(clear_task())
 
+
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(download_worker())
+    # Spawns multiple worker instances for parallel downloads
+    for _ in range(MAX_CONCURRENT_DOWNLOADS):
+        asyncio.create_task(download_worker())
 
 
 # ============================================================
-# YOUTUBE SEARCH
+# YOUTUBE SEARCH WITH PAGINATION
 # ============================================================
 
-async def youtube_search(query: str, max_results: int):
+async def youtube_search(query: str, max_results: int, page: int = 1):
+    start_idx = (page - 1) * max_results + 1
+    end_idx = page * max_results
+
     command = [
         "yt-dlp",
         "--flat-playlist",
         "--dump-single-json",
         "--skip-download",
         "--no-warnings",
-        f"ytsearch{max_results}:{query}",
+        "--playlist-start", str(start_idx),
+        "--playlist-end", str(end_idx),
+        f"ytsearch{end_idx}:{query}",
     ]
 
     try:
@@ -505,6 +514,7 @@ input:checked + .slider:before { transform: translateX(22px); }
 
         <div id="statusMsg" class="status-msg"></div>
         <div id="results" class="results-grid"></div>
+        <div id="infiniteLoader" class="status-msg" style="display:none;">⏳ Loading more tracks...</div>
     </div>
 
     <!-- TAB 2: LIBRARY -->
@@ -532,7 +542,7 @@ input:checked + .slider:before { transform: translateX(22px); }
                 <label class="switch"><input type="checkbox" id="set_meta"><span class="slider"></span></label>
             </div>
             <div class="setting-row">
-                <div><div class="setting-label">Max Search Results</div><div class="setting-desc">Number of YouTube items returned per search</div></div>
+                <div><div class="setting-label">Max Search Results</div><div class="setting-desc">Number of YouTube items returned per search page</div></div>
                 <input type="number" id="set_max_results" min="5" max="50" value="20" style="width:70px;">
             </div>
             <button class="save-btn" onclick="saveSettings()">Save Settings</button>
@@ -547,6 +557,12 @@ let completedSet = new Set();
 let libraryFilesSet = new Set();
 let activeAudio = null;
 let activePreviewBtn = null;
+
+// Infinite scroll state variables
+let currentPage = 1;
+let currentQuery = "";
+let isLoadingMore = false;
+let hasMoreResults = true;
 
 function escapeHtml(t) { return (t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function escapeJs(t) { return (t || "").replace(/'/g, "\\'").replace(/"/g, '\\"'); }
@@ -638,6 +654,29 @@ function togglePreview(btn, url) {
     audio.onended = () => { stopCurrentPreview(); };
 }
 
+function renderItems(data) {
+    const results = document.getElementById("results");
+    data.forEach(item => {
+        const cleanedTitle = (item.title || "Unknown").replace(/[\\\\/:*?"<>|]/g, "").replace(/\\s+/g, " ").trim().substring(0, 180).toLowerCase();
+        const isInLibrary = libraryFilesSet.has(cleanedTitle);
+
+        const card = document.createElement("div");
+        card.className = "result-card";
+        
+        let actionHtml = isInLibrary ? `<div class="badge-library">✅ In Library</div>` : `
+            <button class="btn-preview" onclick="togglePreview(this, '${escapeJs(item.url)}')">▶ Preview</button>
+            <button class="btn-download" data-id="${item.id}" onclick="startDownload('${item.url}', '${escapeJs(item.title)}', '${item.id}')">⬇️ Save</button>
+        `;
+
+        card.innerHTML = `
+            <div class="thumb-wrapper"><img src="${item.thumbnail}" onerror="this.src='https://via.placeholder.com/110x65?text=Music'" /><span class="badge-duration">${item.duration_text}</span></div>
+            <div class="track-info"><div class="track-title">${escapeHtml(item.title)}</div><div class="track-artist">👤 ${escapeHtml(item.channel)}</div></div>
+            <div class="btn-group" data-group-id="${item.id}">${actionHtml}</div>
+        `;
+        results.appendChild(card);
+    });
+}
+
 async function searchMusic() {
     const query = document.getElementById("query").value.trim();
     const statusMsg = document.getElementById("statusMsg");
@@ -646,39 +685,53 @@ async function searchMusic() {
 
     if (!query) return;
     stopCurrentPreview();
+    
+    currentQuery = query;
+    currentPage = 1;
+    hasMoreResults = true;
+    isLoadingMore = false;
+
     statusMsg.textContent = "🔍 Searching YouTube...";
     results.innerHTML = ""; searchBtn.disabled = true;
     await refreshLibraryCache();
 
     try {
-        const response = await fetch("api/search?q=" + encodeURIComponent(query));
+        const response = await fetch(`api/search?q=${encodeURIComponent(query)}&page=1`);
         if (!response.ok) throw new Error("Search failed");
         const data = await response.json();
         
-        if (data.length === 0) { statusMsg.textContent = "No results found."; return; }
+        if (data.length === 0) { statusMsg.textContent = "No results found."; hasMoreResults = false; return; }
         statusMsg.textContent = "";
 
-        data.forEach(item => {
-            const cleanedTitle = (item.title || "Unknown").replace(/[\\\\/:*?"<>|]/g, "").replace(/\\s+/g, " ").trim().substring(0, 180).toLowerCase();
-            const isInLibrary = libraryFilesSet.has(cleanedTitle);
-
-            const card = document.createElement("div");
-            card.className = "result-card";
-            
-            let actionHtml = isInLibrary ? `<div class="badge-library">✅ In Library</div>` : `
-                <button class="btn-preview" onclick="togglePreview(this, '${escapeJs(item.url)}')">▶ Preview</button>
-                <button class="btn-download" data-id="${item.id}" onclick="startDownload('${item.url}', '${escapeJs(item.title)}', '${item.id}')">⬇️ Save</button>
-            `;
-
-            card.innerHTML = `
-                <div class="thumb-wrapper"><img src="${item.thumbnail}" onerror="this.src='https://via.placeholder.com/110x65?text=Music'" /><span class="badge-duration">${item.duration_text}</span></div>
-                <div class="track-info"><div class="track-title">${escapeHtml(item.title)}</div><div class="track-artist">👤 ${escapeHtml(item.channel)}</div></div>
-                <div class="btn-group" data-group-id="${item.id}">${actionHtml}</div>
-            `;
-            results.appendChild(card);
-        });
+        renderItems(data);
     } catch (err) { statusMsg.textContent = "❌ " + err.message; }
     finally { searchBtn.disabled = false; }
+}
+
+async function loadMoreResults() {
+    if (isLoadingMore || !hasMoreResults || !currentQuery) return;
+    
+    isLoadingMore = true;
+    currentPage++;
+    const loader = document.getElementById("infiniteLoader");
+    loader.style.display = "block";
+
+    try {
+        const response = await fetch(`api/search?q=${encodeURIComponent(currentQuery)}&page=${currentPage}`);
+        if (!response.ok) throw new Error("Load failed");
+        const data = await response.json();
+
+        if (!data || data.length === 0) {
+            hasMoreResults = false;
+        } else {
+            renderItems(data);
+        }
+    } catch (e) {
+        hasMoreResults = false;
+    } finally {
+        loader.style.display = "none";
+        isLoadingMore = false;
+    }
 }
 
 async function startDownload(url, title, elementId) {
@@ -776,9 +829,10 @@ async function pollTasks() {
         const container = document.getElementById("queueBadgeContainer");
         
         if (remaining.length > 0) {
-            let html = `<div class="queue-container"><div class="queue-header-title">📋 Up Next in Queue (${remaining.length})</div>`;
+            let html = `<div class="queue-container"><div class="queue-header-title">📋 Queue / Downloading Active (${remaining.length})</div>`;
             remaining.forEach((item, idx) => { 
-                html += `<div class="queue-item"><span class="queue-item-title">🎵 ${escapeHtml(item.title)}</span><span class="queue-item-badge">⏳ #${idx + 1} Waiting</span></div>`; 
+                const statusBadge = item.status === 'downloading' ? '⚡ Downloading' : '⏳ Waiting';
+                html += `<div class="queue-item"><span class="queue-item-title">🎵 ${escapeHtml(item.title)}</span><span class="queue-item-badge">${statusBadge}</span></div>`; 
             });
             html += `</div>`;
             container.innerHTML = html;
@@ -823,6 +877,15 @@ async function deleteFile(filename) {
 
 document.getElementById("searchBtn").addEventListener("click", searchMusic);
 document.getElementById("query").addEventListener("keydown", e => { if (e.key === "Enter") searchMusic(); });
+
+// Infinite scroll event listener
+window.addEventListener("scroll", () => {
+    if (document.getElementById("tab-search").classList.contains("active")) {
+        if ((window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 500)) {
+            loadMoreResults();
+        }
+    }
+});
 
 refreshLibraryCache();
 
@@ -872,10 +935,10 @@ async def delete_library_file(filename: str):
 
 
 @app.get("/api/search")
-async def search(q: str = Query(..., min_length=1)):
+async def search(q: str = Query(..., min_length=1), page: int = Query(1, ge=1)):
     settings = load_settings()
     try:
-        results = await youtube_search(q, settings.get("max_results", 20))
+        results = await youtube_search(q, settings.get("max_results", 20), page)
         return results
     except Exception as error:
         raise HTTPException(status_code=500, detail="YouTube search failed: " + str(error))
