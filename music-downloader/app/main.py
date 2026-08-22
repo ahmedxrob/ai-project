@@ -393,6 +393,18 @@ header h1 {
     color: var(--text-secondary);
 }
 
+.queue-badge {
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #a5b4fc;
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-top: 10px;
+    display: inline-block;
+}
+
 .progress-actions {
     margin-top: 14px;
     padding-top: 12px;
@@ -600,7 +612,7 @@ input:checked + .slider:before { transform: translateX(22px); }
                 <span class="progress-title" id="progressTitle">Downloading...</span>
                 <div class="progress-right-header">
                     <span class="progress-percent" id="progressPercent">0%</span>
-                    <button class="btn-close-progress" onclick="closeProgressPanel()" title="Dismiss">✕</button>
+                    <button class="btn-close-progress" onclick="dismissProgressPanel()" title="Dismiss">✕</button>
                 </div>
             </div>
             
@@ -624,6 +636,8 @@ input:checked + .slider:before { transform: translateX(22px); }
                 <span id="progressStatus">Connecting to stream...</span>
                 <span id="progressSpeed">-- MB/s</span>
             </div>
+
+            <div id="queueBadgeContainer"></div>
 
             <div class="progress-actions" id="progressActions">
                 <button class="btn-secondary" onclick="switchTab('library')">📂 View in Library</button>
@@ -706,6 +720,8 @@ input:checked + .slider:before { transform: translateX(22px); }
 
 <script>
 let currentEventSource = null;
+let downloadQueue = [];
+let activeDownload = null;
 
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -833,13 +849,47 @@ function updatePipelineStep(stepName) {
     }
 }
 
-function closeProgressPanel() {
-    if (currentEventSource) currentEventSource.close();
-    document.getElementById("progressPanel").style.display = "none";
+function updateQueueDisplay() {
+    const container = document.getElementById("queueBadgeContainer");
+    if (downloadQueue.length > 0) {
+        container.innerHTML = `<div class="queue-badge">📋 Queue: ${downloadQueue.length} track(s) waiting</div>`;
+    } else {
+        container.innerHTML = "";
+    }
+}
+
+function dismissProgressPanel() {
+    if (downloadQueue.length === 0) {
+        if (currentEventSource) currentEventSource.close();
+        document.getElementById("progressPanel").style.display = "none";
+        activeDownload = null;
+    } else {
+        alert("Cannot dismiss while downloads are queued.");
+    }
 }
 
 function startDownload(url, title) {
-    if (currentEventSource) currentEventSource.close();
+    downloadQueue.push({ url, title });
+    updateQueueDisplay();
+
+    if (!activeDownload) {
+        processNextQueueItem();
+    }
+}
+
+function processNextQueueItem() {
+    if (downloadQueue.length === 0) {
+        activeDownload = null;
+        updateQueueDisplay();
+        return;
+    }
+
+    activeDownload = downloadQueue.shift();
+    updateQueueDisplay();
+
+    if (currentEventSource) {
+        currentEventSource.close();
+    }
 
     const panel = document.getElementById("progressPanel");
     const pTitle = document.getElementById("progressTitle");
@@ -851,14 +901,14 @@ function startDownload(url, title) {
 
     panel.style.display = "block";
     pActions.style.display = "none";
-    pTitle.textContent = "Downloading: " + title;
+    pTitle.textContent = "Downloading: " + activeDownload.title;
     pPercent.textContent = "0%";
     pFill.style.width = "0%";
     pStatus.textContent = "Connecting to stream...";
     pSpeed.textContent = "-- MB/s";
     updatePipelineStep('download');
 
-    const apiUrl = "api/download-stream?url=" + encodeURIComponent(url) + "&title=" + encodeURIComponent(title);
+    const apiUrl = "api/download-stream?url=" + encodeURIComponent(activeDownload.url) + "&title=" + encodeURIComponent(activeDownload.title);
     currentEventSource = new EventSource(apiUrl);
 
     currentEventSource.onmessage = function(e) {
@@ -886,16 +936,21 @@ function startDownload(url, title) {
             pActions.style.display = "flex";
             currentEventSource.close();
             loadLibraryCount();
+
+            // Automatically proceed to the next item in queue after 1.5 seconds
+            setTimeout(processNextQueueItem, 1500);
         } else if (data.type === "error") {
             pStatus.textContent = "❌ Error: " + data.message;
             pSpeed.textContent = "";
             currentEventSource.close();
+            setTimeout(processNextQueueItem, 2000);
         }
     };
 
     currentEventSource.onerror = function() {
         pStatus.textContent = "❌ Connection interrupted.";
         currentEventSource.close();
+        setTimeout(processNextQueueItem, 2000);
     };
 }
 
