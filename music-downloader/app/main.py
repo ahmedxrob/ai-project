@@ -95,7 +95,6 @@ def resolve_file(filename: str) -> Path:
     if file_path.exists() and file_path.is_file():
         return file_path
     
-    # Fallback search for missing extensions or stripped spaces
     matches = list(DOWNLOAD_DIR.glob(f"{clean_name}*"))
     for match in matches:
         if match.is_file():
@@ -397,34 +396,29 @@ header h1 {
     animation: fadeIn 0.3s ease;
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-.progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.progress-title { font-size: 0.98rem; font-weight: 700; color: var(--text-primary); }
+.progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.progress-title { font-size: 0.92rem; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80%; }
 .progress-right-header { display: flex; align-items: center; gap: 12px; }
-.progress-percent { font-size: 0.92rem; font-weight: 700; color: var(--accent); }
+.progress-percent { font-size: 0.9rem; font-weight: 700; color: var(--accent); }
 .progress-track {
-    width: 100%; height: 8px; background: rgba(255, 255, 255, 0.08); border-radius: 10px; overflow: hidden; margin-bottom: 15px;
+    width: 100%; height: 8px; background: rgba(255, 255, 255, 0.08); border-radius: 10px; overflow: hidden; margin-bottom: 12px;
 }
 .progress-fill {
     height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent) 0%, #a855f7 100%);
     border-radius: 10px; transition: width 0.3s ease;
 }
 .progress-steps {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 15px; background: rgba(15, 23, 42, 0.6);
-    padding: 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.04);
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; background: rgba(15, 23, 42, 0.6);
+    padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.04);
 }
-.step-item { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--text-secondary); font-weight: 500; }
-.step-dot { width: 8px; height: 8px; border-radius: 50%; background: #374151; transition: all 0.3s; flex-shrink: 0; }
+.step-item { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); font-weight: 500; }
+.step-dot { width: 7px; height: 7px; border-radius: 50%; background: #374151; transition: all 0.3s; flex-shrink: 0; }
 .step-item.active { color: #fff; font-weight: 600; }
-.step-item.active .step-dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); animation: pulseDot 1.2s infinite alternate; }
+.step-item.active .step-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulseDot 1.2s infinite alternate; }
 .step-item.completed { color: var(--success); font-weight: 600; }
 .step-item.completed .step-dot { background: var(--success); }
 @keyframes pulseDot { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(1.3); opacity: 1; } }
-.progress-details { display: flex; justify-content: space-between; font-size: 0.82rem; color: var(--text-secondary); }
-.queue-container { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.06); display: flex; flex-direction: column; gap: 8px; }
-.queue-header-title { font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
-.queue-item { background: rgba(15, 23, 42, 0.6); border: 1px solid var(--card-border); padding: 8px 12px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.queue-item-title { font-size: 0.85rem; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-.queue-item-badge { background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+.progress-details { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-secondary); }
 .results-grid { display: flex; flex-direction: column; gap: 12px; }
 .result-card { background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--card-border); border-radius: 16px; padding: 12px 16px; display: flex; align-items: center; gap: 16px; transition: all 0.2s; }
 .result-card:hover { border-color: rgba(255, 255, 255, 0.18); transform: translateY(-1px); }
@@ -507,30 +501,11 @@ input:checked + .slider:before { transform: translateX(22px); }
             <button id="searchBtn" type="button">Search</button>
         </div>
 
-        <div class="progress-panel" id="progressPanel">
-            <div class="progress-header">
-                <span class="progress-title" id="progressTitle">Downloading...</span>
-                <div class="progress-right-header">
-                    <span class="progress-percent" id="progressPercent">0%</span>
-                </div>
+        <div class="progress-panel" id="progressPanel" style="display:none;">
+            <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 14px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                ⚡ Active Downloads
             </div>
-            
-            <div class="progress-track">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-
-            <div class="progress-steps">
-                <div class="step-item" id="stepDownload"><span class="step-dot"></span> 1. Download</div>
-                <div class="step-item" id="stepProcess"><span class="step-dot"></span> 2. Clean Tags</div>
-                <div class="step-item" id="stepDone"><span class="step-dot"></span> 3. Ready</div>
-            </div>
-
-            <div class="progress-details">
-                <span id="progressStatus">Connecting...</span>
-                <span id="progressSpeed">-- MB/s</span>
-            </div>
-
-            <div id="queueBadgeContainer"></div>
+            <div id="activeDownloadsList" style="display: flex; flex-direction: column; gap: 14px;"></div>
         </div>
 
         <div id="statusMsg" class="status-msg"></div>
@@ -841,24 +816,6 @@ async function startDownload(url, title, elementId) {
     } catch (e) { alert("Failed to enqueue download."); }
 }
 
-function updatePipelineStep(status) {
-    const s1 = document.getElementById("stepDownload");
-    const s2 = document.getElementById("stepProcess");
-    const s3 = document.getElementById("stepDone");
-
-    s1.className = "step-item"; s2.className = "step-item"; s3.className = "step-item";
-    
-    if (status === 'downloading') {
-        s1.classList.add("active");
-    } else if (status === 'processing') {
-        s1.classList.add("completed"); s2.classList.add("active");
-    } else if (status === 'completed') {
-        s1.classList.add("completed"); s2.classList.add("completed"); s3.classList.add("completed");
-    } else if (status === 'error') {
-        s1.classList.add("active");
-    }
-}
-
 async function pollTasks() {
     try {
         const res = await fetch('api/tasks');
@@ -885,51 +842,70 @@ async function pollTasks() {
             }
         }
 
-        const activeOrQueued = tasks.filter(t => t.status === 'queued' || t.status === 'downloading' || t.status === 'processing');
-        const recentlyErrored = tasks.filter(t => t.status === 'error' && (Date.now() - t.last_updated < 4000));
-        const recentlyCompleted = tasks.filter(t => t.status === 'completed' && (Date.now() - t.last_updated < 2000));
-
-        const displayTask = activeOrQueued.length > 0 ? activeOrQueued[0] : 
-                            (recentlyErrored.length > 0 ? recentlyErrored[0] : 
-                            (recentlyCompleted.length > 0 ? recentlyCompleted[0] : null));
+        const activeTasks = tasks.filter(t => 
+            t.status === 'queued' || 
+            t.status === 'downloading' || 
+            t.status === 'processing' || 
+            (t.status === 'error' && (Date.now() - t.last_updated < 4000)) ||
+            (t.status === 'completed' && (Date.now() - t.last_updated < 2000))
+        );
 
         const panel = document.getElementById("progressPanel");
+        const listContainer = document.getElementById("activeDownloadsList");
 
-        if (!displayTask) {
+        if (activeTasks.length === 0) {
             panel.style.display = "none";
+            listContainer.innerHTML = "";
             pollTimer = setTimeout(pollTasks, 2500);
             return;
         }
 
         panel.style.display = "block";
-        document.getElementById("progressTitle").textContent = (displayTask.status === 'error' ? "❌ Failed: " : "Downloading: ") + displayTask.title;
-        document.getElementById("progressPercent").textContent = Math.round(displayTask.percent) + "%";
-        document.getElementById("progressFill").style.width = displayTask.percent + "%";
-        document.getElementById("progressSpeed").textContent = displayTask.speed || "";
-        document.getElementById("progressStatus").textContent = displayTask.error || displayTask.step || "Queued...";
-        
-        if (displayTask.status === "error") {
-            document.getElementById("progressFill").style.background = "var(--danger)";
-        } else {
-            document.getElementById("progressFill").style.background = "linear-gradient(90deg, var(--accent) 0%, #a855f7 100%)";
-        }
+        listContainer.innerHTML = "";
 
-        updatePipelineStep(displayTask.status);
+        activeTasks.forEach(task => {
+            const isError = task.status === 'error';
+            const barColor = isError ? "var(--danger)" : "linear-gradient(90deg, var(--accent) 0%, #a855f7 100%)";
+            const percent = Math.round(task.percent || 0);
+            
+            let step1 = "step-item", step2 = "step-item", step3 = "step-item";
+            if (task.status === 'downloading') {
+                step1 += " active";
+            } else if (task.status === 'processing') {
+                step1 += " completed"; step2 += " active";
+            } else if (task.status === 'completed') {
+                step1 += " completed"; step2 += " completed"; step3 += " completed";
+            } else if (isError) {
+                step1 += " active";
+            }
 
-        const remaining = activeOrQueued.slice(1);
-        const container = document.getElementById("queueBadgeContainer");
-        
-        if (remaining.length > 0) {
-            let html = `<div class="queue-container"><div class="queue-header-title">📋 Queue / Downloading Active (${remaining.length})</div>`;
-            remaining.forEach((item, idx) => { 
-                const statusBadge = item.status === 'downloading' ? '⚡ Downloading' : '⏳ Waiting';
-                html += `<div class="queue-item"><span class="queue-item-title">🎵 ${escapeHtml(item.title)}</span><span class="queue-item-badge">${statusBadge}</span></div>`; 
-            });
-            html += `</div>`;
-            container.innerHTML = html;
-        } else { 
-            container.innerHTML = ""; 
-        }
+            const itemHtml = `
+                <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--card-border); padding: 14px; border-radius: 12px;">
+                    <div class="progress-header">
+                        <span class="progress-title">${isError ? "❌ " : "🎵 "}${escapeHtml(task.title)}</span>
+                        <div class="progress-right-header">
+                            <span class="progress-percent" style="color: ${isError ? 'var(--danger)' : 'var(--accent)'}">${percent}%</span>
+                        </div>
+                    </div>
+                    
+                    <div class="progress-track">
+                        <div class="progress-fill" style="width: ${percent}%; background: ${barColor};"></div>
+                    </div>
+
+                    <div class="progress-steps">
+                        <div class="${step1}"><span class="step-dot"></span> 1. Download</div>
+                        <div class="${step2}"><span class="step-dot"></span> 2. Clean Tags</div>
+                        <div class="${step3}"><span class="step-dot"></span> 3. Ready</div>
+                    </div>
+
+                    <div class="progress-details">
+                        <span>${escapeHtml(task.error || task.step || "Queued...")}</span>
+                        <span>${escapeHtml(task.speed || "")}</span>
+                    </div>
+                </div>
+            `;
+            listContainer.insertAdjacentHTML('beforeend', itemHtml);
+        });
 
         pollTimer = setTimeout(pollTasks, 400);
 
