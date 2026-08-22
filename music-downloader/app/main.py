@@ -141,7 +141,6 @@ async def run_download_job(job_id: str, url: str, title: str, artist: str, album
     fmt = settings.get("audio_format", "mp3")
     quality = settings.get("audio_quality", "320K")
     
-    # Save temp raw files inside hidden .tmp directory
     output_template = str(TEMP_DIR / f"{job_id}.%(ext)s")
 
     JOBS[job_id]["status"] = "downloading"
@@ -391,32 +390,15 @@ header h1 {
 .btn-group { display: flex; gap: 8px; align-items: center; }
 
 .btn-preview, .btn-secondary, .btn-download, .btn-danger {
-    padding: 8px 14px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer; border: none;
+    padding: 8px 14px; border-radius: 10px; font-weight: 600; font-size: 0.82rem; cursor: pointer; border: none; transition: all 0.2s;
 }
 .btn-preview { background: rgba(255, 255, 255, 0.06); color: var(--text-primary); border: 1px solid var(--card-border); }
 .btn-preview.playing { background: rgba(99, 102, 241, 0.3); border-color: var(--accent); color: #a5b4fc; }
 .btn-download { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; }
+.btn-download:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5; }
 
 .badge-library { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; padding: 6px 12px; border-radius: 10px; font-size: 0.82rem; font-weight: 600; }
-
-.modal-overlay {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
-    display: none; justify-content: center; align-items: center; z-index: 1000;
-}
-.modal-card {
-    background: #161e2e; border: 1px solid var(--card-border);
-    padding: 24px; border-radius: 20px; width: 90%; max-width: 450px;
-    display: flex; flex-direction: column; gap: 15px;
-}
-.modal-card h3 { font-size: 1.2rem; font-weight: 700; color: #fff; }
-.modal-field { display: flex; flex-direction: column; gap: 6px; }
-.modal-field label { font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); }
-.modal-field input {
-    background: var(--input-bg); border: 1px solid var(--card-border);
-    padding: 10px 14px; border-radius: 10px; color: #fff; outline: none;
-}
 
 .settings-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 20px; padding: 25px; display: flex; flex-direction: column; gap: 20px; }
 .setting-row { display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
@@ -520,24 +502,9 @@ input:checked + .slider:before { transform: translateX(22px); }
     </div>
 </div>
 
-<!-- TAG EDITOR MODAL -->
-<div class="modal-overlay" id="tagModal">
-    <div class="modal-card">
-        <h3>✏️ Edit Track Metadata</h3>
-        <div class="modal-field"><label>Track Title</label><input id="modalTitle" /></div>
-        <div class="modal-field"><label>Artist Name</label><input id="modalArtist" /></div>
-        <div class="modal-field"><label>Album Name</label><input id="modalAlbum" /></div>
-        <div style="display:flex; justify-content: flex-end; gap:10px; margin-top:10px;">
-            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-            <button class="btn-download" onclick="confirmModalDownload()">Download Track</button>
-        </div>
-    </div>
-</div>
-
 <script>
 let activeAudio = null;
 let activePreviewBtn = null;
-let currentPendingItem = null;
 
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -572,6 +539,10 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
+    const btn = event.target;
+    btn.textContent = "⏳ Saving...";
+    btn.disabled = true;
+
     const data = {
         audio_format: document.getElementById('set_format').value,
         audio_quality: document.getElementById('set_quality').value,
@@ -583,26 +554,11 @@ async function saveSettings() {
         auth_pass: document.getElementById('set_pass').value
     };
     await fetch('api/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+    
+    btn.textContent = "Save Settings";
+    btn.disabled = false;
     document.getElementById('settingsMsg').textContent = "✅ Settings saved!";
     setTimeout(() => document.getElementById('settingsMsg').textContent = "", 3000);
-}
-
-function openEditModal(item) {
-    currentPendingItem = item;
-    document.getElementById('modalTitle').value = item.title;
-    document.getElementById('modalArtist').value = item.artist;
-    document.getElementById('modalAlbum').value = item.album;
-    document.getElementById('tagModal').style.display = 'flex';
-}
-
-function closeModal() { document.getElementById('tagModal').style.display = 'none'; }
-
-function confirmModalDownload() {
-    currentPendingItem.title = document.getElementById('modalTitle').value;
-    currentPendingItem.artist = document.getElementById('modalArtist').value;
-    currentPendingItem.album = document.getElementById('modalAlbum').value;
-    closeModal();
-    executeDownload(currentPendingItem);
 }
 
 async function searchMusic() {
@@ -632,7 +588,7 @@ async function searchMusic() {
                     <button class="btn-preview" onclick="togglePreview(this, '${escapeJs(item.url)}')">▶ Preview</button>
                     ${item.in_library 
                         ? `<span class="badge-library">✓ In Library</span>`
-                        : `<button class="btn-download" onclick='openEditModal(${JSON.stringify(item)})'>⬇️ Save</button>`
+                        : `<button class="btn-download" onclick='directDownload(this, ${JSON.stringify(item)})'>⬇️ Save</button>`
                     }
                 </div>
             `;
@@ -643,12 +599,17 @@ async function searchMusic() {
     }
 }
 
-async function executeDownload(item) {
+async function directDownload(btn, item) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Starting...";
+    
     await fetch('api/download', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(item)
     });
+    
+    btn.textContent = "⏳ Queued";
     pollJobs();
 }
 
