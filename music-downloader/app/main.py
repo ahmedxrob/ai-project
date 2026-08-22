@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Query, HTTPException, Body, Depends, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from typing import Optional
 import asyncio
 import json
 import os
@@ -14,10 +15,12 @@ app = FastAPI(title="Navidrome Music Downloader Pro")
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome/music"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+TEMP_DIR = DOWNLOAD_DIR / ".tmp"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 AUDIO_EXTENSIONS = {'.mp3', '.flac', '.m4a', '.ogg', '.wav', '.opus', '.aac', '.alac'}
 
-# Global In-Memory Background Job Store
 JOBS = {}
 
 DEFAULT_SETTINGS = {
@@ -34,7 +37,7 @@ DEFAULT_SETTINGS = {
     "auth_pass": "admin123"
 }
 
-security = HTTPBasic()
+security = HTTPBasic(auto_error=False)
 
 # ============================================================
 # HELPERS & SETTINGS
@@ -59,11 +62,18 @@ def save_settings(data: dict):
     return settings
 
 
-def verify_auth(credentials: HTTPBasicCredentials = Depends(security)):
+def verify_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
     settings = load_settings()
     if not settings.get("auth_enabled", False):
         return True
     
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
     correct_user = secrets.compare_digest(credentials.username, settings.get("auth_user", "admin"))
     correct_pass = secrets.compare_digest(credentials.password, settings.get("auth_pass", "admin123"))
     
@@ -113,6 +123,15 @@ def format_size(size_bytes):
         return "0 MB"
 
 
+def get_existing_filenames():
+    existing = set()
+    for path in DOWNLOAD_DIR.rglob("*"):
+        if path.is_file() and not any(part.startswith(".") for part in path.relative_to(DOWNLOAD_DIR).parts):
+            if path.suffix.lower() in AUDIO_EXTENSIONS:
+                existing.add(path.stem.lower())
+    return existing
+
+
 # ============================================================
 # BACKGROUND WORKER & SEARCH ENGINE
 # ============================================================
@@ -121,7 +140,9 @@ async def run_download_job(job_id: str, url: str, title: str, artist: str, album
     settings = load_settings()
     fmt = settings.get("audio_format", "mp3")
     quality = settings.get("audio_quality", "320K")
-    output_template = str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")
+    
+    # Save temp raw files inside hidden .tmp directory
+    output_template = str(TEMP_DIR / f"{job_id}.%(ext)s")
 
     JOBS[job_id]["status"] = "downloading"
 
@@ -152,7 +173,7 @@ async def run_download_job(job_id: str, url: str, title: str, artist: str, album
 
         await process.wait()
 
-        possible_files = list(DOWNLOAD_DIR.glob(f"{job_id}.*"))
+        possible_files = list(TEMP_DIR.glob(f"{job_id}.*"))
         if not possible_files:
             JOBS[job_id]["status"] = "failed"
             JOBS[job_id]["error"] = "Download failed"
@@ -219,6 +240,7 @@ async def youtube_search(query: str, max_results: int):
         data = json.loads(stdout.decode("utf-8", errors="ignore"))
         results = []
         entries = data.get("entries", [data]) if "entries" in data else [data]
+        existing_library = get_existing_filenames()
 
         for item in entries:
             if not item: continue
@@ -235,6 +257,7 @@ async def youtube_search(query: str, max_results: int):
                 artist, title = parts[0].strip(), parts[1].strip()
 
             duration = item.get("duration", 0) or 0
+            file_stem = clean_filename(title).lower()
 
             results.append({
                 "id": video_id,
@@ -245,6 +268,7 @@ async def youtube_search(query: str, max_results: int):
                 "duration_text": format_duration(duration),
                 "thumbnail": item.get("thumbnail") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
                 "url": f"https://www.youtube.com/watch?v={video_id}",
+                "in_library": file_stem in existing_library
             })
 
         return results
@@ -334,7 +358,6 @@ header h1 {
     font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s;
 }
 
-/* BACKGROUND PROGRESS CONTAINER */
 #progressContainer { display: flex; flex-direction: column; gap: 12px; margin-bottom: 25px; }
 
 .progress-panel {
@@ -351,7 +374,6 @@ header h1 {
 
 .progress-details { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
 
-/* RESULTS & CARDS */
 .results-grid { display: flex; flex-direction: column; gap: 12px; }
 .result-card {
     background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--card-border);
@@ -376,7 +398,8 @@ header h1 {
 .btn-download { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; }
 .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5; }
 
-/* MODAL */
+.badge-library { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; padding: 6px 12px; border-radius: 10px; font-size: 0.82rem; font-weight: 600; }
+
 .modal-overlay {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
@@ -395,7 +418,6 @@ header h1 {
     padding: 10px 14px; border-radius: 10px; color: #fff; outline: none;
 }
 
-/* SETTINGS TAB */
 .settings-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 20px; padding: 25px; display: flex; flex-direction: column; gap: 20px; }
 .setting-row { display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
 .setting-label { font-weight: 600; font-size: 0.95rem; }
@@ -608,7 +630,10 @@ async function searchMusic() {
                 </div>
                 <div class="btn-group">
                     <button class="btn-preview" onclick="togglePreview(this, '${escapeJs(item.url)}')">▶ Preview</button>
-                    <button class="btn-download" onclick='openEditModal(${JSON.stringify(item)})'>⬇️ Save</button>
+                    ${item.in_library 
+                        ? `<span class="badge-library">✓ In Library</span>`
+                        : `<button class="btn-download" onclick='openEditModal(${JSON.stringify(item)})'>⬇️ Save</button>`
+                    }
                 </div>
             `;
             document.getElementById("results").appendChild(card);
@@ -770,7 +795,7 @@ async def start_download(payload: dict = Body(...), auth: bool = Depends(verify_
 async def get_library(auth: bool = Depends(verify_auth)):
     files = []
     for path in DOWNLOAD_DIR.rglob("*"):
-        if path.is_file() and not path.name.startswith("."):
+        if path.is_file() and not any(part.startswith(".") for part in path.relative_to(DOWNLOAD_DIR).parts):
             if path.suffix.lower() in AUDIO_EXTENSIONS:
                 files.append({
                     "name": str(path.relative_to(DOWNLOAD_DIR)),
