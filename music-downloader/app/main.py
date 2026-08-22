@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 import httpx
-import html
 
 app = FastAPI(title="Music Downloader")
 
@@ -11,213 +10,241 @@ ARCHIVE_SEARCH_URL = "https://archive.org/advancedsearch.php"
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Downloader</title>
 
-        <title>Music Downloader</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #111827;
+            color: white;
+            margin: 0;
+            padding: 25px;
+        }
 
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                background: #111827;
-                color: white;
-                margin: 0;
-                padding: 25px;
-            }
+        .container {
+            max-width: 1000px;
+            margin: auto;
+        }
 
-            .container {
-                max-width: 1000px;
-                margin: auto;
-            }
+        h1 {
+            margin-bottom: 5px;
+        }
 
-            h1 {
-                margin-bottom: 5px;
-            }
+        .subtitle {
+            color: #9ca3af;
+        }
 
-            .subtitle {
-                color: #9ca3af;
-            }
+        .search {
+            display: flex;
+            gap: 10px;
+            margin-top: 30px;
+        }
 
-            .search {
-                display: flex;
-                gap: 10px;
-                margin-top: 30px;
-            }
+        input {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+        }
 
-            input {
-                flex: 1;
-                padding: 15px;
-                border: none;
-                border-radius: 10px;
-                font-size: 16px;
-                outline: none;
-            }
+        button {
+            padding: 15px 25px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            background: #6366f1;
+            color: white;
+        }
 
-            button {
-                padding: 15px 25px;
-                border: none;
-                border-radius: 10px;
-                cursor: pointer;
-                font-size: 16px;
-                background: #6366f1;
-                color: white;
-            }
+        button:hover {
+            background: #4f46e5;
+        }
 
-            button:hover {
-                background: #4f46e5;
-            }
+        #results {
+            margin-top: 25px;
+        }
 
-            #results {
-                margin-top: 25px;
-            }
+        .result {
+            background: #1f2937;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
 
-            .result {
-                background: #1f2937;
-                padding: 20px;
-                border-radius: 12px;
-                margin-bottom: 12px;
-            }
+        .title {
+            font-size: 18px;
+            font-weight: bold;
+        }
 
-            .title {
-                font-size: 18px;
-                font-weight: bold;
-            }
+        .creator {
+            color: #9ca3af;
+            margin-top: 6px;
+        }
 
-            .creator {
-                color: #9ca3af;
-                margin-top: 6px;
-            }
+        .identifier {
+            color: #6b7280;
+            font-size: 13px;
+            margin-top: 8px;
+        }
 
-            .identifier {
-                color: #6b7280;
-                font-size: 13px;
-                margin-top: 8px;
-            }
+        .status {
+            margin-top: 20px;
+            color: #9ca3af;
+        }
+    </style>
+</head>
 
-            .status {
-                margin-top: 20px;
-                color: #9ca3af;
-            }
-        </style>
-    </head>
+<body>
 
-    <body>
+<div class="container">
 
-        <div class="container">
+    <h1>🎵 Music Downloader</h1>
 
-            <h1>🎵 Music Downloader</h1>
+    <div class="subtitle">
+        Search downloadable music and add it to Navidrome.
+    </div>
 
-            <div class="subtitle">
-                Search downloadable music and add it to Navidrome.
-            </div>
+    <div class="search">
 
-            <div class="search">
+        <input
+            id="query"
+            type="text"
+            placeholder="Search artist, album or song..."
+            onkeydown="if(event.key === 'Enter') searchMusic()"
+        >
 
-                <input
-                    id="query"
-                    type="text"
-                    placeholder="Search artist, album or song..."
-                    onkeydown="if(event.key === 'Enter') searchMusic()"
-                >
+        <button onclick="searchMusic()">
+            🔍 Search
+        </button>
 
-                <button onclick="searchMusic()">
-                    🔍 Search
-                </button>
+    </div>
 
-            </div>
+    <div id="status" class="status"></div>
 
-            <div id="status" class="status"></div>
+    <div id="results"></div>
 
-            <div id="results"></div>
+</div>
 
-        </div>
+<script>
 
-        <script>
+async function searchMusic() {
 
-            async function searchMusic() {
+    const query =
+        document.getElementById("query").value.trim();
 
-                const query = document.getElementById("query").value.trim();
-                const results = document.getElementById("results");
-                const status = document.getElementById("status");
+    const results =
+        document.getElementById("results");
 
-                if (!query) {
-                    status.textContent = "Enter something to search for.";
-                    return;
-                }
+    const status =
+        document.getElementById("status");
 
-                status.textContent = "Searching...";
-                results.innerHTML = "";
+    if (!query) {
+        status.textContent =
+            "Enter something to search for.";
+        return;
+    }
 
-                try {
+    status.textContent = "Searching...";
+    results.innerHTML = "";
 
-                    const response = await fetch(
-                        "/api/search?q=" + encodeURIComponent(query)
-                    );
+    try {
 
-                    const data = await response.json();
+        const response = await fetch(
+            "/api/search?q=" +
+            encodeURIComponent(query)
+        );
 
-                    if (!response.ok) {
-                        throw new Error(data.detail || "Search failed");
-                    }
+        const text = await response.text();
 
-                    if (data.length === 0) {
-                        status.textContent = "No results found.";
-                        return;
-                    }
+        if (!response.ok) {
+            throw new Error(text);
+        }
 
-                    status.textContent =
-                        data.length + " results found.";
+        let data;
 
-                    data.forEach(item => {
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            console.error("Server response:", text);
+            throw new Error(
+                "Server returned invalid JSON."
+            );
+        }
 
-                        const card = document.createElement("div");
-                        card.className = "result";
+        if (!Array.isArray(data)) {
+            throw new Error(
+                "Unexpected response from server."
+            );
+        }
 
-                        card.innerHTML = `
-                            <div class="title">
-                                ${escapeHtml(item.title)}
-                            </div>
+        if (data.length === 0) {
 
-                            <div class="creator">
-                                ${escapeHtml(item.creator || "Unknown creator")}
-                            </div>
+            status.textContent =
+                "No results found.";
 
-                            <div class="identifier">
-                                ${escapeHtml(item.identifier)}
-                            </div>
-                        `;
+            return;
+        }
 
-                        results.appendChild(card);
+        status.textContent =
+            data.length + " results found.";
 
-                    });
+        data.forEach(item => {
 
-                } catch (error) {
+            const card =
+                document.createElement("div");
 
-                    status.textContent =
-                        "Error: " + error.message;
+            card.className = "result";
 
-                }
+            const title =
+                document.createElement("div");
 
-            }
+            title.className = "title";
+            title.textContent =
+                item.title || "Unknown title";
 
+            const creator =
+                document.createElement("div");
 
-            function escapeHtml(text) {
+            creator.className = "creator";
+            creator.textContent =
+                item.creator || "Unknown creator";
 
-                const div = document.createElement("div");
-                div.textContent = text;
+            const identifier =
+                document.createElement("div");
 
-                return div.innerHTML;
+            identifier.className = "identifier";
+            identifier.textContent =
+                item.identifier || "";
 
-            }
+            card.appendChild(title);
+            card.appendChild(creator);
+            card.appendChild(identifier);
 
-        </script>
+            results.appendChild(card);
 
-    </body>
-    </html>
-    """
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        status.textContent =
+            "Error: " + error.message;
+    }
+}
+
+</script>
+
+</body>
+</html>
+"""
 
 
 @app.get("/api/search")
@@ -225,41 +252,53 @@ async def search_music(
     q: str = Query(..., min_length=1)
 ):
 
-    params = {
-        "q": f'({q}) AND mediatype:audio',
-        "fl[]": [
-            "identifier",
-            "title",
-            "creator",
-            "description"
-        ],
-        "rows": 25,
-        "page": 1,
-        "output": "json"
-    }
+    params = [
+        ("q", f"({q}) AND mediatype:audio"),
+        ("fl[]", "identifier"),
+        ("fl[]", "title"),
+        ("fl[]", "creator"),
+        ("rows", "25"),
+        ("page", "1"),
+        ("output", "json"),
+    ]
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(
+        timeout=30,
+        follow_redirects=True
+    ) as client:
 
         response = await client.get(
             ARCHIVE_SEARCH_URL,
-            params=params
+            params=params,
+            headers={
+                "User-Agent":
+                "HomeAssistant-Music-Downloader/0.1"
+            }
         )
 
         response.raise_for_status()
 
         data = response.json()
 
-    documents = data.get("response", {}).get("docs", [])
+    documents = (
+        data
+        .get("response", {})
+        .get("docs", [])
+    )
 
     results = []
 
     for item in documents:
 
         results.append({
-            "identifier": item.get("identifier", ""),
-            "title": item.get("title", "Unknown title"),
-            "creator": item.get("creator", ""),
-            "description": item.get("description", "")
+            "identifier":
+                item.get("identifier", ""),
+
+            "title":
+                item.get("title", "Unknown title"),
+
+            "creator":
+                item.get("creator", "")
         })
 
     return results
@@ -267,4 +306,7 @@ async def search_music(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+
+    return {
+        "status": "ok"
+    }
