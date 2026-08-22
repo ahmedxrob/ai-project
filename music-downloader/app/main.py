@@ -4,11 +4,15 @@ import asyncio
 import json
 import os
 import re
-import shutil
 import uuid
 from pathlib import Path
 
 app = FastAPI(title="Music Downloader")
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 DOWNLOAD_DIR = Path(
     os.getenv("DOWNLOAD_DIR", "/downloads")
@@ -27,6 +31,7 @@ MAX_RESULTS = 20
 # ============================================================
 
 def clean_filename(value: str) -> str:
+
     value = value or "Unknown"
 
     value = re.sub(
@@ -41,19 +46,26 @@ def clean_filename(value: str) -> str:
         value
     ).strip()
 
-    return (value or "Unknown")[:180]
+    if not value:
+        value = "Unknown"
+
+    return value[:180]
 
 
 def format_duration(seconds):
+
     try:
+
         seconds = int(seconds or 0)
 
         minutes = seconds // 60
+
         seconds = seconds % 60
 
         return f"{minutes}:{seconds:02d}"
 
     except Exception:
+
         return "0:00"
 
 
@@ -64,6 +76,7 @@ def format_duration(seconds):
 async def youtube_search(query: str):
 
     command = [
+
         "yt-dlp",
 
         "--flat-playlist",
@@ -110,7 +123,10 @@ async def youtube_search(query: str):
 
         results = []
 
-        for item in data.get("entries", []):
+        for item in data.get(
+            "entries",
+            []
+        ):
 
             if not item:
                 continue
@@ -119,6 +135,14 @@ async def youtube_search(query: str):
 
             if not video_id:
                 continue
+
+            channel = (
+                item.get("channel")
+                or
+                item.get("uploader")
+                or
+                "Unknown Artist"
+            )
 
             results.append({
 
@@ -129,11 +153,7 @@ async def youtube_search(query: str):
                     "Unknown"
                 ),
 
-                "channel": item.get(
-                    "channel"
-                    or item.get("uploader"),
-                    "Unknown Artist"
-                ),
+                "channel": channel,
 
                 "duration": item.get(
                     "duration",
@@ -142,11 +162,16 @@ async def youtube_search(query: str):
 
                 "duration_text":
                     format_duration(
-                        item.get("duration", 0)
+                        item.get(
+                            "duration",
+                            0
+                        )
                     ),
 
                 "thumbnail":
-                    item.get("thumbnail")
+                    item.get(
+                        "thumbnail"
+                    )
                     or
                     f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
 
@@ -226,7 +251,7 @@ body {
 
     max-width: 1100px;
 
-    margin: auto;
+    margin: 0 auto;
 }
 
 h1 {
@@ -290,7 +315,14 @@ button {
 
 button:hover {
 
-    opacity: .9;
+    opacity: 0.9;
+}
+
+button:disabled {
+
+    opacity: 0.5;
+
+    cursor: wait;
 }
 
 .result {
@@ -312,7 +344,7 @@ button:hover {
 
 .cover {
 
-    width: 100px;
+    width: 110px;
 
     height: 70px;
 
@@ -321,6 +353,8 @@ button:hover {
     object-fit: cover;
 
     background: #374151;
+
+    flex-shrink: 0;
 }
 
 .info {
@@ -385,23 +419,60 @@ button:hover {
     margin-bottom: 15px;
 }
 
+.progress {
+
+    width: 100%;
+
+    height: 6px;
+
+    background: #374151;
+
+    border-radius: 10px;
+
+    overflow: hidden;
+
+    margin-top: 10px;
+
+    display: none;
+}
+
+.progress-bar {
+
+    height: 100%;
+
+    width: 0%;
+
+    background: #10b981;
+
+    transition: width 0.2s;
+}
+
 @media(max-width: 700px) {
 
     body {
+
         padding: 15px;
     }
 
     .result {
-        align-items: flex-start;
-    }
 
-    .actions {
-        flex-direction: column;
+        align-items: flex-start;
+
+        flex-wrap: wrap;
     }
 
     .cover {
+
         width: 80px;
+
         height: 60px;
+    }
+
+    .actions {
+
+        width: 100%;
+
+        justify-content: flex-end;
     }
 
 }
@@ -428,7 +499,10 @@ Search YouTube music and download audio.
     autocomplete="off"
 />
 
-<button onclick="searchMusic()">
+<button
+    id="searchButton"
+    onclick="searchMusic()"
+>
 🔍 Search
 </button>
 
@@ -436,11 +510,26 @@ Search YouTube music and download audio.
 
 <div id="status"></div>
 
+<div class="progress" id="progress">
+
+    <div
+        class="progress-bar"
+        id="progressBar"
+    ></div>
+
+</div>
+
 <div id="results"></div>
 
 </div>
 
+
 <script>
+
+
+// ============================================================
+// SEARCH
+// ============================================================
 
 async function searchMusic() {
 
@@ -451,10 +540,19 @@ async function searchMusic() {
             .trim();
 
     const status =
-        document.getElementById("status");
+        document.getElementById(
+            "status"
+        );
 
     const results =
-        document.getElementById("results");
+        document.getElementById(
+            "results"
+        );
+
+    const searchButton =
+        document.getElementById(
+            "searchButton"
+        );
 
     if (!query) {
 
@@ -469,6 +567,8 @@ async function searchMusic() {
 
     results.innerHTML = "";
 
+    searchButton.disabled = true;
+
     try {
 
         const response =
@@ -482,9 +582,11 @@ async function searchMusic() {
                 "content-type"
             ) || "";
 
-        if (!contentType.includes(
-            "application/json"
-        )) {
+        if (
+            !contentType.includes(
+                "application/json"
+            )
+        ) {
 
             const text =
                 await response.text();
@@ -519,7 +621,9 @@ async function searchMusic() {
             data.length +
             " results";
 
-        for (const item of data) {
+        for (
+            const item of data
+        ) {
 
             const div =
                 document.createElement(
@@ -536,26 +640,35 @@ async function searchMusic() {
                     src="${escapeHtml(
                         item.thumbnail
                     )}"
+                    onerror="
+                        this.src='https://via.placeholder.com/110x70?text=Music'
+                    "
                 >
 
                 <div class="info">
 
                     <div class="title">
+
                         ${escapeHtml(
                             item.title
                         )}
+
                     </div>
 
                     <div class="artist">
+
                         👤 ${escapeHtml(
                             item.channel
                         )}
+
                     </div>
 
                     <div class="duration">
+
                         ⏱ ${escapeHtml(
                             item.duration_text
                         )}
+
                     </div>
 
                 </div>
@@ -569,8 +682,12 @@ async function searchMusic() {
                         target="_blank"
                     >
 
-                        <button class="open">
+                        <button
+                            class="open"
+                        >
+
                             ▶ YouTube
+
                         </button>
 
                     </a>
@@ -578,36 +695,68 @@ async function searchMusic() {
                     <button
                         class="download"
                         onclick="downloadMusic(
-                            '${escapeHtml(
+                            '${escapeJs(
                                 item.url
                             )}'
                         )"
                     >
+
                         ⬇ Download
+
                     </button>
 
                 </div>
+
             `;
 
-            results.appendChild(div);
+            results.appendChild(
+                div
+            );
         }
 
-    } catch(error) {
+    } catch (error) {
 
         status.textContent =
             "❌ " +
             error.message;
+
+    } finally {
+
+        searchButton.disabled =
+            false;
     }
 }
 
 
+// ============================================================
+// DOWNLOAD
+// ============================================================
+
 async function downloadMusic(url) {
 
     const status =
-        document.getElementById("status");
+        document.getElementById(
+            "status"
+        );
+
+    const progress =
+        document.getElementById(
+            "progress"
+        );
+
+    const progressBar =
+        document.getElementById(
+            "progressBar"
+        );
 
     status.textContent =
-        "⬇️ Downloading...";
+        "⬇️ Downloading audio...";
+
+    progress.style.display =
+        "block";
+
+    progressBar.style.width =
+        "10%";
 
     try {
 
@@ -616,6 +765,9 @@ async function downloadMusic(url) {
                 "./api/download?url=" +
                 encodeURIComponent(url)
             );
+
+        progressBar.style.width =
+            "70%";
 
         const contentType =
             response.headers.get(
@@ -638,41 +790,70 @@ async function downloadMusic(url) {
                     "Download failed"
                 );
 
-            } else {
-
-                throw new Error(
-                    await response.text()
-                );
             }
+
+            throw new Error(
+                await response.text()
+            );
         }
 
         const blob =
             await response.blob();
 
+        progressBar.style.width =
+            "100%";
+
         const blobUrl =
-            URL.createObjectURL(blob);
+            URL.createObjectURL(
+                blob
+            );
 
-        const a =
-            document.createElement("a");
+        const link =
+            document.createElement(
+                "a"
+            );
 
-        a.href =
+        link.href =
             blobUrl;
 
-        a.download =
+        link.download =
             "music.mp3";
 
-        document.body.appendChild(a);
+        document.body.appendChild(
+            link
+        );
 
-        a.click();
+        link.click();
 
-        a.remove();
+        link.remove();
 
-        URL.revokeObjectURL(blobUrl);
+        URL.revokeObjectURL(
+            blobUrl
+        );
 
         status.textContent =
             "✅ Download complete";
 
-    } catch(error) {
+        setTimeout(
+            function() {
+
+                progress.style.display =
+                    "none";
+
+                progressBar.style.width =
+                    "0%";
+
+            },
+            1500
+        );
+
+    } catch (error) {
+
+        progress.style.display =
+            "none";
+
+        progressBar.style.width =
+            "0%";
 
         status.textContent =
             "❌ " +
@@ -681,10 +862,16 @@ async function downloadMusic(url) {
 }
 
 
+// ============================================================
+// HTML ESCAPING
+// ============================================================
+
 function escapeHtml(text) {
 
     const div =
-        document.createElement("div");
+        document.createElement(
+            "div"
+        );
 
     div.textContent =
         text || "";
@@ -692,6 +879,34 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+
+// ============================================================
+// JAVASCRIPT STRING ESCAPING
+// ============================================================
+
+function escapeJs(text) {
+
+    return String(
+        text || ""
+    )
+    .replace(
+        /\\/g,
+        "\\\\"
+    )
+    .replace(
+        /'/g,
+        "\\'"
+    )
+    .replace(
+        /"/g,
+        '\\"'
+    );
+}
+
+
+// ============================================================
+// ENTER TO SEARCH
+// ============================================================
 
 document
     .getElementById("query")
@@ -709,6 +924,7 @@ document
 
         }
     );
+
 
 </script>
 
@@ -732,7 +948,10 @@ async def search(
 
     try:
 
-        return await youtube_search(q)
+        results =
+            await youtube_search(q)
+
+        return results
 
     except Exception as error:
 
@@ -745,7 +964,7 @@ async def search(
 
 
 # ============================================================
-# DOWNLOAD
+# DOWNLOAD API
 # ============================================================
 
 @app.get("/api/download")
@@ -755,6 +974,8 @@ async def download_audio(
         min_length=1
     )
 ):
+
+    # Only accept YouTube URLs
 
     if not (
         url.startswith(
@@ -775,13 +996,17 @@ async def download_audio(
             detail="Invalid YouTube URL."
         )
 
-    job_id =
-        uuid.uuid4().hex
+
+    # Unique filename
+
+    job_id = uuid.uuid4().hex
+
 
     output_template = str(
         DOWNLOAD_DIR /
         f"{job_id}.%(ext)s"
     )
+
 
     command = [
 
@@ -807,6 +1032,7 @@ async def download_audio(
         url
     ]
 
+
     try:
 
         process =
@@ -821,8 +1047,10 @@ async def download_audio(
                     asyncio.subprocess.PIPE
             )
 
+
         stdout, stderr =
             await process.communicate()
+
 
         if process.returncode != 0:
 
@@ -835,9 +1063,11 @@ async def download_audio(
             raise HTTPException(
                 status_code=500,
                 detail=
-                    "Download failed: " +
+                    "Download failed: "
+                    +
                     error_text[-2000:]
             )
+
 
         possible_files =
             list(
@@ -846,22 +1076,28 @@ async def download_audio(
                 )
             )
 
+
         if not possible_files:
 
             raise HTTPException(
                 status_code=500,
                 detail=
-                    "Download finished but no file was created."
+                    "Download completed but no audio file was found."
             )
+
 
         audio_file =
             possible_files[0]
 
+
         return FileResponse(
 
-            path=str(audio_file),
+            path=str(
+                audio_file
+            ),
 
-            media_type="audio/mpeg",
+            media_type=
+                "audio/mpeg",
 
             filename=
                 clean_filename(
@@ -869,35 +1105,44 @@ async def download_audio(
                 )
         )
 
+
     except FileNotFoundError:
 
         raise HTTPException(
             status_code=500,
-            detail="yt-dlp is not installed."
+            detail=
+                "yt-dlp is not installed."
         )
+
 
     except HTTPException:
 
         raise
+
 
     except Exception as error:
 
         raise HTTPException(
             status_code=500,
             detail=
-                "Download error: " +
+                "Download error: "
+                +
                 str(error)
         )
 
 
 # ============================================================
-# HEALTH
+# HEALTH CHECK
 # ============================================================
 
 @app.get("/health")
 async def health():
 
     return {
+
         "status": "ok",
-        "service": "music-downloader"
+
+        "service":
+            "music-downloader"
+
     }
