@@ -1,10 +1,11 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 import httpx
+import re
 
 app = FastAPI(title="Music Downloader")
 
-ARCHIVE_SEARCH_URL = "https://archive.org/advancedsearch.php"
+MUSICBRAINZ_URL = "https://musicbrainz.org/ws/2/recording"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -24,11 +25,11 @@ async def home():
         }
 
         body {
+            margin: 0;
+            padding: 25px;
             font-family: Arial, sans-serif;
             background: #111827;
             color: white;
-            margin: 0;
-            padding: 30px;
         }
 
         .container {
@@ -56,22 +57,25 @@ async def home():
             border: none;
             border-radius: 10px;
             font-size: 16px;
-            background: #ffffff;
-            color: #111827;
         }
 
         button {
-            padding: 15px 25px;
+            padding: 15px 22px;
             border: none;
             border-radius: 10px;
-            cursor: pointer;
-            font-size: 16px;
             background: #6366f1;
             color: white;
+            font-size: 16px;
+            cursor: pointer;
         }
 
         button:hover {
             background: #4f46e5;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         #status {
@@ -79,40 +83,55 @@ async def home():
             color: #9ca3af;
         }
 
-        #results {
-            margin-top: 20px;
-        }
-
         .result {
             background: #1f2937;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 12px;
+            border-radius: 14px;
+            padding: 18px;
+            margin-top: 12px;
         }
 
         .title {
-            font-size: 19px;
+            font-size: 20px;
             font-weight: bold;
         }
 
-        .creator {
+        .artist {
+            margin-top: 7px;
+            color: #c4b5fd;
+        }
+
+        .album {
+            margin-top: 5px;
             color: #9ca3af;
-            margin-top: 8px;
         }
 
-        .identifier {
+        .year {
+            margin-top: 5px;
             color: #6b7280;
-            font-size: 13px;
+        }
+
+        .mbid {
             margin-top: 8px;
-            word-break: break-all;
+            color: #4b5563;
+            font-size: 12px;
         }
 
-        .error {
-            color: #f87171;
+        .download {
+            margin-top: 15px;
+            background: #10b981;
         }
 
-        .loading {
-            color: #60a5fa;
+        .download:hover {
+            background: #059669;
+        }
+
+        .notice {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            background: #1e293b;
+            color: #94a3b8;
+            font-size: 14px;
         }
     </style>
 </head>
@@ -124,7 +143,7 @@ async def home():
     <h1>🎵 Music Downloader</h1>
 
     <div class="subtitle">
-        Search downloadable music and add it to Navidrome.
+        Search artists, songs and albums.
     </div>
 
     <div class="search">
@@ -132,10 +151,13 @@ async def home():
         <input
             id="query"
             type="text"
-            placeholder="Search artist, album or song..."
+            placeholder="Search song or artist..."
         >
 
-        <button id="searchButton" onclick="searchMusic()">
+        <button
+            id="searchButton"
+            onclick="searchMusic()"
+        >
             🔍 Search
         </button>
 
@@ -144,6 +166,11 @@ async def home():
     <div id="status"></div>
 
     <div id="results"></div>
+
+    <div class="notice">
+        ℹ️ MusicBrainz provides music metadata. Audio downloading
+        will be connected separately to sources that permit downloading.
+    </div>
 
 </div>
 
@@ -167,28 +194,22 @@ async function searchMusic() {
 
     if (!query) {
 
-        status.className = "error";
         status.textContent =
-            "Please enter something to search.";
+            "Enter an artist or song.";
 
         return;
     }
 
 
-    status.className = "loading";
-    status.textContent = "🔎 Searching...";
+    button.disabled = true;
+
+    status.textContent =
+        "🔎 Searching music...";
 
     results.innerHTML = "";
 
-    button.disabled = true;
-
 
     try {
-
-        /*
-         * "./api/search" is important because
-         * Home Assistant uses an Ingress URL.
-         */
 
         const response = await fetch(
             "./api/search?q=" +
@@ -196,13 +217,13 @@ async function searchMusic() {
         );
 
 
-        const text = await response.text();
+        const text =
+            await response.text();
 
 
         if (!response.ok) {
 
             throw new Error(
-                "Server returned " +
                 response.status +
                 ": " +
                 text
@@ -210,48 +231,23 @@ async function searchMusic() {
         }
 
 
-        let data;
-
-        try {
-
-            data = JSON.parse(text);
-
-        } catch (error) {
-
-            console.error(
-                "Server response:",
-                text
-            );
-
-            throw new Error(
-                "Server returned invalid JSON."
-            );
-        }
-
-
-        if (!Array.isArray(data)) {
-
-            throw new Error(
-                "Unexpected server response."
-            );
-        }
+        const data =
+            JSON.parse(text);
 
 
         if (data.length === 0) {
 
-            status.className = "";
             status.textContent =
-                "No results found.";
+                "No music found.";
 
             return;
         }
 
 
-        status.className = "";
         status.textContent =
             "🎵 " +
             data.length +
-            " results found.";
+            " results";
 
 
         data.forEach(item => {
@@ -259,55 +255,101 @@ async function searchMusic() {
             const card =
                 document.createElement("div");
 
-            card.className = "result";
+            card.className =
+                "result";
 
 
             const title =
                 document.createElement("div");
 
-            title.className = "title";
+            title.className =
+                "title";
 
             title.textContent =
-                item.title ||
-                "Unknown title";
+                "🎵 " +
+                item.title;
 
 
-            const creator =
+            const artist =
                 document.createElement("div");
 
-            creator.className = "creator";
+            artist.className =
+                "artist";
 
-            creator.textContent =
-                item.creator ||
-                "Unknown creator";
+            artist.textContent =
+                item.artist;
 
 
-            const identifier =
+            const album =
                 document.createElement("div");
 
-            identifier.className =
-                "identifier";
+            album.className =
+                "album";
 
-            identifier.textContent =
-                item.identifier ||
+            album.textContent =
+                item.album ?
+                "💿 " + item.album :
+                "Album unknown";
+
+
+            const year =
+                document.createElement("div");
+
+            year.className =
+                "year";
+
+            year.textContent =
+                item.year ?
+                "📅 " + item.year :
                 "";
 
 
+            const mbid =
+                document.createElement("div");
+
+            mbid.className =
+                "mbid";
+
+            mbid.textContent =
+                item.mbid;
+
+
+            const download =
+                document.createElement("button");
+
+            download.className =
+                "download";
+
+            download.textContent =
+                "⬇️ Download";
+
+
+            download.onclick =
+                function() {
+
+                    alert(
+                        "Download source will be connected next."
+                    );
+
+                };
+
+
             card.appendChild(title);
+            card.appendChild(artist);
+            card.appendChild(album);
+            card.appendChild(year);
+            card.appendChild(mbid);
+            card.appendChild(download);
 
-            card.appendChild(creator);
-
-            card.appendChild(identifier);
 
             results.appendChild(card);
 
         });
 
+
     } catch (error) {
 
         console.error(error);
-
-        status.className = "error";
 
         status.textContent =
             "❌ Error: " +
@@ -349,36 +391,35 @@ async def search_music(
     q: str = Query(..., min_length=1)
 ):
 
-    params = [
-        (
-            "q",
-            f"({q}) AND mediatype:audio"
-        ),
-        (
-            "fl[]",
-            "identifier"
-        ),
-        (
-            "fl[]",
-            "title"
-        ),
-        (
-            "fl[]",
-            "creator"
-        ),
-        (
-            "rows",
-            "25"
-        ),
-        (
-            "page",
-            "1"
-        ),
-        (
-            "output",
-            "json"
-        )
-    ]
+    # Clean the user's search.
+    query = re.sub(
+        r"\s+",
+        " ",
+        q.strip()
+    )
+
+
+    # MusicBrainz supports Lucene-style
+    # recording and artist searches.
+    mb_query = (
+        f'recording:"{query}" '
+        f'OR artist:"{query}"'
+    )
+
+
+    params = {
+        "query": mb_query,
+        "fmt": "json",
+        "limit": 25,
+        "offset": 0
+    }
+
+
+    headers = {
+        "User-Agent":
+        "HomeAssistant-Music-Downloader/0.1 "
+        "(https://github.com/ahmedxrob/ai-project)"
+    }
 
 
     async with httpx.AsyncClient(
@@ -387,12 +428,9 @@ async def search_music(
     ) as client:
 
         response = await client.get(
-            ARCHIVE_SEARCH_URL,
+            MUSICBRAINZ_URL,
             params=params,
-            headers={
-                "User-Agent":
-                "HomeAssistant-Music-Downloader/0.1"
-            }
+            headers=headers
         )
 
         response.raise_for_status()
@@ -400,35 +438,105 @@ async def search_music(
         data = response.json()
 
 
-    documents = (
-        data
-        .get("response", {})
-        .get("docs", [])
-    )
+    recordings =
+        data.get(
+            "recordings",
+            []
+        )
 
 
     results = []
 
 
-    for item in documents:
+    for recording in recordings:
+
+        title = recording.get(
+            "title",
+            "Unknown"
+        )
+
+
+        artist_names = []
+
+
+        for credit in recording.get(
+            "artist-credit",
+            []
+        ):
+
+            if isinstance(credit, dict):
+
+                artist = credit.get(
+                    "artist",
+                    {}
+                )
+
+                name = artist.get(
+                    "name"
+                )
+
+                if name:
+                    artist_names.append(name)
+
+
+        artist_name = (
+            ", ".join(artist_names)
+            if artist_names
+            else "Unknown artist"
+        )
+
+
+        releases = recording.get(
+            "release-list",
+            []
+        )
+
+
+        album = ""
+
+        year = ""
+
+
+        if releases:
+
+            first_release =
+                releases[0]
+
+            album =
+                first_release.get(
+                    "title",
+                    ""
+                )
+
+            date =
+                first_release.get(
+                    "date",
+                    ""
+                )
+
+            if date:
+
+                year =
+                    date[:4]
+
 
         results.append({
 
-            "identifier":
-                item.get(
-                    "identifier",
-                    ""
-                ),
-
             "title":
-                item.get(
-                    "title",
-                    "Unknown title"
-                ),
+                title,
 
-            "creator":
-                item.get(
-                    "creator",
+            "artist":
+                artist_name,
+
+            "album":
+                album,
+
+            "year":
+                year,
+
+            "mbid":
+                recording.get(
+                    "id",
                     ""
                 )
 
