@@ -2,6 +2,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 import httpx
 import re
+import html
 
 app = FastAPI()
 
@@ -9,112 +10,76 @@ DEEZER_SEARCH_URL = "https://api.deezer.com/search"
 
 
 # ============================================================
-# HELPERS
+# Helpers
 # ============================================================
 
-def normalize(text: str) -> str:
+def clean_text(value):
+    if not value:
+        return ""
+    return str(value).strip()
+
+
+def normalize(value):
+    value = clean_text(value).lower()
+    value = re.sub(r"[^\w\s]", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
+def score_result(item, query):
     """
-    Normalize text for better search matching.
-    Supports Latin, Arabic, Cyrillic, etc.
+    Rank results so exact artist/title matches appear first.
     """
-    text = (text or "").lower()
 
-    text = re.sub(
-        r"[^a-z0-9\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF]+",
-        " ",
-        text
-    )
+    query_norm = normalize(query)
 
-    text = re.sub(r"\s+", " ", text)
-
-    return text.strip()
-
-
-def calculate_score(query: str, track: dict) -> float:
-
-    title = track.get("title", "")
-    artist = track.get("artist", {}).get("name", "")
-    album = track.get("album", {}).get("title", "")
-
-    query_normalized = normalize(query)
-
-    title_normalized = normalize(title)
-    artist_normalized = normalize(artist)
-    album_normalized = normalize(album)
-
-    query_words = set(query_normalized.split())
-    title_words = set(title_normalized.split())
-    artist_words = set(artist_normalized.split())
-    album_words = set(album_normalized.split())
+    title = normalize(item.get("title", ""))
+    artist = normalize(item.get("artist", ""))
+    album = normalize(item.get("album", ""))
 
     score = 0
 
-    # ========================================================
-    # EXACT MATCHES
-    # ========================================================
-
-    if query_normalized == title_normalized:
+    # Exact title
+    if title == query_norm:
         score += 1000
 
-    if query_normalized == artist_normalized:
+    # Exact artist
+    if artist == query_norm:
         score += 900
 
-    if query_normalized == f"{artist_normalized} {title_normalized}":
-        score += 1500
+    # Query appears in title
+    if query_norm and query_norm in title:
+        score += 500
 
-    if query_normalized == f"{title_normalized} {artist_normalized}":
-        score += 1500
+    # Query appears in artist
+    if query_norm and query_norm in artist:
+        score += 450
 
-    # ========================================================
-    # WORD MATCHING
-    # ========================================================
+    # Query words
+    words = query_norm.split()
 
-    artist_matches = query_words.intersection(
-        artist_words
-    )
+    for word in words:
+        if word in title:
+            score += 100
 
-    title_matches = query_words.intersection(
-        title_words
-    )
+        if word in artist:
+            score += 80
 
-    album_matches = query_words.intersection(
-        album_words
-    )
+        if word in album:
+            score += 30
 
-    score += len(artist_matches) * 350
-
-    score += len(title_matches) * 250
-
-    score += len(album_matches) * 75
-
-    # ========================================================
-    # PARTIAL MATCHES
-    # ========================================================
-
-    if query_normalized in artist_normalized:
-        score += 400
-
-    if query_normalized in title_normalized:
-        score += 400
-
-    # ========================================================
-    # POPULARITY
-    # ========================================================
-
+    # Deezer rank
     try:
-        rank = int(track.get("rank", 0))
+        rank = int(item.get("rank", 0))
+        score += min(rank / 10000, 50)
     except Exception:
-        rank = 0
-
-    # Small popularity bonus.
-    # Matching quality remains much more important.
-    score += min(rank / 10000, 100)
+        pass
 
     return score
 
 
 # ============================================================
-# HOME PAGE
+# HTML UI
 # ============================================================
 
 @app.get("/", response_class=HTMLResponse)
@@ -122,327 +87,310 @@ async def home():
 
     return """
 <!DOCTYPE html>
-
-<html>
+<html lang="en">
 
 <head>
 
-    <meta charset="UTF-8">
+<meta charset="UTF-8">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
 
-    <title>Music Downloader</title>
+<title>Music Downloader</title>
 
-    <style>
+<style>
 
-        * {
-            box-sizing: border-box;
-        }
+* {
+    box-sizing: border-box;
+}
 
-        body {
+body {
 
-            margin: 0;
+    margin: 0;
 
-            padding: 30px;
+    padding: 30px;
 
-            background:
-                linear-gradient(
-                    135deg,
-                    #111827,
-                    #0f172a
-                );
+    background:
+        linear-gradient(
+            135deg,
+            #0f172a,
+            #111827
+        );
 
-            color: white;
+    color: white;
 
-            font-family:
-                Arial,
-                Helvetica,
-                sans-serif;
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
 
-            min-height: 100vh;
-        }
+    min-height: 100vh;
+}
 
-        .container {
+.container {
 
-            max-width: 950px;
+    max-width: 1000px;
 
-            margin: auto;
-        }
+    margin: auto;
+}
 
-        h1 {
+h1 {
 
-            margin-bottom: 5px;
+    margin-bottom: 5px;
 
-            font-size: 32px;
-        }
+    font-size: 32px;
+}
 
-        .subtitle {
+.subtitle {
 
-            color: #9ca3af;
+    color: #9ca3af;
 
-            margin-bottom: 25px;
-        }
+    margin-bottom: 25px;
+}
 
-        .search-box {
+.search-box {
 
-            display: flex;
+    display: flex;
 
-            gap: 10px;
+    gap: 10px;
 
-            width: 100%;
-        }
+    margin-bottom: 25px;
+}
 
-        input {
+input {
 
-            flex: 1;
+    flex: 1;
 
-            padding: 15px;
+    padding: 15px;
 
-            border: none;
+    border: none;
 
-            outline: none;
+    border-radius: 12px;
 
-            border-radius: 12px;
+    background: #1f2937;
 
-            background: #1f2937;
+    color: white;
 
-            color: white;
+    font-size: 16px;
 
-            font-size: 16px;
-        }
+    outline: none;
+}
 
-        input::placeholder {
+input:focus {
 
-            color: #6b7280;
-        }
+    box-shadow:
+        0 0 0 2px #6366f1;
+}
 
-        button {
+button {
 
-            padding:
-                14px
-                20px;
+    padding:
+        14px
+        20px;
 
-            border: none;
+    border: none;
 
-            border-radius: 12px;
+    border-radius: 12px;
 
-            background: #6366f1;
+    background: #6366f1;
 
-            color: white;
+    color: white;
 
-            cursor: pointer;
+    cursor: pointer;
 
-            font-size: 15px;
+    font-size: 15px;
 
-            font-weight: bold;
+    font-weight: bold;
+}
 
-            transition: 0.2s;
-        }
+button:hover {
 
-        button:hover {
+    background: #4f46e5;
+}
 
-            background: #818cf8;
+button:disabled {
 
-            transform: translateY(-1px);
-        }
+    opacity: 0.5;
 
-        button:disabled {
+    cursor: not-allowed;
+}
 
-            opacity: 0.5;
+#status {
 
-            cursor: not-allowed;
+    color: #9ca3af;
 
-            transform: none;
-        }
+    margin-bottom: 15px;
+}
 
-        #status {
+.result {
 
-            margin-top: 25px;
+    display: flex;
 
-            margin-bottom: 15px;
+    align-items: center;
 
-            color: #9ca3af;
-        }
+    gap: 16px;
 
-        .result {
+    background: #1f2937;
 
-            background: #1f2937;
+    padding: 14px;
 
-            padding: 15px;
+    margin-bottom: 10px;
 
-            margin-top: 12px;
+    border-radius: 14px;
 
-            border-radius: 14px;
+    transition:
+        transform 0.15s,
+        background 0.15s;
+}
 
-            border:
-                1px solid
-                #374151;
+.result:hover {
 
-            transition: 0.2s;
-        }
+    background: #273449;
 
-        .result:hover {
+    transform: translateY(-1px);
+}
 
-            border-color: #6366f1;
-        }
+.cover {
 
-        .result-row {
+    width: 75px;
 
-            display: flex;
+    height: 75px;
 
-            gap: 15px;
+    object-fit: cover;
 
-            align-items: center;
-        }
+    border-radius: 10px;
 
-        .cover {
+    background: #374151;
 
-            width: 75px;
+    flex-shrink: 0;
+}
 
-            height: 75px;
+.info {
 
-            border-radius: 10px;
+    flex: 1;
 
-            object-fit: cover;
+    min-width: 0;
+}
 
-            background: #111827;
+.title {
 
-            flex-shrink: 0;
-        }
+    font-size: 18px;
 
-        .info {
+    font-weight: bold;
 
-            flex: 1;
+    white-space: nowrap;
 
-            min-width: 0;
-        }
+    overflow: hidden;
 
-        .title {
+    text-overflow: ellipsis;
+}
 
-            font-size: 18px;
+.artist {
 
-            font-weight: bold;
+    color: #a78bfa;
 
-            overflow: hidden;
+    margin-top: 5px;
+}
 
-            text-overflow: ellipsis;
+.album {
 
-            white-space: nowrap;
-        }
+    color: #9ca3af;
 
-        .artist {
+    margin-top: 4px;
 
-            color: #a78bfa;
+    font-size: 14px;
+}
 
-            margin-top: 6px;
-        }
+.duration {
 
-        .album {
+    color: #6b7280;
 
-            color: #9ca3af;
+    font-size: 13px;
 
-            margin-top: 5px;
+    margin-top: 4px;
+}
 
-            font-size: 14px;
-        }
+.actions {
 
-        .rank {
+    display: flex;
 
-            color: #6b7280;
+    gap: 8px;
 
-            margin-top: 4px;
+    flex-shrink: 0;
+}
 
-            font-size: 12px;
-        }
+.preview {
 
-        .actions {
+    background: #374151;
+}
 
-            display: flex;
+.preview:hover {
 
-            gap: 8px;
+    background: #4b5563;
+}
 
-            margin-top: 15px;
+.download {
 
-            flex-wrap: wrap;
-        }
+    background: #10b981;
+}
 
-        .preview-button {
+.download:hover {
 
-            background: #374151;
-        }
+    background: #059669;
+}
 
-        .preview-button:hover {
+audio {
 
-            background: #4b5563;
-        }
+    width: 100%;
 
-        .deezer-button {
+    margin-top: 10px;
+}
 
-            background: #374151;
+.empty {
 
-            text-decoration: none;
+    padding: 40px;
 
-            color: white;
+    text-align: center;
 
-            padding:
-                14px
-                20px;
+    color: #9ca3af;
+}
 
-            border-radius: 12px;
+@media (max-width: 700px) {
 
-            font-size: 14px;
+    body {
 
-            display: inline-flex;
+        padding: 15px;
+    }
 
-            align-items: center;
-        }
+    .search-box {
 
-        .deezer-button:hover {
+        flex-direction: column;
+    }
 
-            background: #4b5563;
-        }
+    .result {
 
-        .empty {
+        align-items: flex-start;
+    }
 
-            text-align: center;
+    .actions {
 
-            padding: 50px;
+        flex-direction: column;
+    }
 
-            color: #6b7280;
-        }
+    .cover {
 
-        @media(max-width: 600px) {
+        width: 60px;
 
-            body {
-                padding: 15px;
-            }
+        height: 60px;
+    }
 
-            .search-box {
-                flex-direction: column;
-            }
+}
 
-            .search-box button {
-                width: 100%;
-            }
-
-            .cover {
-                width: 60px;
-                height: 60px;
-            }
-
-            .title {
-                font-size: 16px;
-            }
-
-        }
-
-    </style>
+</style>
 
 </head>
-
 
 <body>
 
@@ -453,7 +401,6 @@ async def home():
     <div class="subtitle">
         Search artists, songs and albums.
     </div>
-
 
     <div class="search-box">
 
@@ -473,9 +420,7 @@ async def home():
 
     </div>
 
-
     <div id="status"></div>
-
 
     <div id="results"></div>
 
@@ -484,10 +429,8 @@ async def home():
 
 <script>
 
+let currentAudio = null;
 
-// ============================================================
-// SEARCH
-// ============================================================
 
 async function searchMusic() {
 
@@ -497,14 +440,11 @@ async function searchMusic() {
             .value
             .trim();
 
-
     const status =
         document.getElementById("status");
 
-
     const results =
         document.getElementById("results");
-
 
     const button =
         document.getElementById("searchButton");
@@ -515,18 +455,16 @@ async function searchMusic() {
         status.textContent =
             "Enter a song or artist.";
 
-        results.innerHTML = "";
-
         return;
     }
 
 
-    button.disabled = true;
-
     status.textContent =
-        "🔎 Searching Deezer...";
+        "🔎 Searching...";
 
     results.innerHTML = "";
+
+    button.disabled = true;
 
 
     try {
@@ -554,7 +492,7 @@ async function searchMusic() {
         if (!Array.isArray(data)) {
 
             throw new Error(
-                "Invalid response from server"
+                "Invalid server response"
             );
         }
 
@@ -580,21 +518,104 @@ async function searchMusic() {
             " results";
 
 
-        for (
-            const item of data
-        ) {
+        for (const item of data) {
 
-            createResult(
-                item,
-                results
-            );
+            const div =
+                document.createElement("div");
 
+            div.className = "result";
+
+
+            const cover =
+                item.cover ||
+                "";
+
+
+            const title =
+                escapeHtml(
+                    item.title ||
+                    "Unknown"
+                );
+
+
+            const artist =
+                escapeHtml(
+                    item.artist ||
+                    "Unknown artist"
+                );
+
+
+            const album =
+                escapeHtml(
+                    item.album ||
+                    "Album unknown"
+                );
+
+
+            const duration =
+                formatDuration(
+                    item.duration
+                );
+
+
+            div.innerHTML = `
+
+                <img
+                    class="cover"
+                    src="${cover}"
+                    onerror="this.style.visibility='hidden'"
+                >
+
+                <div class="info">
+
+                    <div class="title">
+                        🎵 ${title}
+                    </div>
+
+                    <div class="artist">
+                        👤 ${artist}
+                    </div>
+
+                    <div class="album">
+                        💿 ${album}
+                    </div>
+
+                    <div class="duration">
+                        ⏱ ${duration}
+                    </div>
+
+                    <div
+                        class="preview-container"
+                        id="preview-${item.id}"
+                    ></div>
+
+                </div>
+
+                <div class="actions">
+
+                    <button
+                        class="preview"
+                        onclick='previewTrack(${JSON.stringify(item)})'
+                    >
+                        ▶️ Preview
+                    </button>
+
+                    <button
+                        class="download"
+                        onclick='downloadTrack(${JSON.stringify(item)})'
+                    >
+                        ⬇️ Download
+                    </button>
+
+                </div>
+            `;
+
+
+            results.appendChild(div);
         }
 
 
     } catch (error) {
-
-        console.error(error);
 
         status.textContent =
             "❌ " +
@@ -603,184 +624,16 @@ async function searchMusic() {
     } finally {
 
         button.disabled = false;
-
     }
-
 }
 
 
-// ============================================================
-// CREATE RESULT
-// ============================================================
+function previewTrack(item) {
 
-function createResult(
-    item,
-    container
-) {
-
-    const div =
-        document.createElement("div");
-
-
-    div.className =
-        "result";
-
-
-    const cover =
-        item.cover ||
-        item.cover_big ||
-        "";
-
-
-    const preview =
-        item.preview ||
-        "";
-
-
-    const deezer =
-        item.deezer_url ||
-        "#";
-
-
-    div.innerHTML = `
-
-        <div class="result-row">
-
-            ${
-                cover
-                ?
-                `
-                <img
-                    class="cover"
-                    src="${escapeHtml(cover)}"
-                    loading="lazy"
-                    alt=""
-                >
-                `
-                :
-                `
-                <div class="cover"></div>
-                `
-            }
-
-
-            <div class="info">
-
-                <div class="title">
-
-                    🎵
-                    ${escapeHtml(
-                        item.title ||
-                        "Unknown"
-                    )}
-
-                </div>
-
-
-                <div class="artist">
-
-                    👤
-                    ${escapeHtml(
-                        item.artist ||
-                        "Unknown artist"
-                    )}
-
-                </div>
-
-
-                <div class="album">
-
-                    💿
-                    ${escapeHtml(
-                        item.album ||
-                        "Unknown album"
-                    )}
-
-                </div>
-
-
-                ${
-                    item.rank
-                    ?
-                    `
-                    <div class="rank">
-
-                        ⭐ Popularity:
-                        ${escapeHtml(
-                            String(item.rank)
-                        )}
-
-                    </div>
-                    `
-                    :
-                    ""
-                }
-
-            </div>
-
-        </div>
-
-
-        <div class="actions">
-
-            ${
-                preview
-                ?
-                `
-                <button
-                    class="preview-button"
-                    onclick="previewMusic(
-                        '${escapeJs(preview)}'
-                    )"
-                >
-                    ▶️ Preview
-                </button>
-                `
-                :
-                ""
-            }
-
-
-            ${
-                deezer !== "#"
-                ?
-                `
-                <a
-                    class="deezer-button"
-                    href="${escapeHtml(deezer)}"
-                    target="_blank"
-                    rel="noopener"
-                >
-                    Open Deezer ↗
-                </a>
-                `
-                :
-                ""
-            }
-
-        </div>
-
-    `;
-
-
-    container.appendChild(div);
-
-}
-
-
-// ============================================================
-// PREVIEW
-// ============================================================
-
-let currentAudio = null;
-
-
-function previewMusic(url) {
-
-    if (!url) {
+    if (!item.preview) {
 
         alert(
-            "No preview available."
+            "No preview available for this track."
         );
 
         return;
@@ -795,61 +648,95 @@ function previewMusic(url) {
     }
 
 
+    const container =
+        document.getElementById(
+            "preview-" + item.id
+        );
+
+
+    if (!container) {
+        return;
+    }
+
+
+    container.innerHTML = `
+
+        <audio
+            controls
+            autoplay
+        >
+            <source
+                src="${item.preview}"
+                type="audio/mpeg"
+            >
+        </audio>
+
+    `;
+
+
     currentAudio =
-        new Audio(url);
-
-
-    currentAudio.play()
-        .catch(error => {
-
-            console.error(error);
-
-            alert(
-                "Unable to play preview."
-            );
-
-        });
-
+        container.querySelector("audio");
 }
 
 
-// ============================================================
-// HTML ESCAPE
-// ============================================================
+async function downloadTrack(item) {
+
+    /*
+     * Download will be connected in the next step.
+     */
+
+    alert(
+        "Download system is not connected yet.\\n\\n" +
+        item.artist +
+        " - " +
+        item.title
+    );
+}
+
+
+function formatDuration(seconds) {
+
+    if (!seconds) {
+        return "--:--";
+    }
+
+
+    seconds =
+        Number(seconds);
+
+
+    const minutes =
+        Math.floor(
+            seconds / 60
+        );
+
+
+    const remaining =
+        Math.floor(
+            seconds % 60
+        );
+
+
+    return (
+        minutes +
+        ":" +
+        String(remaining)
+            .padStart(2, "0")
+    );
+}
+
 
 function escapeHtml(text) {
 
     const div =
         document.createElement("div");
 
-
     div.textContent =
         text || "";
-
 
     return div.innerHTML;
 }
 
-
-// ============================================================
-// JAVASCRIPT STRING ESCAPE
-// ============================================================
-
-function escapeJs(text) {
-
-    return String(text || "")
-        .replace(/\\/g, "\\\\")
-        .replace(/'/g, "\\'")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, "\\n")
-        .replace(/\r/g, "\\r");
-
-}
-
-
-// ============================================================
-// ENTER KEY
-// ============================================================
 
 document
     .getElementById("query")
@@ -862,12 +749,10 @@ document
             ) {
 
                 searchMusic();
-
             }
 
         }
     );
-
 
 </script>
 
@@ -878,14 +763,15 @@ document
 
 
 # ============================================================
-# DEEZER SEARCH API
+# Deezer Search API
 # ============================================================
 
 @app.get("/api/search")
 async def search(
     q: str = Query(
         ...,
-        min_length=1
+        min_length=1,
+        max_length=200
     )
 ):
 
@@ -925,86 +811,22 @@ async def search(
             params=params,
 
             headers=headers
-
         )
 
 
         response.raise_for_status()
 
 
-        data =
-            response.json()
+        data = response.json()
 
-
-    tracks =
-        data.get(
-            "data",
-            []
-        )
-
-
-    # ========================================================
-    # SCORE RESULTS
-    # ========================================================
-
-    scored = []
-
-
-    for track in tracks:
-
-        score =
-            calculate_score(
-                query,
-                track
-            )
-
-
-        scored.append({
-
-            "score": score,
-
-            "track": track
-
-        })
-
-
-    # Best matches first
-    scored.sort(
-
-        key=lambda item:
-            item["score"],
-
-        reverse=True
-
-    )
-
-
-    # ========================================================
-    # REMOVE DUPLICATES
-    # ========================================================
 
     results = []
 
-    seen = set()
 
-
-    for item in scored:
-
-        track =
-            item["track"]
-
-
-        track_id =
-            track.get("id")
-
-
-        if track_id in seen:
-
-            continue
-
-
-        seen.add(track_id)
-
+    for track in data.get(
+        "data",
+        []
+    ):
 
         artist_data =
             track.get(
@@ -1020,56 +842,33 @@ async def search(
             )
 
 
-        results.append({
+        item = {
 
             "id":
-                track_id,
-
+                track.get(
+                    "id"
+                ),
 
             "title":
-                track.get(
-                    "title",
-                    "Unknown"
+                clean_text(
+                    track.get(
+                        "title"
+                    )
                 ),
-
 
             "artist":
-                artist_data.get(
-                    "name",
-                    "Unknown"
+                clean_text(
+                    artist_data.get(
+                        "name"
+                    )
                 ),
-
-
-            "artist_id":
-                artist_data.get(
-                    "id"
-                ),
-
 
             "album":
-                album_data.get(
-                    "title",
-                    "Unknown"
+                clean_text(
+                    album_data.get(
+                        "title"
+                    )
                 ),
-
-
-            "album_id":
-                album_data.get(
-                    "id"
-                ),
-
-
-            "cover":
-                album_data.get(
-                    "cover_medium"
-                ),
-
-
-            "cover_big":
-                album_data.get(
-                    "cover_big"
-                ),
-
 
             "duration":
                 track.get(
@@ -1077,45 +876,78 @@ async def search(
                     0
                 ),
 
-
             "rank":
                 track.get(
                     "rank",
                     0
                 ),
 
-
             "preview":
                 track.get(
                     "preview"
                 ),
 
+            "cover":
+                album_data.get(
+                    "cover_medium"
+                ),
 
             "deezer_url":
                 track.get(
                     "link"
-                ),
-
-
-            "score":
-                round(
-                    item["score"],
-                    2
                 )
-
-        })
-
-
-        if len(results) >= 25:
-
-            break
+        }
 
 
-    return results
+        results.append(item)
+
+
+    # Rank the results
+    results.sort(
+        key=lambda item:
+            score_result(
+                item,
+                query
+            ),
+        reverse=True
+    )
+
+
+    # Remove duplicate tracks
+    unique = []
+
+    seen = set()
+
+
+    for item in results:
+
+        key = (
+
+            normalize(
+                item["title"]
+            ),
+
+            normalize(
+                item["artist"]
+            )
+
+        )
+
+
+        if key in seen:
+            continue
+
+
+        seen.add(key)
+
+        unique.append(item)
+
+
+    return unique[:50]
 
 
 # ============================================================
-# HEALTH CHECK
+# Health
 # ============================================================
 
 @app.get("/health")
