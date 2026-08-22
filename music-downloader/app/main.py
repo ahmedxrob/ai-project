@@ -1091,7 +1091,7 @@ async def download_stream(
             audio_file = possible_files[0]
             ext = audio_file.suffix
 
-            data = json.dumps({"type": "status", "message": "Cleaning metadata & setting album..."})
+            data = json.dumps({"type": "status", "message": "Cleaning description & setting album..."})
             yield f"data: {data}\n\n"
 
             cleaned_file = DOWNLOAD_DIR / f"clean_{job_id}{ext}"
@@ -1100,8 +1100,9 @@ async def download_stream(
                 "-y",
                 "-i", str(audio_file),
                 "-c", "copy",
-                "-metadata", "album=Singles",
+                "-metadata", "album=Iceberg",
                 "-metadata", "comment=",
+                "-metadata", "description=",
                 "-metadata", "purl=",
                 str(cleaned_file)
             ]
