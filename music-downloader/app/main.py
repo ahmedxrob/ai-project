@@ -272,26 +272,57 @@ header h1 {
 
 .search-card button:hover { transform: translateY(-1px); }
 
-/* PROGRESS PANEL */
+/* INTERACTIVE PROGRESS PANEL */
 .progress-panel {
     background: var(--card-bg);
     backdrop-filter: blur(16px);
     border: 1px solid var(--card-border);
-    border-radius: 16px;
-    padding: 20px;
+    border-radius: 20px;
+    padding: 22px;
     margin-bottom: 25px;
     display: none;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .progress-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
 }
 
-.progress-title { font-size: 0.92rem; font-weight: 600; color: var(--text-primary); }
+.progress-title { font-size: 0.98rem; font-weight: 700; color: var(--text-primary); }
+
+.progress-right-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
 .progress-percent { font-size: 0.92rem; font-weight: 700; color: var(--accent); }
+
+.btn-close-progress {
+    background: rgba(255, 255, 255, 0.08);
+    border: none;
+    color: var(--text-secondary);
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+}
+
+.btn-close-progress:hover { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
 
 .progress-track {
     width: 100%;
@@ -299,7 +330,7 @@ header h1 {
     background: rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     overflow: hidden;
-    margin-bottom: 10px;
+    margin-bottom: 15px;
 }
 
 .progress-fill {
@@ -310,11 +341,64 @@ header h1 {
     transition: width 0.3s ease;
 }
 
+/* INTERACTIVE PIPELINE STEPS */
+.progress-steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 15px;
+    background: rgba(15, 23, 42, 0.6);
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.step-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.step-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #374151;
+    transition: all 0.3s;
+    flex-shrink: 0;
+}
+
+.step-item.active { color: #fff; font-weight: 600; }
+.step-item.active .step-dot {
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+    animation: pulseDot 1.2s infinite alternate;
+}
+
+.step-item.completed { color: var(--success); font-weight: 600; }
+.step-item.completed .step-dot { background: var(--success); }
+
+@keyframes pulseDot {
+    0% { transform: scale(1); opacity: 0.8; }
+    100% { transform: scale(1.3); opacity: 1; }
+}
+
 .progress-details {
     display: flex;
     justify-content: space-between;
     font-size: 0.82rem;
     color: var(--text-secondary);
+}
+
+.progress-actions {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    display: none;
+    gap: 10px;
 }
 
 /* RESULTS & CARDS */
@@ -376,7 +460,9 @@ header h1 {
     text-decoration: none;
     display: inline-flex;
     align-items: center;
+    transition: all 0.2s;
 }
+.btn-secondary:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 
 .btn-download {
     background: linear-gradient(135deg, #10b981 0%, #059669 100%);
@@ -425,16 +511,8 @@ header h1 {
 
 .setting-row:last-child { border-bottom: none; padding-bottom: 0; }
 
-.setting-label {
-    font-weight: 600;
-    font-size: 0.95rem;
-}
-
-.setting-desc {
-    font-size: 0.82rem;
-    color: var(--text-secondary);
-    margin-top: 2px;
-}
+.setting-label { font-weight: 600; font-size: 0.95rem; }
+.setting-desc { font-size: 0.82rem; color: var(--text-secondary); margin-top: 2px; }
 
 select, input[type="number"] {
     background: var(--input-bg);
@@ -446,13 +524,7 @@ select, input[type="number"] {
     font-size: 0.9rem;
 }
 
-.switch {
-    position: relative;
-    display: inline-block;
-    width: 46px;
-    height: 24px;
-}
-
+.switch { position: relative; display: inline-block; width: 46px; height: 24px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 
 .slider {
@@ -485,6 +557,7 @@ input:checked + .slider:before { transform: translateX(22px); }
     .result-card { flex-direction: column; align-items: flex-start; }
     .thumb-wrapper { width: 100%; height: 140px; }
     .btn-group { width: 100%; justify-content: flex-end; }
+    .progress-steps { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -525,14 +598,35 @@ input:checked + .slider:before { transform: translateX(22px); }
         <div class="progress-panel" id="progressPanel">
             <div class="progress-header">
                 <span class="progress-title" id="progressTitle">Downloading...</span>
-                <span class="progress-percent" id="progressPercent">0%</span>
+                <div class="progress-right-header">
+                    <span class="progress-percent" id="progressPercent">0%</span>
+                    <button class="btn-close-progress" onclick="closeProgressPanel()" title="Dismiss">✕</button>
+                </div>
             </div>
+            
             <div class="progress-track">
                 <div class="progress-fill" id="progressFill"></div>
             </div>
+
+            <div class="progress-steps">
+                <div class="step-item active" id="stepDownload">
+                    <span class="step-dot"></span> 1. Downloading Stream
+                </div>
+                <div class="step-item" id="stepProcess">
+                    <span class="step-dot"></span> 2. Cleaning Tags & Album
+                </div>
+                <div class="step-item" id="stepDone">
+                    <span class="step-dot"></span> 3. Ready for Navidrome
+                </div>
+            </div>
+
             <div class="progress-details">
-                <span id="progressStatus">Initializing...</span>
+                <span id="progressStatus">Connecting to stream...</span>
                 <span id="progressSpeed">-- MB/s</span>
+            </div>
+
+            <div class="progress-actions" id="progressActions">
+                <button class="btn-secondary" onclick="switchTab('library')">📂 View in Library</button>
             </div>
         </div>
 
@@ -718,6 +812,32 @@ async function searchMusic() {
     }
 }
 
+function updatePipelineStep(stepName) {
+    const s1 = document.getElementById("stepDownload");
+    const s2 = document.getElementById("stepProcess");
+    const s3 = document.getElementById("stepDone");
+
+    s1.className = "step-item";
+    s2.className = "step-item";
+    s3.className = "step-item";
+
+    if (stepName === 'download') {
+        s1.classList.add("active");
+    } else if (stepName === 'process') {
+        s1.classList.add("completed");
+        s2.classList.add("active");
+    } else if (stepName === 'done') {
+        s1.classList.add("completed");
+        s2.classList.add("completed");
+        s3.classList.add("completed");
+    }
+}
+
+function closeProgressPanel() {
+    if (currentEventSource) currentEventSource.close();
+    document.getElementById("progressPanel").style.display = "none";
+}
+
 function startDownload(url, title) {
     if (currentEventSource) currentEventSource.close();
 
@@ -727,13 +847,16 @@ function startDownload(url, title) {
     const pFill = document.getElementById("progressFill");
     const pStatus = document.getElementById("progressStatus");
     const pSpeed = document.getElementById("progressSpeed");
+    const pActions = document.getElementById("progressActions");
 
     panel.style.display = "block";
+    pActions.style.display = "none";
     pTitle.textContent = "Downloading: " + title;
     pPercent.textContent = "0%";
     pFill.style.width = "0%";
-    pStatus.textContent = "Connecting...";
-    pSpeed.textContent = "";
+    pStatus.textContent = "Connecting to stream...";
+    pSpeed.textContent = "-- MB/s";
+    updatePipelineStep('download');
 
     const apiUrl = "api/download-stream?url=" + encodeURIComponent(url) + "&title=" + encodeURIComponent(title);
     currentEventSource = new EventSource(apiUrl);
@@ -746,27 +869,32 @@ function startDownload(url, title) {
             pFill.style.width = data.percent + "%";
             pSpeed.textContent = data.speed || "";
             pStatus.textContent = "Downloading audio stream...";
+            updatePipelineStep('download');
         } else if (data.type === "status") {
             pStatus.textContent = data.message;
-            if (data.message.includes("Embedding")) {
-                pPercent.textContent = "95%";
-                pFill.style.width = "95%";
+            if (data.message.includes("Cleaning") || data.message.includes("Embedding")) {
+                pPercent.textContent = "92%";
+                pFill.style.width = "92%";
+                updatePipelineStep('process');
             }
         } else if (data.type === "complete") {
             pPercent.textContent = "100%";
             pFill.style.width = "100%";
-            pStatus.textContent = "✅ Saved: " + data.file;
+            pStatus.textContent = "✅ Saved successfully!";
             pSpeed.textContent = "";
+            updatePipelineStep('done');
+            pActions.style.display = "flex";
             currentEventSource.close();
             loadLibraryCount();
         } else if (data.type === "error") {
             pStatus.textContent = "❌ Error: " + data.message;
+            pSpeed.textContent = "";
             currentEventSource.close();
         }
     };
 
     currentEventSource.onerror = function() {
-        pStatus.textContent = "❌ Download connection failed.";
+        pStatus.textContent = "❌ Connection interrupted.";
         currentEventSource.close();
     };
 }
@@ -962,6 +1090,33 @@ async def download_stream(
 
             audio_file = possible_files[0]
             ext = audio_file.suffix
+
+            data = json.dumps({"type": "status", "message": "Cleaning metadata & setting album..."})
+            yield f"data: {data}\n\n"
+
+            cleaned_file = DOWNLOAD_DIR / f"clean_{job_id}{ext}"
+            clean_command = [
+                "ffmpeg",
+                "-y",
+                "-i", str(audio_file),
+                "-c", "copy",
+                "-metadata", "album=Singles",
+                "-metadata", "comment=",
+                "-metadata", "purl=",
+                str(cleaned_file)
+            ]
+
+            process_clean = await asyncio.create_subprocess_exec(
+                *clean_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process_clean.wait()
+
+            if process_clean.returncode == 0 and cleaned_file.exists():
+                audio_file.unlink()
+                audio_file = cleaned_file
+
             clean_title = clean_filename(title)
             final_name = f"{clean_title}{ext}"
             final_path = DOWNLOAD_DIR / final_name
