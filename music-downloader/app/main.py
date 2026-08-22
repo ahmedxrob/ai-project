@@ -9,7 +9,7 @@ from pathlib import Path
 
 app = FastAPI(title="Music Downloader")
 
-# Changed to save to the Home Assistant share folder
+# Save to the Home Assistant share folder
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome_music"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -259,7 +259,8 @@ async function downloadMusic(url, title) {
     progressBar.style.width = "10%";
 
     try {
-        const apiUrl = "api/download?url=" + encodeURIComponent(url);
+        // We now send the title back to the API so it knows what to name the file!
+        const apiUrl = "api/download?url=" + encodeURIComponent(url) + "&title=" + encodeURIComponent(title);
         
         const response = await fetch(apiUrl);
         progressBar.style.width = "70%";
@@ -277,7 +278,7 @@ async function downloadMusic(url, title) {
         setTimeout(() => {
             progress.style.display = "none";
             progressBar.style.width = "0%";
-        }, 3000);
+        }, 5000);
 
     } catch (error) {
         console.error(error);
@@ -315,10 +316,14 @@ async def search(q: str = Query(..., min_length=1)):
 # ============================================================
 
 @app.get("/api/download")
-async def download_audio(url: str = Query(..., min_length=1)):
+async def download_audio(
+    url: str = Query(..., min_length=1),
+    title: str = Query("Unknown", min_length=1)  # Receive the title here
+):
     if not (url.startswith("https://www.youtube.com/") or url.startswith("https://youtube.com/") or url.startswith("https://youtu.be/")):
         raise HTTPException(status_code=400, detail="Invalid YouTube URL.")
 
+    # We download as a UUID first to prevent errors if you download two songs at once
     job_id = uuid.uuid4().hex
     output_template = str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")
 
@@ -353,15 +358,25 @@ async def download_audio(url: str = Query(..., min_length=1)):
             raise HTTPException(status_code=500, detail="Download completed but no audio file was found.")
 
         audio_file = possible_files[0]
+        ext = audio_file.suffix  # gets '.mp3'
         
-        clean_name = clean_filename(audio_file.name)
-        final_path = DOWNLOAD_DIR / clean_name
+        # Clean the title we received from the frontend
+        clean_title = clean_filename(title)
+        final_name = f"{clean_title}{ext}"
+        final_path = DOWNLOAD_DIR / final_name
+        
+        # If a song with this exact name already exists, append a short hash to prevent overwriting
+        if final_path.exists():
+            final_name = f"{clean_title}_{job_id[:4]}{ext}"
+            final_path = DOWNLOAD_DIR / final_name
+
+        # Rename it from the UUID to the actual Song Title
         audio_file.rename(final_path)
 
         return {
             "status": "success",
             "message": "Saved to server",
-            "file": clean_name
+            "file": final_name
         }
 
     except FileNotFoundError:
