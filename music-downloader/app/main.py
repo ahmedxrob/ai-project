@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException, Body
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 import asyncio
 import json
 import os
@@ -458,7 +458,14 @@ header h1 {
 .track-title { font-size: 0.98rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
 .track-artist { font-size: 0.85rem; color: var(--text-secondary); }
 
-.btn-group { display: flex; gap: 8px; }
+.btn-group { display: flex; gap: 8px; align-items: center; }
+
+audio {
+    height: 36px;
+    max-width: 160px;
+    border-radius: 8px;
+    outline: none;
+}
 
 .btn-secondary {
     background: rgba(255, 255, 255, 0.06);
@@ -589,7 +596,7 @@ input:checked + .slider:before { transform: translateX(22px); }
 @media(max-width: 640px) {
     .result-card { flex-direction: column; align-items: flex-start; }
     .thumb-wrapper { width: 100%; height: 140px; }
-    .btn-group { width: 100%; justify-content: flex-end; }
+    .btn-group { width: 100%; justify-content: space-between; }
     .progress-steps { grid-template-columns: 1fr; }
 }
 </style>
@@ -804,7 +811,6 @@ async function refreshLibraryCache() {
         const files = await res.json();
         libraryFilesSet.clear();
         files.forEach(f => {
-            // Store filename without extension for robust matching
             const baseName = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
             libraryFilesSet.add(baseName.toLowerCase());
         });
@@ -824,7 +830,6 @@ async function searchMusic() {
     results.innerHTML = "";
     searchBtn.disabled = true;
 
-    // Refresh library cache so we can check against it
     await refreshLibraryCache();
 
     try {
@@ -851,7 +856,7 @@ async function searchMusic() {
                 actionHtml = `<div class="badge-library">✅ In Library</div>`;
             } else {
                 actionHtml = `
-                    <a class="btn-secondary" href="${item.url}" target="_blank">Preview</a>
+                    <audio controls preload="none" src="api/preview?url=${encodeURIComponent(item.url)}"></audio>
                     <button class="btn-download" id="btn-${CSS.escape(item.id)}" onclick="startDownload('${item.url}', '${escapeJs(item.title)}', '${CSS.escape(item.id)}')">
                         ⬇️ Save
                     </button>
@@ -925,7 +930,6 @@ function dismissProgressPanel() {
 }
 
 function startDownload(url, title, elementId) {
-    // Disable button immediately to prevent double click
     if (elementId) {
         const btn = document.getElementById("btn-" + elementId);
         if (btn) {
@@ -992,7 +996,6 @@ function processNextQueueItem() {
             pSpeed.textContent = "Processing";
             updatePipelineStep('process');
 
-            // Interactive simulation ticks for processing phase
             let tick = 92;
             const procInterval = setInterval(() => {
                 if (tick < 98) {
@@ -1014,7 +1017,6 @@ function processNextQueueItem() {
             currentEventSource.close();
             refreshLibraryCache();
 
-            // Update button on card if visible
             if (activeDownload && activeDownload.elementId) {
                 const btn = document.getElementById("btn-" + activeDownload.elementId);
                 if (btn) {
@@ -1025,7 +1027,6 @@ function processNextQueueItem() {
                 }
             }
 
-            // Automatically proceed to the next item in queue after 1.5 seconds
             setTimeout(processNextQueueItem, 1500);
         } else if (data.type === "error") {
             pStatus.textContent = "❌ Error: " + data.message;
@@ -1149,6 +1150,31 @@ async def search(q: str = Query(..., min_length=1)):
         raise HTTPException(status_code=500, detail="YouTube search failed: " + str(error))
 
 
+@app.get("/api/preview")
+async def preview_audio(url: str = Query(..., min_length=1)):
+    if not (url.startswith("https://www.youtube.com/") or url.startswith("https://youtube.com/") or url.startswith("https://youtu.be/")):
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL.")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "yt-dlp",
+            "-g",
+            "-f", "ba/b",
+            url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError("Failed to extract preview stream.")
+        
+        stream_url = stdout.decode("utf-8", errors="ignore").strip().split("\n")[0]
+        if stream_url:
+            return RedirectResponse(url=stream_url)
+        raise HTTPException(status_code=400, detail="Could not retrieve audio stream.")
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
 @app.get("/api/download-stream")
 async def download_stream(
     url: str = Query(..., min_length=1),
@@ -1174,6 +1200,9 @@ async def download_stream(
             "--audio-format", fmt,
             "--audio-quality", quality,
             "--newline",
+            "--embed-subs",
+            "--sub-langs", "all,-live_chat",
+            "--parse-metadata", "title:%(album)s",
             "-o", output_template,
         ]
 
@@ -1230,12 +1259,16 @@ async def download_stream(
             data = json.dumps({"type": "status", "message": "Cleaning tags & metadata..."})
             yield f"data: {data}\n\n"
 
+            clean_title = clean_filename(title)
             cleaned_file = DOWNLOAD_DIR / f"clean_{job_id}{ext}"
+            
             clean_command = [
                 "ffmpeg",
                 "-y",
                 "-i", str(audio_file),
+                "-map", "0",
                 "-c", "copy",
+                "-metadata", f"album={clean_title}",
                 "-metadata", "comment=",
                 "-metadata", "description=",
                 "-metadata", "purl=",
@@ -1253,7 +1286,6 @@ async def download_stream(
                 audio_file.unlink()
                 audio_file = cleaned_file
 
-            clean_title = clean_filename(title)
             final_name = f"{clean_title}{ext}"
             final_path = DOWNLOAD_DIR / final_name
 
