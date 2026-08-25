@@ -21,6 +21,7 @@ from fastapi import (
     Body,
     WebSocket,
     WebSocketDisconnect,
+    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -39,8 +40,6 @@ from fastapi.staticfiles import StaticFiles
 #
 #   /api/*   -> Xrob Music web application
 #   /rest/*  -> Subsonic API for Amperfy
-#
-# Navidrome is NOT required.
 #
 # Music:
 #   /share/mymusic/music
@@ -951,10 +950,6 @@ def _ffprobe_metadata_sync(
 
     except Exception:
 
-        # Filename fallback:
-        #
-        # Artist - Title.mp3
-        #
         stem = path.stem
 
         if " - " in stem:
@@ -1556,7 +1551,6 @@ async def download_worker():
                 force_save=True,
             )
 
-            # Invalidate library cache
             LIBRARY_CACHE["files"] = None
 
             METADATA_CACHE.pop(
@@ -2574,76 +2568,65 @@ def xml_response(
 
 
 # ============================================================
-# SUBSONIC AUTHENTICATION
+# SUBSONIC AUTHENTICATION & REQUEST HELPERS
 # ============================================================
+
+async def parse_subsonic_params(request: Request) -> dict:
+    """Parses parameters from either GET query parameters or POST form data."""
+    params = dict(request.query_params)
+    if request.method == "POST":
+        try:
+            form = await request.form()
+            for k, v in form.items():
+                if isinstance(v, str):
+                    params[k] = v
+        except Exception:
+            pass
+    return params
+
 
 def verify_subsonic_auth(
     username: str,
-    token: str,
-    salt: str,
-    password: str,
-):
-
+    token: str = "",
+    salt: str = "",
+    password: str = "",
+) -> bool:
     if not username:
-
         return False
 
     settings = load_settings()
-
-    configured_user = str(
-        settings.get(
-            "subsonic_user",
-            "admin",
-        )
-    )
-
-    configured_password = str(
-        settings.get(
-            "subsonic_password",
-            "changeme",
-        )
-    )
+    configured_user = str(settings.get("subsonic_user", "admin"))
+    configured_password = str(settings.get("subsonic_password", "changeme"))
 
     if username != configured_user:
-
         return False
 
-    # Token authentication:
-    #
-    # token = md5(password + salt)
-    #
+    # 1. Token authentication (t & s)
+    if token and salt:
+        expected = hashlib.md5((configured_password + salt).encode("utf-8")).hexdigest()
+        return token.lower() == expected.lower()
 
-    expected = hashlib.md5(
-        (
-            configured_password
-            + salt
-        ).encode(
-            "utf-8"
-        )
-    ).hexdigest()
+    # 2. Plaintext / Encrypted Password authentication (p)
+    if password:
+        clean_pass = password
+        if clean_pass.startswith("enc:"):
+            try:
+                clean_pass = bytes.fromhex(clean_pass[4:]).decode("utf-8")
+            except Exception:
+                pass
+        return clean_pass == configured_password
 
-    return (
-        bool(token)
-        and bool(salt)
-        and token.lower()
-        == expected.lower()
-    )
+    return False
 
 
 def authenticate_subsonic(
     username: str,
     token: str,
     salt: str,
+    password: str,
     request_format: str,
 ):
-
-    if verify_subsonic_auth(
-        username,
-        token,
-        salt,
-        "",
-    ):
-
+    if verify_subsonic_auth(username, token, salt, password):
         return None
 
     return subsonic_error(
@@ -2881,20 +2864,17 @@ async def build_artists():
 # SUBSONIC: PING
 # ============================================================
 
-@app.get("/rest/ping.view")
-async def subsonic_ping(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-):
+@app.api_route("/rest/ping.view", methods=["GET", "POST"])
+@app.api_route("/rest/ping", methods=["GET", "POST"])
+async def subsonic_ping(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -2915,23 +2895,81 @@ async def subsonic_ping(
 
 
 # ============================================================
-# SUBSONIC: LICENSE
+# SUBSONIC: GET USER
 # ============================================================
 
-@app.get("/rest/getLicense.view")
-async def subsonic_license(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-):
+@app.api_route("/rest/getUser.view", methods=["GET", "POST"])
+@app.api_route("/rest/getUser", methods=["GET", "POST"])
+async def subsonic_get_user(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    username_target = params.get("username", u)
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
+        f,
+    )
+
+    if auth_error:
+        return auth_error
+
+    settings = load_settings()
+    configured_user = str(settings.get("subsonic_user", "admin"))
+    target_user = username_target if username_target else configured_user
+
+    user_info = {
+        "username": target_user,
+        "email": f"{target_user}@local",
+        "scrobblingEnabled": True,
+        "adminRole": True,
+        "settingsRole": True,
+        "downloadRole": True,
+        "uploadRole": True,
+        "playlistRole": True,
+        "coverArtRole": True,
+        "commentRole": True,
+        "podcastRole": True,
+        "streamRole": True,
+        "jukeboxRole": True,
+        "shareRole": True,
+        "videoConversionRole": True,
+    }
+
+    if wants_json(f):
+        return Response(
+            content=json.dumps(
+                subsonic_json(
+                    {
+                        "user": user_info
+                    }
+                )
+            ),
+            media_type="application/json",
+        )
+
+    return xml_response(
+        f'<user username="{xml_escape(target_user)}" scrobblingEnabled="true" adminRole="true" settingsRole="true" downloadRole="true" uploadRole="true" playlistRole="true" coverArtRole="true" commentRole="true" podcastRole="true" streamRole="true" jukeboxRole="true" shareRole="true" videoConversionRole="true"/>'
+    )
+
+
+# ============================================================
+# SUBSONIC: LICENSE
+# ============================================================
+
+@app.api_route("/rest/getLicense.view", methods=["GET", "POST"])
+@app.api_route("/rest/getLicense", methods=["GET", "POST"])
+async def subsonic_license(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+
+    auth_error = authenticate_subsonic(
+        u,
+        t,
+        s,
+        p,
         f,
     )
 
@@ -2962,23 +3000,45 @@ async def subsonic_license(
 
 
 # ============================================================
+# SUBSONIC: OPENSUBSONIC EXTENSIONS
+# ============================================================
+
+@app.api_route("/rest/getOpenSubsonicExtensions.view", methods=["GET", "POST"])
+@app.api_route("/rest/getOpenSubsonicExtensions", methods=["GET", "POST"])
+async def subsonic_open_subsonic_extensions(request: Request):
+    params = await parse_subsonic_params(request)
+    f = params.get("f", "json")
+
+    if wants_json(f):
+        return Response(
+            content=json.dumps(
+                subsonic_json(
+                    {
+                        "openSubsonicExtensions": []
+                    }
+                )
+            ),
+            media_type="application/json",
+        )
+
+    return xml_response("<openSubsonicExtensions/>")
+
+
+# ============================================================
 # SUBSONIC: MUSIC FOLDERS
 # ============================================================
 
-@app.get("/rest/getMusicFolders.view")
-async def subsonic_music_folders(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-):
+@app.api_route("/rest/getMusicFolders.view", methods=["GET", "POST"])
+@app.api_route("/rest/getMusicFolders", methods=["GET", "POST"])
+async def subsonic_music_folders(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3016,21 +3076,17 @@ async def subsonic_music_folders(
 # SUBSONIC: INDEXES
 # ============================================================
 
-@app.get("/rest/getIndexes.view")
-async def subsonic_indexes(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    musicFolderId: int = Query(1),
-):
+@app.api_route("/rest/getIndexes.view", methods=["GET", "POST"])
+@app.api_route("/rest/getIndexes", methods=["GET", "POST"])
+async def subsonic_indexes(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3094,20 +3150,17 @@ async def subsonic_indexes(
 # SUBSONIC: ARTISTS
 # ============================================================
 
-@app.get("/rest/getArtists.view")
-async def subsonic_artists(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-):
+@app.api_route("/rest/getArtists.view", methods=["GET", "POST"])
+@app.api_route("/rest/getArtists", methods=["GET", "POST"])
+async def subsonic_artists(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3173,21 +3226,18 @@ async def subsonic_artists(
 # SUBSONIC: ARTIST
 # ============================================================
 
-@app.get("/rest/getArtist.view")
-async def subsonic_artist(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    id: str = Query(""),
-):
+@app.api_route("/rest/getArtist.view", methods=["GET", "POST"])
+@app.api_route("/rest/getArtist", methods=["GET", "POST"])
+async def subsonic_artist(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    artist_id = params.get("id", "")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3200,7 +3250,7 @@ async def subsonic_artist(
         (
             x
             for x in artists
-            if x["id"] == id
+            if x["id"] == artist_id
         ),
         None,
     )
@@ -3315,21 +3365,18 @@ async def subsonic_artist(
 # SUBSONIC: ALBUM
 # ============================================================
 
-@app.get("/rest/getAlbum.view")
-async def subsonic_album(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    id: str = Query(""),
-):
+@app.api_route("/rest/getAlbum.view", methods=["GET", "POST"])
+@app.api_route("/rest/getAlbum", methods=["GET", "POST"])
+async def subsonic_album(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    album_id = params.get("id", "")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3366,14 +3413,14 @@ async def subsonic_album(
             f"album:{artist}:{album_name}"
         )
 
-        if candidate_id != id:
+        if candidate_id != album_id:
 
             continue
 
         if album_info is None:
 
             album_info = {
-                "id": id,
+                "id": album_id,
                 "name": album_name,
                 "artist": artist,
             }
@@ -3440,7 +3487,7 @@ async def subsonic_album(
         )
 
     return xml_response(
-        f'<album id="{xml_escape(id)}" '
+        f'<album id="{xml_escape(album_id)}" '
         f'name="{xml_escape(album_info["name"])}" '
         f'artist="{xml_escape(album_info["artist"])}" '
         f'songCount="{len(songs)}">'
@@ -3460,21 +3507,18 @@ async def subsonic_album(
 # SUBSONIC: SONG
 # ============================================================
 
-@app.get("/rest/getSong.view")
-async def subsonic_song(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    id: str = Query(""),
-):
+@app.api_route("/rest/getSong.view", methods=["GET", "POST"])
+@app.api_route("/rest/getSong", methods=["GET", "POST"])
+async def subsonic_song(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    song_id = params.get("id", "")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3484,7 +3528,7 @@ async def subsonic_song(
     try:
 
         path = await resolve_song_id(
-            id
+            song_id
         )
 
     except Exception:
@@ -3528,23 +3572,20 @@ async def subsonic_song(
 # SUBSONIC: ALBUM LIST
 # ============================================================
 
-@app.get("/rest/getAlbumList2.view")
-async def subsonic_album_list(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    type: str = Query("alphabeticalByName"),
-    size: int = Query(500),
-    offset: int = Query(0),
-):
+@app.api_route("/rest/getAlbumList2.view", methods=["GET", "POST"])
+@app.api_route("/rest/getAlbumList2", methods=["GET", "POST"])
+async def subsonic_album_list(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    type_param = params.get("type", "alphabeticalByName")
+    size = int(params.get("size", 500))
+    offset = int(params.get("offset", 0))
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3615,7 +3656,7 @@ async def subsonic_album_list(
         albums.values()
     )
 
-    if type == "alphabeticalByArtist":
+    if type_param == "alphabeticalByArtist":
 
         album_list.sort(
             key=lambda x: (
@@ -3624,7 +3665,7 @@ async def subsonic_album_list(
             )
         )
 
-    elif type == "newest":
+    elif type_param == "newest":
 
         album_list.sort(
             key=lambda x: x["name"].lower(),
@@ -3674,24 +3715,21 @@ async def subsonic_album_list(
 # SUBSONIC: SEARCH
 # ============================================================
 
-@app.get("/rest/search3.view")
-async def subsonic_search(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    query: str = Query(""),
-    songCount: int = Query(20),
-    albumCount: int = Query(20),
-    artistCount: int = Query(20),
-):
+@app.api_route("/rest/search3.view", methods=["GET", "POST"])
+@app.api_route("/rest/search3", methods=["GET", "POST"])
+async def subsonic_search(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    query = params.get("query", "")
+    song_count = int(params.get("songCount", 20))
+    album_count = int(params.get("albumCount", 20))
+    artist_count = int(params.get("artistCount", 20))
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3770,19 +3808,19 @@ async def subsonic_search(
             }
 
     songs = songs[
-        :songCount
+        :song_count
     ]
 
     artist_list = list(
         artists.values()
     )[
-        :artistCount
+        :artist_count
     ]
 
     album_list = list(
         albums.values()
     )[
-        :albumCount
+        :album_count
     ]
 
     if wants_json(f):
@@ -3831,21 +3869,18 @@ async def subsonic_search(
 # SUBSONIC: RANDOM SONGS
 # ============================================================
 
-@app.get("/rest/getRandomSongs.view")
-async def subsonic_random_songs(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    size: int = Query(20),
-):
+@app.api_route("/rest/getRandomSongs.view", methods=["GET", "POST"])
+@app.api_route("/rest/getRandomSongs", methods=["GET", "POST"])
+async def subsonic_random_songs(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    size = int(params.get("size", 20))
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3905,23 +3940,18 @@ async def subsonic_random_songs(
 # SUBSONIC: STREAM
 # ============================================================
 
-@app.get("/rest/stream.view")
-async def subsonic_stream(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    id: str = Query(""),
-    maxBitRate: int = Query(0),
-    format: str = Query(""),
-):
+@app.api_route("/rest/stream.view", methods=["GET", "POST"])
+@app.api_route("/rest/stream", methods=["GET", "POST"])
+async def subsonic_stream(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    song_id = params.get("id", "")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3931,7 +3961,7 @@ async def subsonic_stream(
     try:
 
         path = await resolve_song_id(
-            id
+            song_id
         )
 
     except Exception:
@@ -3963,21 +3993,18 @@ async def subsonic_stream(
 # SUBSONIC: DOWNLOAD
 # ============================================================
 
-@app.get("/rest/download.view")
-async def subsonic_download(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    id: str = Query(""),
-):
+@app.api_route("/rest/download.view", methods=["GET", "POST"])
+@app.api_route("/rest/download", methods=["GET", "POST"])
+async def subsonic_download(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    song_id = params.get("id", "")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -3987,7 +4014,7 @@ async def subsonic_download(
     try:
 
         path = await resolve_song_id(
-            id
+            song_id
         )
 
     except Exception:
@@ -4014,22 +4041,18 @@ async def subsonic_download(
 # SUBSONIC: COVER ART
 # ============================================================
 
-@app.get("/rest/getCoverArt.view")
-async def subsonic_cover_art(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    id: str = Query(""),
-    size: int = Query(0),
-):
+@app.api_route("/rest/getCoverArt.view", methods=["GET", "POST"])
+@app.api_route("/rest/getCoverArt", methods=["GET", "POST"])
+async def subsonic_cover_art(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
+    cover_id = params.get("id", "")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
@@ -4039,7 +4062,7 @@ async def subsonic_cover_art(
     try:
 
         path = await resolve_song_id(
-            id
+            cover_id
         )
 
     except Exception:
@@ -4105,34 +4128,22 @@ async def subsonic_cover_art(
 # SUBSONIC: SCROBBLE
 # ============================================================
 
-@app.get("/rest/scrobble.view")
-async def subsonic_scrobble(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    id: str = Query(""),
-    submission: bool = Query(True),
-    time: int = Query(0),
-):
+@app.api_route("/rest/scrobble.view", methods=["GET", "POST"])
+@app.api_route("/rest/scrobble", methods=["GET", "POST"])
+async def subsonic_scrobble(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
     if auth_error:
         return auth_error
-
-    # We accept scrobbling so Amperfy can
-    # report playback without failing.
-    #
-    # You can later connect this to a
-    # play-history database.
 
     if wants_json(f):
 
@@ -4150,21 +4161,17 @@ async def subsonic_scrobble(
 # OPTIONAL SUBSONIC: STAR
 # ============================================================
 
-@app.get("/rest/star.view")
-async def subsonic_star(
-    u: str = Query(""),
-    t: str = Query(""),
-    s: str = Query(""),
-    v: str = Query(SUBSONIC_API_VERSION),
-    c: str = Query("Amperfy"),
-    f: str = Query("json"),
-    id: str = Query(""),
-):
+@app.api_route("/rest/star.view", methods=["GET", "POST"])
+@app.api_route("/rest/star", methods=["GET", "POST"])
+async def subsonic_star(request: Request):
+    params = await parse_subsonic_params(request)
+    u, t, s, p, f = params.get("u", ""), params.get("t", ""), params.get("s", ""), params.get("p", ""), params.get("f", "json")
 
     auth_error = authenticate_subsonic(
         u,
         t,
         s,
+        p,
         f,
     )
 
