@@ -490,7 +490,6 @@ async def youtube_search(query: str, max_results: int, page: int = 1):
         "--dump-single-json",
         "--skip-download",
         "--no-warnings",
-        "--match-filter", "duration > 0",
         "--playlist-start", str(start_idx),
         "--playlist-end", str(end_idx),
         f"ytsearch{end_idx}:{query}",
@@ -1251,13 +1250,8 @@ function toggleAudioStream(btn, streamUrl, type = 'search', title = 'Track', art
         btn.innerHTML = `⏸ Pause`;
         gpPlayBtn.textContent = '⏸';
     }).catch(err => {
-        if (!streamUrl.includes('transcode=true')) {
-            const transcodeUrl = streamUrl + (streamUrl.includes('?') ? '&' : '?') + 'transcode=true';
-            toggleAudioStream(btn, transcodeUrl, type, title, artist, artUrl);
-        } else {
-            btn.innerHTML = `❌ Error`;
-            setTimeout(() => { btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`; }, 2000);
-        }
+        btn.innerHTML = `❌ Error`;
+        setTimeout(() => { btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`; }, 2000);
     });
 }
 
@@ -1758,18 +1752,48 @@ async def preview_audio(url: str = Query(..., min_length=1)):
             "yt-dlp",
             "-g",
             "-f", "ba/b",
+            "--no-playlist",
             url,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await process.communicate()
+        stdout, stderr = await process.communicate()
         if process.returncode != 0:
-            raise RuntimeError("Failed to extract preview stream.")
+            raise RuntimeError("Failed to extract preview stream URL.")
         
         stream_url = stdout.decode("utf-8", errors="ignore").strip().split("\n")[0]
-        if stream_url:
-            return RedirectResponse(url=stream_url)
-        raise HTTPException(status_code=400, detail="Could not retrieve audio stream.")
+        if not stream_url:
+            raise HTTPException(status_code=400, detail="Could not retrieve audio stream.")
+
+        ffmpeg_proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n",
+            "-i", stream_url,
+            "-vn",
+            "-acodec", "libmp3lame",
+            "-ab", "128k",
+            "-f", "mp3",
+            "pipe:1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+
+        async def media_stream():
+            try:
+                while True:
+                    chunk = await ffmpeg_proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                if ffmpeg_proc.returncode is None:
+                    try:
+                        ffmpeg_proc.kill()
+                    except Exception:
+                        pass
+                await ffmpeg_proc.wait()
+
+        return StreamingResponse(media_stream(), media_type="audio/mpeg")
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
 
