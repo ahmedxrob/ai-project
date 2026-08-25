@@ -1,7 +1,7 @@
 /* ============================================================
    XROB MUSIC — SPOTIFY / DEEZER STYLE
    Complete replacement stylesheet
-   Keeps existing HTML + JavaScript hooks
+   Existing HTML + JavaScript hooks preserved
    ============================================================ */
 
 :root {
@@ -72,6 +72,7 @@ body {
     min-height: 100vh;
     background: var(--bg-main);
     color: var(--text-primary);
+
     font-family:
         'Plus Jakarta Sans',
         -apple-system,
@@ -220,6 +221,7 @@ a {
 
     display: flex;
     align-items: center;
+
     gap: 14px;
 
     padding: 12px 14px;
@@ -273,7 +275,9 @@ a {
 
 .app-shell > div:not(.side-nav) {
     margin-left: var(--sidebar-width);
+
     min-width: 0;
+
     width: calc(100% - var(--sidebar-width));
 }
 
@@ -305,6 +309,7 @@ a {
 
 .tab-content {
     display: none;
+
     animation: fadeIn 0.2s ease;
 }
 
@@ -418,6 +423,7 @@ a {
 
 .search-card button:hover {
     background: var(--accent-hover);
+
     transform: scale(1.03);
 }
 
@@ -583,50 +589,62 @@ a {
 
 /* ============================================================
    PREVIEW BUTTON
+   IMPORTANT: KEPT VISIBLE
    ============================================================ */
 
 .btn-preview {
-    width: 38px;
-    height: 38px;
+    min-width: 82px;
 
-    padding: 0;
+    height: 36px;
+
+    padding: 0 13px;
 
     display: inline-flex;
     align-items: center;
     justify-content: center;
 
-    border-radius: 50%;
+    gap: 6px;
+
+    border-radius: 18px;
 
     background: transparent;
 
-    border: 1px solid transparent;
+    border: 1px solid var(--border);
 
     color: var(--text-primary);
 
-    font-size: 0;
+    font-size: 11px;
+    font-weight: 700;
 
     cursor: pointer;
 
     transition:
         background-color 0.15s ease,
         color 0.15s ease,
+        border-color 0.15s ease,
         transform 0.15s ease;
 }
 
-.btn-preview::first-letter {
-    font-size: 16px;
-}
-
 .btn-preview:hover {
-    background: var(--bg-elevated);
+    background: var(--bg-surface-hover);
 
-    transform: scale(1.05);
+    border-color: var(--text-secondary);
+
+    color: var(--text-primary);
+
+    transform: scale(1.03);
 }
 
 .btn-preview.playing {
     background: var(--accent);
 
+    border-color: var(--accent);
+
     color: #000;
+}
+
+.btn-preview:active {
+    transform: scale(0.97);
 }
 
 /* ============================================================
@@ -635,6 +653,7 @@ a {
 
 .btn-download {
     min-width: 40px;
+
     height: 38px;
 
     padding: 0 14px;
@@ -1199,8 +1218,7 @@ input:checked + .slider:before {
 
     font-size: 12px;
 
-    animation:
-        toastIn 0.25s ease;
+    animation: toastIn 0.25s ease;
 }
 
 @keyframes toastIn {
@@ -1626,9 +1644,18 @@ input:checked + .slider:before {
         gap: 2px;
     }
 
+    /* KEEP PREVIEW VISIBLE ON MOBILE */
+
     .btn-preview {
-        width: 34px;
+        min-width: 70px;
+
+        width: auto;
+
         height: 34px;
+
+        padding: 0 10px;
+
+        font-size: 10px;
     }
 
     .btn-download {
@@ -1683,6 +1710,7 @@ input:checked + .slider:before {
 
     .setting-row > div:first-child {
         flex: 1;
+
         min-width: 0;
     }
 
@@ -1838,7 +1866,9 @@ input:checked + .slider:before {
 
     #toast-container {
         top: 12px;
+
         left: 12px;
+
         right: 12px;
 
         max-width: none;
@@ -1880,8 +1910,15 @@ input:checked + .slider:before {
     }
 
     .btn-preview {
-        width: 30px;
+        min-width: 64px;
+
+        width: auto;
+
         height: 30px;
+
+        padding: 0 8px;
+
+        font-size: 9px;
     }
 
     .btn-download {
@@ -1915,8 +1952,11 @@ input:checked + .slider:before {
     *::before,
     *::after {
         animation-duration: 0.01ms !important;
+
         animation-iteration-count: 1 !important;
+
         scroll-behavior: auto !important;
+
         transition-duration: 0.01ms !important;
     }
 }
