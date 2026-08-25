@@ -35,6 +35,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 
 # ============================================================
@@ -62,6 +63,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============================================================
+# MIDDLEWARE FOR SUBSONIC .view EXTENSION REMOVAL
+# ============================================================
+
+class SubsonicViewSuffixMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Strips legacy Subsonic .view extension (e.g. /rest/ping.view -> /rest/ping)
+        if request.url.path.endswith(".view"):
+            new_path = request.url.path[:-5]
+            request.scope["path"] = new_path
+        return await call_next(request)
+
+
+app.add_middleware(SubsonicViewSuffixMiddleware)
 
 app.mount(
     "/static",
