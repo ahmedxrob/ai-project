@@ -1,5 +1,7 @@
 /* ============================================================
    XROB MUSIC — SPOTIFY / DEEZER STYLE
+   Complete replacement stylesheet
+   Existing HTML + JavaScript hooks preserved
    ============================================================ */
 
 :root {
@@ -587,6 +589,7 @@ a {
 
 /* ============================================================
    PREVIEW BUTTON
+   IMPORTANT: KEPT VISIBLE
    ============================================================ */
 
 .btn-preview {
@@ -1145,7 +1148,6 @@ input:checked + .slider:before {
     color: #000;
 
     font-size: 12px;
-
     font-weight: 800;
 
     cursor: pointer;
@@ -1584,6 +1586,8 @@ input:checked + .slider:before {
             calc(var(--player-height) + 80px);
     }
 
+    /* Search */
+
     .search-card {
         margin-bottom: 22px;
     }
@@ -1611,6 +1615,8 @@ input:checked + .slider:before {
         font-size: 21px;
     }
 
+    /* Results */
+
     .result-card {
         min-height: 68px;
 
@@ -1637,6 +1643,8 @@ input:checked + .slider:before {
     .btn-group {
         gap: 2px;
     }
+
+    /* KEEP PREVIEW VISIBLE ON MOBILE */
 
     .btn-preview {
         min-width: 70px;
@@ -1674,6 +1682,8 @@ input:checked + .slider:before {
         font-size: 9px;
     }
 
+    /* Library headers */
+
     .library-header-bar {
         flex-wrap: wrap;
 
@@ -1683,6 +1693,8 @@ input:checked + .slider:before {
 
         gap: 8px;
     }
+
+    /* Settings */
 
     .settings-card {
         padding: 5px 14px;
@@ -1705,6 +1717,8 @@ input:checked + .slider:before {
     .setting-desc {
         line-height: 1.4;
     }
+
+    /* Player */
 
     .global-player-bar {
         left: 0;
@@ -1774,6 +1788,8 @@ input:checked + .slider:before {
     .gp-extra {
         display: none;
     }
+
+    /* Bottom nav */
 
     .bottom-nav {
         position: fixed;
@@ -1845,6 +1861,8 @@ input:checked + .slider:before {
     .bottom-nav .nav-link.active span:first-child {
         color: var(--accent);
     }
+
+    /* Toast */
 
     #toast-container {
         top: 12px;
