@@ -1,194 +1,1132 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xrob Music</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta name="theme-color" content="#121212">
+    <meta name="description" content="Xrob Music — Search, download and manage your music library">
+
+    <title>Xrob Music</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+    >
+
+    <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
 
 <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
-<!-- Audio Element for Global Player -->
-<audio id="global-audio-element" crossOrigin="anonymous"></audio>
+<!-- =========================================================
+     GLOBAL AUDIO ELEMENT
+     ========================================================= -->
+<audio
+    id="global-audio-element"
+    preload="metadata"
+    crossorigin="anonymous">
+</audio>
 
 <div class="app-shell">
-    <nav class="side-nav" aria-label="Main Navigation">
-        <div class="side-brand">
-            <svg width="36" height="36" viewBox="0 0 512 512" aria-hidden="true">
-              <defs><linearGradient id="waveGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00F2FE" /><stop offset="100%" stop-color="#4FACFE" /></linearGradient></defs>
-              <rect width="512" height="512" rx="112" fill="#0F172A" />
-              <rect x="112" y="216" width="24" height="80" rx="12" fill="url(#waveGrad)" opacity="0.4" />
-              <rect x="160" y="176" width="24" height="160" rx="12" fill="url(#waveGrad)" opacity="0.75" />
-              <rect x="328" y="176" width="24" height="160" rx="12" fill="url(#waveGrad)" opacity="0.75" />
-              <rect x="376" y="216" width="24" height="80" rx="12" fill="url(#waveGrad)" opacity="0.4" />
-              <path d="M 256 128 V 300 M 196 248 L 256 312 L 316 248" stroke="url(#waveGrad)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-              <path d="M 196 376 H 316" stroke="url(#waveGrad)" stroke-width="24" stroke-linecap="round" />
-            </svg>
-            <h1>Xrob Music</h1>
-        </div>
-        <ul class="nav-list" role="tablist">
-            <li><button class="nav-link active" id="btn-search" role="tab" aria-selected="true" aria-controls="tab-search" onclick="navigate('search')"><span>🔍</span> Search & Download</button></li>
-            <li><button class="nav-link" id="btn-downloads" role="tab" aria-selected="false" aria-controls="tab-downloads" onclick="navigate('downloads')"><span>⬇️</span> Downloads (<span id="queueCount">0</span>)</button></li>
-            <li><button class="nav-link" id="btn-library" role="tab" aria-selected="false" aria-controls="tab-library" onclick="navigate('library')"><span>📂</span> Library (<span id="sideLibCount">0</span>)</button></li>
-            <li><button class="nav-link" id="btn-settings" role="tab" aria-selected="false" aria-controls="tab-settings" onclick="navigate('settings')"><span>⚙️</span> Settings</button></li>
-        </ul>
-    </nav>
 
-    <div style="flex: 1; display: flex; flex-direction: column;">
-        <header class="mobile-header">
-            <div class="side-brand">
-                <svg width="30" height="30" viewBox="0 0 512 512" aria-hidden="true">
-                  <rect width="512" height="512" rx="112" fill="#0F172A" />
-                  <path d="M 256 128 V 300 M 196 248 L 256 312 L 316 248" stroke="#4FACFE" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-                </svg>
-                <h1 style="font-size: 1.1rem;">Xrob Music</h1>
+    <!-- =====================================================
+         DESKTOP SIDEBAR
+         ===================================================== -->
+    <aside class="side-nav" aria-label="Main Navigation">
+
+        <div class="side-brand">
+            <svg
+                class="brand-logo"
+                width="38"
+                height="38"
+                viewBox="0 0 512 512"
+                aria-hidden="true"
+            >
+                <defs>
+                    <linearGradient
+                        id="waveGrad"
+                        x1="0%"
+                        y1="0%"
+                        x2="100%"
+                        y2="100%"
+                    >
+                        <stop offset="0%" stop-color="#00F2FE"/>
+                        <stop offset="100%" stop-color="#4FACFE"/>
+                    </linearGradient>
+                </defs>
+
+                <rect
+                    width="512"
+                    height="512"
+                    rx="112"
+                    fill="#0F172A"
+                />
+
+                <rect
+                    x="112"
+                    y="216"
+                    width="24"
+                    height="80"
+                    rx="12"
+                    fill="url(#waveGrad)"
+                    opacity="0.4"
+                />
+
+                <rect
+                    x="160"
+                    y="176"
+                    width="24"
+                    height="160"
+                    rx="12"
+                    fill="url(#waveGrad)"
+                    opacity="0.75"
+                />
+
+                <rect
+                    x="328"
+                    y="176"
+                    width="24"
+                    height="160"
+                    rx="12"
+                    fill="url(#waveGrad)"
+                    opacity="0.75"
+                />
+
+                <rect
+                    x="376"
+                    y="216"
+                    width="24"
+                    height="80"
+                    rx="12"
+                    fill="url(#waveGrad)"
+                    opacity="0.4"
+                />
+
+                <path
+                    d="M256 128V300M196 248L256 312L316 248"
+                    stroke="url(#waveGrad)"
+                    stroke-width="28"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    fill="none"
+                />
+
+                <path
+                    d="M196 376H316"
+                    stroke="url(#waveGrad)"
+                    stroke-width="24"
+                    stroke-linecap="round"
+                />
+            </svg>
+
+            <div class="brand-text">
+                <strong>Xrob</strong>
+                <span>Music</span>
             </div>
+        </div>
+
+        <div class="sidebar-section-title">
+            MENU
+        </div>
+
+        <ul class="nav-list" role="tablist">
+
+            <li>
+                <button
+                    class="nav-link active"
+                    id="btn-search"
+                    role="tab"
+                    aria-selected="true"
+                    aria-controls="tab-search"
+                    onclick="navigate('search')"
+                >
+                    <span class="nav-icon">⌕</span>
+                    <span class="nav-label">Search & Download</span>
+                </button>
+            </li>
+
+            <li>
+                <button
+                    class="nav-link"
+                    id="btn-downloads"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-downloads"
+                    onclick="navigate('downloads')"
+                >
+                    <span class="nav-icon">↓</span>
+                    <span class="nav-label">
+                        Downloads
+                        <span class="nav-count" id="queueCount">0</span>
+                    </span>
+                </button>
+            </li>
+
+            <li>
+                <button
+                    class="nav-link"
+                    id="btn-library"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-library"
+                    onclick="navigate('library')"
+                >
+                    <span class="nav-icon">♫</span>
+                    <span class="nav-label">
+                        Library
+                        <span class="nav-count" id="sideLibCount">0</span>
+                    </span>
+                </button>
+            </li>
+
+            <li>
+                <button
+                    class="nav-link"
+                    id="btn-settings"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-settings"
+                    onclick="navigate('settings')"
+                >
+                    <span class="nav-icon">⚙</span>
+                    <span class="nav-label">Settings</span>
+                </button>
+            </li>
+
+        </ul>
+
+        <div class="sidebar-bottom">
+            <div class="sidebar-status">
+                <span class="status-dot"></span>
+                <span>Xrob Music Server</span>
+            </div>
+        </div>
+
+    </aside>
+
+    <!-- =====================================================
+         MAIN APPLICATION AREA
+         ===================================================== -->
+    <div class="app-main">
+
+        <!-- =================================================
+             MOBILE HEADER
+             ================================================= -->
+        <header class="mobile-header">
+
+            <div class="mobile-brand">
+
+                <svg
+                    class="mobile-logo"
+                    width="32"
+                    height="32"
+                    viewBox="0 0 512 512"
+                    aria-hidden="true"
+                >
+                    <rect
+                        width="512"
+                        height="512"
+                        rx="112"
+                        fill="#0F172A"
+                    />
+
+                    <path
+                        d="M256 128V300M196 248L256 312L316 248"
+                        stroke="#4FACFE"
+                        stroke-width="32"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        fill="none"
+                    />
+
+                    <path
+                        d="M196 376H316"
+                        stroke="#00F2FE"
+                        stroke-width="24"
+                        stroke-linecap="round"
+                    />
+                </svg>
+
+                <div class="mobile-brand-text">
+                    <strong>Xrob</strong>
+                    <span>Music</span>
+                </div>
+
+            </div>
+
         </header>
 
+        <!-- =================================================
+             MAIN CONTENT
+             ================================================= -->
         <main class="main-content" id="main-content">
-            <!-- TAB 1: SEARCH -->
-            <section id="tab-search" class="tab-content active" role="tabpanel" aria-labelledby="btn-search">
+
+            <!-- =============================================
+                 SEARCH TAB
+                 ============================================= -->
+            <section
+                id="tab-search"
+                class="tab-content active"
+                role="tabpanel"
+                aria-labelledby="btn-search"
+            >
+
+                <div class="page-heading">
+                    <div>
+                        <h2>Search Music</h2>
+                        <p>Find tracks, artists and albums.</p>
+                    </div>
+                </div>
+
                 <div class="search-card">
-                    <label for="query" class="sr-only">Search tracks, artists, or albums</label>
-                    <input id="query" placeholder="Search track, artist, or album..." autocomplete="off" />
-                    <button id="searchBtn" type="button" aria-label="Execute search">Search</button>
-                </div>
 
-                <div class="progress-panel" id="progressPanel" style="display:none;" aria-live="polite">
-                    <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 14px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
-                        ⚡ Active Downloads
+                    <label
+                        for="query"
+                        class="sr-only"
+                    >
+                        Search tracks, artists or albums
+                    </label>
+
+                    <div class="search-input-wrap">
+
+                        <span class="search-icon">⌕</span>
+
+                        <input
+                            id="query"
+                            type="search"
+                            placeholder="Search track, artist, or album..."
+                            autocomplete="off"
+                            spellcheck="false"
+                        />
+
+                        <button
+                            id="clearSearchBtn"
+                            class="clear-search"
+                            type="button"
+                            aria-label="Clear search"
+                            onclick="document.getElementById('query').value=''; document.getElementById('query').focus();"
+                        >
+                            ×
+                        </button>
+
                     </div>
-                    <div id="activeDownloadsList" style="display: flex; flex-direction: column; gap: 14px;"></div>
+
+                    <button
+                        id="searchBtn"
+                        type="button"
+                        class="search-button"
+                        aria-label="Execute search"
+                    >
+                        Search
+                    </button>
+
                 </div>
 
-                <div id="statusMsg" class="status-msg" aria-live="polite"></div>
-                <div id="results" class="results-grid" aria-live="polite"></div>
-                <div id="infiniteLoader" class="status-msg" style="display:none;">⏳ Loading more tracks...</div>
+                <!-- ACTIVE DOWNLOADS -->
+                <div
+                    class="progress-panel"
+                    id="progressPanel"
+                    style="display:none;"
+                    aria-live="polite"
+                >
+
+                    <div class="section-heading">
+                        <div>
+                            <span class="section-icon">⚡</span>
+                            Active Downloads
+                        </div>
+                    </div>
+
+                    <div
+                        id="activeDownloadsList"
+                        class="active-downloads-list"
+                    ></div>
+
+                </div>
+
+                <div
+                    id="statusMsg"
+                    class="status-msg"
+                    aria-live="polite"
+                ></div>
+
+                <div
+                    id="results"
+                    class="results-grid"
+                    aria-live="polite"
+                ></div>
+
+                <div
+                    id="infiniteLoader"
+                    class="status-msg"
+                    style="display:none;"
+                >
+                    <span class="loading-spinner"></span>
+                    Loading more tracks...
+                </div>
+
             </section>
 
-            <!-- TAB 2: DOWNLOADS -->
-            <section id="tab-downloads" class="tab-content" role="tabpanel" aria-labelledby="btn-downloads">
-                <div class="library-header-bar">
-                    <span>⬇️ Active & Recent Downloads</span>
-                    <div style="display: flex; gap: 8px;">
-                        <button class="btn-refresh" onclick="clearDoneTasks()">🧹 Clear Done</button>
-                        <button class="btn-refresh" onclick="loadDownloads()">🔄 Refresh</button>
+            <!-- =============================================
+                 DOWNLOADS TAB
+                 ============================================= -->
+            <section
+                id="tab-downloads"
+                class="tab-content"
+                role="tabpanel"
+                aria-labelledby="btn-downloads"
+            >
+
+                <div class="page-heading">
+
+                    <div>
+                        <h2>Downloads</h2>
+                        <p>Monitor active and completed downloads.</p>
+                    </div>
+
+                    <div class="heading-actions">
+
+                        <button
+                            class="btn-secondary"
+                            onclick="clearDoneTasks()"
+                        >
+                            🧹 Clear Done
+                        </button>
+
+                        <button
+                            class="btn-secondary"
+                            onclick="loadDownloads()"
+                        >
+                            ↻ Refresh
+                        </button>
+
+                    </div>
+
+                </div>
+
+                <div
+                    id="downloadsList"
+                    class="results-grid downloads-grid"
+                ></div>
+
+            </section>
+
+            <!-- =============================================
+                 LIBRARY TAB
+                 ============================================= -->
+            <section
+                id="tab-library"
+                class="tab-content"
+                role="tabpanel"
+                aria-labelledby="btn-library"
+            >
+
+                <div class="page-heading">
+
+                    <div>
+                        <h2>Your Library</h2>
+                        <p>Music downloaded to your Xrob Music server.</p>
+                    </div>
+
+                    <button
+                        class="btn-secondary"
+                        onclick="loadLibrary()"
+                    >
+                        ↻ Refresh
+                    </button>
+
+                </div>
+
+                <div class="library-stats">
+
+                    <div class="stat-card">
+                        <span class="stat-icon">♫</span>
+                        <div>
+                            <span class="stat-label">Tracks</span>
+                            <strong id="statTracks">0</strong>
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <span class="stat-icon">●</span>
+                        <div>
+                            <span class="stat-label">Artists</span>
+                            <strong id="statArtists">0</strong>
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <span class="stat-icon">▣</span>
+                        <div>
+                            <span class="stat-label">Albums</span>
+                            <strong id="statAlbums">0</strong>
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <span class="stat-icon">▤</span>
+                        <div>
+                            <span class="stat-label">Storage</span>
+                            <strong id="libFolderSize">0 MB</strong>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="library-toolbar">
+
+                    <div class="library-search">
+
+                        <span>⌕</span>
+
+                        <label
+                            for="libSearchQuery"
+                            class="sr-only"
+                        >
+                            Filter local tracks
+                        </label>
+
+                        <input
+                            id="libSearchQuery"
+                            placeholder="Filter your library..."
+                            autocomplete="off"
+                            oninput="filterLibrary()"
+                        />
+
+                    </div>
+
+                    <div class="library-count">
+                        <span>Total:</span>
+                        <strong id="libCountDetail">0</strong>
+                    </div>
+
+                </div>
+
+                <div
+                    id="libraryList"
+                    class="results-grid library-grid"
+                    aria-live="polite"
+                ></div>
+
+            </section>
+
+            <!-- =============================================
+                 SETTINGS TAB
+                 ============================================= -->
+            <section
+                id="tab-settings"
+                class="tab-content"
+                role="tabpanel"
+                aria-labelledby="btn-settings"
+            >
+
+                <div class="page-heading">
+                    <div>
+                        <h2>Settings</h2>
+                        <p>Configure Xrob Music and playback.</p>
                     </div>
                 </div>
-                <div id="downloadsList" class="results-grid"></div>
-            </section>
 
-            <!-- TAB 3: LIBRARY -->
-            <section id="tab-library" class="tab-content" role="tabpanel" aria-labelledby="btn-library">
-                <div class="search-card" style="margin-bottom: 16px;">
-                    <label for="libSearchQuery" class="sr-only">Filter local tracks</label>
-                    <input id="libSearchQuery" placeholder="🔍 Filter local library tracks..." autocomplete="off" oninput="filterLibrary()" />
-                </div>
-                <div class="library-header-bar">
-                    <span>🎵 Tracks: <strong id="statTracks">0</strong> · 👤 Artists: <strong id="statArtists">0</strong> · 💿 Albums: <strong id="statAlbums">0</strong></span>
-                </div>
-                <div class="library-header-bar">
-                    <span>📁 Total Tracks: <strong id="libCountDetail">0</strong></span>
-                    <span>💾 Folder Size: <strong id="libFolderSize">0 MB</strong></span>
-                    <button class="btn-refresh" onclick="loadLibrary()" aria-label="Refresh library files">🔄 Refresh</button>
-                </div>
-                <div id="libraryList" class="results-grid" aria-live="polite"></div>
-            </section>
-
-            <!-- TAB 4: SETTINGS -->
-            <section id="tab-settings" class="tab-content" role="tabpanel" aria-labelledby="btn-settings">
                 <div class="settings-card">
-                    <div class="setting-row">
-                        <div><div class="setting-label">Theme Support</div><div class="setting-desc">Switch between Dark and Light mode</div></div>
-                        <select id="set_theme" onchange="toggleTheme(this.value)">
-                            <option value="dark">Dark Mode</option>
-                            <option value="light">Light Mode</option>
-                        </select>
+
+                    <!-- APPEARANCE -->
+                    <div class="settings-section">
+
+                        <div class="settings-section-title">
+                            Appearance
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Theme
+                                </div>
+
+                                <div class="setting-desc">
+                                    Choose between dark and light mode.
+                                </div>
+                            </div>
+
+                            <select
+                                id="set_theme"
+                                onchange="toggleTheme(this.value)"
+                            >
+                                <option value="dark">Dark Mode</option>
+                                <option value="light">Light Mode</option>
+                            </select>
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Desktop Notifications
+                                </div>
+
+                                <div class="setting-desc">
+                                    Get notified when downloads finish.
+                                </div>
+                            </div>
+
+                            <button
+                                class="btn-secondary"
+                                onclick="requestNotificationPermission()"
+                            >
+                                Enable
+                            </button>
+
+                        </div>
+
                     </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Desktop Notifications</div><div class="setting-desc">Alert when downloads finish successfully</div></div>
-                        <button class="btn-refresh" onclick="requestNotificationPermission()">Enable Notifications</button>
+
+                    <!-- AMPERFY / SUBSONIC -->
+                    <div class="settings-section">
+
+                        <div class="settings-section-title">
+                            Amperfy / Subsonic
+                        </div>
+
+                        <div class="settings-info-box">
+
+                            <div class="settings-info-icon">
+                                ♪
+                            </div>
+
+                            <div>
+                                <strong>
+                                    Use Xrob Music directly with Amperfy
+                                </strong>
+
+                                <p>
+                                    Xrob Music provides a Subsonic-compatible
+                                    API for iOS music players such as Amperfy.
+                                </p>
+                            </div>
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Xrob Music Server
+                                </div>
+
+                                <div class="setting-desc">
+                                    Address Amperfy should connect to.
+                                </div>
+                            </div>
+
+                            <div class="setting-value-group">
+                                <input
+                                    type="text"
+                                    id="set_amperfy_host"
+                                    placeholder="http://192.168.1.100:8099"
+                                >
+
+                                <button
+                                    type="button"
+                                    class="btn-secondary"
+                                    onclick="copyAmperfyServerUrl()"
+                                >
+                                    Copy
+                                </button>
+                            </div>
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Subsonic Username
+                                </div>
+
+                                <div class="setting-desc">
+                                    Username used by Amperfy.
+                                </div>
+                            </div>
+
+                            <input
+                                type="text"
+                                id="set_amperfy_user"
+                                placeholder="admin"
+                                autocomplete="username"
+                            >
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Subsonic Password
+                                </div>
+
+                                <div class="setting-desc">
+                                    Password configured for the Subsonic API.
+                                </div>
+                            </div>
+
+                            <input
+                                type="password"
+                                id="set_amperfy_password"
+                                placeholder="Password"
+                                autocomplete="current-password"
+                            >
+
+                        </div>
+
+                        <div class="amperfy-actions">
+
+                            <button
+                                class="btn-secondary"
+                                type="button"
+                                onclick="testAmperfyConnection()"
+                            >
+                                Test Connection
+                            </button>
+
+                            <button
+                                class="btn-primary"
+                                type="button"
+                                onclick="showAmperfySetup()"
+                            >
+                                Amperfy Setup
+                            </button>
+
+                        </div>
+
+                        <div
+                            id="amperfyStatus"
+                            class="api-status"
+                            aria-live="polite"
+                        ></div>
+
                     </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Navidrome Integration</div><div class="setting-desc">Server URL for automatic scan pings</div></div>
-                        <input type="text" id="set_navidrome_url" placeholder="http://localhost:4533" style="width:220px;">
+
+                    <!-- NAVIDROME -->
+                    <div class="settings-section">
+
+                        <div class="settings-section-title">
+                            Legacy Navidrome Integration
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Navidrome URL
+                                </div>
+
+                                <div class="setting-desc">
+                                    Optional server URL for scan notifications.
+                                </div>
+                            </div>
+
+                            <input
+                                type="text"
+                                id="set_navidrome_url"
+                                placeholder="http://localhost:4533"
+                            >
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Navidrome User
+                                </div>
+
+                                <div class="setting-desc">
+                                    Optional Subsonic username.
+                                </div>
+                            </div>
+
+                            <input
+                                type="text"
+                                id="set_navidrome_user"
+                                placeholder="admin"
+                            >
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Navidrome API Token
+                                </div>
+
+                                <div class="setting-desc">
+                                    Optional API token / authentication hash.
+                                </div>
+                            </div>
+
+                            <input
+                                type="password"
+                                id="set_navidrome_token"
+                                placeholder="Token / Auth Hash"
+                            >
+
+                        </div>
+
                     </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Navidrome User</div><div class="setting-desc">Subsonic API Username</div></div>
-                        <input type="text" id="set_navidrome_user" placeholder="admin" style="width:160px;">
+
+                    <!-- AUDIO -->
+                    <div class="settings-section">
+
+                        <div class="settings-section-title">
+                            Audio
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Audio Format
+                                </div>
+
+                                <div class="setting-desc">
+                                    Preferred format for downloaded tracks.
+                                </div>
+                            </div>
+
+                            <select id="set_format">
+                                <option value="mp3">MP3</option>
+                                <option value="flac">FLAC — Lossless</option>
+                                <option value="m4a">M4A — AAC</option>
+                                <option value="opus">OPUS</option>
+                            </select>
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Audio Quality
+                                </div>
+
+                                <div class="setting-desc">
+                                    Bitrate target for lossy formats.
+                                </div>
+                            </div>
+
+                            <select id="set_quality">
+                                <option value="320K">320 Kbps</option>
+                                <option value="256K">256 Kbps</option>
+                                <option value="192K">192 Kbps</option>
+                                <option value="128K">128 Kbps</option>
+                            </select>
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Embed Album Art
+                                </div>
+
+                                <div class="setting-desc">
+                                    Add album artwork to downloaded files.
+                                </div>
+                            </div>
+
+                            <label class="switch">
+                                <input
+                                    type="checkbox"
+                                    id="set_thumb"
+                                >
+                                <span class="slider"></span>
+                            </label>
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Embed Metadata
+                                </div>
+
+                                <div class="setting-desc">
+                                    Write artist, album and track metadata.
+                                </div>
+                            </div>
+
+                            <label class="switch">
+                                <input
+                                    type="checkbox"
+                                    id="set_meta"
+                                >
+                                <span class="slider"></span>
+                            </label>
+
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Organize by Artist
+                                </div>
+
+                                <div class="setting-desc">
+                                    Store music using Artist/Track folders.
+                                </div>
+                            </div>
+
+                            <label class="switch">
+                                <input
+                                    type="checkbox"
+                                    id="set_organize"
+                                >
+                                <span class="slider"></span>
+                            </label>
+
+                        </div>
+
                     </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Navidrome API Token</div><div class="setting-desc">Subsonic API Token / Password</div></div>
-                        <input type="text" id="set_navidrome_token" placeholder="Token / Auth Hash" style="width:160px;">
+
+                    <!-- SEARCH -->
+                    <div class="settings-section">
+
+                        <div class="settings-section-title">
+                            Search
+                        </div>
+
+                        <div class="setting-row">
+
+                            <div class="setting-info">
+                                <div class="setting-label">
+                                    Maximum Search Results
+                                </div>
+
+                                <div class="setting-desc">
+                                    Number of results returned per page.
+                                </div>
+                            </div>
+
+                            <input
+                                type="number"
+                                id="set_max_results"
+                                min="5"
+                                max="50"
+                                value="20"
+                            >
+
+                        </div>
+
                     </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Audio Format</div><div class="setting-desc">Preferred output audio format for downloads</div></div>
-                        <select id="set_format"><option value="mp3">MP3</option><option value="flac">FLAC (Lossless)</option><option value="m4a">M4A (AAC)</option><option value="opus">OPUS</option></select>
+
+                    <div class="settings-footer">
+
+                        <button
+                            class="save-btn"
+                            onclick="saveSettings()"
+                        >
+                            Save Settings
+                        </button>
+
+                        <div
+                            id="settingsMsg"
+                            class="status-msg"
+                        ></div>
+
                     </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Audio Quality / Bitrate</div><div class="setting-desc">Bitrate target for lossy formats</div></div>
-                        <select id="set_quality"><option value="320K">320 Kbps</option><option value="256K">256 Kbps</option><option value="192K">192 Kbps</option><option value="128K">128 Kbps</option></select>
-                    </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Embed Album Art</div><div class="setting-desc">Embed cover art into audio files</div></div>
-                        <label class="switch"><input type="checkbox" id="set_thumb"><span class="slider"></span></label>
-                    </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Embed Metadata Tags</div><div class="setting-desc">Write ID3 tags into the file</div></div>
-                        <label class="switch"><input type="checkbox" id="set_meta"><span class="slider"></span></label>
-                    </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Organize by Artist</div><div class="setting-desc">Save new tracks in Artist/Track folders</div></div>
-                        <label class="switch"><input type="checkbox" id="set_organize"><span class="slider"></span></label>
-                    </div>
-                    <div class="setting-row">
-                        <div><div class="setting-label">Max Search Results</div><div class="setting-desc">Number of YouTube items returned per search page</div></div>
-                        <input type="number" id="set_max_results" min="5" max="50" value="20" style="width:70px;">
-                    </div>
-                    <button class="save-btn" onclick="saveSettings()">Save Settings</button>
-                    <div id="settingsMsg" class="status-msg"></div>
+
                 </div>
+
             </section>
+
         </main>
+
     </div>
+
 </div>
 
-<!-- FIXED PERSISTENT AUDIO PLAYER BAR WITH VISUALIZER -->
-<div id="global-player-bar" class="global-player-bar" style="display: none;">
+<!-- =========================================================
+     GLOBAL PLAYER
+     ========================================================= -->
+<div
+    id="global-player-bar"
+    class="global-player-bar"
+    style="display:none;"
+>
+
     <div class="gp-track-details">
-        <img id="gp-art" src="" alt="Album Art" onerror="this.src='https://via.placeholder.com/46?text=🎵'" />
+
+        <div class="gp-art-wrapper">
+
+            <img
+                id="gp-art"
+                src=""
+                alt="Album Art"
+                onerror="this.style.opacity='0.25';"
+            >
+
+            <div class="gp-art-placeholder">
+                ♪
+            </div>
+
+        </div>
+
         <div class="gp-text">
-            <span id="gp-title" class="gp-title">Select a track</span>
-            <span id="gp-artist" class="gp-artist">Ready</span>
+
+            <span
+                id="gp-title"
+                class="gp-title"
+            >
+                Select a track
+            </span>
+
+            <span
+                id="gp-artist"
+                class="gp-artist"
+            >
+                Ready to play
+            </span>
+
         </div>
+
     </div>
+
     <div class="gp-controls">
-        <button id="gp-play-btn" class="gp-play-btn" aria-label="Play/Pause">▶</button>
+
+        <button
+            id="gp-play-btn"
+            class="gp-play-btn"
+            aria-label="Play/Pause"
+            type="button"
+        >
+            ▶
+        </button>
+
         <div class="gp-progress-container">
+
             <span id="gp-cur-time">0:00</span>
-            <input type="range" id="gp-seek" min="0" max="100" value="0">
+
+            <input
+                type="range"
+                id="gp-seek"
+                min="0"
+                max="100"
+                value="0"
+                step="0.1"
+                aria-label="Seek"
+            >
+
             <span id="gp-dur-time">0:00</span>
+
         </div>
+
     </div>
+
     <div class="gp-extra">
-        <canvas id="visualizer-canvas" width="90" height="30"></canvas>
-        <span style="font-size:0.8rem;">🔊</span>
-        <input type="range" id="gp-volume" min="0" max="1" step="0.01" value="1" title="Volume">
+
+        <canvas
+            id="visualizer-canvas"
+            width="90"
+            height="30"
+        ></canvas>
+
+        <span class="volume-icon">🔊</span>
+
+        <input
+            type="range"
+            id="gp-volume"
+            min="0"
+            max="1"
+            step="0.01"
+            value="1"
+            title="Volume"
+            aria-label="Volume"
+        >
+
     </div>
+
 </div>
 
-<nav class="bottom-nav" aria-label="Mobile Bottom Navigation">
-    <button class="nav-link active" id="mob-btn-search" role="tab" aria-selected="true" aria-controls="tab-search" onclick="navigate('search')"><span>🔍</span> Search</button>
-    <button class="nav-link" id="mob-btn-downloads" role="tab" aria-selected="false" aria-controls="tab-downloads" onclick="navigate('downloads')"><span>⬇️</span> Downloads</button>
-    <button class="nav-link" id="mob-btn-library" role="tab" aria-selected="false" aria-controls="tab-library" onclick="navigate('library')"><span>📂</span> Library (<span id="mobLibCount">0</span>)</button>
-    <button class="nav-link" id="mob-btn-settings" role="tab" aria-selected="false" aria-controls="tab-settings" onclick="navigate('settings')"><span>⚙️</span> Settings</button>
+<!-- =========================================================
+     MOBILE BOTTOM NAV
+     ========================================================= -->
+<nav
+    class="bottom-nav"
+    aria-label="Mobile Navigation"
+>
+
+    <button
+        class="nav-link active"
+        id="mob-btn-search"
+        role="tab"
+        aria-selected="true"
+        aria-controls="tab-search"
+        onclick="navigate('search')"
+    >
+        <span class="mobile-nav-icon">⌕</span>
+        <span>Search</span>
+    </button>
+
+    <button
+        class="nav-link"
+        id="mob-btn-downloads"
+        role="tab"
+        aria-selected="false"
+        aria-controls="tab-downloads"
+        onclick="navigate('downloads')"
+    >
+        <span class="mobile-nav-icon">↓</span>
+        <span>Downloads</span>
+    </button>
+
+    <button
+        class="nav-link"
+        id="mob-btn-library"
+        role="tab"
+        aria-selected="false"
+        aria-controls="tab-library"
+        onclick="navigate('library')"
+    >
+        <span class="mobile-nav-icon">♫</span>
+        <span>
+            Library
+            <span id="mobLibCount">0</span>
+        </span>
+    </button>
+
+    <button
+        class="nav-link"
+        id="mob-btn-settings"
+        role="tab"
+        aria-selected="false"
+        aria-controls="tab-settings"
+        onclick="navigate('settings')"
+    >
+        <span class="mobile-nav-icon">⚙</span>
+        <span>Settings</span>
+    </button>
+
 </nav>
 
+<!-- =========================================================
+     AMPERFY HELPER
+     ========================================================= -->
+<script src="/static/amperfy.js"></script>
+
+<!-- =========================================================
+     MAIN APPLICATION JS
+     ========================================================= -->
 <script src="/static/app.js"></script>
+
 </body>
 </html>
