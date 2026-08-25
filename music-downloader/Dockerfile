@@ -17,4 +17,4 @@ RUN mkdir -p /share/navidrome_music
 
 EXPOSE 8099
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8099"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100"]
