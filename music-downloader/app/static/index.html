@@ -147,7 +147,7 @@
                         <div><div class="setting-label">Max Search Results</div><div class="setting-desc">Number of YouTube items returned per search page</div></div>
                         <input type="number" id="set_max_results" min="5" max="50" value="20" style="width:70px;">
                     </div>
-                    <button class="save-btn" onclick="saveSettings()">Save Settings</button>
+                    <button id="saveSettingsBtn" class="save-btn" onclick="saveSettings()">Save Settings</button>
                     <div id="settingsMsg" class="status-msg"></div>
                 </div>
             </section>
@@ -158,7 +158,7 @@
 <!-- FIXED PERSISTENT AUDIO PLAYER BAR WITH VISUALIZER -->
 <div id="global-player-bar" class="global-player-bar" style="display: none;">
     <div class="gp-track-details">
-        <img id="gp-art" src="" alt="Album Art" onerror="this.src='https://via.placeholder.com/46?text=🎵'" />
+        <img id="gp-art" src="" alt="Album Art" onerror="this.src='data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2264%22%20height%3D%2264%22%3E%3Crect%20width%3D%22100%25%22%20height%3D%22100%25%22%20fill%3D%22%231e293b%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2255%25%22%20text-anchor%3D%22middle%22%20font-size%3D%2228%22%3E%E2%99%AA%3C%2Ftext%3E%3C%2Fsvg%3E'" />
         <div class="gp-text">
             <span id="gp-title" class="gp-title">Select a track</span>
             <span id="gp-artist" class="gp-artist">Ready</span>
