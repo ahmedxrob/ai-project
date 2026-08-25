@@ -138,6 +138,62 @@ button {
 
 
 /* =========================================
+   TOAST NOTIFICATIONS
+========================================= */
+
+#toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.toast {
+    pointer-events: auto;
+    padding: 12px 20px;
+    border-radius: 12px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--bg-elevated);
+    border: 1px solid var(--card-border);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    animation: toastIn 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.toast-success {
+    border-color: var(--success);
+    background: linear-gradient(135deg, rgba(30, 215, 96, 0.2), var(--bg-elevated));
+}
+
+.toast-error {
+    border-color: var(--danger);
+    background: linear-gradient(135deg, rgba(255, 77, 109, 0.2), var(--bg-elevated));
+}
+
+.toast-info {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), var(--bg-elevated));
+}
+
+@keyframes toastIn {
+    from {
+        opacity: 0;
+        transform: translateY(-12px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+
+/* =========================================
    APP LAYOUT
 ========================================= */
 
@@ -422,8 +478,6 @@ button {
         0 14px 40px rgba(0, 0, 0, 0.2);
 }
 
-/* Background glow */
-
 .progress-panel::before {
     content: "";
 
@@ -446,25 +500,6 @@ button {
     pointer-events: none;
 }
 
-/* Header */
-
-.progress-panel > div:first-child {
-    position: relative;
-
-    display: flex !important;
-    align-items: center;
-
-    margin-bottom: 4px !important;
-
-    color: var(--text-primary);
-
-    font-size: 1rem !important;
-    font-weight: 800 !important;
-}
-
-
-/* Active Downloads List */
-
 #activeDownloadsList {
     position: relative;
 
@@ -473,9 +508,6 @@ button {
 
     gap: 10px !important;
 }
-
-
-/* Download items created by JS */
 
 #activeDownloadsList > * {
     position: relative;
@@ -502,14 +534,11 @@ button {
     transform: translateY(-1px);
 }
 
-
-/* Progress elements */
-
 #activeDownloadsList progress {
     width: 100%;
     height: 7px;
 
-    margin-top: 10px;
+    margin-top: 6px;
 
     overflow: hidden;
 
@@ -539,18 +568,6 @@ button {
     background: var(--accent);
 
     border-radius: 20px;
-}
-
-
-/* Custom div progress bars */
-
-#activeDownloadsList .progress-bar,
-#activeDownloadsList [class*="progress-fill"] {
-    height: 7px;
-
-    border-radius: 20px;
-
-    background: var(--accent-gradient);
 }
 
 
@@ -610,6 +627,8 @@ button {
 
     background: var(--input-bg);
 
+    cursor: pointer;
+
     box-shadow:
         0 6px 16px rgba(0, 0, 0, 0.25);
 }
@@ -667,6 +686,8 @@ button {
 
     font-size: 0.65rem;
     font-weight: 700;
+
+    z-index: 2;
 }
 
 
