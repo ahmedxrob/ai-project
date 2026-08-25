@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Query, HTTPException, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, Response, StreamingResponse
 import asyncio
+import hashlib
 import json
 import mimetypes
 import os
@@ -17,6 +18,9 @@ app = FastAPI(title="Xrob Music")
 
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome/music"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
+COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 DB_FILE = DOWNLOAD_DIR / "tasks.db"
@@ -51,6 +55,7 @@ DEFAULT_SETTINGS = {
 TASKS = {}
 task_queue = asyncio.Queue()
 ACTIVE_PROCESSES = {}
+LAST_SAVED_TIME = {}
 
 
 # --- PERSISTENT TASK STORAGE (SQLite) ---
@@ -77,7 +82,7 @@ def init_db():
         conn.commit()
 
 
-def db_save_task(task: dict):
+def _db_save_task_sync(task: dict):
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute("""
             INSERT OR REPLACE INTO tasks 
@@ -92,7 +97,15 @@ def db_save_task(task: dict):
         conn.commit()
 
 
-def db_load_tasks() -> dict:
+async def db_save_task(task: dict, force: bool = False):
+    task_id = task.get("id")
+    now = time.time()
+    if force or (now - LAST_SAVED_TIME.get(task_id, 0) > 0.5):
+        LAST_SAVED_TIME[task_id] = now
+        await asyncio.to_thread(_db_save_task_sync, task)
+
+
+def _db_load_tasks_sync() -> dict:
     if not DB_FILE.exists():
         return {}
     tasks = {}
@@ -130,8 +143,8 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-async def notify_task_update(task: dict):
-    db_save_task(task)
+async def notify_task_update(task: dict, force_save: bool = False):
+    await db_save_task(task, force=force_save)
     await manager.broadcast({"type": "task_update", "task": task})
 
 
@@ -155,12 +168,11 @@ async def trigger_navidrome_rescan():
     req_url = f"{endpoint}?{urllib.parse.urlencode(params)}"
 
     try:
-        loop = asyncio.get_event_loop()
         def _ping():
             req = urllib.request.Request(req_url, headers={"User-Agent": "XrobMusic/1.0"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 pass
-        await loop.run_in_executor(None, _ping)
+        await asyncio.to_thread(_ping)
     except Exception:
         pass
 
@@ -172,14 +184,23 @@ def normalize_duplicate_key(value: str) -> str:
     return value
 
 
-def get_all_audio_files():
+def _get_all_audio_files_sync():
     return [p for p in DOWNLOAD_DIR.rglob("*")
             if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in AUDIO_EXTENSIONS]
 
 
-def is_duplicate(title: str) -> bool:
+async def get_all_audio_files():
+    return await asyncio.to_thread(_get_all_audio_files_sync)
+
+
+def _is_duplicate_sync(title: str) -> bool:
     key = normalize_duplicate_key(title)
-    return any(normalize_duplicate_key(p.name) == key for p in get_all_audio_files())
+    files = _get_all_audio_files_sync()
+    return any(normalize_duplicate_key(p.name) == key for p in files)
+
+
+async def is_duplicate(title: str) -> bool:
+    return await asyncio.to_thread(_is_duplicate_sync, title)
 
 
 def load_settings():
@@ -229,7 +250,16 @@ def format_size(size_bytes):
         return "0 MB"
 
 
-def resolve_file(filename: str) -> Path:
+def cleanup_task_files(task_id: str):
+    for p in DOWNLOAD_DIR.glob(f"*{task_id}*"):
+        try:
+            if p.is_file():
+                p.unlink()
+        except Exception:
+            pass
+
+
+def _resolve_file_sync(filename: str) -> Path:
     clean_name = filename.strip()
     base_dir = DOWNLOAD_DIR.resolve()
     file_path = (DOWNLOAD_DIR / clean_name).resolve()
@@ -240,12 +270,16 @@ def resolve_file(filename: str) -> Path:
     if file_path.exists() and file_path.is_file():
         return file_path
 
-    matches = list(DOWNLOAD_DIR.rglob(f"{Path(clean_name).name}*"))
-    for match in matches:
-        if match.is_file() and match.resolve().is_relative_to(base_dir):
+    target_name = Path(clean_name).name
+    for match in DOWNLOAD_DIR.rglob("*"):
+        if match.is_file() and match.name == target_name and match.resolve().is_relative_to(base_dir):
             return match
 
     raise HTTPException(status_code=404, detail="File not found")
+
+
+async def resolve_file(filename: str) -> Path:
+    return await asyncio.to_thread(_resolve_file_sync, filename)
 
 
 async def download_worker():
@@ -260,7 +294,7 @@ async def download_worker():
             task["status"] = "downloading"
             task["step"] = "Downloading stream..."
             task["last_updated"] = time.time() * 1000
-            await notify_task_update(task)
+            await notify_task_update(task, force_save=True)
             
             settings = load_settings()
             fmt = settings.get("audio_format", "mp3")
@@ -313,32 +347,34 @@ async def download_worker():
                     spd_match = speed_regex.search(line_str)
                     if spd_match:
                         task["speed"] = spd_match.group(1).replace("~", "")
-                    await notify_task_update(task)
+                    await notify_task_update(task, force_save=False)
                         
                 elif "[ExtractAudio]" in line_str or "[EmbedThumbnail]" in line_str or "[Metadata]" in line_str:
                     task["status"] = "processing"
                     task["step"] = "Embedding cover art & tags..."
                     task["percent"] = 92
                     task["last_updated"] = time.time() * 1000
-                    await notify_task_update(task)
+                    await notify_task_update(task, force_save=True)
 
             await process.wait()
             ACTIVE_PROCESSES.pop(task_id, None)
 
             if task.get("cancel_requested"):
+                await asyncio.to_thread(cleanup_task_files, task_id)
                 task["status"] = "cancelled"
                 task["step"] = "Cancelled"
                 task["last_updated"] = time.time() * 1000
-                await notify_task_update(task)
+                await notify_task_update(task, force_save=True)
                 continue
 
             if process.returncode != 0:
                 stderr_data = await process.stderr.read()
                 err_text = stderr_data.decode("utf-8", errors="ignore")
+                await asyncio.to_thread(cleanup_task_files, task_id)
                 task["status"] = "error"
                 task["error"] = err_text[-300:]
                 task["last_updated"] = time.time() * 1000
-                await notify_task_update(task)
+                await notify_task_update(task, force_save=True)
                 continue
 
             possible_files = [
@@ -349,7 +385,7 @@ async def download_worker():
                 task["status"] = "error"
                 task["error"] = "Downloaded file not found."
                 task["last_updated"] = time.time() * 1000
-                await notify_task_update(task)
+                await notify_task_update(task, force_save=True)
                 continue
 
             audio_file = possible_files[0]
@@ -359,7 +395,7 @@ async def download_worker():
             task["step"] = "Cleaning tags & metadata..."
             task["percent"] = 96
             task["last_updated"] = time.time() * 1000
-            await notify_task_update(task)
+            await notify_task_update(task, force_save=True)
 
             clean_title = clean_filename(task["title"])
             cleaned_file = DOWNLOAD_DIR / f"clean_{task_id}{ext}"
@@ -399,7 +435,7 @@ async def download_worker():
             final_name = f"{clean_title}{ext}"
             final_path = final_dir / final_name
 
-            if final_path.exists() or is_duplicate(clean_title):
+            if final_path.exists() or await is_duplicate(clean_title):
                 final_name = f"{clean_title}_{task_id[:4]}{ext}"
                 final_path = final_dir / final_name
 
@@ -410,25 +446,26 @@ async def download_worker():
             task["percent"] = 100
             task["step"] = "Ready"
             task["last_updated"] = time.time() * 1000
-            await notify_task_update(task)
+            await notify_task_update(task, force_save=True)
 
             # Trigger Navidrome automatic scan ping
             await trigger_navidrome_rescan()
 
         except Exception as err:
+            await asyncio.to_thread(cleanup_task_files, task_id)
             task["status"] = "error"
             task["error"] = str(err)
             task["last_updated"] = time.time() * 1000
-            await notify_task_update(task)
+            await notify_task_update(task, force_save=True)
         finally:
             task_queue.task_done()
 
 
 @app.on_event("startup")
 async def startup_event():
-    init_db()
+    await asyncio.to_thread(init_db)
     global TASKS
-    TASKS = db_load_tasks()
+    TASKS = await asyncio.to_thread(_db_load_tasks_sync)
     for _ in range(MAX_CONCURRENT_DOWNLOADS):
         asyncio.create_task(download_worker())
 
@@ -1582,16 +1619,20 @@ async def update_settings(data: dict = Body(...)):
 
 @app.get("/api/library")
 async def get_library():
-    files = []
-    total_bytes = 0
-    for path in get_all_audio_files():
-        sz = path.stat().st_size
-        total_bytes += sz
-        files.append({
-            "name": str(path.relative_to(DOWNLOAD_DIR)),
-            "size": format_size(sz),
-            "bytes": sz
-        })
+    audio_files = await get_all_audio_files()
+    def _build():
+        files = []
+        total_bytes = 0
+        for path in audio_files:
+            sz = path.stat().st_size
+            total_bytes += sz
+            files.append({
+                "name": str(path.relative_to(DOWNLOAD_DIR)),
+                "size": format_size(sz),
+                "bytes": sz
+            })
+        return files, total_bytes
+    files, total_bytes = await asyncio.to_thread(_build)
     return {
         "files": sorted(files, key=lambda x: x["name"]),
         "total_size": format_size(total_bytes),
@@ -1601,25 +1642,28 @@ async def get_library():
 
 @app.get("/api/stats")
 async def get_stats():
-    files = get_all_audio_files()
-    total_bytes = sum(p.stat().st_size for p in files)
-    artists = set()
-    albums = set()
-    for p in files:
-        rel = p.relative_to(DOWNLOAD_DIR)
-        if len(rel.parts) > 1:
-            artists.add(rel.parts[0])
+    files = await get_all_audio_files()
+    def _build():
+        total_bytes = sum(p.stat().st_size for p in files)
+        artists = set()
+        albums = set()
+        for p in files:
+            rel = p.relative_to(DOWNLOAD_DIR)
+            if len(rel.parts) > 1:
+                artists.add(rel.parts[0])
+        return len(files), len(artists), len(albums), format_size(total_bytes)
+    tracks_cnt, artists_cnt, albums_cnt, total_sz = await asyncio.to_thread(_build)
     return {
-        "tracks": len(files),
-        "artists": len(artists),
-        "albums": len(albums),
-        "total_size": format_size(total_bytes)
+        "tracks": tracks_cnt,
+        "artists": artists_cnt,
+        "albums": albums_cnt,
+        "total_size": total_sz
     }
 
 
 @app.get("/api/library/stream/{filename:path}")
 async def stream_library_file(filename: str, transcode: bool = Query(False)):
-    file_path = resolve_file(filename)
+    file_path = await resolve_file(filename)
 
     if transcode:
         async def transcode_generator():
@@ -1644,8 +1688,14 @@ async def stream_library_file(filename: str, transcode: bool = Query(False)):
 
 @app.get("/api/library/cover/{filename:path}")
 async def get_library_cover(filename: str):
-    file_path = resolve_file(filename)
+    file_path = await resolve_file(filename)
     
+    cache_key = hashlib.md5(str(file_path.relative_to(DOWNLOAD_DIR)).encode()).hexdigest() + ".jpg"
+    cache_path = COVER_CACHE_DIR / cache_key
+    
+    if cache_path.exists():
+        return FileResponse(cache_path, media_type="image/jpeg")
+
     command = [
         "ffmpeg",
         "-y",
@@ -1664,6 +1714,7 @@ async def get_library_cover(filename: str):
         )
         stdout, _ = await process.communicate()
         if process.returncode == 0 and len(stdout) > 0:
+            await asyncio.to_thread(cache_path.write_bytes, stdout)
             return Response(content=stdout, media_type="image/jpeg")
     except Exception:
         pass
@@ -1674,7 +1725,16 @@ async def get_library_cover(filename: str):
 
 @app.delete("/api/library/{filename:path}")
 async def delete_library_file(filename: str):
-    file_path = resolve_file(filename)
+    file_path = await resolve_file(filename)
+    
+    cache_key = hashlib.md5(str(file_path.relative_to(DOWNLOAD_DIR)).encode()).hexdigest() + ".jpg"
+    cache_path = COVER_CACHE_DIR / cache_key
+    if cache_path.exists():
+        try:
+            cache_path.unlink()
+        except Exception:
+            pass
+            
     file_path.unlink()
     return {"status": "deleted"}
 
@@ -1722,7 +1782,7 @@ async def enqueue_download(payload: dict = Body(...)):
     album = payload.get("album", "")
     element_id = payload.get("elementId", "")
 
-    if is_duplicate(title):
+    if await is_duplicate(title):
         raise HTTPException(status_code=409, detail="This track already exists in your library.")
     
     if not url:
@@ -1745,7 +1805,7 @@ async def enqueue_download(payload: dict = Body(...)):
     }
     
     TASKS[task_id] = task_info
-    await notify_task_update(task_info)
+    await notify_task_update(task_info, force_save=True)
     await task_queue.put(task_id)
     return {"status": "ok", "task_id": task_id}
 
@@ -1765,7 +1825,7 @@ async def cancel_task(task_id: str):
     task["status"] = "cancelled"
     task["step"] = "Cancelled"
     task["last_updated"] = time.time() * 1000
-    await notify_task_update(task)
+    await notify_task_update(task, force_save=True)
     return {"status": "cancelled"}
 
 
