@@ -1,7 +1,5 @@
 import asyncio
-import hashlib
 import json
-import mimetypes
 import os
 import re
 import shutil
@@ -13,16 +11,26 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Query, HTTPException, Body, WebSocket, WebSocketDisconnect
-from fastapi.responses import RedirectResponse, FileResponse, Response, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(title="Xrob Music")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome/music"))
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "./downloads"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
@@ -63,8 +71,6 @@ task_queue = asyncio.Queue()
 ACTIVE_PROCESSES = {}
 LAST_SAVED_TIME = {}
 
-
-# --- PERSISTENT TASK STORAGE (SQLite) ---
 
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
@@ -131,8 +137,6 @@ def _db_clear_completed_tasks_sync():
         conn.commit()
 
 
-# --- WEBSOCKET CONNECTION MANAGER ---
-
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -159,8 +163,6 @@ async def notify_task_update(task: dict, force_save: bool = False):
     await db_save_task(task, force=force_save)
     await manager.broadcast({"type": "task_update", "task": task})
 
-
-# --- NAVIDROME AUTO-RESCAN TRIGGER ---
 
 async def trigger_navidrome_rescan():
     settings = load_settings()
@@ -272,7 +274,7 @@ def cleanup_task_files(task_id: str):
 
 
 def _resolve_file_sync(filename: str) -> Path:
-    clean_name = filename.strip()
+    clean_name = urllib.parse.unquote(filename).strip()
     base_dir = DOWNLOAD_DIR.resolve()
     file_path = (DOWNLOAD_DIR / clean_name).resolve()
 
@@ -323,8 +325,6 @@ async def download_worker():
                 "--audio-format", fmt,
                 "--audio-quality", quality,
                 "--newline",
-                "--embed-subs",
-                "--sub-langs", "all,-live_chat",
                 "-o", output_template,
             ]
 
@@ -418,11 +418,8 @@ async def download_worker():
                 "-i", str(audio_file),
                 "-map", "0",
                 "-c", "copy",
-                "-disposition:v:0", "attached_pic",
-                "-metadata", f"album={clean_title}",
-                "-metadata", "comment=",
-                "-metadata", "description=",
-                "-metadata", "purl=",
+                "-metadata", f"title={clean_title}",
+                "-metadata", f"artist={task.get('artist', 'Unknown Artist')}",
                 str(cleaned_file)
             ]
 
@@ -460,7 +457,6 @@ async def download_worker():
             task["last_updated"] = time.time() * 1000
             await notify_task_update(task, force_save=True)
 
-            # Trigger Navidrome automatic scan ping
             await trigger_navidrome_rescan()
 
         except Exception as err:
@@ -523,7 +519,10 @@ async def youtube_search(query: str, max_results: int, page: int = 1):
         data = json.loads(stdout.decode("utf-8", errors="ignore"))
         results = []
 
-        for item in data.get("entries", []):
+        entries = data.get("entries", [])
+        page_entries = entries[start_idx - 1:end_idx] if len(entries) >= end_idx else entries
+
+        for item in page_entries:
             if not item:
                 continue
             
@@ -567,6 +566,106 @@ async def update_settings(data: dict = Body(...)):
     return save_settings(data)
 
 
+@app.get("/api/search")
+async def search_api(q: str = Query(...), page: int = Query(1)):
+    settings = load_settings()
+    max_results = settings.get("max_results", 20)
+    try:
+        results = await youtube_search(q, max_results, page)
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/preview")
+async def preview_audio(url: str = Query(...)):
+    try:
+        command = ["yt-dlp", "-g", "-f", "bestaudio/best", url]
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await process.communicate()
+        if process.returncode == 0 and stdout:
+            direct_url = stdout.decode("utf-8").strip().split("\n")[0]
+            def iter_stream():
+                req = urllib.request.Request(direct_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req) as response:
+                    while chunk := response.read(64 * 1024):
+                        yield chunk
+            return StreamingResponse(iter_stream(), media_type="audio/mpeg", headers={"Access-Control-Allow-Origin": "*"})
+        raise HTTPException(status_code=400, detail="Unable to extract preview URL")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/download")
+async def start_download_api(payload: dict = Body(...)):
+    url = payload.get("url")
+    title = payload.get("title", "Unknown Track")
+    element_id = payload.get("elementId")
+    artist = payload.get("artist", "Unknown Artist")
+
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing URL")
+
+    task_id = str(uuid.uuid4())[:8]
+    task = {
+        "id": task_id,
+        "title": title,
+        "artist": artist,
+        "album": title,
+        "url": url,
+        "elementId": element_id,
+        "status": "queued",
+        "percent": 0,
+        "speed": "",
+        "step": "Queued...",
+        "error": "",
+        "last_updated": time.time() * 1000,
+        "final_name": ""
+    }
+
+    TASKS[task_id] = task
+    await notify_task_update(task, force_save=True)
+    await task_queue.put(task_id)
+    return {"status": "ok", "taskId": task_id}
+
+
+@app.get("/api/tasks")
+async def get_tasks():
+    return list(TASKS.values())
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task_api(task_id: str):
+    task = TASKS.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task["cancel_requested"] = True
+    if task_id in ACTIVE_PROCESSES:
+        try:
+            ACTIVE_PROCESSES[task_id].kill()
+        except Exception:
+            pass
+
+    task["status"] = "cancelled"
+    task["step"] = "Cancelled by user"
+    task["last_updated"] = time.time() * 1000
+    await notify_task_update(task, force_save=True)
+    return {"status": "cancelled"}
+
+
+@app.delete("/api/tasks/clear-completed")
+async def clear_completed_tasks_api():
+    await asyncio.to_thread(_db_clear_completed_tasks_sync)
+    global TASKS
+    TASKS = {k: v for k, v in TASKS.items() if v.get("status") not in ("completed", "cancelled", "error")}
+    return {"status": "cleared"}
+
+
 @app.get("/api/library")
 async def get_library():
     audio_files = await get_all_audio_files()
@@ -590,6 +689,42 @@ async def get_library():
     }
 
 
+@app.get("/api/library/stream/{filename:path}")
+async def stream_library_file(filename: str):
+    file_path = await resolve_file(filename)
+    mime = MEDIA_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
+    return FileResponse(file_path, media_type=mime, headers={"Access-Control-Allow-Origin": "*"})
+
+
+@app.get("/api/library/cover/{filename:path}")
+async def get_library_cover(filename: str):
+    file_path = await resolve_file(filename)
+    cover_file = COVER_CACHE_DIR / f"{file_path.stem}.jpg"
+
+    if cover_file.exists():
+        return FileResponse(cover_file, media_type="image/jpeg")
+
+    cmd = [
+        "ffmpeg", "-y", "-i", str(file_path),
+        "-an", "-vcodec", "copy", str(cover_file)
+    ]
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    await process.wait()
+
+    if process.returncode == 0 and cover_file.exists():
+        return FileResponse(cover_file, media_type="image/jpeg")
+    
+    svg_fallback = '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="65"><rect width="100%" height="100%" fill="#1e293b"/><text x="50%" y="50%" fill="#9ca3af" font-size="20" text-anchor="middle" dominant-baseline="central">🎵</text></svg>'
+    return Response(content=svg_fallback, media_type="image/svg+xml")
+
+
+@app.delete("/api/library/{filename:path}")
+async def delete_library_file(filename: str):
+    file_path = await resolve_file(filename)
+    file_path.unlink()
+    return {"status": "deleted"}
+
+
 @app.get("/api/stats")
 async def get_stats():
     files = await get_all_audio_files()
@@ -599,245 +734,15 @@ async def get_stats():
         albums = set()
         for p in files:
             rel = p.relative_to(DOWNLOAD_DIR)
-            if len(rel.parts) > 1:
-                artists.add(rel.parts[0])
-        return len(files), len(artists), len(albums), format_size(total_bytes)
-    tracks_cnt, artists_cnt, albums_cnt, total_sz = await asyncio.to_thread(_build)
+            parts = rel.parts
+            if len(parts) > 1:
+                artists.add(parts[0])
+            albums.add(p.stem)
+        return len(files), len(artists), len(albums), total_bytes
+    tracks, artists, albums, total_bytes = await asyncio.to_thread(_build)
     return {
-        "tracks": tracks_cnt,
-        "artists": artists_cnt,
-        "albums": albums_cnt,
-        "total_size": total_sz
+        "tracks": tracks,
+        "artists": artists,
+        "albums": albums,
+        "total_size": format_size(total_bytes)
     }
-
-
-@app.get("/api/library/stream/{filename:path}")
-async def stream_library_file(filename: str, transcode: bool = Query(False)):
-    file_path = await resolve_file(filename)
-
-    if transcode:
-        async def transcode_generator():
-            proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-i", str(file_path), "-vn", "-ab", "192k", "-f", "mp3", "pipe:1",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
-            )
-            while True:
-                chunk = await proc.stdout.read(65536)
-                if not chunk:
-                    break
-                yield chunk
-            await proc.wait()
-
-        return StreamingResponse(transcode_generator(), media_type="audio/mpeg")
-
-    ext = file_path.suffix.lower()
-    media_type = MEDIA_TYPES.get(ext, mimetypes.guess_type(file_path)[0] or "audio/mpeg")
-    return FileResponse(path=file_path, filename=file_path.name, media_type=media_type)
-
-
-@app.get("/api/library/cover/{filename:path}")
-async def get_library_cover(filename: str):
-    file_path = await resolve_file(filename)
-    
-    cache_key = hashlib.md5(str(file_path.relative_to(DOWNLOAD_DIR)).encode()).hexdigest() + ".jpg"
-    cache_path = COVER_CACHE_DIR / cache_key
-    
-    if cache_path.exists():
-        return FileResponse(cache_path, media_type="image/jpeg")
-
-    command = [
-        "ffmpeg",
-        "-y",
-        "-i", str(file_path),
-        "-an",
-        "-c:v", "mjpeg",
-        "-frames:v", "1",
-        "-f", "image2pipe",
-        "-"
-    ]
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, _ = await process.communicate()
-        if process.returncode == 0 and len(stdout) > 0:
-            await asyncio.to_thread(cache_path.write_bytes, stdout)
-            return Response(content=stdout, media_type="image/jpeg")
-    except Exception:
-        pass
-
-    svg_placeholder = """<svg xmlns="http://www.w3.org/2000/svg" width="110" height="65" viewBox="0 0 110 65"><rect width="100%" height="100%" fill="#1e293b"/><text x="50%" y="50%" fill="#9ca3af" font-size="20" text-anchor="middle" dominant-baseline="central">🎵</text></svg>"""
-    return Response(content=svg_placeholder, media_type="image/svg+xml")
-
-
-@app.delete("/api/library/{filename:path}")
-async def delete_library_file(filename: str):
-    file_path = await resolve_file(filename)
-    
-    cache_key = hashlib.md5(str(file_path.relative_to(DOWNLOAD_DIR)).encode()).hexdigest() + ".jpg"
-    cache_path = COVER_CACHE_DIR / cache_key
-    if cache_path.exists():
-        try:
-            cache_path.unlink()
-        except Exception:
-            pass
-            
-    file_path.unlink()
-    return {"status": "deleted"}
-
-
-@app.get("/api/search")
-async def search(q: str = Query(..., min_length=1), page: int = Query(1, ge=1)):
-    settings = load_settings()
-    try:
-        results = await youtube_search(q, settings.get("max_results", 20), page)
-        return results
-    except Exception as error:
-        raise HTTPException(status_code=500, detail="YouTube search failed: " + str(error))
-
-
-@app.get("/api/preview")
-async def preview_audio(url: str = Query(..., min_length=1)):
-    if not (url.startswith("https://www.youtube.com/") or url.startswith("https://youtube.com/") or url.startswith("https://youtu.be/")):
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL.")
-    try:
-        process = await asyncio.create_subprocess_exec(
-            "yt-dlp",
-            "-g",
-            "-f", "ba/b",
-            "--no-playlist",
-            url,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await process.communicate()
-        if process.returncode != 0:
-            raise RuntimeError("Failed to extract preview stream URL.")
-        
-        stream_url = stdout.decode("utf-8", errors="ignore").strip().split("\n")[0]
-        if not stream_url:
-            raise HTTPException(status_code=400, detail="Could not retrieve audio stream.")
-
-        ffmpeg_proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n",
-            "-i", stream_url,
-            "-vn",
-            "-acodec", "libmp3lame",
-            "-ab", "128k",
-            "-f", "mp3",
-            "pipe:1",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-
-        async def media_stream():
-            try:
-                while True:
-                    chunk = await ffmpeg_proc.stdout.read(65536)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                if ffmpeg_proc.returncode is None:
-                    try:
-                        ffmpeg_proc.kill()
-                    except Exception:
-                        pass
-                await ffmpeg_proc.wait()
-
-        return StreamingResponse(media_stream(), media_type="audio/mpeg")
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-
-
-@app.post("/api/download")
-async def enqueue_download(payload: dict = Body(...)):
-    url = payload.get("url")
-    title = payload.get("title", "Unknown")
-    artist = payload.get("artist", "Unknown Artist")
-    album = payload.get("album", "")
-    element_id = payload.get("elementId", "")
-
-    if await is_duplicate(title):
-        raise HTTPException(status_code=409, detail="This track already exists in your library.")
-    
-    if not url:
-        raise HTTPException(status_code=400, detail="Missing URL")
-
-    task_id = uuid.uuid4().hex
-    task_info = {
-        "id": task_id,
-        "title": title,
-        "artist": artist,
-        "album": album,
-        "url": url,
-        "elementId": element_id,
-        "status": "queued",
-        "percent": 0,
-        "speed": "",
-        "step": "Waiting in queue...",
-        "error": "",
-        "last_updated": time.time() * 1000
-    }
-    
-    TASKS[task_id] = task_info
-    await notify_task_update(task_info, force_save=True)
-    await task_queue.put(task_id)
-    return {"status": "ok", "task_id": task_id}
-
-
-@app.post("/api/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str):
-    task = TASKS.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if task["status"] in ["completed", "cancelled"]:
-        return {"status": task["status"]}
-
-    task["cancel_requested"] = True
-    proc = ACTIVE_PROCESSES.get(task_id)
-    if proc and proc.returncode is None:
-        proc.terminate()
-    task["status"] = "cancelled"
-    task["step"] = "Cancelled"
-    task["last_updated"] = time.time() * 1000
-    await notify_task_update(task, force_save=True)
-    return {"status": "cancelled"}
-
-
-@app.delete("/api/tasks/clear-completed")
-async def clear_completed_tasks():
-    global TASKS
-    to_remove = [
-        task_id for task_id, task in TASKS.items() 
-        if task.get("status") in ["completed", "cancelled", "error"]
-    ]
-    for task_id in to_remove:
-        TASKS.pop(task_id, None)
-
-    await asyncio.to_thread(_db_clear_completed_tasks_sync)
-    return {"status": "ok", "cleared": len(to_remove)}
-
-
-@app.get("/api/tasks")
-async def get_tasks():
-    now = time.time() * 1000
-    for t in TASKS.values():
-        if t["status"] in ["queued", "downloading", "processing"]:
-            t["last_updated"] = now
-            
-    def sort_key(task):
-        status_weight = {"downloading": 0, "processing": 1, "queued": 2, "completed": 3, "error": 4, "cancelled": 5}
-        return status_weight.get(task["status"], 99)
-        
-    sorted_tasks = sorted(list(TASKS.values()), key=sort_key)
-    return sorted_tasks
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "service": "music-downloader"}
