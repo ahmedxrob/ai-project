@@ -317,8 +317,6 @@ async def download_worker():
                 "--audio-format", fmt,
                 "--audio-quality", quality,
                 "--newline",
-                "--embed-subs",
-                "--sub-langs", "all,-live_chat",
                 "-o", output_template,
             ]
 
@@ -695,7 +693,6 @@ async def search(q: str = Query(..., min_length=1), page: int = Query(1, ge=1)):
 
 @app.get("/api/preview")
 async def preview_audio(url: str = Query(..., min_length=1)):
-    # Auto-convert raw YouTube video IDs to full URLs if passed from search results
     if not url.startswith("http"):
         url = f"https://www.youtube.com/watch?v={url}"
 
