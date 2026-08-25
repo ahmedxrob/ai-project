@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query, HTTPException, Body
+from fastapi import FastAPI, Query, HTTPException, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, Response, StreamingResponse
 import asyncio
 import json
@@ -6,7 +6,10 @@ import mimetypes
 import os
 import re
 import shutil
+import sqlite3
 import time
+import urllib.parse
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -16,6 +19,7 @@ DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome/music"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
+DB_FILE = DOWNLOAD_DIR / "tasks.db"
 AUDIO_EXTENSIONS = {'.mp3', '.flac', '.m4a', '.ogg', '.wav', '.opus', '.aac', '.alac'}
 MAX_CONCURRENT_DOWNLOADS = 3
 
@@ -37,12 +41,128 @@ DEFAULT_SETTINGS = {
     "embed_metadata": True,
     "max_results": 20,
     "organize_by_artist": False,
-    "poll_interval": 1500
+    "poll_interval": 1500,
+    "navidrome_url": os.getenv("NAVIDROME_URL", ""),
+    "navidrome_user": os.getenv("NAVIDROME_USER", ""),
+    "navidrome_token": os.getenv("NAVIDROME_TOKEN", ""),
+    "navidrome_salt": os.getenv("NAVIDROME_SALT", "")
 }
 
 TASKS = {}
 task_queue = asyncio.Queue()
 ACTIVE_PROCESSES = {}
+
+
+# --- PERSISTENT TASK STORAGE (SQLite) ---
+
+def init_db():
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                artist TEXT,
+                album TEXT,
+                url TEXT,
+                elementId TEXT,
+                status TEXT,
+                percent REAL,
+                speed TEXT,
+                step TEXT,
+                error TEXT,
+                last_updated REAL,
+                final_name TEXT
+            )
+        """)
+        conn.commit()
+
+
+def db_save_task(task: dict):
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO tasks 
+            (id, title, artist, album, url, elementId, status, percent, speed, step, error, last_updated, final_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            task.get("id"), task.get("title"), task.get("artist"), task.get("album"),
+            task.get("url"), task.get("elementId"), task.get("status"), task.get("percent", 0),
+            task.get("speed", ""), task.get("step", ""), task.get("error", ""),
+            task.get("last_updated", 0), task.get("final_name", "")
+        ))
+        conn.commit()
+
+
+def db_load_tasks() -> dict:
+    if not DB_FILE.exists():
+        return {}
+    tasks = {}
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM tasks")
+        for row in cursor.fetchall():
+            t = dict(row)
+            tasks[t["id"]] = t
+    return tasks
+
+
+# --- WEBSOCKET CONNECTION MANAGER ---
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_json(message)
+            except Exception:
+                self.disconnect(connection)
+
+manager = ConnectionManager()
+
+
+async def notify_task_update(task: dict):
+    db_save_task(task)
+    await manager.broadcast({"type": "task_update", "task": task})
+
+
+# --- NAVIDROME AUTO-RESCAN TRIGGER ---
+
+async def trigger_navidrome_rescan():
+    settings = load_settings()
+    url = settings.get("navidrome_url") or os.getenv("NAVIDROME_URL", "")
+    if not url:
+        return
+
+    user = settings.get("navidrome_user") or os.getenv("NAVIDROME_USER", "")
+    token = settings.get("navidrome_token") or os.getenv("NAVIDROME_TOKEN", "")
+    salt = settings.get("navidrome_salt") or os.getenv("NAVIDROME_SALT", "")
+
+    endpoint = f"{url.rstrip('/')}/rest/startScan"
+    params = {"u": user, "t": token, "v": "1.16.1", "c": "XrobMusic", "f": "json"}
+    if salt:
+        params["s"] = salt
+
+    req_url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+
+    try:
+        loop = asyncio.get_event_loop()
+        def _ping():
+            req = urllib.request.Request(req_url, headers={"User-Agent": "XrobMusic/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                pass
+        await loop.run_in_executor(None, _ping)
+    except Exception:
+        pass
 
 
 def normalize_duplicate_key(value: str) -> str:
@@ -140,6 +260,7 @@ async def download_worker():
             task["status"] = "downloading"
             task["step"] = "Downloading stream..."
             task["last_updated"] = time.time() * 1000
+            await notify_task_update(task)
             
             settings = load_settings()
             fmt = settings.get("audio_format", "mp3")
@@ -192,12 +313,14 @@ async def download_worker():
                     spd_match = speed_regex.search(line_str)
                     if spd_match:
                         task["speed"] = spd_match.group(1).replace("~", "")
+                    await notify_task_update(task)
                         
                 elif "[ExtractAudio]" in line_str or "[EmbedThumbnail]" in line_str or "[Metadata]" in line_str:
                     task["status"] = "processing"
                     task["step"] = "Embedding cover art & tags..."
                     task["percent"] = 92
                     task["last_updated"] = time.time() * 1000
+                    await notify_task_update(task)
 
             await process.wait()
             ACTIVE_PROCESSES.pop(task_id, None)
@@ -206,6 +329,7 @@ async def download_worker():
                 task["status"] = "cancelled"
                 task["step"] = "Cancelled"
                 task["last_updated"] = time.time() * 1000
+                await notify_task_update(task)
                 continue
 
             if process.returncode != 0:
@@ -214,6 +338,7 @@ async def download_worker():
                 task["status"] = "error"
                 task["error"] = err_text[-300:]
                 task["last_updated"] = time.time() * 1000
+                await notify_task_update(task)
                 continue
 
             possible_files = [
@@ -224,6 +349,7 @@ async def download_worker():
                 task["status"] = "error"
                 task["error"] = "Downloaded file not found."
                 task["last_updated"] = time.time() * 1000
+                await notify_task_update(task)
                 continue
 
             audio_file = possible_files[0]
@@ -233,6 +359,7 @@ async def download_worker():
             task["step"] = "Cleaning tags & metadata..."
             task["percent"] = 96
             task["last_updated"] = time.time() * 1000
+            await notify_task_update(task)
 
             clean_title = clean_filename(task["title"])
             cleaned_file = DOWNLOAD_DIR / f"clean_{task_id}{ext}"
@@ -283,19 +410,37 @@ async def download_worker():
             task["percent"] = 100
             task["step"] = "Ready"
             task["last_updated"] = time.time() * 1000
+            await notify_task_update(task)
+
+            # Trigger Navidrome automatic scan ping
+            await trigger_navidrome_rescan()
 
         except Exception as err:
             task["status"] = "error"
             task["error"] = str(err)
             task["last_updated"] = time.time() * 1000
+            await notify_task_update(task)
         finally:
             task_queue.task_done()
 
 
 @app.on_event("startup")
 async def startup_event():
+    init_db()
+    global TASKS
+    TASKS = db_load_tasks()
     for _ in range(MAX_CONCURRENT_DOWNLOADS):
         asyncio.create_task(download_worker())
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 
 async def youtube_search(query: str, max_results: int, page: int = 1):
@@ -419,77 +564,31 @@ body {
 }
 
 .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
-/* App Shell Layout */
 .app-shell { display: flex; width: 100%; min-height: 100vh; }
 
-/* Side Navigation Drawer (Desktop) */
 .side-nav {
-    width: 260px;
-    background: var(--card-bg);
-    border-right: 1px solid var(--card-border);
-    padding: 24px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    backdrop-filter: blur(12px);
+    width: 260px; background: var(--card-bg); border-right: 1px solid var(--card-border);
+    padding: 24px 16px; display: flex; flex-direction: column; gap: 20px; backdrop-filter: blur(12px);
 }
-
-.side-brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.side-brand h1 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--text-primary);
-}
-
+.side-brand { display: flex; align-items: center; gap: 12px; }
+.side-brand h1 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); }
 .nav-list { display: flex; flex-direction: column; gap: 8px; list-style: none; }
-
 .nav-link {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    border-radius: 12px;
-    color: var(--text-secondary);
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 0.95rem;
-    transition: all 0.2s;
-    background: transparent;
-    border: none;
-    width: 100%;
-    cursor: pointer;
-    text-align: left;
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px;
+    color: var(--text-secondary); text-decoration: none; font-weight: 600; font-size: 0.95rem;
+    transition: all 0.2s; background: transparent; border: none; width: 100%; cursor: pointer; text-align: left;
 }
-
 .nav-link:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.05); }
 .nav-link.active { background: var(--accent); color: #fff; box-shadow: 0 4px 12px var(--accent-glow); }
 
-/* Main Content Area */
 .main-content {
-    flex: 1;
-    padding: 30px 24px 90px 24px;
-    max-width: 1000px;
-    margin: 0 auto;
-    width: 100%;
+    flex: 1; padding: 30px 24px 140px 24px; max-width: 1000px; margin: 0 auto; width: 100%;
 }
 
-/* Mobile Header & Bottom Navigation */
 .mobile-header { display: none; align-items: center; justify-content: space-between; padding: 16px 20px; background: var(--card-bg); border-bottom: 1px solid var(--card-border); }
 .bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--card-bg); border-top: 1px solid var(--card-border); padding: 8px; backdrop-filter: blur(16px); z-index: 100; justify-content: space-around; }
 .bottom-nav .nav-link { flex-direction: column; gap: 4px; padding: 8px; font-size: 0.75rem; align-items: center; justify-content: center; text-align: center; }
@@ -499,7 +598,7 @@ body {
     .side-nav { display: none; }
     .mobile-header { display: flex; }
     .bottom-nav { display: flex; }
-    .main-content { padding: 20px 16px 100px 16px; }
+    .main-content { padding: 20px 16px 160px 16px; }
 }
 
 .tab-content { display: none; }
@@ -507,8 +606,7 @@ body {
 
 .search-card {
     background: var(--card-bg); backdrop-filter: blur(16px); border: 1px solid var(--card-border);
-    padding: 12px; border-radius: 20px; display: flex; gap: 10px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-    margin-bottom: 25px;
+    padding: 12px; border-radius: 20px; display: flex; gap: 10px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); margin-bottom: 25px;
 }
 .search-card input {
     flex: 1; background: var(--input-bg); border: 1px solid var(--card-border); padding: 14px 18px;
@@ -516,8 +614,7 @@ body {
 }
 .search-card button {
     background: linear-gradient(135deg, var(--accent) 0%, #4338ca 100%); color: #fff; border: none;
-    padding: 0 26px; border-radius: 14px; font-weight: 600; font-size: 0.95rem; cursor: pointer;
-    transition: all 0.2s; box-shadow: 0 4px 15px var(--accent-glow);
+    padding: 0 26px; border-radius: 14px; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 15px var(--accent-glow);
 }
 .search-card button:hover { transform: translateY(-1px); }
 
@@ -565,7 +662,7 @@ body {
 .setting-row:last-child { border-bottom: none; padding-bottom: 0; }
 .setting-label { font-weight: 600; font-size: 0.95rem; }
 .setting-desc { font-size: 0.82rem; color: var(--text-secondary); margin-top: 2px; }
-select, input[type="number"] { background: var(--input-bg); border: 1px solid var(--card-border); color: var(--text-primary); padding: 8px 12px; border-radius: 10px; outline: none; font-size: 0.9rem; }
+select, input[type="number"], input[type="text"] { background: var(--input-bg); border: 1px solid var(--card-border); color: var(--text-primary); padding: 8px 12px; border-radius: 10px; outline: none; font-size: 0.9rem; }
 
 .switch { position: relative; display: inline-block; width: 46px; height: 24px; }
 .switch input { opacity: 0; width: 0; height: 0; }
@@ -589,40 +686,49 @@ input:checked + .slider:before { transform: translateX(22px); }
 }
 .btn-refresh:hover { background: var(--accent); color: #fff; }
 
-/* Toast Notifications Container */
-#toast-container {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-.toast {
-    background: var(--card-bg);
-    border: 1px solid var(--accent);
-    color: var(--text-primary);
-    padding: 12px 18px;
-    border-radius: 12px;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.3);
-    backdrop-filter: blur(12px);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
+#toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
+.toast { background: var(--card-bg); border: 1px solid var(--accent); color: var(--text-primary); padding: 12px 18px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); backdrop-filter: blur(12px); display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
-@media(max-width: 640px) { .result-card { flex-direction: column; align-items: flex-start; } .thumb-wrapper { width: 100%; height: 140px; } .btn-group { width: 100%; justify-content: space-between; } .progress-steps { grid-template-columns: 1fr; } }
+/* PERSISTENT GLOBAL AUDIO PLAYER & VISUALIZER */
+.global-player-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; height: 75px; background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(20px); border-top: 1px solid var(--card-border); z-index: 950;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 24px; gap: 20px;
+}
+@media (max-width: 768px) { .global-player-bar { bottom: 60px; height: 65px; padding: 0 12px; } }
+.gp-track-details { display: flex; align-items: center; gap: 12px; width: 220px; min-width: 0; }
+.gp-track-details img { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; background: var(--input-bg); flex-shrink: 0; }
+.gp-text { min-width: 0; display: flex; flex-direction: column; }
+.gp-title { font-size: 0.9rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary); }
+.gp-artist { font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gp-controls { flex: 1; max-width: 500px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.gp-play-btn { background: var(--accent); color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; cursor: pointer; transition: transform 0.2s; }
+.gp-play-btn:hover { transform: scale(1.08); }
+.gp-progress-container { width: 100%; display: flex; align-items: center; gap: 10px; font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; }
+.gp-progress-container input[type="range"] { flex: 1; height: 4px; accent-color: var(--accent); cursor: pointer; }
+.gp-extra { display: flex; align-items: center; gap: 14px; width: 220px; justify-content: flex-end; }
+.gp-extra input[type="range"] { width: 70px; height: 4px; accent-color: var(--accent); cursor: pointer; }
+#visualizer-canvas { width: 90px; height: 30px; border-radius: 6px; background: rgba(0, 0, 0, 0.2); }
+
+@media(max-width: 640px) {
+    .result-card { flex-direction: column; align-items: flex-start; }
+    .thumb-wrapper { width: 100%; height: 140px; }
+    .btn-group { width: 100%; justify-content: space-between; }
+    .progress-steps { grid-template-columns: 1fr; }
+    .gp-extra #visualizer-canvas { display: none; }
+    .gp-extra input[type="range"] { width: 50px; }
+}
 </style>
 </head>
 <body>
 
 <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
+<!-- Audio Element for Global Player -->
+<audio id="global-audio-element" crossOrigin="anonymous"></audio>
+
 <div class="app-shell">
-    <!-- Desktop Side Navigation -->
     <nav class="side-nav" aria-label="Main Navigation">
         <div class="side-brand">
             <svg width="36" height="36" viewBox="0 0 512 512" aria-hidden="true">
@@ -645,7 +751,6 @@ input:checked + .slider:before { transform: translateX(22px); }
         </ul>
     </nav>
 
-    <!-- App Content Shell -->
     <div style="flex: 1; display: flex; flex-direction: column;">
         <header class="mobile-header">
             <div class="side-brand">
@@ -704,7 +809,7 @@ input:checked + .slider:before { transform: translateX(22px); }
                 <div id="libraryList" class="results-grid" aria-live="polite"></div>
             </section>
 
-            <!-- TAB 3: SETTINGS -->
+            <!-- TAB 4: SETTINGS -->
             <section id="tab-settings" class="tab-content" role="tabpanel" aria-labelledby="btn-settings">
                 <div class="settings-card">
                     <div class="setting-row">
@@ -717,6 +822,18 @@ input:checked + .slider:before { transform: translateX(22px); }
                     <div class="setting-row">
                         <div><div class="setting-label">Desktop Notifications</div><div class="setting-desc">Alert when downloads finish successfully</div></div>
                         <button class="btn-refresh" onclick="requestNotificationPermission()">Enable Notifications</button>
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Navidrome Integration</div><div class="setting-desc">Server URL for automatic scan pings</div></div>
+                        <input type="text" id="set_navidrome_url" placeholder="http://localhost:4533" style="width:220px;">
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Navidrome User</div><div class="setting-desc">Subsonic API Username</div></div>
+                        <input type="text" id="set_navidrome_user" placeholder="admin" style="width:160px;">
+                    </div>
+                    <div class="setting-row">
+                        <div><div class="setting-label">Navidrome API Token</div><div class="setting-desc">Subsonic API Token / Password</div></div>
+                        <input type="text" id="set_navidrome_token" placeholder="Token / Auth Hash" style="width:160px;">
                     </div>
                     <div class="setting-row">
                         <div><div class="setting-label">Audio Format</div><div class="setting-desc">Preferred output audio format for downloads</div></div>
@@ -750,7 +867,30 @@ input:checked + .slider:before { transform: translateX(22px); }
     </div>
 </div>
 
-<!-- Mobile Bottom Tab Navigation -->
+<!-- FIXED PERSISTENT AUDIO PLAYER BAR WITH VISUALIZER -->
+<div id="global-player-bar" class="global-player-bar" style="display: none;">
+    <div class="gp-track-details">
+        <img id="gp-art" src="" alt="Album Art" onerror="this.src='https://via.placeholder.com/46?text=🎵'" />
+        <div class="gp-text">
+            <span id="gp-title" class="gp-title">Select a track</span>
+            <span id="gp-artist" class="gp-artist">Ready</span>
+        </div>
+    </div>
+    <div class="gp-controls">
+        <button id="gp-play-btn" class="gp-play-btn" aria-label="Play/Pause">▶</button>
+        <div class="gp-progress-container">
+            <span id="gp-cur-time">0:00</span>
+            <input type="range" id="gp-seek" min="0" max="100" value="0">
+            <span id="gp-dur-time">0:00</span>
+        </div>
+    </div>
+    <div class="gp-extra">
+        <canvas id="visualizer-canvas" width="90" height="30"></canvas>
+        <span style="font-size:0.8rem;">🔊</span>
+        <input type="range" id="gp-volume" min="0" max="1" step="0.01" value="1" title="Volume">
+    </div>
+</div>
+
 <nav class="bottom-nav" aria-label="Mobile Bottom Navigation">
     <button class="nav-link active" id="mob-btn-search" role="tab" aria-selected="true" aria-controls="tab-search" onclick="navigate('search')"><span>🔍</span> Search</button>
     <button class="nav-link" id="mob-btn-downloads" role="tab" aria-selected="false" aria-controls="tab-downloads" onclick="navigate('downloads')"><span>⬇️</span> Downloads</button>
@@ -763,7 +903,6 @@ let pollTimer = null;
 let completedSet = new Set();
 let libraryFilesSet = new Set();
 let rawLibraryFiles = [];
-let activeAudio = null;
 let activePreviewBtn = null;
 
 let currentPage = 1;
@@ -771,7 +910,123 @@ let currentQuery = "";
 let isLoadingMore = false;
 let hasMoreResults = true;
 
-/* Notifications API Integration */
+// Persistent Global Player & Audio Visualizer Variables
+const globalAudio = document.getElementById("global-audio-element");
+const gpBar = document.getElementById("global-player-bar");
+const gpPlayBtn = document.getElementById("gp-play-btn");
+const gpSeek = document.getElementById("gp-seek");
+const gpVolume = document.getElementById("gp-volume");
+const gpCurTime = document.getElementById("gp-cur-time");
+const gpDurTime = document.getElementById("gp-dur-time");
+const gpTitle = document.getElementById("gp-title");
+const gpArtist = document.getElementById("gp-artist");
+const gpArt = document.getElementById("gp-art");
+
+let audioCtx = null;
+let analyser = null;
+let sourceNode = null;
+let visualizerAnimationFrame = null;
+const canvas = document.getElementById('visualizer-canvas');
+const canvasCtx = canvas ? canvas.getContext('2d') : null;
+
+function initAudioContext() {
+    if (audioCtx) return;
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        sourceNode = audioCtx.createMediaElementSource(globalAudio);
+        sourceNode.connect(analyser);
+        analyser.connect(audioCtx.destination);
+        drawVisualizer();
+    } catch (e) {}
+}
+
+function drawVisualizer() {
+    if (!analyser || !canvasCtx) return;
+    visualizerAnimationFrame = requestAnimationFrame(drawVisualizer);
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    analyser.getByteFrequencyData(dataArray);
+
+    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+    const barWidth = (canvas.width / bufferLength) * 1.6;
+    let x = 0;
+
+    for (let i = 0; i < bufferLength; i++) {
+        const barHeight = (dataArray[i] / 255) * canvas.height;
+        canvasCtx.fillStyle = '#6366f1';
+        canvasCtx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+        x += barWidth;
+    }
+}
+
+function formatSecs(sec) {
+    sec = Math.floor(sec || 0);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+globalAudio.ontimeupdate = () => {
+    if (!globalAudio.duration) return;
+    gpSeek.value = (globalAudio.currentTime / globalAudio.duration) * 100;
+    gpCurTime.textContent = formatSecs(globalAudio.currentTime);
+    gpDurTime.textContent = formatSecs(globalAudio.duration);
+};
+
+globalAudio.onended = () => {
+    gpPlayBtn.textContent = '▶';
+    if (activePreviewBtn) {
+        activePreviewBtn.classList.remove('playing');
+        activePreviewBtn.innerHTML = activePreviewBtn.dataset.type === 'library' ? `▶ Play` : `▶ Preview`;
+    }
+};
+
+gpPlayBtn.onclick = () => {
+    initAudioContext();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (globalAudio.paused) {
+        globalAudio.play();
+        gpPlayBtn.textContent = '⏸';
+        if (activePreviewBtn) activePreviewBtn.classList.add('playing');
+    } else {
+        globalAudio.pause();
+        gpPlayBtn.textContent = '▶';
+        if (activePreviewBtn) activePreviewBtn.classList.remove('playing');
+    }
+};
+
+gpSeek.oninput = () => {
+    if (globalAudio.duration) {
+        globalAudio.currentTime = (gpSeek.value / 100) * globalAudio.duration;
+    }
+};
+
+gpVolume.oninput = () => {
+    globalAudio.volume = gpVolume.value;
+};
+
+// WebSocket Real-time Updates Setup
+let socket = null;
+function initWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+    socket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'task_update') {
+                pollTasks();
+            }
+        } catch(e) {}
+    };
+
+    socket.onclose = () => {
+        setTimeout(initWebSocket, 3000);
+    };
+}
+
 function requestNotificationPermission() {
     if ("Notification" in window) {
         Notification.requestPermission().then(permission => {
@@ -803,7 +1058,6 @@ function showToast(message) {
     setTimeout(() => toast.remove(), 4000);
 }
 
-/* Dynamic Dark Mode & Accessibility Helper */
 function toggleTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('xrob_music_theme', theme);
@@ -812,7 +1066,6 @@ function toggleTheme(theme) {
 const savedTheme = localStorage.getItem('xrob_music_theme') || 'dark';
 toggleTheme(savedTheme);
 
-/* Fast Navigation Structures & Deep Linking */
 function navigate(tab, updateHash = true) {
     if (updateHash) {
         window.location.hash = tab;
@@ -872,6 +1125,9 @@ async function loadSettings() {
         document.getElementById('set_max_results').value = s.max_results || 20;
         document.getElementById('set_organize').checked = !!s.organize_by_artist;
         document.getElementById('set_theme').value = localStorage.getItem('xrob_music_theme') || 'dark';
+        document.getElementById('set_navidrome_url').value = s.navidrome_url || '';
+        document.getElementById('set_navidrome_user').value = s.navidrome_user || '';
+        document.getElementById('set_navidrome_token').value = s.navidrome_token || '';
     } catch(e) {}
 }
 
@@ -882,7 +1138,10 @@ async function saveSettings() {
         embed_thumbnail: document.getElementById('set_thumb').checked,
         embed_metadata: document.getElementById('set_meta').checked,
         max_results: parseInt(document.getElementById('set_max_results').value) || 20,
-        organize_by_artist: document.getElementById('set_organize').checked
+        organize_by_artist: document.getElementById('set_organize').checked,
+        navidrome_url: document.getElementById('set_navidrome_url').value,
+        navidrome_user: document.getElementById('set_navidrome_user').value,
+        navidrome_token: document.getElementById('set_navidrome_token').value
     };
     const msg = document.getElementById('settingsMsg');
     msg.textContent = "Saving...";
@@ -912,63 +1171,57 @@ async function refreshLibraryCache() {
 }
 
 function stopCurrentPreview() {
-    if (activeAudio) { activeAudio.pause(); activeAudio = null; }
+    if (!globalAudio.paused) {
+        globalAudio.pause();
+    }
+    gpPlayBtn.textContent = '▶';
     if (activePreviewBtn) {
-        activePreviewBtn.classList.remove('playing', 'loading');
+        activePreviewBtn.classList.remove('playing');
         activePreviewBtn.innerHTML = activePreviewBtn.dataset.type === 'library' ? `▶ Play` : `▶ Preview`;
         activePreviewBtn = null;
     }
 }
 
-function toggleAudioStream(btn, streamUrl, type = 'search') {
-    if (activePreviewBtn === btn && activeAudio) {
-        if (activeAudio.paused) {
-            activeAudio.play();
-            btn.classList.add('playing');
-            btn.innerHTML = `⏸ Pause`;
-        } else {
-            activeAudio.pause();
-            btn.classList.remove('playing');
-            btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`;
-        }
+function toggleAudioStream(btn, streamUrl, type = 'search', title = 'Track', artist = 'Artist', artUrl = '') {
+    initAudioContext();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+
+    if (activePreviewBtn === btn && !globalAudio.paused) {
+        globalAudio.pause();
+        btn.classList.remove('playing');
+        btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`;
+        gpPlayBtn.textContent = '▶';
         return;
     }
-    stopCurrentPreview();
+
+    if (activePreviewBtn) {
+        activePreviewBtn.classList.remove('playing');
+        activePreviewBtn.innerHTML = activePreviewBtn.dataset.type === 'library' ? `▶ Play` : `▶ Preview`;
+    }
+
     btn.dataset.type = type;
     activePreviewBtn = btn;
-    btn.classList.add('loading');
     btn.innerHTML = `⏳ Loading...`;
-    
-    const audio = new Audio(streamUrl);
-    activeAudio = audio;
-    
-    audio.play().then(() => {
-        btn.classList.remove('loading');
+
+    gpTitle.textContent = title;
+    gpArtist.textContent = artist;
+    gpArt.src = artUrl || 'https://via.placeholder.com/46?text=🎵';
+    gpBar.style.display = 'flex';
+
+    globalAudio.src = streamUrl;
+    globalAudio.play().then(() => {
         btn.classList.add('playing');
         btn.innerHTML = `⏸ Pause`;
+        gpPlayBtn.textContent = '⏸';
     }).catch(err => {
         if (!streamUrl.includes('transcode=true')) {
             const transcodeUrl = streamUrl + (streamUrl.includes('?') ? '&' : '?') + 'transcode=true';
-            toggleAudioStream(btn, transcodeUrl, type);
+            toggleAudioStream(btn, transcodeUrl, type, title, artist, artUrl);
         } else {
-            stopCurrentPreview();
             btn.innerHTML = `❌ Error`;
             setTimeout(() => { btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`; }, 2000);
         }
     });
-    
-    audio.onerror = () => {
-        if (!streamUrl.includes('transcode=true')) {
-            const transcodeUrl = streamUrl + (streamUrl.includes('?') ? '&' : '?') + 'transcode=true';
-            toggleAudioStream(btn, transcodeUrl, type);
-        } else {
-            stopCurrentPreview();
-            btn.innerHTML = `❌ Error`;
-            setTimeout(() => { btn.innerHTML = type === 'library' ? `▶ Play` : `▶ Preview`; }, 2000);
-        }
-    };
-    
-    audio.onended = () => { stopCurrentPreview(); };
 }
 
 function renderItems(data) {
@@ -1006,7 +1259,7 @@ function renderItems(data) {
             prevBtn.className = 'btn-preview';
             prevBtn.setAttribute('aria-label', `Preview ${titleHtml}`);
             prevBtn.innerHTML = '▶ Preview';
-            prevBtn.onclick = () => toggleAudioStream(prevBtn, "api/preview?url=" + encodeURIComponent(item.url), 'search');
+            prevBtn.onclick = () => toggleAudioStream(prevBtn, "api/preview?url=" + encodeURIComponent(item.url), 'search', item.title, item.channel, item.thumbnail);
 
             const dlBtn = document.createElement('button');
             dlBtn.className = 'btn-download';
@@ -1030,7 +1283,6 @@ async function searchMusic() {
     const searchBtn = document.getElementById("searchBtn");
 
     if (!query) return;
-    stopCurrentPreview();
     
     currentQuery = query;
     currentPage = 1;
@@ -1091,7 +1343,6 @@ async function startDownload(url, title, elementId, artist = 'Unknown Artist') {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url, title, elementId, artist })
         });
-        clearTimeout(pollTimer);
         pollTasks();
     } catch (e) { alert("Failed to enqueue download."); }
 }
@@ -1107,7 +1358,6 @@ async function pollTasks() {
             if (t.status === 'completed' && !completedSet.has(t.id)) {
                 completedSet.add(t.id);
                 libraryNeedsUpdate = true;
-                
                 notifyTrackComplete(t.title);
 
                 if (t.elementId) {
@@ -1138,7 +1388,6 @@ async function pollTasks() {
         if (activeTasks.length === 0) {
             panel.style.display = "none";
             listContainer.innerHTML = "";
-            pollTimer = setTimeout(pollTasks, 3000);
             return;
         }
 
@@ -1189,11 +1438,7 @@ async function pollTasks() {
             listContainer.insertAdjacentHTML('beforeend', itemHtml);
         });
 
-        pollTimer = setTimeout(pollTasks, 1500);
-
-    } catch (e) {
-        pollTimer = setTimeout(pollTasks, 3000);
-    }
+    } catch (e) {}
 }
 
 async function loadStats() {
@@ -1282,7 +1527,7 @@ function filterLibrary() {
         `;
 
         const playBtn = card.querySelector('.btn-preview');
-        playBtn.onclick = () => toggleAudioStream(playBtn, streamUrl, 'library');
+        playBtn.onclick = () => toggleAudioStream(playBtn, streamUrl, 'library', f.name, 'Local Library', coverUrl);
 
         const delBtn = card.querySelector('.btn-danger');
         delBtn.onclick = () => deleteFile(f.name);
@@ -1317,6 +1562,7 @@ refreshLibraryCache();
 document.addEventListener("DOMContentLoaded", () => {
     handleDeepLink();
     pollTasks();
+    initWebSocket();
 });
 </script>
 </body>
@@ -1499,6 +1745,7 @@ async def enqueue_download(payload: dict = Body(...)):
     }
     
     TASKS[task_id] = task_info
+    await notify_task_update(task_info)
     await task_queue.put(task_id)
     return {"status": "ok", "task_id": task_id}
 
@@ -1518,6 +1765,7 @@ async def cancel_task(task_id: str):
     task["status"] = "cancelled"
     task["step"] = "Cancelled"
     task["last_updated"] = time.time() * 1000
+    await notify_task_update(task)
     return {"status": "cancelled"}
 
 
