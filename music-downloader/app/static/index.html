@@ -3,137 +3,761 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Downloader & Library</title>
+
+    <meta name="theme-color" content="#080808">
+    <meta name="description" content="Music Hub - Search, download and manage your music library">
+
+    <title>Music Hub</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+    >
+
     <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
 
-    <!-- Navigation Bar -->
-    <nav class="navbar">
-        <button id="btn-search" class="active" onclick="navigate('search')">Search</button>
-        <button id="btn-downloads" onclick="navigate('downloads')">Downloads</button>
-        <button id="btn-library" onclick="navigate('library')">Library</button>
-        <button id="btn-settings" onclick="navigate('settings')">Settings</button>
-    </nav>
+<div class="app-container">
 
-    <!-- Main View Containers -->
-    <main class="container">
-        <!-- Search Tab -->
-        <section id="tab-search" class="tab-content active">
-            <div class="search-bar">
-                <input type="text" id="searchQuery" placeholder="Search tracks or paste URL..." />
-                <button onclick="performSearch()">Search</button>
+    <!-- =========================
+         DESKTOP HEADER
+    ========================== -->
+    <header class="app-header">
+
+        <div class="brand">
+            <div class="brand-icon">♪</div>
+
+            <div class="brand-text">
+                <h1>Music Hub</h1>
+                <span>Your Music Library</span>
             </div>
-            <div id="searchResults"></div>
+        </div>
+
+        <nav class="desktop-nav" aria-label="Desktop Navigation">
+
+            <button
+                class="nav-link active"
+                id="btn-search"
+                onclick="navigate('search')"
+            >
+                <span class="nav-icon">⌕</span>
+                <span>Search</span>
+            </button>
+
+            <button
+                class="nav-link"
+                id="btn-downloads"
+                onclick="navigate('downloads')"
+            >
+                <span class="nav-icon">↓</span>
+                <span>Queue</span>
+            </button>
+
+            <button
+                class="nav-link"
+                id="btn-library"
+                onclick="navigate('library')"
+            >
+                <span class="nav-icon">♫</span>
+                <span>Library</span>
+            </button>
+
+            <button
+                class="nav-link"
+                id="btn-settings"
+                onclick="navigate('settings')"
+            >
+                <span class="nav-icon">⚙</span>
+                <span>Settings</span>
+            </button>
+
+        </nav>
+
+    </header>
+
+
+    <!-- =========================
+         MAIN CONTENT
+    ========================== -->
+    <main class="main-content">
+
+        <!-- =========================
+             SEARCH
+        ========================== -->
+        <section
+            id="tab-search"
+            class="tab-content active"
+            role="tabpanel"
+            aria-labelledby="btn-search"
+        >
+
+            <div class="page-heading">
+                <div>
+                    <span class="eyebrow">MUSIC DISCOVERY</span>
+                    <h2>Find your music</h2>
+                    <p>Search tracks, artists and albums.</p>
+                </div>
+            </div>
+
+            <div class="search-card">
+
+                <div class="search-icon">⌕</div>
+
+                <input
+                    id="searchQuery"
+                    type="text"
+                    placeholder="Search tracks, artists, albums..."
+                    autocomplete="off"
+                    aria-label="Search music"
+                />
+
+                <button
+                    id="searchBtn"
+                    type="button"
+                    onclick="performSearch()"
+                >
+                    <span>Search</span>
+                </button>
+
+            </div>
+
+            <div id="searchResults" class="results-grid"></div>
+
         </section>
 
-        <!-- Downloads Tab -->
-        <section id="tab-downloads" class="tab-content">
-            <div class="tab-header">
-                <h2>Download Queue</h2>
-                <button class="btn-secondary" onclick="clearCompletedDownloads()">Clear Completed</button>
+
+        <!-- =========================
+             DOWNLOAD QUEUE
+        ========================== -->
+        <section
+            id="tab-downloads"
+            class="tab-content"
+            role="tabpanel"
+            aria-labelledby="btn-downloads"
+        >
+
+            <div class="page-heading queue-heading">
+
+                <div>
+                    <span class="eyebrow">DOWNLOADS</span>
+                    <h2>Download Queue</h2>
+                    <p>Manage your active and completed downloads.</p>
+                </div>
+
+                <button
+                    class="btn-clear"
+                    onclick="clearCompletedDownloads()"
+                >
+                    Clear Completed
+                </button>
+
             </div>
-            <div id="downloadList"></div>
+
+            <div id="downloadList" class="queue-list"></div>
+
         </section>
 
-        <!-- Library Tab -->
-        <section id="tab-library" class="tab-content">
-            <div class="library-stats">
-                <div>Tracks: <strong id="statTracks">0</strong></div>
-                <div>Artists: <strong id="statArtists">0</strong></div>
-                <div>Albums: <strong id="statAlbums">0</strong></div>
-                <div>Total Files: <strong id="libCountDetail">0</strong></div>
-                <div>Storage: <strong id="libFolderSize">0 B</strong></div>
+
+        <!-- =========================
+             LIBRARY
+        ========================== -->
+        <section
+            id="tab-library"
+            class="tab-content"
+            role="tabpanel"
+            aria-labelledby="btn-library"
+        >
+
+            <div class="page-heading">
+
+                <div>
+                    <span class="eyebrow">YOUR COLLECTION</span>
+                    <h2>Music Library</h2>
+                    <p>Your downloaded music in one place.</p>
+                </div>
+
+                <button
+                    class="btn-refresh"
+                    onclick="loadLibrary()"
+                >
+                    <span>↻</span>
+                    Refresh
+                </button>
+
             </div>
-            <div class="search-bar" style="margin-top: 15px;">
-                <input type="text" id="libSearchQuery" placeholder="Filter local library..." />
+
+
+            <div class="library-stats-overview">
+
+                <div class="stat-card">
+                    <div class="stat-icon">♫</div>
+
+                    <div>
+                        <span
+                            class="stat-value"
+                            id="statTracks"
+                        >0</span>
+
+                        <span class="stat-label">
+                            Tracks
+                        </span>
+                    </div>
+                </div>
+
+
+                <div class="stat-card">
+                    <div class="stat-icon">♬</div>
+
+                    <div>
+                        <span
+                            class="stat-value"
+                            id="statArtists"
+                        >0</span>
+
+                        <span class="stat-label">
+                            Artists
+                        </span>
+                    </div>
+                </div>
+
+
+                <div class="stat-card">
+                    <div class="stat-icon">▣</div>
+
+                    <div>
+                        <span
+                            class="stat-value"
+                            id="statAlbums"
+                        >0</span>
+
+                        <span class="stat-label">
+                            Albums
+                        </span>
+                    </div>
+                </div>
+
             </div>
-            <div id="libraryList"></div>
+
+
+            <div class="library-meta">
+
+                <div class="library-meta-item">
+                    <span>Tracks</span>
+                    <strong id="libCountDetail">0</strong>
+                </div>
+
+                <div class="library-meta-divider"></div>
+
+                <div class="library-meta-item">
+                    <span>Storage</span>
+                    <strong id="libFolderSize">0 B</strong>
+                </div>
+
+            </div>
+
+
+            <div class="search-card library-search">
+
+                <div class="search-icon">⌕</div>
+
+                <label
+                    for="libSearchQuery"
+                    class="sr-only"
+                >
+                    Search local library
+                </label>
+
+                <input
+                    id="libSearchQuery"
+                    type="text"
+                    placeholder="Filter your library..."
+                    autocomplete="off"
+                />
+
+            </div>
+
+
+            <div
+                id="libraryList"
+                class="results-grid"
+            ></div>
+
         </section>
 
-        <!-- Settings Tab -->
-        <section id="tab-settings" class="tab-content">
-            <div class="settings-form">
-                <div class="form-group">
-                    <label for="set_format">Audio Format</label>
-                    <select id="set_format">
-                        <option value="mp3">MP3</option>
-                        <option value="flac">FLAC</option>
-                        <option value="m4a">M4A</option>
-                        <option value="opus">OPUS</option>
-                    </select>
+
+        <!-- =========================
+             SETTINGS
+        ========================== -->
+        <section
+            id="tab-settings"
+            class="tab-content"
+            role="tabpanel"
+            aria-labelledby="btn-settings"
+        >
+
+            <div class="page-heading">
+
+                <div>
+                    <span class="eyebrow">CONFIGURATION</span>
+                    <h2>Settings</h2>
+                    <p>Customize downloads and your music library.</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="set_quality">Audio Quality</label>
-                    <select id="set_quality">
-                        <option value="320K">320 kbps</option>
-                        <option value="256K">256 kbps</option>
-                        <option value="128K">128 kbps</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="set_max_results">Max Search Results</label>
-                    <input type="number" id="set_max_results" value="20" min="1" max="50" />
-                </div>
-
-                <div class="form-group checkbox-group">
-                    <label><input type="checkbox" id="set_thumb" /> Embed Covers & Artwork</label>
-                    <label><input type="checkbox" id="set_meta" /> Embed Audio Metadata</label>
-                    <label><input type="checkbox" id="set_organize" /> Subfolder by Artist</label>
-                </div>
-
-                <hr />
-
-                <h3>Navidrome Server Settings</h3>
-                <div class="form-group">
-                    <label for="set_navidrome_url">Navidrome URL</label>
-                    <input type="text" id="set_navidrome_url" placeholder="https://navidrome.example.com" />
-                </div>
-                <div class="form-group">
-                    <label for="set_navidrome_user">Username</label>
-                    <input type="text" id="set_navidrome_user" />
-                </div>
-                <div class="form-group">
-                    <label for="set_navidrome_token">Token / Password</label>
-                    <input type="password" id="set_navidrome_token" />
-                </div>
-
-                <button id="saveSettingsBtn" class="btn-primary">Save Settings</button>
-                <div id="settingsMsg" class="status-msg"></div>
             </div>
+
+
+            <div class="settings-card">
+
+
+                <!-- AUDIO -->
+                <div class="settings-section">
+
+                    <div class="settings-section-title">
+                        <div class="settings-section-icon">♫</div>
+
+                        <div>
+                            <h3>Audio</h3>
+                            <p>Choose your preferred download quality.</p>
+                        </div>
+                    </div>
+
+
+                    <div class="settings-grid">
+
+                        <div class="form-group">
+                            <label for="set_format">
+                                Audio Format
+                            </label>
+
+                            <select id="set_format">
+                                <option value="mp3">MP3</option>
+                                <option value="m4a">M4A</option>
+                                <option value="flac">FLAC</option>
+                                <option value="ogg">OGG</option>
+                                <option value="opus">OPUS</option>
+                                <option value="wav">WAV</option>
+                            </select>
+                        </div>
+
+
+                        <div class="form-group">
+                            <label for="set_quality">
+                                Audio Quality
+                            </label>
+
+                            <select id="set_quality">
+                                <option value="320K">320 kbps</option>
+                                <option value="256K">256 kbps</option>
+                                <option value="192K">192 kbps</option>
+                                <option value="128K">128 kbps</option>
+                            </select>
+                        </div>
+
+
+                        <div class="form-group">
+                            <label for="set_max_results">
+                                Max Search Results
+                            </label>
+
+                            <input
+                                type="number"
+                                id="set_max_results"
+                                min="1"
+                                max="100"
+                                value="20"
+                            >
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <div class="settings-divider"></div>
+
+
+                <!-- LIBRARY -->
+                <div class="settings-section">
+
+                    <div class="settings-section-title">
+                        <div class="settings-section-icon">▣</div>
+
+                        <div>
+                            <h3>Library</h3>
+                            <p>Control how downloaded music is organized.</p>
+                        </div>
+                    </div>
+
+
+                    <div class="settings-options">
+
+                        <label class="setting-option">
+
+                            <div class="option-text">
+                                <strong>Embed Thumbnail</strong>
+                                <span>
+                                    Add album artwork directly to the audio file.
+                                </span>
+                            </div>
+
+                            <span class="switch">
+                                <input
+                                    type="checkbox"
+                                    id="set_thumb"
+                                >
+                                <span class="slider"></span>
+                            </span>
+
+                        </label>
+
+
+                        <label class="setting-option">
+
+                            <div class="option-text">
+                                <strong>Embed Metadata</strong>
+                                <span>
+                                    Add artist, album and track information.
+                                </span>
+                            </div>
+
+                            <span class="switch">
+                                <input
+                                    type="checkbox"
+                                    id="set_meta"
+                                >
+                                <span class="slider"></span>
+                            </span>
+
+                        </label>
+
+
+                        <label class="setting-option">
+
+                            <div class="option-text">
+                                <strong>Organize by Artist</strong>
+                                <span>
+                                    Automatically create folders for artists.
+                                </span>
+                            </div>
+
+                            <span class="switch">
+                                <input
+                                    type="checkbox"
+                                    id="set_organize"
+                                >
+                                <span class="slider"></span>
+                            </span>
+
+                        </label>
+
+                    </div>
+
+                </div>
+
+
+                <div class="settings-divider"></div>
+
+
+                <!-- APPEARANCE -->
+                <div class="settings-section">
+
+                    <div class="settings-section-title">
+                        <div class="settings-section-icon">◐</div>
+
+                        <div>
+                            <h3>Appearance</h3>
+                            <p>Customize the interface.</p>
+                        </div>
+                    </div>
+
+
+                    <div class="form-group">
+
+                        <label for="set_theme">
+                            Theme
+                        </label>
+
+                        <select id="set_theme">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                        </select>
+
+                    </div>
+
+                </div>
+
+
+                <div class="settings-divider"></div>
+
+
+                <!-- NAVIDROME -->
+                <div class="settings-section">
+
+                    <div class="settings-section-title">
+                        <div class="settings-section-icon">♫</div>
+
+                        <div>
+                            <h3>Navidrome</h3>
+                            <p>Connect your music library to Navidrome.</p>
+                        </div>
+                    </div>
+
+
+                    <div class="settings-grid navidrome-grid">
+
+                        <div class="form-group full">
+                            <label for="set_navidrome_url">
+                                Navidrome URL
+                            </label>
+
+                            <input
+                                type="url"
+                                id="set_navidrome_url"
+                                placeholder="http://localhost:4533"
+                            >
+                        </div>
+
+
+                        <div class="form-group">
+                            <label for="set_navidrome_user">
+                                Username
+                            </label>
+
+                            <input
+                                type="text"
+                                id="set_navidrome_user"
+                                placeholder="Admin"
+                            >
+                        </div>
+
+
+                        <div class="form-group">
+                            <label for="set_navidrome_token">
+                                Token
+                            </label>
+
+                            <input
+                                type="password"
+                                id="set_navidrome_token"
+                                placeholder="Token"
+                            >
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- SAVE -->
+                <div class="settings-actions">
+
+                    <button
+                        id="saveSettingsBtn"
+                        type="button"
+                        class="save-btn"
+                    >
+                        Save Settings
+                    </button>
+
+                    <span
+                        id="settingsMsg"
+                        class="status-msg"
+                    ></span>
+
+                </div>
+
+            </div>
+
         </section>
+
     </main>
 
-    <!-- Global Floating Audio Player Bar -->
-    <div id="global-player-bar" class="player-bar" style="display: none;">
-        <img id="gp-art" src="" alt="Art" />
-        <div class="player-info">
-            <div id="gp-title" class="track-title"></div>
-            <div id="gp-artist" class="track-artist"></div>
+</div>
+
+
+<!-- =========================
+     MOBILE NAVIGATION
+========================== -->
+<nav
+    class="mobile-nav"
+    aria-label="Mobile Navigation"
+>
+
+    <button
+        class="nav-link active"
+        id="mob-btn-search"
+        onclick="navigate('search')"
+    >
+        <span class="mobile-nav-icon">⌕</span>
+        <span>Search</span>
+    </button>
+
+
+    <button
+        class="nav-link"
+        id="mob-btn-downloads"
+        onclick="navigate('downloads')"
+    >
+        <span class="mobile-nav-icon">↓</span>
+        <span>Queue</span>
+    </button>
+
+
+    <button
+        class="nav-link"
+        id="mob-btn-library"
+        onclick="navigate('library')"
+    >
+        <span class="mobile-nav-icon">♫</span>
+        <span>
+            Library
+            <small id="mobLibCount">0</small>
+        </span>
+    </button>
+
+
+    <button
+        class="nav-link"
+        id="mob-btn-settings"
+        onclick="navigate('settings')"
+    >
+        <span class="mobile-nav-icon">⚙</span>
+        <span>Settings</span>
+    </button>
+
+</nav>
+
+
+<!-- =========================
+     GLOBAL PLAYER
+========================== -->
+<div
+    class="global-player-bar"
+    id="global-player-bar"
+    style="display:none;"
+>
+
+    <!-- LEFT -->
+    <div class="player-info">
+
+        <div class="player-art-wrapper">
+
+            <img
+                id="gp-art"
+                src=""
+                alt="Album Cover"
+            >
+
+            <div class="player-art-overlay">
+                ♪
+            </div>
+
         </div>
+
+
+        <div class="player-text">
+
+            <div
+                id="gp-title"
+                class="player-title"
+            >
+                Track Title
+            </div>
+
+            <div
+                id="gp-artist"
+                class="player-artist"
+            >
+                Artist
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- CENTER -->
+    <div class="player-main">
+
         <div class="player-controls">
-            <button id="gp-play-btn">▶</button>
-            <span id="gp-cur-time">0:00</span>
-            <input type="range" id="gp-seek" min="0" max="100" value="0" />
-            <span id="gp-dur-time">0:00</span>
-            <input type="range" id="gp-volume" min="0" max="1" step="0.05" value="1" />
+
+            <button
+                id="gp-play-btn"
+                type="button"
+                class="btn-play-gp"
+                aria-label="Play or pause"
+            >
+                ▶
+            </button>
+
         </div>
+
+
+        <div class="player-progress">
+
+            <span id="gp-cur-time">
+                0:00
+            </span>
+
+            <input
+                type="range"
+                id="gp-seek"
+                value="0"
+                min="0"
+                max="100"
+                aria-label="Seek"
+            >
+
+            <span id="gp-dur-time">
+                0:00
+            </span>
+
+        </div>
+
     </div>
 
-    <!-- Optional Mobile Bottom Bar -->
-    <div class="mobile-nav" style="display:none;">
-        <button id="mob-btn-search" onclick="navigate('search')">Search</button>
-        <button id="mob-btn-downloads" onclick="navigate('downloads')">Downloads</button>
-        <button id="mob-btn-library" onclick="navigate('library')">Library (<span id="mobLibCount">0</span>)</button>
-        <button id="mob-btn-settings" onclick="navigate('settings')">Settings</button>
+
+    <!-- RIGHT -->
+    <div class="player-extra">
+
+        <div class="visualizer-wrapper">
+            <canvas
+                id="visualizer-canvas"
+                width="120"
+                height="32"
+            ></canvas>
+        </div>
+
+        <div class="volume-wrapper">
+
+            <span class="volume-icon">
+                🔊
+            </span>
+
+            <input
+                type="range"
+                id="gp-volume"
+                value="1"
+                min="0"
+                max="1"
+                step="0.05"
+                aria-label="Volume"
+            >
+
+        </div>
+
     </div>
 
-    <div id="toast-container"></div>
+</div>
 
-    <!-- Hidden HTML5 Audio Element -->
-    <audio id="global-audio-element" style="display:none;"></audio>
-    <script src="/static/app.js"></script>
+<!-- Audio player element -->
+<audio id="global-audio-element" style="display:none;"></audio>
+
+<script src="/static/app.js"></script>
+
 </body>
 </html>
