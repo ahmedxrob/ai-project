@@ -1,5 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
+/* =========================================
+   VARIABLES
+========================================= */
+
 :root {
     --bg-main: #080808;
     --bg-secondary: #121212;
@@ -9,15 +13,16 @@
     --card-bg: rgba(24, 24, 24, 0.82);
     --card-hover: rgba(38, 38, 38, 0.95);
 
-    --card-border: rgba(255, 255, 255, 0.06);
+    --card-border: rgba(255, 255, 255, 0.07);
     --card-border-hover: rgba(139, 92, 246, 0.45);
 
     --accent: #8b5cf6;
     --accent-secondary: #6366f1;
+
     --accent-gradient: linear-gradient(
         135deg,
         #6366f1 0%,
-        #8b5cf6 50%,
+        #8b5cf6 55%,
         #d946ef 100%
     );
 
@@ -37,10 +42,12 @@
     --focus-ring: #a78bfa;
 
     --sidebar-width: 260px;
-    --radius-sm: 10px;
-    --radius-md: 16px;
-    --radius-lg: 24px;
 }
+
+
+/* =========================================
+   LIGHT MODE
+========================================= */
 
 [data-theme="light"] {
     --bg-main: #f5f5f5;
@@ -48,7 +55,7 @@
     --bg-elevated: #ffffff;
     --bg-hover: #eeeeee;
 
-    --card-bg: rgba(255, 255, 255, 0.88);
+    --card-bg: rgba(255, 255, 255, 0.9);
     --card-hover: rgba(255, 255, 255, 1);
 
     --card-border: rgba(0, 0, 0, 0.08);
@@ -63,6 +70,7 @@
 
     --input-bg: #f0f0f0;
 }
+
 
 /* =========================================
    RESET
@@ -81,13 +89,14 @@ html {
 
 body {
     min-height: 100vh;
+
     color: var(--text-primary);
 
     background:
         radial-gradient(
             circle at 50% -10%,
-            rgba(109, 40, 217, 0.28),
-            transparent 40%
+            rgba(109, 40, 217, 0.25),
+            transparent 42%
         ),
         var(--bg-main);
 
@@ -113,14 +122,20 @@ button {
 
 .sr-only {
     position: absolute;
+
     width: 1px;
     height: 1px;
+
     padding: 0;
     margin: -1px;
+
     overflow: hidden;
+
     clip: rect(0, 0, 0, 0);
+
     border: 0;
 }
+
 
 /* =========================================
    APP LAYOUT
@@ -128,9 +143,11 @@ button {
 
 .app-shell {
     display: flex;
+
     width: 100%;
     min-height: 100vh;
 }
+
 
 /* =========================================
    SIDEBAR
@@ -147,9 +164,11 @@ button {
 
     display: flex;
     flex-direction: column;
+
     gap: 32px;
 
-    background: rgba(10, 10, 10, 0.82);
+    background: rgba(10, 10, 10, 0.84);
+
     border-right: 1px solid var(--card-border);
 
     backdrop-filter: blur(24px);
@@ -157,12 +176,13 @@ button {
 }
 
 [data-theme="light"] .side-nav {
-    background: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.85);
 }
 
 .side-brand {
     display: flex;
     align-items: center;
+
     gap: 12px;
 
     padding: 4px 10px;
@@ -171,16 +191,24 @@ button {
 .side-brand h1 {
     font-size: 1.3rem;
     font-weight: 800;
+
     letter-spacing: -0.04em;
 
     background: var(--accent-gradient);
+
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
+
+/* =========================================
+   NAVIGATION
+========================================= */
+
 .nav-list {
     display: flex;
     flex-direction: column;
+
     gap: 6px;
 
     list-style: none;
@@ -191,6 +219,7 @@ button {
 
     display: flex;
     align-items: center;
+
     gap: 13px;
 
     padding: 13px 14px;
@@ -206,6 +235,7 @@ button {
     font-weight: 700;
 
     cursor: pointer;
+
     text-align: left;
 
     transition:
@@ -216,12 +246,14 @@ button {
 
 .nav-link:hover {
     color: var(--text-primary);
+
     background: var(--bg-hover);
+
     transform: translateX(3px);
 }
 
 .nav-link.active {
-    color: #fff;
+    color: #ffffff;
 
     background: var(--accent-gradient);
 
@@ -229,9 +261,6 @@ button {
         0 8px 24px var(--accent-glow);
 }
 
-.nav-link span:first-child {
-    font-size: 1rem;
-}
 
 /* =========================================
    MAIN CONTENT
@@ -251,6 +280,7 @@ button {
 
 .tab-content {
     display: none;
+
     animation: fadeIn 0.25s ease;
 }
 
@@ -270,8 +300,9 @@ button {
     }
 }
 
+
 /* =========================================
-   SEARCH
+   SEARCH BAR
 ========================================= */
 
 .search-card {
@@ -279,6 +310,7 @@ button {
 
     display: flex;
     align-items: center;
+
     gap: 12px;
 
     width: 100%;
@@ -355,6 +387,173 @@ button {
     filter: brightness(1.1);
 }
 
+
+/* =========================================
+   ACTIVE DOWNLOADS PANEL
+========================================= */
+
+.progress-panel {
+    position: relative;
+
+    display: flex;
+    flex-direction: column;
+
+    gap: 14px;
+
+    margin-bottom: 28px;
+
+    padding: 20px;
+
+    background:
+        linear-gradient(
+            135deg,
+            rgba(99, 102, 241, 0.13),
+            rgba(139, 92, 246, 0.04)
+        ),
+        var(--bg-secondary);
+
+    border: 1px solid rgba(139, 92, 246, 0.22);
+
+    border-radius: 20px;
+
+    overflow: hidden;
+
+    box-shadow:
+        0 14px 40px rgba(0, 0, 0, 0.2);
+}
+
+/* Background glow */
+
+.progress-panel::before {
+    content: "";
+
+    position: absolute;
+
+    width: 260px;
+    height: 260px;
+
+    top: -180px;
+    right: -80px;
+
+    border-radius: 50%;
+
+    background: var(--accent);
+
+    opacity: 0.12;
+
+    filter: blur(60px);
+
+    pointer-events: none;
+}
+
+/* Header */
+
+.progress-panel > div:first-child {
+    position: relative;
+
+    display: flex !important;
+    align-items: center;
+
+    margin-bottom: 4px !important;
+
+    color: var(--text-primary);
+
+    font-size: 1rem !important;
+    font-weight: 800 !important;
+}
+
+
+/* Active Downloads List */
+
+#activeDownloadsList {
+    position: relative;
+
+    display: flex;
+    flex-direction: column;
+
+    gap: 10px !important;
+}
+
+
+/* Download items created by JS */
+
+#activeDownloadsList > * {
+    position: relative;
+
+    padding: 14px 16px;
+
+    background: rgba(255, 255, 255, 0.035);
+
+    border: 1px solid var(--card-border);
+
+    border-radius: 14px;
+
+    transition:
+        background 0.2s ease,
+        border-color 0.2s ease,
+        transform 0.2s ease;
+}
+
+#activeDownloadsList > *:hover {
+    background: rgba(255, 255, 255, 0.065);
+
+    border-color: rgba(139, 92, 246, 0.35);
+
+    transform: translateY(-1px);
+}
+
+
+/* Progress elements */
+
+#activeDownloadsList progress {
+    width: 100%;
+    height: 7px;
+
+    margin-top: 10px;
+
+    overflow: hidden;
+
+    appearance: none;
+    -webkit-appearance: none;
+
+    border: none;
+
+    border-radius: 20px;
+
+    background: var(--input-bg);
+}
+
+#activeDownloadsList progress::-webkit-progress-bar {
+    background: var(--input-bg);
+
+    border-radius: 20px;
+}
+
+#activeDownloadsList progress::-webkit-progress-value {
+    background: var(--accent-gradient);
+
+    border-radius: 20px;
+}
+
+#activeDownloadsList progress::-moz-progress-bar {
+    background: var(--accent);
+
+    border-radius: 20px;
+}
+
+
+/* Custom div progress bars */
+
+#activeDownloadsList .progress-bar,
+#activeDownloadsList [class*="progress-fill"] {
+    height: 7px;
+
+    border-radius: 20px;
+
+    background: var(--accent-gradient);
+}
+
+
 /* =========================================
    RESULTS
 ========================================= */
@@ -362,6 +561,7 @@ button {
 .results-grid {
     display: flex;
     flex-direction: column;
+
     gap: 8px;
 }
 
@@ -382,18 +582,19 @@ button {
 
     transition:
         background 0.2s ease,
-        border-color 0.2s ease,
-        transform 0.2s ease;
+        border-color 0.2s ease;
 }
 
 .result-card:hover {
     background: var(--bg-hover);
+
     border-color: var(--card-border-hover);
 }
 
-.result-card:hover .thumb-wrapper img {
-    transform: scale(1.08);
-}
+
+/* =========================================
+   ALBUM ART
+========================================= */
 
 .thumb-wrapper {
     position: relative;
@@ -422,7 +623,9 @@ button {
     transition: transform 0.35s ease;
 }
 
-/* play overlay */
+.result-card:hover .thumb-wrapper img {
+    transform: scale(1.08);
+}
 
 .thumb-wrapper::after {
     content: "▶";
@@ -439,7 +642,7 @@ button {
 
     color: white;
 
-    font-size: 1.2rem;
+    font-size: 1.1rem;
 
     transition: opacity 0.2s ease;
 }
@@ -465,6 +668,11 @@ button {
     font-size: 0.65rem;
     font-weight: 700;
 }
+
+
+/* =========================================
+   TRACK INFO
+========================================= */
 
 .track-info {
     flex: 1;
@@ -497,6 +705,7 @@ button {
     text-overflow: ellipsis;
 }
 
+
 /* =========================================
    BUTTONS
 ========================================= */
@@ -504,6 +713,7 @@ button {
 .btn-group {
     display: flex;
     align-items: center;
+
     gap: 8px;
 }
 
@@ -570,6 +780,7 @@ button {
 
 .btn-download:disabled {
     background: var(--input-bg);
+
     color: var(--text-muted);
 
     cursor: not-allowed;
@@ -589,6 +800,7 @@ button {
 
 .btn-danger:hover {
     background: var(--danger);
+
     color: white;
 }
 
@@ -606,8 +818,9 @@ button {
     transform: rotate(10deg);
 }
 
+
 /* =========================================
-   LIBRARY HEADER
+   LIBRARY HEADERS
 ========================================= */
 
 .library-header-bar {
@@ -635,14 +848,15 @@ button {
     color: var(--text-primary);
 }
 
+
 /* =========================================
    SETTINGS
 ========================================= */
 
-.settings-card,
-.progress-panel {
+.settings-card {
     display: flex;
     flex-direction: column;
+
     gap: 18px;
 
     padding: 28px;
@@ -650,7 +864,7 @@ button {
     background: var(--card-bg);
 
     border: 1px solid var(--card-border);
-    border-radius: var(--radius-lg);
+    border-radius: 24px;
 
     backdrop-filter: blur(18px);
 
@@ -672,6 +886,7 @@ button {
 
 .setting-row:last-child {
     padding-bottom: 0;
+
     border-bottom: none;
 }
 
@@ -689,6 +904,11 @@ button {
 
     font-size: 0.78rem;
 }
+
+
+/* =========================================
+   INPUTS
+========================================= */
 
 select,
 input[type="number"],
@@ -719,6 +939,7 @@ input[type="text"]:focus {
     box-shadow:
         0 0 0 3px var(--accent-glow);
 }
+
 
 /* =========================================
    SAVE BUTTON
@@ -753,172 +974,6 @@ input[type="text"]:focus {
     filter: brightness(1.08);
 }
 
-/* =========================================
-   GLOBAL MUSIC PLAYER
-========================================= */
-
-.global-player-bar {
-    position: fixed;
-
-    left: calc(var(--sidebar-width) + 20px);
-    right: 20px;
-    bottom: 16px;
-
-    width: auto;
-    max-width: none;
-
-    height: 82px;
-
-    z-index: 950;
-
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-
-    gap: 20px;
-
-    padding: 10px 20px;
-
-    background: rgba(18, 18, 18, 0.92);
-
-    border: 1px solid var(--card-border);
-    border-radius: 18px;
-
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-
-    box-shadow:
-        0 18px 50px rgba(0, 0, 0, 0.45);
-}
-
-[data-theme="light"] .global-player-bar {
-    background: rgba(255, 255, 255, 0.92);
-}
-
-.gp-track-details {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-
-    width: 250px;
-    min-width: 0;
-}
-
-.gp-track-details img {
-    width: 54px;
-    height: 54px;
-
-    flex-shrink: 0;
-
-    border-radius: 9px;
-
-    object-fit: cover;
-
-    box-shadow:
-        0 5px 14px rgba(0, 0, 0, 0.25);
-}
-
-.gp-text {
-    min-width: 0;
-
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.gp-title,
-.gp-artist {
-    overflow: hidden;
-
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-.gp-title {
-    color: var(--text-primary);
-
-    font-size: 0.84rem;
-    font-weight: 700;
-}
-
-.gp-artist {
-    color: var(--text-secondary);
-
-    font-size: 0.74rem;
-}
-
-.gp-controls {
-    flex: 1;
-
-    max-width: 600px;
-
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-
-    gap: 7px;
-}
-
-.gp-play-btn {
-    width: 40px;
-    height: 40px;
-
-    display: grid;
-    place-items: center;
-
-    border: none;
-    border-radius: 50%;
-
-    background: #fff;
-
-    color: #000;
-
-    font-size: 0.9rem;
-
-    cursor: pointer;
-
-    transition:
-        transform 0.18s ease;
-}
-
-.gp-play-btn:hover {
-    transform: scale(1.08);
-}
-
-.gp-progress-container {
-    width: 100%;
-
-    display: flex;
-    align-items: center;
-
-    gap: 10px;
-
-    color: var(--text-secondary);
-
-    font-size: 0.7rem;
-    font-weight: 600;
-}
-
-.gp-progress-container input {
-    flex: 1;
-}
-
-.gp-extra {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.gp-extra canvas {
-    opacity: 0.7;
-}
-
-input[type="range"] {
-    width: 100%;
-    cursor: pointer;
-
-    accent-color: var(--accent);
-}
 
 /* =========================================
    SWITCH
@@ -979,6 +1034,7 @@ input[type="range"] {
     transform: translateX(20px);
 }
 
+
 /* =========================================
    STATUS
 ========================================= */
@@ -993,6 +1049,178 @@ input[type="range"] {
     font-size: 0.88rem;
 }
 
+
+/* =========================================
+   GLOBAL MUSIC PLAYER
+========================================= */
+
+.global-player-bar {
+    position: fixed;
+
+    left: calc(var(--sidebar-width) + 20px);
+    right: 20px;
+    bottom: 16px;
+
+    width: auto;
+    max-width: none;
+
+    height: 82px;
+
+    z-index: 950;
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: 20px;
+
+    padding: 10px 20px;
+
+    background: rgba(18, 18, 18, 0.92);
+
+    border: 1px solid var(--card-border);
+    border-radius: 18px;
+
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+
+    box-shadow:
+        0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="light"] .global-player-bar {
+    background: rgba(255, 255, 255, 0.92);
+}
+
+.gp-track-details {
+    display: flex;
+    align-items: center;
+
+    gap: 12px;
+
+    width: 250px;
+    min-width: 0;
+}
+
+.gp-track-details img {
+    width: 54px;
+    height: 54px;
+
+    flex-shrink: 0;
+
+    border-radius: 9px;
+
+    object-fit: cover;
+
+    box-shadow:
+        0 5px 14px rgba(0, 0, 0, 0.25);
+}
+
+.gp-text {
+    min-width: 0;
+
+    display: flex;
+    flex-direction: column;
+
+    gap: 4px;
+}
+
+.gp-title,
+.gp-artist {
+    overflow: hidden;
+
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.gp-title {
+    color: var(--text-primary);
+
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.gp-artist {
+    color: var(--text-secondary);
+
+    font-size: 0.74rem;
+}
+
+.gp-controls {
+    flex: 1;
+
+    max-width: 600px;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    gap: 7px;
+}
+
+.gp-play-btn {
+    width: 40px;
+    height: 40px;
+
+    display: grid;
+    place-items: center;
+
+    border: none;
+    border-radius: 50%;
+
+    background: #fff;
+
+    color: #000;
+
+    font-size: 0.9rem;
+
+    cursor: pointer;
+
+    transition: transform 0.18s ease;
+}
+
+.gp-play-btn:hover {
+    transform: scale(1.08);
+}
+
+.gp-progress-container {
+    width: 100%;
+
+    display: flex;
+    align-items: center;
+
+    gap: 10px;
+
+    color: var(--text-secondary);
+
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.gp-progress-container input {
+    flex: 1;
+}
+
+.gp-extra {
+    display: flex;
+    align-items: center;
+
+    gap: 8px;
+}
+
+.gp-extra canvas {
+    opacity: 0.7;
+}
+
+input[type="range"] {
+    width: 100%;
+
+    cursor: pointer;
+
+    accent-color: var(--accent);
+}
+
+
 /* =========================================
    MOBILE
 ========================================= */
@@ -1001,6 +1229,7 @@ input[type="range"] {
 .bottom-nav {
     display: none;
 }
+
 
 @media (max-width: 900px) {
 
@@ -1020,6 +1249,7 @@ input[type="range"] {
         display: none;
     }
 }
+
 
 @media (max-width: 768px) {
 
@@ -1047,7 +1277,7 @@ input[type="range"] {
 
         padding: 15px 16px;
 
-        background: rgba(8, 8, 8, 0.85);
+        background: rgba(8, 8, 8, 0.88);
 
         border-bottom: 1px solid var(--card-border);
 
@@ -1068,6 +1298,7 @@ input[type="range"] {
 
     .result-card {
         padding: 9px;
+
         gap: 12px;
     }
 
@@ -1142,7 +1373,7 @@ input[type="range"] {
 
         padding: 8px;
 
-        background: rgba(18, 18, 18, 0.94);
+        background: rgba(18, 18, 18, 0.95);
 
         border-top: 1px solid var(--card-border);
 
@@ -1172,6 +1403,7 @@ input[type="range"] {
     }
 }
 
+
 @media (max-width: 420px) {
 
     .search-card {
@@ -1180,6 +1412,7 @@ input[type="range"] {
 
     .search-card button {
         padding: 10px 12px;
+
         font-size: 0.78rem;
     }
 
