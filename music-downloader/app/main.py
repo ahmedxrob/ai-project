@@ -119,6 +119,12 @@ def _db_load_tasks_sync() -> dict:
     return tasks
 
 
+def _db_clear_completed_tasks_sync():
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute("DELETE FROM tasks WHERE status IN ('completed', 'cancelled', 'error')")
+        conn.commit()
+
+
 # --- WEBSOCKET CONNECTION MANAGER ---
 
 class ConnectionManager:
@@ -823,7 +829,10 @@ input:checked + .slider:before { transform: translateX(22px); }
             <section id="tab-downloads" class="tab-content" role="tabpanel" aria-labelledby="btn-downloads">
                 <div class="library-header-bar">
                     <span>⬇️ Active & Recent Downloads</span>
-                    <button class="btn-refresh" onclick="loadDownloads()">🔄 Refresh</button>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn-refresh" onclick="clearDoneTasks()">🧹 Clear Done</button>
+                        <button class="btn-refresh" onclick="loadDownloads()">🔄 Refresh</button>
+                    </div>
                 </div>
                 <div id="downloadsList" class="results-grid"></div>
             </section>
@@ -1486,6 +1495,15 @@ async function cancelTask(taskId) {
     loadDownloads();
 }
 
+async function clearDoneTasks() {
+    try {
+        await fetch('api/tasks/clear-completed', { method: 'DELETE' });
+        loadDownloads();
+    } catch(e) {
+        alert("Failed to clear finished downloads.");
+    }
+}
+
 async function loadDownloads() {
     const list = document.getElementById('downloadsList');
     try {
@@ -1851,6 +1869,20 @@ async def cancel_task(task_id: str):
     task["last_updated"] = time.time() * 1000
     await notify_task_update(task, force_save=True)
     return {"status": "cancelled"}
+
+
+@app.delete("/api/tasks/clear-completed")
+async def clear_completed_tasks():
+    global TASKS
+    to_remove = [
+        task_id for task_id, task in TASKS.items() 
+        if task.get("status") in ["completed", "cancelled", "error"]
+    ]
+    for task_id in to_remove:
+        TASKS.pop(task_id, None)
+
+    await asyncio.to_thread(_db_clear_completed_tasks_sync)
+    return {"status": "ok", "cleared": len(to_remove)}
 
 
 @app.get("/api/tasks")
