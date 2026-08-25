@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -110,15 +111,20 @@ def format_size(size_bytes):
 
 def resolve_file(filename: str) -> Path:
     clean_name = filename.strip()
-    file_path = DOWNLOAD_DIR / clean_name
+    base_dir = DOWNLOAD_DIR.resolve()
+    file_path = (DOWNLOAD_DIR / clean_name).resolve()
+
+    if not file_path.is_relative_to(base_dir):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     if file_path.exists() and file_path.is_file():
         return file_path
-    
+
     matches = list(DOWNLOAD_DIR.rglob(f"{Path(clean_name).name}*"))
     for match in matches:
-        if match.is_file():
+        if match.is_file() and match.resolve().is_relative_to(base_dir):
             return match
-            
+
     raise HTTPException(status_code=404, detail="File not found")
 
 
@@ -208,15 +214,16 @@ async def download_worker():
                 task["status"] = "error"
                 task["error"] = err_text[-300:]
                 task["last_updated"] = time.time() * 1000
-                task_queue.task_done()
                 continue
 
-            possible_files = list(DOWNLOAD_DIR.glob(f"{task_id}.*"))
+            possible_files = [
+                p for p in DOWNLOAD_DIR.glob(f"{task_id}.*")
+                if p.is_file() and p.suffix.lower() not in {".part", ".ytdl", ".temp"}
+            ]
             if not possible_files:
                 task["status"] = "error"
                 task["error"] = "Downloaded file not found."
                 task["last_updated"] = time.time() * 1000
-                task_queue.task_done()
                 continue
 
             audio_file = possible_files[0]
@@ -255,6 +262,7 @@ async def download_worker():
                 audio_file.unlink()
                 audio_file = cleaned_file
 
+            artist = clean_filename(task.get("artist", "Unknown Artist"))
             if settings.get("organize_by_artist", False):
                 final_dir = DOWNLOAD_DIR / artist
                 final_dir.mkdir(parents=True, exist_ok=True)
@@ -268,7 +276,7 @@ async def download_worker():
                 final_name = f"{clean_title}_{task_id[:4]}{ext}"
                 final_path = final_dir / final_name
 
-            audio_file.rename(final_path)
+            shutil.move(str(audio_file), str(final_path))
             task["final_name"] = str(final_path.relative_to(DOWNLOAD_DIR))
 
             task["status"] = "completed"
@@ -282,8 +290,6 @@ async def download_worker():
             task["last_updated"] = time.time() * 1000
         finally:
             task_queue.task_done()
-            
-            # Keep task history visible for the Downloads page. The frontend can clear it explicitly.
 
 
 @app.on_event("startup")
@@ -1102,7 +1108,6 @@ async function pollTasks() {
                 completedSet.add(t.id);
                 libraryNeedsUpdate = true;
                 
-                // Trigger Web Notification & Toast
                 notifyTrackComplete(t.title);
 
                 if (t.elementId) {
@@ -1348,7 +1353,6 @@ async def get_library():
     }
 
 
-
 @app.get("/api/stats")
 async def get_stats():
     files = get_all_audio_files()
@@ -1497,7 +1501,6 @@ async def enqueue_download(payload: dict = Body(...)):
     TASKS[task_id] = task_info
     await task_queue.put(task_id)
     return {"status": "ok", "task_id": task_id}
-
 
 
 @app.post("/api/tasks/{task_id}/cancel")
