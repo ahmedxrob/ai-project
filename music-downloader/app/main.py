@@ -354,7 +354,7 @@ async def download_worker():
                     if spd_match:
                         task["speed"] = spd_match.group(1).replace("~", "")
                     await notify_task_update(task, force_save=False)
-                        
+                    
                 elif "[ExtractAudio]" in line_str or "[EmbedThumbnail]" in line_str or "[Metadata]" in line_str:
                     task["status"] = "processing"
                     task["step"] = "Embedding cover art & tags..."
@@ -695,8 +695,13 @@ async def search(q: str = Query(..., min_length=1), page: int = Query(1, ge=1)):
 
 @app.get("/api/preview")
 async def preview_audio(url: str = Query(..., min_length=1)):
+    # Auto-convert raw YouTube video IDs to full URLs if passed from search results
+    if not url.startswith("http"):
+        url = f"https://www.youtube.com/watch?v={url}"
+
     if not (url.startswith("https://www.youtube.com/") or url.startswith("https://youtube.com/") or url.startswith("https://youtu.be/")):
         raise HTTPException(status_code=400, detail="Invalid YouTube URL.")
+        
     try:
         process = await asyncio.create_subprocess_exec(
             "yt-dlp",
