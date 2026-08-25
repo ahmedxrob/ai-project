@@ -32,7 +32,7 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/navidrome/music"))
+DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/share/mymusic/music"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
