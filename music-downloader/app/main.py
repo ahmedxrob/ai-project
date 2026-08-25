@@ -12,9 +12,9 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, Query, HTTPException, Body, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, Query, HTTPException, Body, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, FileResponse, Response, StreamingResponse, JSONResponse
+from fastapi.responses import RedirectResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -62,8 +62,10 @@ DEFAULT_SETTINGS = {
     "max_results": 20,
     "organize_by_artist": False,
     "poll_interval": 1500,
-    "subsonic_user": os.getenv("SUBSONIC_USER", "admin"),
-    "subsonic_pass": os.getenv("SUBSONIC_PASS", "admin")
+    "navidrome_url": os.getenv("NAVIDROME_URL", ""),
+    "navidrome_user": os.getenv("NAVIDROME_USER", ""),
+    "navidrome_token": os.getenv("NAVIDROME_TOKEN", ""),
+    "navidrome_salt": os.getenv("NAVIDROME_SALT", "")
 }
 
 TASKS = {}
@@ -166,6 +168,35 @@ manager = ConnectionManager()
 async def notify_task_update(task: dict, force_save: bool = False):
     await db_save_task(task, force=force_save)
     await manager.broadcast({"type": "task_update", "task": task})
+
+
+# --- NAVIDROME AUTO-RESCAN TRIGGER ---
+
+async def trigger_navidrome_rescan():
+    settings = load_settings()
+    url = settings.get("navidrome_url") or os.getenv("NAVIDROME_URL", "")
+    if not url:
+        return
+
+    user = settings.get("navidrome_user") or os.getenv("NAVIDROME_USER", "")
+    token = settings.get("navidrome_token") or os.getenv("NAVIDROME_TOKEN", "")
+    salt = settings.get("navidrome_salt") or os.getenv("NAVIDROME_SALT", "")
+
+    endpoint = f"{url.rstrip('/')}/rest/startScan"
+    params = {"u": user, "t": token, "v": "1.16.1", "c": "XrobMusic", "f": "json"}
+    if salt:
+        params["s"] = salt
+
+    req_url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+
+    try:
+        def _ping():
+            req = urllib.request.Request(req_url, headers={"User-Agent": "XrobMusic/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                pass
+        await asyncio.to_thread(_ping)
+    except Exception:
+        pass
 
 
 def normalize_duplicate_key(value: str) -> str:
@@ -271,233 +302,6 @@ def _resolve_file_sync(filename: str) -> Path:
 
 async def resolve_file(filename: str) -> Path:
     return await asyncio.to_thread(_resolve_file_sync, filename)
-
-
-# --- SUBSONIC DIRECT API CATALOG ENGINE ---
-
-def get_subsonic_catalog():
-    files = _get_all_audio_files_sync()
-    songs = []
-    artists = {}
-    albums = {}
-
-    for p in files:
-        rel = str(p.relative_to(DOWNLOAD_DIR))
-        song_id = hashlib.md5(rel.encode("utf-8")).hexdigest()
-        ext = p.suffix.lower()
-        media_type = MEDIA_TYPES.get(ext, "audio/mpeg")
-        
-        parts = Path(rel).parts
-        if len(parts) > 1:
-            artist_name = parts[0]
-        else:
-            artist_name = "Unknown Artist"
-        
-        album_name = "Downloads"
-        title = p.stem
-
-        artist_id = hashlib.md5(artist_name.encode("utf-8")).hexdigest()
-        album_id = hashlib.md5(f"{artist_name}_{album_name}".encode("utf-8")).hexdigest()
-
-        song_data = {
-            "id": song_id,
-            "parent": album_id,
-            "isDir": False,
-            "title": title,
-            "album": album_name,
-            "artist": artist_name,
-            "track": 1,
-            "year": 2026,
-            "genre": "Music",
-            "coverArt": song_id,
-            "size": p.stat().st_size,
-            "contentType": media_type,
-            "suffix": ext.lstrip('.'),
-            "duration": 180,
-            "bitRate": 320,
-            "path": rel,
-            "isDetail": True,
-            "albumId": album_id,
-            "artistId": artist_id,
-            "type": "music"
-        }
-        songs.append(song_data)
-
-        if artist_id not in artists:
-            artists[artist_id] = {
-                "id": artist_id,
-                "name": artist_name,
-                "albumCount": 1,
-                "coverArt": song_id
-            }
-
-        if album_id not in albums:
-            albums[album_id] = {
-                "id": album_id,
-                "name": album_name,
-                "artist": artist_name,
-                "artistId": artist_id,
-                "coverArt": song_id,
-                "songCount": 0,
-                "duration": 0,
-                "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(p.stat().st_ctime)),
-                "song": []
-            }
-        albums[album_id]["songCount"] += 1
-        albums[album_id]["duration"] += 180
-        albums[album_id]["song"].append(song_data)
-
-    return songs, artists, albums
-
-
-@app.api_route("/rest/{endpoint}", methods=["GET", "POST"])
-@app.api_route("/rest/{endpoint}.view", methods=["GET", "POST"])
-async def subsonic_handler(endpoint: str, request: Request):
-    ep = endpoint.replace(".view", "").lower()
-    params = dict(request.query_params)
-    
-    def make_res(data: dict):
-        return JSONResponse(content={
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "type": "XrobMusic",
-                "serverVersion": "1.0.0",
-                **data
-            }
-        })
-
-    songs, artists, albums = get_subsonic_catalog()
-
-    if ep in ("ping", "getlicense"):
-        return make_res({"license": {"valid": True, "email": "user@xrob.local"}})
-    
-    elif ep == "getmusicfolders":
-        return make_res({
-            "musicFolders": {
-                "musicFolder": [{"id": 1, "name": "Music"}]
-            }
-        })
-        
-    elif ep in ("getindexes", "getartists"):
-        indexed = {}
-        for art_id, art in artists.items():
-            letter = art["name"][0].upper() if art["name"] else "#"
-            if not letter.isalpha():
-                letter = "#"
-            if letter not in indexed:
-                indexed[letter] = []
-            indexed[letter].append(art)
-        
-        index_list = []
-        for letter in sorted(indexed.keys()):
-            index_list.append({
-                "name": letter,
-                "artist": indexed[letter]
-            })
-            
-        key_name = "indexes" if ep == "getindexes" else "artists"
-        return make_res({
-            key_name: {
-                "lastModified": int(time.time()),
-                "ignoredArticles": "The El La Los Las Le Les",
-                "index": index_list
-            }
-        })
-
-    elif ep == "getartist":
-        art_id = params.get("id")
-        art = artists.get(art_id)
-        if not art and artists:
-            art = list(artists.values())[0]
-        if not art:
-            return make_res({"artist": {"id": "0", "name": "Unknown", "album": []}})
-        
-        art_albums = [alb for alb in albums.values() if alb["artistId"] == art["id"]]
-        return make_res({
-            "artist": {
-                "id": art["id"],
-                "name": art["name"],
-                "album": art_albums
-            }
-        })
-
-    elif ep in ("getalbum", "getmusicdirectory"):
-        alb_id = params.get("id")
-        alb = albums.get(alb_id)
-        if not alb and albums:
-            alb = list(albums.values())[0]
-        if not alb:
-            return make_res({"album": {"id": "0", "name": "Downloads", "song": []}})
-        
-        return make_res({
-            "album": alb,
-            "directory": {
-                "id": alb["id"],
-                "name": alb["name"],
-                "child": alb.get("song", [])
-            }
-        })
-
-    elif ep == "getsong":
-        song_id = params.get("id")
-        matching = [s for s in songs if s["id"] == song_id]
-        song = matching[0] if matching else (songs[0] if songs else {})
-        return make_res({"song": song})
-
-    elif ep == "stream":
-        song_id = params.get("id")
-        matching = [s for s in songs if s["id"] == song_id]
-        if matching:
-            rel_path = matching[0]["path"]
-        else:
-            rel_path = song_id or ""
-        
-        try:
-            file_path = await resolve_file(rel_path)
-            ext = file_path.suffix.lower()
-            media_type = MEDIA_TYPES.get(ext, "audio/mpeg")
-            return FileResponse(file_path, media_type=media_type)
-        except Exception:
-            raise HTTPException(status_code=404, detail="Track not found")
-
-    elif ep == "getcoverart":
-        art_id = params.get("id")
-        matching = [s for s in songs if s["id"] == art_id or s["albumId"] == art_id or s["artistId"] == art_id]
-        if matching:
-            return await get_library_cover(matching[0]["path"])
-        svg_fallback = (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">'
-            '<rect width="100%" height="100%" fill="#1e293b"/>'
-            '<text x="50%" y="50%" fill="#9ca3af" font-size="60" text-anchor="middle" dominant-baseline="central">🎵</text>'
-            '</svg>'
-        )
-        return Response(content=svg_fallback, media_type="image/svg+xml")
-
-    elif ep in ("search2", "search3"):
-        q = params.get("query", "").lower()
-        m_songs = [s for s in songs if q in s["title"].lower() or q in s["artist"].lower()]
-        m_artists = [a for a in artists.values() if q in a["name"].lower()]
-        m_albums = [al for al in albums.values() if q in al["name"].lower() or q in al["artist"].lower()]
-        
-        res_key = "searchResult3" if ep == "search3" else "searchResult2"
-        return make_res({
-            res_key: {
-                "song": m_songs,
-                "artist": m_artists,
-                "album": m_albums
-            }
-        })
-
-    elif ep in ("startscan", "getscanstatus"):
-        return make_res({
-            "scanStatus": {
-                "scanning": False,
-                "count": len(songs)
-            }
-        })
-
-    return make_res({})
 
 
 async def download_worker():
@@ -665,6 +469,9 @@ async def download_worker():
             task["step"] = "Ready"
             task["last_updated"] = time.time() * 1000
             await notify_task_update(task, force_save=True)
+
+            # Trigger Navidrome automatic scan ping
+            await trigger_navidrome_rescan()
 
         except Exception as err:
             await asyncio.to_thread(cleanup_task_files, task_id)
