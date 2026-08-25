@@ -355,8 +355,46 @@ button {
     filter: brightness(1.1);
 }
 
+/* Search Suggestions Popup */
+.search-suggestions {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: var(--bg-elevated);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.search-suggestions.visible {
+    display: flex;
+}
+
+.search-suggestion {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.search-suggestion:hover {
+    background: var(--bg-hover);
+}
+
 /* =========================================
-   RESULTS
+   RESULTS & DOWNLOAD PROGRESS
 ========================================= */
 
 .results-grid {
@@ -367,23 +405,14 @@ button {
 
 .result-card {
     position: relative;
-
     display: flex;
     align-items: center;
-
     gap: 16px;
-
     padding: 10px 14px;
-
     background: transparent;
-
     border: 1px solid transparent;
     border-radius: 14px;
-
-    transition:
-        background 0.2s ease,
-        border-color 0.2s ease,
-        transform 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .result-card:hover {
@@ -397,72 +426,42 @@ button {
 
 .thumb-wrapper {
     position: relative;
-
     width: 58px;
     height: 58px;
-
     flex-shrink: 0;
-
     overflow: hidden;
-
     border-radius: 10px;
-
     background: var(--input-bg);
-
-    box-shadow:
-        0 6px 16px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
 }
 
 .thumb-wrapper img {
     width: 100%;
     height: 100%;
-
     object-fit: cover;
-
     transition: transform 0.35s ease;
-}
-
-/* play overlay */
-
-.thumb-wrapper::after {
-    content: "▶";
-
-    position: absolute;
-    inset: 0;
-
-    display: grid;
-    place-items: center;
-
-    opacity: 0;
-
-    background: rgba(0, 0, 0, 0.45);
-
-    color: white;
-
-    font-size: 1.2rem;
-
-    transition: opacity 0.2s ease;
-}
-
-.result-card:hover .thumb-wrapper::after {
-    opacity: 1;
 }
 
 .badge-duration {
     position: absolute;
-
     right: 4px;
     bottom: 4px;
-
     padding: 2px 5px;
-
     border-radius: 5px;
-
     background: rgba(0, 0, 0, 0.78);
-
     color: #fff;
-
     font-size: 0.65rem;
+    font-weight: 700;
+}
+
+.badge-library {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--success-bg);
+    color: var(--success);
+    font-size: 0.8rem;
     font-weight: 700;
 }
 
@@ -473,28 +472,86 @@ button {
 
 .track-title {
     margin-bottom: 5px;
-
     overflow: hidden;
-
     color: var(--text-primary);
-
     font-size: 0.92rem;
     font-weight: 700;
-
     white-space: nowrap;
     text-overflow: ellipsis;
 }
 
 .track-artist {
     overflow: hidden;
-
     color: var(--text-secondary);
-
     font-size: 0.8rem;
     font-weight: 500;
-
     white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+/* Active Downloads Header Widget */
+.download-progress-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px;
+    border-radius: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--card-border);
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.88rem;
+    font-weight: 700;
+}
+
+.progress-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.progress-track {
+    width: 100%;
+    height: 6px;
+    background: var(--input-bg);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--accent-gradient);
+    transition: width 0.3s ease;
+}
+
+.progress-fill.progress-complete {
+    background: var(--success);
+}
+
+.progress-fill.progress-error {
+    background: var(--danger);
+}
+
+.progress-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.progress-steps {
+    display: flex;
+    gap: 16px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+.progress-steps span.done {
+    color: var(--success);
 }
 
 /* =========================================
@@ -514,27 +571,17 @@ button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-
     border-radius: 10px;
-
     font-size: 0.8rem;
     font-weight: 700;
-
     cursor: pointer;
-
-    transition:
-        transform 0.18s ease,
-        background 0.18s ease,
-        filter 0.18s ease;
+    transition: transform 0.18s ease, background 0.18s ease, filter 0.18s ease;
 }
 
 .btn-preview {
     padding: 8px 13px;
-
     background: transparent;
-
     border: 1px solid var(--card-border);
-
     color: var(--text-primary);
 }
 
@@ -544,23 +591,16 @@ button {
 
 .btn-preview.playing {
     border-color: transparent;
-
     background: var(--accent-gradient);
-
     color: #fff;
 }
 
 .btn-download {
     padding: 9px 16px;
-
     border: none;
-
     background: var(--success);
-
     color: #000;
-
-    box-shadow:
-        0 5px 15px rgba(30, 215, 96, 0.18);
+    box-shadow: 0 5px 15px rgba(30, 215, 96, 0.18);
 }
 
 .btn-download:hover {
@@ -571,19 +611,14 @@ button {
 .btn-download:disabled {
     background: var(--input-bg);
     color: var(--text-muted);
-
     cursor: not-allowed;
-
     box-shadow: none;
 }
 
 .btn-danger {
     padding: 8px 13px;
-
     border: 1px solid rgba(255, 77, 109, 0.3);
-
     background: var(--danger-bg);
-
     color: var(--danger);
 }
 
@@ -594,11 +629,8 @@ button {
 
 .btn-refresh {
     padding: 8px 12px;
-
     border: 1px solid var(--card-border);
-
     background: var(--input-bg);
-
     color: var(--text-primary);
 }
 
@@ -614,20 +646,13 @@ button {
     display: flex;
     align-items: center;
     justify-content: space-between;
-
     gap: 12px;
-
     padding: 15px 18px;
-
     margin-bottom: 12px;
-
     background: var(--bg-secondary);
-
     border: 1px solid var(--card-border);
     border-radius: 14px;
-
     color: var(--text-secondary);
-
     font-size: 0.85rem;
 }
 
@@ -636,7 +661,7 @@ button {
 }
 
 /* =========================================
-   SETTINGS
+   SETTINGS & PROGRESS PANELS
 ========================================= */
 
 .settings-card,
@@ -644,29 +669,20 @@ button {
     display: flex;
     flex-direction: column;
     gap: 18px;
-
     padding: 28px;
-
     background: var(--card-bg);
-
     border: 1px solid var(--card-border);
     border-radius: var(--radius-lg);
-
     backdrop-filter: blur(18px);
-
-    box-shadow:
-        0 15px 45px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 15px 45px rgba(0, 0, 0, 0.18);
 }
 
 .setting-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-
     gap: 20px;
-
     padding-bottom: 18px;
-
     border-bottom: 1px solid var(--card-border);
 }
 
@@ -677,16 +693,13 @@ button {
 
 .setting-label {
     color: var(--text-primary);
-
     font-size: 0.9rem;
     font-weight: 700;
 }
 
 .setting-desc {
     margin-top: 4px;
-
     color: var(--text-secondary);
-
     font-size: 0.78rem;
 }
 
@@ -694,58 +707,33 @@ select,
 input[type="number"],
 input[type="text"] {
     max-width: 100%;
-
     padding: 10px 13px;
-
     border: 1px solid var(--card-border);
     border-radius: 10px;
-
     outline: none;
-
     background: var(--input-bg);
-
     color: var(--text-primary);
-
-    transition:
-        border-color 0.2s ease,
-        box-shadow 0.2s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 select:focus,
 input[type="number"]:focus,
 input[type="text"]:focus {
     border-color: var(--accent);
-
-    box-shadow:
-        0 0 0 3px var(--accent-glow);
+    box-shadow: 0 0 0 3px var(--accent-glow);
 }
-
-/* =========================================
-   SAVE BUTTON
-========================================= */
 
 .save-btn {
     width: 100%;
-
     padding: 13px;
-
     border: none;
     border-radius: 12px;
-
     background: var(--accent-gradient);
-
     color: #fff;
-
     font-weight: 800;
-
     cursor: pointer;
-
-    box-shadow:
-        0 8px 22px var(--accent-glow);
-
-    transition:
-        transform 0.2s ease,
-        filter 0.2s ease;
+    box-shadow: 0 8px 22px var(--accent-glow);
+    transition: transform 0.2s ease, filter 0.2s ease;
 }
 
 .save-btn:hover {
@@ -754,41 +742,65 @@ input[type="text"]:focus {
 }
 
 /* =========================================
+   TOAST NOTIFICATIONS
+========================================= */
+
+#toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.toast {
+    padding: 12px 20px;
+    border-radius: 12px;
+    background: rgba(18, 18, 18, 0.95);
+    border: 1px solid var(--card-border);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    backdrop-filter: blur(12px);
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: auto;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.toast-success { border-color: var(--success); }
+.toast-error { border-color: var(--danger); }
+
+/* =========================================
    GLOBAL MUSIC PLAYER
 ========================================= */
 
 .global-player-bar {
     position: fixed;
-
     left: calc(var(--sidebar-width) + 20px);
     right: 20px;
     bottom: 16px;
-
-    width: auto;
-    max-width: none;
-
     height: 82px;
-
     z-index: 950;
-
     display: flex;
     align-items: center;
     justify-content: space-between;
-
     gap: 20px;
-
     padding: 10px 20px;
-
     background: rgba(18, 18, 18, 0.92);
-
     border: 1px solid var(--card-border);
     border-radius: 18px;
-
     backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-
-    box-shadow:
-        0 18px 50px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
 }
 
 [data-theme="light"] .global-player-bar {
@@ -799,7 +811,6 @@ input[type="text"]:focus {
     display: flex;
     align-items: center;
     gap: 12px;
-
     width: 250px;
     min-width: 0;
 }
@@ -807,20 +818,14 @@ input[type="text"]:focus {
 .gp-track-details img {
     width: 54px;
     height: 54px;
-
     flex-shrink: 0;
-
     border-radius: 9px;
-
     object-fit: cover;
-
-    box-shadow:
-        0 5px 14px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 5px 14px rgba(0, 0, 0, 0.25);
 }
 
 .gp-text {
     min-width: 0;
-
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -829,56 +834,42 @@ input[type="text"]:focus {
 .gp-title,
 .gp-artist {
     overflow: hidden;
-
     white-space: nowrap;
     text-overflow: ellipsis;
 }
 
 .gp-title {
     color: var(--text-primary);
-
     font-size: 0.84rem;
     font-weight: 700;
 }
 
 .gp-artist {
     color: var(--text-secondary);
-
     font-size: 0.74rem;
 }
 
 .gp-controls {
     flex: 1;
-
     max-width: 600px;
-
     display: flex;
     flex-direction: column;
     align-items: center;
-
     gap: 7px;
 }
 
 .gp-play-btn {
     width: 40px;
     height: 40px;
-
     display: grid;
     place-items: center;
-
     border: none;
     border-radius: 50%;
-
     background: #fff;
-
     color: #000;
-
     font-size: 0.9rem;
-
     cursor: pointer;
-
-    transition:
-        transform 0.18s ease;
+    transition: transform 0.18s ease;
 }
 
 .gp-play-btn:hover {
@@ -887,14 +878,10 @@ input[type="text"]:focus {
 
 .gp-progress-container {
     width: 100%;
-
     display: flex;
     align-items: center;
-
     gap: 10px;
-
     color: var(--text-secondary);
-
     font-size: 0.7rem;
     font-weight: 600;
 }
@@ -916,7 +903,6 @@ input[type="text"]:focus {
 input[type="range"] {
     width: 100%;
     cursor: pointer;
-
     accent-color: var(--accent);
 }
 
@@ -926,48 +912,35 @@ input[type="range"] {
 
 .switch {
     position: relative;
-
     width: 46px;
     height: 26px;
-
     display: inline-block;
 }
 
 .switch input {
     width: 0;
     height: 0;
-
     opacity: 0;
 }
 
 .slider {
     position: absolute;
     inset: 0;
-
     border-radius: 30px;
-
     background: var(--input-bg);
-
     cursor: pointer;
-
     transition: 0.25s;
 }
 
 .slider::before {
     content: "";
-
     position: absolute;
-
     width: 18px;
     height: 18px;
-
     left: 4px;
     bottom: 4px;
-
     border-radius: 50%;
-
     background: white;
-
     transition: 0.25s;
 }
 
@@ -985,16 +958,13 @@ input[type="range"] {
 
 .status-msg {
     padding: 18px 0;
-
     color: var(--text-secondary);
-
     text-align: center;
-
     font-size: 0.88rem;
 }
 
 /* =========================================
-   MOBILE
+   MOBILE RESPONSIVENESS
 ========================================= */
 
 .mobile-header,
@@ -1003,195 +973,90 @@ input[type="range"] {
 }
 
 @media (max-width: 900px) {
-
-    .side-nav {
-        width: 220px;
-    }
-
-    .main-content {
-        padding: 32px 24px 150px;
-    }
-
-    .global-player-bar {
-        left: 240px;
-    }
-
-    .gp-extra canvas {
-        display: none;
-    }
+    .side-nav { width: 220px; }
+    .main-content { padding: 32px 24px 150px; }
+    .global-player-bar { left: 240px; }
+    .gp-extra canvas { display: none; }
 }
 
 @media (max-width: 768px) {
-
-    body {
-        padding-bottom: 75px;
-    }
-
-    .app-shell {
-        display: block;
-    }
-
-    .side-nav {
-        display: none;
-    }
+    body { padding-bottom: 75px; }
+    .app-shell { display: block; }
+    .side-nav { display: none; }
 
     .mobile-header {
         position: sticky;
         top: 0;
-
         z-index: 100;
-
         display: flex;
         align-items: center;
         justify-content: space-between;
-
         padding: 15px 16px;
-
         background: rgba(8, 8, 8, 0.85);
-
         border-bottom: 1px solid var(--card-border);
-
         backdrop-filter: blur(18px);
     }
 
-    .main-content {
-        padding: 22px 14px 160px;
-    }
+    .main-content { padding: 22px 14px 160px; }
+    .search-card { border-radius: 14px; }
+    .search-card button { padding: 11px 16px; }
 
-    .search-card {
-        border-radius: 14px;
-    }
+    .result-card { padding: 9px; gap: 12px; }
+    .thumb-wrapper { width: 54px; height: 54px; }
+    .btn-preview { display: none; }
+    .btn-download { padding: 8px 12px; }
 
-    .search-card button {
-        padding: 11px 16px;
-    }
-
-    .result-card {
-        padding: 9px;
-        gap: 12px;
-    }
-
-    .thumb-wrapper {
-        width: 54px;
-        height: 54px;
-    }
-
-    .btn-preview {
-        display: none;
-    }
-
-    .btn-download {
-        padding: 8px 12px;
-    }
-
-    .setting-row {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .setting-row input,
-    .setting-row select {
-        width: 100% !important;
-    }
+    .setting-row { align-items: flex-start; flex-direction: column; }
+    .setting-row input, .setting-row select { width: 100% !important; }
 
     .global-player-bar {
         left: 10px;
         right: 10px;
         bottom: 74px;
-
         height: 70px;
-
         padding: 8px 12px;
-
         border-radius: 16px;
     }
 
-    .gp-track-details {
-        width: 42%;
-    }
-
-    .gp-track-details img {
-        width: 48px;
-        height: 48px;
-    }
-
-    .gp-extra {
-        display: none;
-    }
-
-    .gp-progress-container {
-        display: none;
-    }
-
-    .gp-controls {
-        flex: 0;
-    }
+    .gp-track-details { width: 42%; }
+    .gp-track-details img { width: 48px; height: 48px; }
+    .gp-extra { display: none; }
+    .gp-progress-container { display: none; }
+    .gp-controls { flex: 0; }
 
     .bottom-nav {
         position: fixed;
-
         left: 0;
         right: 0;
         bottom: 0;
-
         z-index: 1000;
-
         display: flex;
         align-items: center;
         justify-content: space-around;
-
         padding: 8px;
-
         background: rgba(18, 18, 18, 0.94);
-
         border-top: 1px solid var(--card-border);
-
         backdrop-filter: blur(20px);
     }
 
     .bottom-nav .nav-link {
         width: auto;
-
         flex: 1;
-
         flex-direction: column;
-
         gap: 4px;
-
         padding: 7px 4px;
-
         border-radius: 10px;
-
         font-size: 0.65rem;
-
         text-align: center;
     }
 
-    .bottom-nav .nav-link:hover {
-        transform: none;
-    }
+    .bottom-nav .nav-link:hover { transform: none; }
 }
 
 @media (max-width: 420px) {
-
-    .search-card {
-        padding-left: 12px;
-    }
-
-    .search-card button {
-        padding: 10px 12px;
-        font-size: 0.78rem;
-    }
-
-    .track-title {
-        font-size: 0.82rem;
-    }
-
-    .track-artist {
-        font-size: 0.72rem;
-    }
-
-    .btn-download {
-        font-size: 0.72rem;
-    }
+    .search-card { padding-left: 12px; }
+    .search-card button { padding: 10px 12px; font-size: 0.78rem; }
+    .track-title { font-size: 0.82rem; }
+    .track-artist { font-size: 0.72rem; }
+    .btn-download { font-size: 0.72rem; }
 }
