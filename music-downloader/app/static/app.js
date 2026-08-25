@@ -1,5 +1,6 @@
 /* ============================================================
    XROB MUSIC — SPOTIFY STYLE PLAYER + EXISTING FUNCTIONALITY
+   Backend/API logic unchanged
    ============================================================ */
 
 let pollTimer = null;
@@ -939,13 +940,22 @@ async function loadSettings() {
             ) || "dark";
 
 
-        if (document.getElementById("set_subsonic_user")) {
-            document.getElementById("set_subsonic_user").value = s.subsonic_user || "admin";
-        }
+        document.getElementById(
+            "set_navidrome_url"
+        ).value =
+            s.navidrome_url || "";
 
-        if (document.getElementById("set_subsonic_pass")) {
-            document.getElementById("set_subsonic_pass").value = s.subsonic_pass || "admin";
-        }
+
+        document.getElementById(
+            "set_navidrome_user"
+        ).value =
+            s.navidrome_user || "";
+
+
+        document.getElementById(
+            "set_navidrome_token"
+        ).value =
+            s.navidrome_token || "";
 
     } catch (e) {}
 }
@@ -987,15 +997,20 @@ async function saveSettings() {
                 "set_organize"
             ).checked,
 
-        subsonic_user:
-            document.getElementById("set_subsonic_user")
-                ? document.getElementById("set_subsonic_user").value
-                : "admin",
+        navidrome_url:
+            document.getElementById(
+                "set_navidrome_url"
+            ).value,
 
-        subsonic_pass:
-            document.getElementById("set_subsonic_pass")
-                ? document.getElementById("set_subsonic_pass").value
-                : "admin"
+        navidrome_user:
+            document.getElementById(
+                "set_navidrome_user"
+            ).value,
+
+        navidrome_token:
+            document.getElementById(
+                "set_navidrome_token"
+            ).value
     };
 
 
