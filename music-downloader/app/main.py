@@ -179,7 +179,7 @@ ACTIVE_PROCESSES = {}
 
 LAST_SAVED_TIME = {}
 
-
+MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
 # ============================================================
 # SUBSONIC LIBRARY CACHE
 # ============================================================
