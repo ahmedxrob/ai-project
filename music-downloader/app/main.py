@@ -211,7 +211,6 @@ def load_settings():
             or ""
         )
 
-    # Remove old Navidrome settings.
     for key in (
         "navidrome_url",
         "navidrome_user",
@@ -270,7 +269,6 @@ def public_settings():
 
     safe = dict(settings)
 
-    # Password never exposed to browser.
     safe.pop(
         "subsonic_password",
         None,
@@ -3398,7 +3396,6 @@ def validate_subsonic_auth(
 
         return False
 
-    # Token authentication.
     if token and salt:
 
         expected = hashlib.md5(
@@ -3417,7 +3414,6 @@ def validate_subsonic_auth(
 
             return True
 
-    # Plain password.
     if (
         supplied_password
         == password
@@ -3425,7 +3421,6 @@ def validate_subsonic_auth(
 
         return True
 
-    # Older clients may send md5(password).
     if (
         supplied_password
         and len(
@@ -3926,7 +3921,6 @@ def song_to_subsonic(
             ),
     }
 
-    # Only send track when a real track number exists.
     if track_value > 0:
 
         result[
@@ -4109,7 +4103,7 @@ async def rest_ping(
 
 
 # ============================================================
-# OPENSONIC EXTENSIONS
+# OPENSONIC EXTENSIONS (FIXED FOR CLIENT COMPATIBILITY)
 # ============================================================
 
 @app.get(
@@ -4122,76 +4116,39 @@ async def rest_extensions(
     request: Request,
 ):
 
-    # IMPORTANT:
-    # openSubsonicExtensions is an ARRAY.
-    #
-    # Do NOT wrap it in:
-    #
-    # {
-    #     "extension": [...]
-    # }
-    #
-    # Native OpenSubsonic clients such as Arpeggi
-    # decode this property as a list.
+    extensions_list = [
+        {
+            "name": "transcodeOffset",
+            "versions": [1],
+        },
+        {
+            "name": "formPost",
+            "versions": [1],
+        },
+        {
+            "name": "songLyrics",
+            "versions": [1, 2],
+        },
+        {
+            "name": "transcoding",
+            "versions": [1],
+        },
+        {
+            "name": "playbackReport",
+            "versions": [1],
+        },
+    ]
 
     return make_subsonic_response(
         {
-            "status":
-                "ok",
-
-            "version":
-                SUBSONIC_VERSION,
-
-            "serverVersion":
-                SERVER_VERSION,
-
-            "openSubsonic":
-                True,
-
-            "type":
-                "Xrob Music",
-
-            "openSubsonicExtensions": [
-                {
-                    "name":
-                        "transcodeOffset",
-
-                    "versions":
-                        [1],
-                },
-
-                {
-                    "name":
-                        "formPost",
-
-                    "versions":
-                        [1],
-                },
-
-                {
-                    "name":
-                        "songLyrics",
-
-                    "versions":
-                        [1, 2],
-                },
-
-                {
-                    "name":
-                        "transcoding",
-
-                    "versions":
-                        [1],
-                },
-
-                {
-                    "name":
-                        "playbackReport",
-
-                    "versions":
-                        [1],
-                },
-            ],
+            "status": "ok",
+            "version": SUBSONIC_VERSION,
+            "serverVersion": SERVER_VERSION,
+            "openSubsonic": True,
+            "type": "Xrob Music",
+            "openSubsonicExtensions": {
+                "extension": extensions_list
+            },
         },
         request,
     )
@@ -6558,8 +6515,3 @@ async def rest_lyrics(
         },
         request,
     )
-
-
-# ============================================================
-# END
-# ============================================================
