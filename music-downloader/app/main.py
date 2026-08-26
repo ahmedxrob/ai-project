@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import json
-import mimetypes
 import os
 import re
 import shutil
@@ -38,7 +37,6 @@ STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(title="Xrob Music")
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,7 +44,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 app.mount(
     "/static",
@@ -71,23 +68,14 @@ DOWNLOAD_DIR.mkdir(
     exist_ok=True,
 )
 
-
 COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
-
 COVER_CACHE_DIR.mkdir(
     parents=True,
     exist_ok=True,
 )
 
-
-SETTINGS_FILE = (
-    DOWNLOAD_DIR / ".settings.json"
-)
-
-DB_FILE = (
-    DOWNLOAD_DIR / "tasks.db"
-)
-
+SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
+DB_FILE = DOWNLOAD_DIR / "tasks.db"
 
 AUDIO_EXTENSIONS = {
     ".mp3",
@@ -100,9 +88,7 @@ AUDIO_EXTENSIONS = {
     ".alac",
 }
 
-
 MAX_CONCURRENT_DOWNLOADS = 3
-
 
 MEDIA_TYPES = {
     ".mp3": "audio/mpeg",
@@ -115,7 +101,6 @@ MEDIA_TYPES = {
     ".alac": "audio/mp4",
 }
 
-
 DEFAULT_SETTINGS = {
     "audio_format": "mp3",
     "audio_quality": "320K",
@@ -124,22 +109,10 @@ DEFAULT_SETTINGS = {
     "max_results": 20,
     "organize_by_artist": False,
     "poll_interval": 1500,
-    "navidrome_url": os.getenv(
-        "NAVIDROME_URL",
-        "",
-    ),
-    "navidrome_user": os.getenv(
-        "NAVIDROME_USER",
-        "",
-    ),
-    "navidrome_token": os.getenv(
-        "NAVIDROME_TOKEN",
-        "",
-    ),
-    "navidrome_salt": os.getenv(
-        "NAVIDROME_SALT",
-        "",
-    ),
+    "navidrome_url": os.getenv("NAVIDROME_URL", ""),
+    "navidrome_user": os.getenv("NAVIDROME_USER", ""),
+    "navidrome_token": os.getenv("NAVIDROME_TOKEN", ""),
+    "navidrome_salt": os.getenv("NAVIDROME_SALT", ""),
 }
 
 
@@ -148,16 +121,13 @@ DEFAULT_SETTINGS = {
 # ============================================================
 
 TASKS = {}
-
 task_queue = asyncio.Queue()
-
 ACTIVE_PROCESSES = {}
-
 LAST_SAVED_TIME = {}
 
 
 # ============================================================
-# PERSISTENT TASK STORAGE
+# DATABASE
 # ============================================================
 
 def init_db():
@@ -181,14 +151,11 @@ def init_db():
             )
             """
         )
-
         conn.commit()
 
 
 def _db_save_task_sync(task: dict):
-
     with sqlite3.connect(DB_FILE) as conn:
-
         conn.execute(
             """
             INSERT OR REPLACE INTO tasks
@@ -225,29 +192,17 @@ def _db_save_task_sync(task: dict):
                 task.get("final_name", ""),
             ),
         )
-
         conn.commit()
 
 
-async def db_save_task(
-    task: dict,
-    force: bool = False,
-):
-
+async def db_save_task(task: dict, force: bool = False):
     task_id = task.get("id")
-
     now = time.time()
-
-    last_saved = LAST_SAVED_TIME.get(
-        task_id,
-        0,
-    )
 
     if (
         force
-        or now - last_saved > 0.5
+        or now - LAST_SAVED_TIME.get(task_id, 0) > 0.5
     ):
-
         LAST_SAVED_TIME[task_id] = now
 
         await asyncio.to_thread(
@@ -257,35 +212,26 @@ async def db_save_task(
 
 
 def _db_load_tasks_sync() -> dict:
-
     if not DB_FILE.exists():
         return {}
 
     tasks = {}
 
     with sqlite3.connect(DB_FILE) as conn:
-
         conn.row_factory = sqlite3.Row
 
         cursor = conn.cursor()
-
-        cursor.execute(
-            "SELECT * FROM tasks"
-        )
+        cursor.execute("SELECT * FROM tasks")
 
         for row in cursor.fetchall():
-
             task = dict(row)
-
             tasks[task["id"]] = task
 
     return tasks
 
 
 def _db_clear_completed_tasks_sync():
-
     with sqlite3.connect(DB_FILE) as conn:
-
         conn.execute(
             """
             DELETE FROM tasks
@@ -298,16 +244,11 @@ def _db_clear_completed_tasks_sync():
             )
             """
         )
-
         conn.commit()
 
 
-def _db_delete_task_sync(
-    task_id: str,
-):
-
+def _db_delete_task_sync(task_id: str):
     with sqlite3.connect(DB_FILE) as conn:
-
         conn.execute(
             """
             DELETE FROM tasks
@@ -315,12 +256,11 @@ def _db_delete_task_sync(
             """,
             (task_id,),
         )
-
         conn.commit()
 
 
 # ============================================================
-# WEBSOCKET CONNECTION MANAGER
+# WEBSOCKET MANAGER
 # ============================================================
 
 class ConnectionManager:
@@ -328,48 +268,22 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections = []
 
-    async def connect(
-        self,
-        websocket: WebSocket,
-    ):
+    async def connect(self, websocket: WebSocket):
         await websocket.accept()
 
         if websocket not in self.active_connections:
-            self.active_connections.append(
-                websocket
-            )
+            self.active_connections.append(websocket)
 
-    def disconnect(
-        self,
-        websocket: WebSocket,
-    ):
-
+    def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
-            self.active_connections.remove(
-                websocket
-            )
-
-    async def broadcast(
-        self,
-        message: dict,
-    ):
-
-        for connection in list(
-            self.active_connections
-        ):
-
+    async def broadcast(self, message: dict):
+        for connection in list(self.active_connections):
             try:
-
-                await connection.send_json(
-                    message
-                )
-
+                await connection.send_json(message)
             except Exception:
-
-                self.disconnect(
-                    connection
-                )
+                self.disconnect(connection)
 
 
 manager = ConnectionManager()
@@ -379,7 +293,6 @@ async def notify_task_update(
     task: dict,
     force_save: bool = False,
 ):
-
     await db_save_task(
         task,
         force=force_save,
@@ -403,10 +316,7 @@ async def trigger_navidrome_rescan():
 
     url = (
         settings.get("navidrome_url")
-        or os.getenv(
-            "NAVIDROME_URL",
-            "",
-        )
+        or os.getenv("NAVIDROME_URL", "")
     )
 
     if not url:
@@ -414,31 +324,21 @@ async def trigger_navidrome_rescan():
 
     user = (
         settings.get("navidrome_user")
-        or os.getenv(
-            "NAVIDROME_USER",
-            "",
-        )
+        or os.getenv("NAVIDROME_USER", "")
     )
 
     token = (
         settings.get("navidrome_token")
-        or os.getenv(
-            "NAVIDROME_TOKEN",
-            "",
-        )
+        or os.getenv("NAVIDROME_TOKEN", "")
     )
 
     salt = (
         settings.get("navidrome_salt")
-        or os.getenv(
-            "NAVIDROME_SALT",
-            "",
-        )
+        or os.getenv("NAVIDROME_SALT", "")
     )
 
     endpoint = (
-        f"{url.rstrip('/')}"
-        "/rest/startScan"
+        f"{url.rstrip('/')}/rest/startScan"
     )
 
     params = {
@@ -460,12 +360,10 @@ async def trigger_navidrome_rescan():
     try:
 
         def _ping():
-
             req = urllib.request.Request(
                 req_url,
                 headers={
-                    "User-Agent":
-                        "XrobMusic/1.0"
+                    "User-Agent": "XrobMusic/1.0"
                 },
             )
 
@@ -475,9 +373,7 @@ async def trigger_navidrome_rescan():
             ):
                 pass
 
-        await asyncio.to_thread(
-            _ping
-        )
+        await asyncio.to_thread(_ping)
 
     except Exception:
         pass
@@ -487,13 +383,9 @@ async def trigger_navidrome_rescan():
 # HELPERS
 # ============================================================
 
-def normalize_duplicate_key(
-    value: str,
-) -> str:
+def normalize_duplicate_key(value: str) -> str:
 
-    value = Path(
-        value or ""
-    ).stem.lower()
+    value = Path(value or "").stem.lower()
 
     value = re.sub(
         r"\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(ed)?|audio)\b",
@@ -519,8 +411,7 @@ def _get_all_audio_files_sync():
         if (
             p.is_file()
             and not p.name.startswith(".")
-            and p.suffix.lower()
-            in AUDIO_EXTENSIONS
+            and p.suffix.lower() in AUDIO_EXTENSIONS
         )
     ]
 
@@ -532,27 +423,19 @@ async def get_all_audio_files():
     )
 
 
-def _is_duplicate_sync(
-    title: str,
-) -> bool:
+def _is_duplicate_sync(title: str) -> bool:
 
-    key = normalize_duplicate_key(
-        title
-    )
+    key = normalize_duplicate_key(title)
 
     files = _get_all_audio_files_sync()
 
     return any(
-        normalize_duplicate_key(
-            p.name
-        ) == key
+        normalize_duplicate_key(p.name) == key
         for p in files
     )
 
 
-async def is_duplicate(
-    title: str,
-) -> bool:
+async def is_duplicate(title: str) -> bool:
 
     return await asyncio.to_thread(
         _is_duplicate_sync,
@@ -585,12 +468,9 @@ def load_settings():
     return DEFAULT_SETTINGS.copy()
 
 
-def save_settings(
-    data: dict,
-):
+def save_settings(data: dict):
 
     settings = load_settings()
-
     settings.update(data)
 
     with open(
@@ -608,9 +488,7 @@ def save_settings(
     return settings
 
 
-def clean_filename(
-    value: str,
-) -> str:
+def clean_filename(value: str) -> str:
 
     value = value or "Unknown"
 
@@ -624,9 +502,7 @@ def clean_filename(
         r"\s+",
         " ",
         value,
-    ).strip(
-        " ."
-    )
+    ).strip(" .")
 
     return (
         value[:180]
@@ -635,58 +511,38 @@ def clean_filename(
     )
 
 
-def format_duration(
-    seconds,
-):
+def format_duration(seconds):
 
     try:
 
-        seconds = int(
-            seconds or 0
-        )
+        seconds = int(seconds or 0)
 
         minutes = seconds // 60
-
         seconds = seconds % 60
 
-        return (
-            f"{minutes}:"
-            f"{seconds:02d}"
-        )
+        return f"{minutes}:{seconds:02d}"
 
     except Exception:
 
         return "0:00"
 
 
-def format_size(
-    size_bytes,
-):
+def format_size(size_bytes):
 
     try:
 
-        if (
-            size_bytes
-            >= 1024 * 1024 * 1024
-        ):
+        if size_bytes >= 1024 * 1024 * 1024:
 
             gb = (
                 size_bytes
-                / (
-                    1024
-                    * 1024
-                    * 1024
-                )
+                / (1024 * 1024 * 1024)
             )
 
             return f"{gb:.2f} GB"
 
         mb = (
             size_bytes
-            / (
-                1024
-                * 1024
-            )
+            / (1024 * 1024)
         )
 
         return f"{mb:.1f} MB"
@@ -696,9 +552,7 @@ def format_size(
         return "0 MB"
 
 
-def cleanup_task_files(
-    task_id: str,
-):
+def cleanup_task_files(task_id: str):
 
     patterns = [
         f"*{task_id}*",
@@ -707,32 +561,25 @@ def cleanup_task_files(
 
     for pattern in patterns:
 
-        for p in DOWNLOAD_DIR.glob(
-            pattern
-        ):
+        for path in DOWNLOAD_DIR.glob(pattern):
 
             try:
 
-                if p.is_file():
-                    p.unlink()
+                if path.is_file():
+                    path.unlink()
 
             except Exception:
                 pass
 
 
-def _resolve_file_sync(
-    filename: str,
-) -> Path:
+def _resolve_file_sync(filename: str) -> Path:
 
     clean_name = filename.strip()
 
-    base_dir = (
-        DOWNLOAD_DIR.resolve()
-    )
+    base_dir = DOWNLOAD_DIR.resolve()
 
     file_path = (
-        DOWNLOAD_DIR
-        / clean_name
+        DOWNLOAD_DIR / clean_name
     ).resolve()
 
     try:
@@ -740,7 +587,6 @@ def _resolve_file_sync(
         if not file_path.is_relative_to(
             base_dir
         ):
-
             raise HTTPException(
                 status_code=403,
                 detail="Access denied",
@@ -749,54 +595,40 @@ def _resolve_file_sync(
     except AttributeError:
 
         if (
-            base_dir
-            not in file_path.parents
+            base_dir not in file_path.parents
             and file_path != base_dir
         ):
-
             raise HTTPException(
                 status_code=403,
                 detail="Access denied",
             )
 
-
     if (
         file_path.exists()
         and file_path.is_file()
     ):
-
         return file_path
 
+    target_name = Path(clean_name).name
 
-    target_name = Path(
-        clean_name
-    ).name
-
-
-    for match in DOWNLOAD_DIR.rglob(
-        "*"
-    ):
+    for match in DOWNLOAD_DIR.rglob("*"):
 
         if (
             match.is_file()
             and match.name == target_name
         ):
 
+            resolved = match.resolve()
+
             try:
 
-                if match.resolve().is_relative_to(
-                    base_dir
-                ):
-                    return match
+                if resolved.is_relative_to(base_dir):
+                    return resolved
 
             except AttributeError:
 
-                if (
-                    base_dir
-                    in match.resolve().parents
-                ):
-                    return match
-
+                if base_dir in resolved.parents:
+                    return resolved
 
     raise HTTPException(
         status_code=404,
@@ -804,9 +636,7 @@ def _resolve_file_sync(
     )
 
 
-async def resolve_file(
-    filename: str,
-) -> Path:
+async def resolve_file(filename: str) -> Path:
 
     return await asyncio.to_thread(
         _resolve_file_sync,
@@ -826,18 +656,13 @@ async def download_worker():
 
         try:
 
-            task = TASKS.get(
-                task_id
-            )
+            task = TASKS.get(task_id)
 
             if not task:
                 continue
 
-
             # ------------------------------------------------
-            # IMPORTANT:
-            # A queued task may have been cancelled before
-            # a worker receives it.
+            # CANCELLED BEFORE WORKER STARTS
             # ------------------------------------------------
 
             if (
@@ -850,11 +675,7 @@ async def download_worker():
             ):
 
                 task["status"] = "cancelled"
-
-                task["step"] = (
-                    "Cancelled"
-                )
-
+                task["step"] = "Cancelled"
                 task["last_updated"] = (
                     time.time() * 1000
                 )
@@ -866,19 +687,12 @@ async def download_worker():
 
                 continue
 
-
             # ------------------------------------------------
             # START DOWNLOAD
             # ------------------------------------------------
 
-            task["status"] = (
-                "downloading"
-            )
-
-            task["step"] = (
-                "Downloading stream..."
-            )
-
+            task["status"] = "downloading"
+            task["step"] = "Downloading stream..."
             task["last_updated"] = (
                 time.time() * 1000
             )
@@ -887,7 +701,6 @@ async def download_worker():
                 task,
                 force_save=True,
             )
-
 
             settings = load_settings()
 
@@ -911,12 +724,10 @@ async def download_worker():
                 True,
             )
 
-
             output_template = str(
                 DOWNLOAD_DIR
                 / f"{task_id}.%(ext)s"
             )
-
 
             command = [
                 "yt-dlp",
@@ -931,25 +742,19 @@ async def download_worker():
                 output_template,
             ]
 
-
             if embed_thumb:
-
                 command.append(
                     "--embed-thumbnail"
                 )
 
-
             if embed_meta:
-
                 command.append(
                     "--add-metadata"
                 )
 
-
             command.append(
                 task["url"]
             )
-
 
             process = (
                 await asyncio.create_subprocess_exec(
@@ -959,11 +764,7 @@ async def download_worker():
                 )
             )
 
-
-            ACTIVE_PROCESSES[
-                task_id
-            ] = process
-
+            ACTIVE_PROCESSES[task_id] = process
 
             progress_regex = re.compile(
                 r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%"
@@ -973,9 +774,8 @@ async def download_worker():
                 r"at\s+([~0-9a-zA-Z\.\/]+)"
             )
 
-
             # ------------------------------------------------
-            # PROCESS OUTPUT
+            # READ YT-DLP OUTPUT
             # ------------------------------------------------
 
             while True:
@@ -987,19 +787,14 @@ async def download_worker():
                 if not line:
                     break
 
-
                 line_str = line.decode(
                     "utf-8",
                     errors="ignore",
                 ).strip()
 
-
-                pct_match = (
-                    progress_regex.search(
-                        line_str
-                    )
+                pct_match = progress_regex.search(
+                    line_str
                 )
-
 
                 if pct_match:
 
@@ -1011,13 +806,9 @@ async def download_worker():
                         time.time() * 1000
                     )
 
-
-                    speed_match = (
-                        speed_regex.search(
-                            line_str
-                        )
+                    speed_match = speed_regex.search(
+                        line_str
                     )
-
 
                     if speed_match:
 
@@ -1029,33 +820,26 @@ async def download_worker():
                             )
                         )
 
-
                     await notify_task_update(
                         task,
                         force_save=False,
                     )
 
-
                 elif any(
                     marker in line_str
-                    for marker in [
+                    for marker in (
                         "[ExtractAudio]",
                         "[EmbedThumbnail]",
                         "[Metadata]",
-                        "[Fixup]"
-                    ]
+                        "[Fixup]",
+                    )
                 ):
 
-                    task["status"] = (
-                        "processing"
-                    )
-
+                    task["status"] = "processing"
                     task["step"] = (
                         "Embedding cover art & tags..."
                     )
-
                     task["percent"] = 92
-
                     task["last_updated"] = (
                         time.time() * 1000
                     )
@@ -1065,37 +849,26 @@ async def download_worker():
                         force_save=True,
                     )
 
-
             await process.wait()
-
 
             ACTIVE_PROCESSES.pop(
                 task_id,
                 None,
             )
 
-
             # ------------------------------------------------
-            # CANCELLED DOWNLOAD
+            # CANCELLED
             # ------------------------------------------------
 
-            if task.get(
-                "cancel_requested"
-            ):
+            if task.get("cancel_requested"):
 
                 await asyncio.to_thread(
                     cleanup_task_files,
                     task_id,
                 )
 
-                task["status"] = (
-                    "cancelled"
-                )
-
-                task["step"] = (
-                    "Cancelled"
-                )
-
+                task["status"] = "cancelled"
+                task["step"] = "Cancelled"
                 task["last_updated"] = (
                     time.time() * 1000
                 )
@@ -1107,9 +880,8 @@ async def download_worker():
 
                 continue
 
-
             # ------------------------------------------------
-            # DOWNLOAD FAILED
+            # DOWNLOAD ERROR
             # ------------------------------------------------
 
             if process.returncode != 0:
@@ -1118,36 +890,25 @@ async def download_worker():
                     await process.stderr.read()
                 )
 
-                err_text = (
-                    stderr_data.decode(
-                        "utf-8",
-                        errors="ignore",
-                    )
+                err_text = stderr_data.decode(
+                    "utf-8",
+                    errors="ignore",
                 )
-
 
                 await asyncio.to_thread(
                     cleanup_task_files,
                     task_id,
                 )
 
-
                 task["status"] = "error"
-
                 task["error"] = (
                     err_text[-1000:]
-                    or
-                    "yt-dlp download failed."
+                    or "yt-dlp download failed."
                 )
-
-                task["step"] = (
-                    "Download failed"
-                )
-
+                task["step"] = "Download failed"
                 task["last_updated"] = (
                     time.time() * 1000
                 )
-
 
                 await notify_task_update(
                     task,
@@ -1155,7 +916,6 @@ async def download_worker():
                 )
 
                 continue
-
 
             # ------------------------------------------------
             # FIND DOWNLOADED FILE
@@ -1177,21 +937,13 @@ async def download_worker():
                 )
             ]
 
-
             if not possible_files:
 
-                task["status"] = (
-                    "error"
-                )
-
+                task["status"] = "error"
                 task["error"] = (
                     "Downloaded file not found."
                 )
-
-                task["step"] = (
-                    "Download failed"
-                )
-
+                task["step"] = "Download failed"
                 task["last_updated"] = (
                     time.time() * 1000
                 )
@@ -1203,11 +955,7 @@ async def download_worker():
 
                 continue
 
-
-            audio_file = (
-                possible_files[0]
-            )
-
+            audio_file = possible_files[0]
 
             ext = (
                 audio_file.suffix
@@ -1215,21 +963,15 @@ async def download_worker():
                 else f".{fmt}"
             )
 
-
             # ------------------------------------------------
             # PROCESSING
             # ------------------------------------------------
 
-            task["status"] = (
-                "processing"
-            )
-
+            task["status"] = "processing"
             task["step"] = (
                 "Cleaning tags & metadata..."
             )
-
             task["percent"] = 96
-
             task["last_updated"] = (
                 time.time() * 1000
             )
@@ -1239,17 +981,14 @@ async def download_worker():
                 force_save=True,
             )
 
-
             clean_title = clean_filename(
                 task["title"]
             )
-
 
             cleaned_file = (
                 DOWNLOAD_DIR
                 / f"clean_{task_id}{ext}"
             )
-
 
             clean_command = [
                 "ffmpeg",
@@ -1273,7 +1012,6 @@ async def download_worker():
                 str(cleaned_file),
             ]
 
-
             process_clean = (
                 await asyncio.create_subprocess_exec(
                     *clean_command,
@@ -1282,11 +1020,9 @@ async def download_worker():
                 )
             )
 
-
-            clean_stdout, clean_stderr = (
+            _, clean_stderr = (
                 await process_clean.communicate()
             )
-
 
             if (
                 process_clean.returncode == 0
@@ -1300,33 +1036,17 @@ async def download_worker():
 
                 audio_file = cleaned_file
 
+            elif not audio_file.exists():
 
-            # ------------------------------------------------
-            # FALLBACK IF FFMPEG PROCESSING FAILED
-            # ------------------------------------------------
-
-            if (
-                process_clean.returncode != 0
-                and not audio_file.exists()
-            ):
-
-                task["status"] = (
-                    "error"
-                )
-
+                task["status"] = "error"
                 task["error"] = (
                     clean_stderr.decode(
                         "utf-8",
                         errors="ignore",
                     )[-1000:]
-                    or
-                    "Audio processing failed."
+                    or "Audio processing failed."
                 )
-
-                task["step"] = (
-                    "Processing failed"
-                )
-
+                task["step"] = "Processing failed"
                 task["last_updated"] = (
                     time.time() * 1000
                 )
@@ -1338,9 +1058,8 @@ async def download_worker():
 
                 continue
 
-
             # ------------------------------------------------
-            # FINAL DESTINATION
+            # FINAL DIRECTORY
             # ------------------------------------------------
 
             artist = clean_filename(
@@ -1349,7 +1068,6 @@ async def download_worker():
                     "Unknown Artist",
                 )
             )
-
 
             if settings.get(
                 "organize_by_artist",
@@ -1367,23 +1085,18 @@ async def download_worker():
 
             else:
 
-                final_dir = (
-                    DOWNLOAD_DIR
-                )
-
+                final_dir = DOWNLOAD_DIR
 
             final_name = (
                 f"{clean_title}{ext}"
             )
 
-
             final_path = (
                 final_dir / final_name
             )
 
-
             # ------------------------------------------------
-            # DUPLICATE HANDLING
+            # DUPLICATE PROTECTION
             # ------------------------------------------------
 
             if (
@@ -1403,7 +1116,6 @@ async def download_worker():
                     final_dir / final_name
                 )
 
-
             # ------------------------------------------------
             # MOVE FINAL FILE
             # ------------------------------------------------
@@ -1413,52 +1125,38 @@ async def download_worker():
                 str(final_path),
             )
 
-
             task["final_name"] = str(
                 final_path.relative_to(
                     DOWNLOAD_DIR
                 )
             )
 
-
             # ------------------------------------------------
             # COMPLETE
             # ------------------------------------------------
 
-            task["status"] = (
-                "completed"
-            )
-
+            task["status"] = "completed"
             task["percent"] = 100
-
             task["speed"] = ""
-
-            task["step"] = (
-                "Ready"
-            )
-
+            task["step"] = "Ready"
             task["error"] = ""
-
             task["last_updated"] = (
                 time.time() * 1000
             )
-
 
             await notify_task_update(
                 task,
                 force_save=True,
             )
 
-
-            # Trigger Navidrome scan
+            # ------------------------------------------------
+            # NAVIDROME SCAN
+            # ------------------------------------------------
 
             await trigger_navidrome_rescan()
 
-
         except asyncio.CancelledError:
-
             raise
-
 
         except Exception as err:
 
@@ -1472,36 +1170,23 @@ async def download_worker():
                 task_id,
             )
 
-
             task = TASKS.get(
                 task_id
             )
 
-
             if task:
 
-                task["status"] = (
-                    "error"
-                )
-
-                task["error"] = (
-                    str(err)
-                )
-
-                task["step"] = (
-                    "Unexpected error"
-                )
-
+                task["status"] = "error"
+                task["error"] = str(err)
+                task["step"] = "Unexpected error"
                 task["last_updated"] = (
                     time.time() * 1000
                 )
-
 
                 await notify_task_update(
                     task,
                     force_save=True,
                 )
-
 
         finally:
 
@@ -1524,25 +1209,17 @@ async def startup_event():
         init_db
     )
 
-
     global TASKS
 
     TASKS = await asyncio.to_thread(
         _db_load_tasks_sync
     )
 
-
-    # Reset stale active tasks from a previous
-    # application/container restart.
-
-    now_ms = (
-        time.time() * 1000
-    )
-
+    now_ms = time.time() * 1000
 
     stale_changed = False
 
-
+    # Recover interrupted jobs.
     for task in TASKS.values():
 
         if task.get("status") in {
@@ -1550,10 +1227,7 @@ async def startup_event():
             "processing",
         }:
 
-            task["status"] = (
-                "queued"
-            )
-
+            task["status"] = "queued"
             task["step"] = (
                 "Recovered after restart"
             )
@@ -1570,13 +1244,9 @@ async def startup_event():
             )
 
             task["error"] = ""
-
-            task["last_updated"] = (
-                now_ms
-            )
+            task["last_updated"] = now_ms
 
             stale_changed = True
-
 
     if stale_changed:
 
@@ -1587,9 +1257,7 @@ async def startup_event():
                 force=True,
             )
 
-
-    # Start workers.
-
+    # Start download workers.
     for _ in range(
         MAX_CONCURRENT_DOWNLOADS
     ):
@@ -1598,15 +1266,12 @@ async def startup_event():
             download_worker()
         )
 
-
-    # Requeue tasks that were queued when
-    # the application previously stopped.
-
+    # Requeue interrupted/queued tasks.
     for task in TASKS.values():
 
-        if task.get(
-            "status"
-        ) == "queued":
+        if task.get("status") == "queued":
+
+            task["cancel_requested"] = False
 
             await task_queue.put(
                 task["id"]
@@ -1656,16 +1321,10 @@ async def youtube_search(
 ):
 
     start_idx = (
-        (page - 1)
-        * max_results
-        + 1
-    )
+        (page - 1) * max_results
+    ) + 1
 
-    end_idx = (
-        page
-        * max_results
-    )
-
+    end_idx = page * max_results
 
     command = [
         "yt-dlp",
@@ -1680,7 +1339,6 @@ async def youtube_search(
         f"ytsearch{end_idx}:{query}",
     ]
 
-
     try:
 
         process = (
@@ -1691,11 +1349,9 @@ async def youtube_search(
             )
         )
 
-
         stdout, stderr = (
             await process.communicate()
         )
-
 
         if process.returncode != 0:
 
@@ -1709,7 +1365,6 @@ async def youtube_search(
                 or "YouTube search failed."
             )
 
-
         data = json.loads(
             stdout.decode(
                 "utf-8",
@@ -1717,9 +1372,7 @@ async def youtube_search(
             )
         )
 
-
         results = []
-
 
         for item in data.get(
             "entries",
@@ -1729,22 +1382,16 @@ async def youtube_search(
             if not item:
                 continue
 
-
-            video_id = item.get(
-                "id"
-            )
-
+            video_id = item.get("id")
 
             if not video_id:
                 continue
-
 
             channel = (
                 item.get("channel")
                 or item.get("uploader")
                 or "Unknown Artist"
             )
-
 
             duration = (
                 item.get(
@@ -1753,7 +1400,6 @@ async def youtube_search(
                 )
                 or 0
             )
-
 
             results.append(
                 {
@@ -1787,16 +1433,13 @@ async def youtube_search(
                 }
             )
 
-
         return results
-
 
     except FileNotFoundError:
 
         raise RuntimeError(
             "yt-dlp is not installed."
         )
-
 
     except json.JSONDecodeError:
 
@@ -1806,7 +1449,7 @@ async def youtube_search(
 
 
 # ============================================================
-# FRONTEND
+# HOME
 # ============================================================
 
 @app.get("/")
@@ -1850,18 +1493,21 @@ async def search_endpoint(
     if not q.strip():
         return []
 
-
     settings = load_settings()
 
+    try:
 
-    max_results = int(
-        settings.get(
-            "max_results",
-            20,
+        max_results = int(
+            settings.get(
+                "max_results",
+                20,
+            )
+            or 20
         )
-        or 20
-    )
 
+    except Exception:
+
+        max_results = 20
 
     max_results = max(
         5,
@@ -1871,10 +1517,9 @@ async def search_endpoint(
         ),
     )
 
-
     try:
 
-        results = await youtube_search(
+        return await youtube_search(
             q,
             max_results=max_results,
             page=max(
@@ -1882,8 +1527,6 @@ async def search_endpoint(
                 page,
             ),
         )
-
-        return results
 
     except Exception as e:
 
@@ -1909,7 +1552,6 @@ async def preview_endpoint(
             detail="URL missing",
         )
 
-
     try:
 
         proc = (
@@ -1924,18 +1566,16 @@ async def preview_endpoint(
             )
         )
 
-
         stdout, stderr = (
             await proc.communicate()
         )
-
 
         if (
             proc.returncode != 0
             or not stdout
         ):
 
-            err = stderr.decode(
+            error = stderr.decode(
                 "utf-8",
                 errors="ignore",
             )
@@ -1943,12 +1583,11 @@ async def preview_endpoint(
             raise HTTPException(
                 status_code=500,
                 detail=(
+                    error[-500:]
+                    or
                     "Failed to fetch preview audio URL"
-                    if not err
-                    else err[-500:]
                 ),
             )
-
 
         direct_url = (
             stdout
@@ -1959,7 +1598,6 @@ async def preview_endpoint(
             .strip()
             .split("\n")[0]
         )
-
 
         ffmpeg_proc = (
             await asyncio.create_subprocess_exec(
@@ -1978,7 +1616,6 @@ async def preview_endpoint(
             )
         )
 
-
         async def stream_generator():
 
             try:
@@ -1991,45 +1628,32 @@ async def preview_endpoint(
                         )
                     )
 
-
                     if not chunk:
                         break
 
-
                     yield chunk
-
 
             finally:
 
-                if (
-                    ffmpeg_proc.returncode
-                    is None
-                ):
+                if ffmpeg_proc.returncode is None:
 
                     try:
-
                         ffmpeg_proc.kill()
-
                     except Exception:
                         pass
-
 
         return StreamingResponse(
             stream_generator(),
             media_type="audio/mpeg",
             headers={
-                "Access-Control-Allow-Origin":
-                    "*",
-                "Cache-Control":
-                    "no-cache",
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-cache",
             },
         )
-
 
     except HTTPException:
 
         raise
-
 
     except Exception as e:
 
@@ -2048,9 +1672,7 @@ async def enqueue_download(
     payload: dict = Body(...),
 ):
 
-    url = payload.get(
-        "url"
-    )
+    url = payload.get("url")
 
     title = payload.get(
         "title",
@@ -2067,14 +1689,12 @@ async def enqueue_download(
         "Unknown Artist",
     )
 
-
     if not url:
 
         raise HTTPException(
             status_code=400,
             detail="Missing URL",
         )
-
 
     title = str(
         title or "Unknown Track"
@@ -2088,11 +1708,7 @@ async def enqueue_download(
         element_id or ""
     )
 
-
-    # Prevent accidentally queueing the exact same
-    # YouTube item multiple times while it is already
-    # active.
-
+    # Prevent duplicate active queue entries.
     for existing in TASKS.values():
 
         if (
@@ -2111,13 +1727,11 @@ async def enqueue_download(
                     existing.get("id"),
             }
 
-
     task_id = (
         str(uuid.uuid4())
         .replace("-", "")
         [:12]
     )
-
 
     task = {
         "id": task_id,
@@ -2137,20 +1751,16 @@ async def enqueue_download(
         "cancel_requested": False,
     }
 
-
     TASKS[task_id] = task
-
 
     await notify_task_update(
         task,
         force_save=True,
     )
 
-
     await task_queue.put(
         task_id
     )
-
 
     return {
         "status": "ok",
@@ -2165,7 +1775,6 @@ async def enqueue_download(
 @app.get("/api/tasks")
 async def get_tasks():
 
-    # Newest / active-friendly ordering.
     tasks = list(
         TASKS.values()
     )
@@ -2197,9 +1806,7 @@ async def get_tasks():
 # CANCEL TASK
 # ============================================================
 
-@app.post(
-    "/api/tasks/{task_id}/cancel"
-)
+@app.post("/api/tasks/{task_id}/cancel")
 async def cancel_task(
     task_id: str,
 ):
@@ -2208,7 +1815,6 @@ async def cancel_task(
         task_id
     )
 
-
     if not task:
 
         raise HTTPException(
@@ -2216,11 +1822,9 @@ async def cancel_task(
             detail="Task not found",
         )
 
-
     status = task.get(
         "status"
     )
-
 
     if status in {
         "completed",
@@ -2231,15 +1835,11 @@ async def cancel_task(
     }:
 
         return {
-            "status":
-                status,
-            "task_id":
-                task_id,
+            "status": status,
+            "task_id": task_id,
         }
 
-
     task["cancel_requested"] = True
-
 
     if task_id in ACTIVE_PROCESSES:
 
@@ -2258,35 +1858,16 @@ async def cancel_task(
             except Exception:
                 pass
 
-
-    task["status"] = (
-        "cancelled"
-    )
-
-    task["step"] = (
-        "Cancelled"
-    )
-
-    task["percent"] = (
-        float(
-            task.get(
-                "percent",
-                0,
-            )
-            or 0
-        )
-    )
-
+    task["status"] = "cancelled"
+    task["step"] = "Cancelled"
     task["last_updated"] = (
         time.time() * 1000
     )
-
 
     await notify_task_update(
         task,
         force_save=True,
     )
-
 
     return {
         "status": "cancelled",
@@ -2295,93 +1876,14 @@ async def cancel_task(
 
 
 # ============================================================
-# DELETE ONE COMPLETED TASK
+# IMPORTANT:
+# CLEAR-COMPLETED MUST APPEAR BEFORE {task_id}
 # ============================================================
 
-@app.delete(
-    "/api/tasks/{task_id}"
-)
-async def delete_task(
-    task_id: str,
-):
-
-    task = TASKS.get(
-        task_id
-    )
-
-
-    if not task:
-
-        raise HTTPException(
-            status_code=404,
-            detail="Task not found",
-        )
-
-
-    status = task.get(
-        "status"
-    )
-
-
-    if status in {
-        "queued",
-        "downloading",
-        "processing",
-    }:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Cannot remove an active "
-                "download. Cancel it first."
-            ),
-        )
-
-
-    TASKS.pop(
-        task_id,
-        None,
-    )
-
-
-    LAST_SAVED_TIME.pop(
-        task_id,
-        None,
-    )
-
-
-    await asyncio.to_thread(
-        _db_delete_task_sync,
-        task_id,
-    )
-
-
-    await manager.broadcast(
-        {
-            "type": "task_update",
-            "action": "deleted",
-            "task_id": task_id,
-        }
-    )
-
-
-    return {
-        "status": "deleted",
-        "task_id": task_id,
-    }
-
-
-# ============================================================
-# CLEAR COMPLETED
-# ============================================================
-
-@app.delete(
-    "/api/tasks/clear-completed"
-)
+@app.delete("/api/tasks/clear-completed")
 async def clear_completed_tasks():
 
     global TASKS
-
 
     removable_statuses = {
         "completed",
@@ -2391,15 +1893,12 @@ async def clear_completed_tasks():
         "failed",
     }
 
-
     to_remove = [
-        tid
-        for tid, task
-        in TASKS.items()
+        task_id
+        for task_id, task in TASKS.items()
         if task.get("status")
         in removable_statuses
     ]
-
 
     for task_id in to_remove:
 
@@ -2413,28 +1912,88 @@ async def clear_completed_tasks():
             None,
         )
 
-
     await asyncio.to_thread(
         _db_clear_completed_tasks_sync
     )
-
 
     await manager.broadcast(
         {
             "type": "task_update",
             "action": "cleared",
-            "count": len(
-                to_remove
-            ),
+            "count": len(to_remove),
         }
     )
 
-
     return {
         "status": "cleared",
-        "count": len(
-            to_remove
-        ),
+        "count": len(to_remove),
+    }
+
+
+# ============================================================
+# DELETE ONE FINISHED TASK
+# ============================================================
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(
+    task_id: str,
+):
+
+    task = TASKS.get(
+        task_id
+    )
+
+    if not task:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found",
+        )
+
+    status = task.get(
+        "status"
+    )
+
+    if status in {
+        "queued",
+        "downloading",
+        "processing",
+    }:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot remove an active download. "
+                "Cancel it first."
+            ),
+        )
+
+    TASKS.pop(
+        task_id,
+        None,
+    )
+
+    LAST_SAVED_TIME.pop(
+        task_id,
+        None,
+    )
+
+    await asyncio.to_thread(
+        _db_delete_task_sync,
+        task_id,
+    )
+
+    await manager.broadcast(
+        {
+            "type": "task_update",
+            "action": "deleted",
+            "task_id": task_id,
+        }
+    )
+
+    return {
+        "status": "deleted",
+        "task_id": task_id,
     }
 
 
@@ -2449,27 +2008,22 @@ async def get_library():
         await get_all_audio_files()
     )
 
-
     def _build():
 
         files = []
-
         total_bytes = 0
-
 
         for path in audio_files:
 
             try:
 
-                sz = path.stat().st_size
+                size = path.stat().st_size
 
             except Exception:
 
                 continue
 
-
-            total_bytes += sz
-
+            total_bytes += size
 
             files.append(
                 {
@@ -2481,19 +2035,17 @@ async def get_library():
                         ),
                     "size":
                         format_size(
-                            sz
+                            size
                         ),
                     "bytes":
-                        sz,
+                        size,
                 }
             )
-
 
         return (
             files,
             total_bytes,
         )
-
 
     files, total_bytes = (
         await asyncio.to_thread(
@@ -2501,14 +2053,12 @@ async def get_library():
         )
     )
 
-
     return {
-        "files":
-            sorted(
-                files,
-                key=lambda x:
-                    x["name"].lower(),
-            ),
+        "files": sorted(
+            files,
+            key=lambda x:
+                x["name"].lower(),
+        ),
         "total_size":
             format_size(
                 total_bytes
@@ -2529,59 +2079,44 @@ async def get_stats():
         await get_all_audio_files()
     )
 
-
     def _build():
 
         total_bytes = 0
-
         artists = set()
-
         albums = set()
 
-
-        for p in files:
+        for path in files:
 
             try:
 
                 total_bytes += (
-                    p.stat().st_size
+                    path.stat().st_size
                 )
 
             except Exception:
 
                 continue
 
-
-            rel = (
-                p.relative_to(
+            relative = (
+                path.relative_to(
                     DOWNLOAD_DIR
                 )
             )
 
-
-            parts = rel.parts
-
+            parts = relative.parts
 
             if len(parts) > 1:
-
                 artists.add(
                     parts[0]
                 )
-
             else:
-
                 artists.add(
                     "Unknown Artist"
                 )
 
-
-            # Keep album stats based on file
-            # name as your original implementation.
-
             albums.add(
-                p.stem
+                path.stem
             )
-
 
         return (
             len(files),
@@ -2589,7 +2124,6 @@ async def get_stats():
             len(albums),
             total_bytes,
         )
-
 
     (
         tracks_count,
@@ -2599,7 +2133,6 @@ async def get_stats():
     ) = await asyncio.to_thread(
         _build
     )
-
 
     return {
         "tracks":
@@ -2630,10 +2163,8 @@ async def get_library_cover(
 
     try:
 
-        file_path = (
-            await resolve_file(
-                filename
-            )
+        file_path = await resolve_file(
+            filename
         )
 
     except HTTPException:
@@ -2643,18 +2174,15 @@ async def get_library_cover(
             detail="File not found",
         )
 
-
     file_hash = hashlib.md5(
         str(file_path)
         .encode("utf-8")
     ).hexdigest()
 
-
     cover_path = (
         COVER_CACHE_DIR
         / f"{file_hash}.jpg"
     )
-
 
     if cover_path.exists():
 
@@ -2666,7 +2194,6 @@ async def get_library_cover(
                     "*"
             },
         )
-
 
     def _extract_cover():
 
@@ -2683,11 +2210,9 @@ async def get_library_cover(
             str(cover_path),
         ]
 
-
         try:
 
             import subprocess
-
 
             result = subprocess.run(
                 command,
@@ -2695,7 +2220,6 @@ async def get_library_cover(
                 stderr=subprocess.DEVNULL,
                 timeout=5,
             )
-
 
             if (
                 result.returncode == 0
@@ -2705,20 +2229,16 @@ async def get_library_cover(
 
                 return cover_path
 
-
         except Exception:
             pass
 
-
         return None
-
 
     extracted = (
         await asyncio.to_thread(
             _extract_cover
         )
     )
-
 
     if (
         extracted
@@ -2734,32 +2254,23 @@ async def get_library_cover(
             },
         )
 
-
-    svg_fallback = (
-        '<svg '
-        'xmlns="http://www.w3.org/2000/svg" '
-        'width="110" '
-        'height="110" '
+    fallback = (
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        'width="110" height="110" '
         'viewBox="0 0 110 110">'
-        '<rect '
-        'width="100%" '
-        'height="100%" '
+        '<rect width="100%" height="100%" '
         'fill="#1e293b"/>'
-        '<text '
-        'x="50%" '
-        'y="50%" '
+        '<text x="50%" y="50%" '
         'fill="#9ca3af" '
         'font-size="24" '
         'text-anchor="middle" '
         'dominant-baseline="central">'
         '🎵'
-        '</text>'
-        '</svg>'
+        '</text></svg>'
     )
 
-
     return Response(
-        content=svg_fallback,
+        content=fallback,
         media_type="image/svg+xml",
         headers={
             "Access-Control-Allow-Origin":
@@ -2783,19 +2294,12 @@ async def stream_library_file(
         filename
     )
 
+    ext = file_path.suffix.lower()
 
-    ext = (
-        file_path.suffix.lower()
+    media_type = MEDIA_TYPES.get(
+        ext,
+        "audio/mpeg",
     )
-
-
-    media_type = (
-        MEDIA_TYPES.get(
-            ext,
-            "audio/mpeg",
-        )
-    )
-
 
     return FileResponse(
         file_path,
@@ -2824,34 +2328,27 @@ async def delete_library_file(
         filename
     )
 
-
     try:
-
-        file_path.unlink()
-
 
         file_hash = hashlib.md5(
             str(file_path)
             .encode("utf-8")
         ).hexdigest()
 
+        file_path.unlink()
 
         cover_path = (
             COVER_CACHE_DIR
             / f"{file_hash}.jpg"
         )
 
-
         if cover_path.exists():
-
             cover_path.unlink()
-
 
         return {
             "status": "deleted",
             "filename": filename,
         }
-
 
     except Exception as e:
 
