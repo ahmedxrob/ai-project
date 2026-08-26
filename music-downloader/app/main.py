@@ -35,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 
 # ============================================================
 # XROB MUSIC
-# Downloader + Library + OpenSubsonic server
+# Downloader + Local Library + OpenSubsonic/Arpeggi
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -43,7 +43,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(
     title="Xrob Music",
-    version="2.3.0",
+    version="2.4.0",
 )
 
 app.add_middleware(
@@ -86,10 +86,16 @@ COVER_CACHE_DIR.mkdir(
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 DB_FILE = DOWNLOAD_DIR / "tasks.db"
 
+# Home Assistant Add-on options
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "2.3.0"
+SERVER_VERSION = "2.4.0"
+
+# IMPORTANT:
+# Subsonic music folder ID is numeric.
+MUSIC_FOLDER_ID = 1
+MUSIC_FOLDER_NAME = "Music"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 
@@ -158,7 +164,10 @@ def load_addon_options():
         return data if isinstance(data, dict) else {}
 
     except Exception as exc:
-        print("Failed to read /data/options.json:", exc)
+        print(
+            "Failed to read /data/options.json:",
+            exc,
+        )
         return {}
 
 
@@ -182,17 +191,19 @@ def load_settings():
 
     addon = load_addon_options()
 
-    if addon.get("subsonic_user") is not None:
+    if "subsonic_user" in addon:
         settings["subsonic_user"] = str(
-            addon.get("subsonic_user") or "admin"
+            addon.get("subsonic_user")
+            or "admin"
         )
 
     if "subsonic_password" in addon:
         settings["subsonic_password"] = str(
-            addon.get("subsonic_password") or ""
+            addon.get("subsonic_password")
+            or ""
         )
 
-    # Remove old Navidrome configuration.
+    # Old Navidrome values are intentionally ignored.
     for key in (
         "navidrome_url",
         "navidrome_user",
@@ -254,6 +265,7 @@ def public_settings():
 
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
+
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (
@@ -341,13 +353,20 @@ def db_save_task_sync(task):
         conn.commit()
 
 
-async def db_save_task(task, force=False):
+async def db_save_task(
+    task,
+    force=False,
+):
     task_id = task.get("id")
     now = time.time()
 
     if (
         force
-        or now - LAST_SAVED_TIME.get(task_id, 0) > 0.5
+        or now - LAST_SAVED_TIME.get(
+            task_id,
+            0,
+        )
+        > 0.5
     ):
         LAST_SAVED_TIME[task_id] = now
 
@@ -364,6 +383,7 @@ def db_load_tasks_sync():
     tasks = {}
 
     with sqlite3.connect(DB_FILE) as conn:
+
         conn.row_factory = sqlite3.Row
 
         for row in conn.execute(
@@ -377,6 +397,7 @@ def db_load_tasks_sync():
 
 def db_clear_finished_sync():
     with sqlite3.connect(DB_FILE) as conn:
+
         conn.execute(
             """
             DELETE FROM tasks
@@ -389,15 +410,20 @@ def db_clear_finished_sync():
             )
             """
         )
+
         conn.commit()
 
 
-def db_delete_task_sync(task_id):
+def db_delete_task_sync(
+    task_id,
+):
     with sqlite3.connect(DB_FILE) as conn:
+
         conn.execute(
             "DELETE FROM tasks WHERE id = ?",
             (task_id,),
         )
+
         conn.commit()
 
 
@@ -406,31 +432,55 @@ def db_delete_task_sync(task_id):
 # ============================================================
 
 class ConnectionManager:
+
     def __init__(self):
         self.connections = []
 
-    async def connect(self, websocket):
+    async def connect(
+        self,
+        websocket,
+    ):
         await websocket.accept()
 
         if websocket not in self.connections:
-            self.connections.append(websocket)
+            self.connections.append(
+                websocket
+            )
 
-    def disconnect(self, websocket):
+    def disconnect(
+        self,
+        websocket,
+    ):
         if websocket in self.connections:
-            self.connections.remove(websocket)
+            self.connections.remove(
+                websocket
+            )
 
-    async def broadcast(self, message):
-        for websocket in list(self.connections):
+    async def broadcast(
+        self,
+        message,
+    ):
+        for websocket in list(
+            self.connections
+        ):
             try:
-                await websocket.send_json(message)
+                await websocket.send_json(
+                    message
+                )
             except Exception:
-                self.disconnect(websocket)
+                self.disconnect(
+                    websocket
+                )
 
 
 manager = ConnectionManager()
 
 
-async def notify_task_update(task, force_save=False):
+async def notify_task_update(
+    task,
+    force_save=False,
+):
+
     await db_save_task(
         task,
         force=force_save,
@@ -448,14 +498,20 @@ async def notify_task_update(task, force_save=False):
 # HELPERS
 # ============================================================
 
-def safe_int(value, default=0):
+def safe_int(
+    value,
+    default=0,
+):
     try:
         return int(value)
     except Exception:
         return default
 
 
-def safe_float(value, default=0):
+def safe_float(
+    value,
+    default=0,
+):
     try:
         return float(value)
     except Exception:
@@ -463,16 +519,29 @@ def safe_float(value, default=0):
 
 
 def format_duration(seconds):
-    seconds = safe_int(seconds, 0)
-    return f"{seconds // 60}:{seconds % 60:02d}"
+    seconds = safe_int(
+        seconds,
+        0,
+    )
+
+    return (
+        f"{seconds // 60}:"
+        f"{seconds % 60:02d}"
+    )
 
 
 def format_size(size):
-    try:
-        if size >= 1024 ** 3:
-            return f"{size / (1024 ** 3):.2f} GB"
 
-        return f"{size / (1024 ** 2):.1f} MB"
+    try:
+
+        if size >= 1024 ** 3:
+            return (
+                f"{size / (1024 ** 3):.2f} GB"
+            )
+
+        return (
+            f"{size / (1024 ** 2):.1f} MB"
+        )
 
     except Exception:
         return "0 MB"
@@ -482,7 +551,10 @@ def clean_metadata_text(
     value,
     fallback="",
 ):
-    value = str(value or "").strip()
+
+    value = str(
+        value or ""
+    ).strip()
 
     if not value:
         return fallback
@@ -501,6 +573,7 @@ def clean_metadata_text(
 
 
 def clean_filename(value):
+
     value = clean_metadata_text(
         value,
         "Unknown",
@@ -518,10 +591,17 @@ def clean_filename(value):
         value,
     ).strip(" .")
 
-    return value[:180] if value else "Unknown"
+    return (
+        value[:180]
+        if value
+        else "Unknown"
+    )
 
 
-def normalize_duplicate_key(value):
+def normalize_duplicate_key(
+    value,
+):
+
     value = Path(
         value or ""
     ).stem.lower()
@@ -545,32 +625,47 @@ def normalize_duplicate_key(value):
 # ============================================================
 
 def get_audio_files_sync():
+
     return [
         path
         for path in DOWNLOAD_DIR.rglob("*")
         if (
             path.is_file()
-            and not path.name.startswith(".")
-            and path.suffix.lower() in AUDIO_EXTENSIONS
+            and not path.name.startswith(
+                "."
+            )
+            and path.suffix.lower()
+            in AUDIO_EXTENSIONS
         )
     ]
 
 
 async def get_all_audio_files():
+
     return await asyncio.to_thread(
         get_audio_files_sync
     )
 
 
-def resolve_file_sync(filename):
+def resolve_file_sync(
+    filename,
+):
+
     base = DOWNLOAD_DIR.resolve()
+
     target = (
-        DOWNLOAD_DIR / filename
+        DOWNLOAD_DIR
+        / filename
     ).resolve()
 
     try:
-        safe = target.is_relative_to(base)
+
+        safe = target.is_relative_to(
+            base
+        )
+
     except AttributeError:
+
         safe = (
             target == base
             or base in target.parents
@@ -588,12 +683,18 @@ def resolve_file_sync(filename):
     ):
         return target
 
-    target_name = Path(filename).name
+    target_name = Path(
+        filename
+    ).name
 
-    for match in DOWNLOAD_DIR.rglob("*"):
+    for match in DOWNLOAD_DIR.rglob(
+        "*"
+    ):
+
         if (
             match.is_file()
-            and match.name == target_name
+            and match.name
+            == target_name
         ):
             return match.resolve()
 
@@ -603,7 +704,10 @@ def resolve_file_sync(filename):
     )
 
 
-async def resolve_file(filename):
+async def resolve_file(
+    filename,
+):
+
     return await asyncio.to_thread(
         resolve_file_sync,
         filename,
@@ -614,14 +718,24 @@ async def resolve_file(filename):
 # METADATA
 # ============================================================
 
-def read_metadata_sync(path):
+def read_metadata_sync(
+    path,
+):
+
     try:
+
         stat = path.stat()
         cache_key = str(path)
 
-        cached = METADATA_CACHE.get(cache_key)
+        cached = METADATA_CACHE.get(
+            cache_key
+        )
 
-        if cached and cached[0] == stat.st_mtime:
+        if (
+            cached
+            and cached[0]
+            == stat.st_mtime
+        ):
             return cached[1]
 
         command = [
@@ -646,6 +760,7 @@ def read_metadata_sync(path):
         metadata = {}
 
         if result.returncode == 0:
+
             raw = json.loads(
                 result.stdout or "{}"
             )
@@ -661,54 +776,76 @@ def read_metadata_sync(path):
             )
 
             metadata = {
-                "title": clean_metadata_text(
-                    tags.get("title"),
-                    path.stem,
-                ),
-                "artist": clean_metadata_text(
-                    tags.get("artist")
-                    or tags.get("album_artist"),
-                    (
-                        path.parent.name
-                        if path.parent != DOWNLOAD_DIR
-                        else "Unknown Artist"
+                "title":
+                    clean_metadata_text(
+                        tags.get("title"),
+                        path.stem,
                     ),
-                ),
-                "album": clean_metadata_text(
-                    tags.get("album"),
-                    path.stem,
-                ),
-                "genre": clean_metadata_text(
-                    tags.get("genre"),
-                    "",
-                ),
-                "year": clean_metadata_text(
-                    tags.get("date")
-                    or tags.get("year"),
-                    "",
-                ),
-                "track": clean_metadata_text(
-                    tags.get("track"),
-                    "",
-                ),
-                "disc": clean_metadata_text(
-                    tags.get("disc"),
-                    "",
-                ),
-                "duration": safe_float(
-                    fmt.get("duration"),
-                    0,
-                ),
+
+                "artist":
+                    clean_metadata_text(
+                        tags.get("artist")
+                        or tags.get(
+                            "album_artist"
+                        ),
+                        (
+                            path.parent.name
+                            if path.parent
+                            != DOWNLOAD_DIR
+                            else "Unknown Artist"
+                        ),
+                    ),
+
+                "album":
+                    clean_metadata_text(
+                        tags.get("album"),
+                        path.stem,
+                    ),
+
+                "genre":
+                    clean_metadata_text(
+                        tags.get("genre"),
+                        "",
+                    ),
+
+                "year":
+                    clean_metadata_text(
+                        tags.get("date")
+                        or tags.get("year"),
+                        "",
+                    ),
+
+                "track":
+                    clean_metadata_text(
+                        tags.get("track"),
+                        "",
+                    ),
+
+                "disc":
+                    clean_metadata_text(
+                        tags.get("disc"),
+                        "",
+                    ),
+
+                "duration":
+                    safe_float(
+                        fmt.get("duration"),
+                        0,
+                    ),
             }
 
         if not metadata:
+
             metadata = {
                 "title": path.stem,
+
                 "artist": (
                     path.parent.name
-                    if path.parent != DOWNLOAD_DIR
+                    if path.parent
+                    != DOWNLOAD_DIR
                     else "Unknown Artist"
                 ),
+
                 "album": path.stem,
                 "genre": "",
                 "year": "",
@@ -717,7 +854,9 @@ def read_metadata_sync(path):
                 "duration": 0,
             }
 
-        METADATA_CACHE[cache_key] = (
+        METADATA_CACHE[
+            cache_key
+        ] = (
             stat.st_mtime,
             metadata,
         )
@@ -725,13 +864,17 @@ def read_metadata_sync(path):
         return metadata
 
     except Exception:
+
         return {
             "title": path.stem,
+
             "artist": (
                 path.parent.name
-                if path.parent != DOWNLOAD_DIR
+                if path.parent
+                != DOWNLOAD_DIR
                 else "Unknown Artist"
             ),
+
             "album": path.stem,
             "genre": "",
             "year": "",
@@ -741,7 +884,10 @@ def read_metadata_sync(path):
         }
 
 
-async def read_metadata(path):
+async def read_metadata(
+    path,
+):
+
     return await asyncio.to_thread(
         read_metadata_sync,
         path,
@@ -749,10 +895,13 @@ async def read_metadata(path):
 
 
 # ============================================================
-# STABLE IDS
+# STABLE IDs
 # ============================================================
 
-def make_song_id(path):
+def make_song_id(
+    path,
+):
+
     relative = str(
         path.relative_to(
             DOWNLOAD_DIR
@@ -763,10 +912,15 @@ def make_song_id(path):
         relative.encode("utf-8")
     ).hexdigest()[:20]
 
-    return f"song-{digest}"
+    return (
+        f"song-{digest}"
+    )
 
 
-def make_artist_id(name):
+def make_artist_id(
+    name,
+):
+
     name = clean_metadata_text(
         name,
         "Unknown Artist",
@@ -776,13 +930,16 @@ def make_artist_id(name):
         name.encode("utf-8")
     ).hexdigest()[:20]
 
-    return f"artist-{digest}"
+    return (
+        f"artist-{digest}"
+    )
 
 
 def make_album_id(
     artist,
     album,
 ):
+
     raw = (
         str(artist)
         + "\x00"
@@ -793,7 +950,9 @@ def make_album_id(
         raw.encode("utf-8")
     ).hexdigest()[:20]
 
-    return f"album-{digest}"
+    return (
+        f"album-{digest}"
+    )
 
 
 # ============================================================
@@ -816,12 +975,18 @@ async def build_library():
         except Exception:
             continue
 
-        metadata = await read_metadata(path)
+        metadata = await read_metadata(
+            path
+        )
 
-        song_id = make_song_id(path)
+        song_id = make_song_id(
+            path
+        )
+
         artist_id = make_artist_id(
             metadata["artist"]
         )
+
         album_id = make_album_id(
             metadata["artist"],
             metadata["album"],
@@ -829,62 +994,118 @@ async def build_library():
 
         song = {
             "id": song_id,
-            "title": metadata["title"],
-            "artist": metadata["artist"],
-            "artistId": artist_id,
-            "album": metadata["album"],
-            "albumId": album_id,
-            "genre": metadata["genre"],
-            "year": metadata["year"],
-            "track": metadata["track"],
-            "disc": metadata["disc"],
-            "duration": safe_int(
-                metadata["duration"],
-                0,
-            ),
-            "path": path,
-            "suffix": path.suffix.lower(),
-            "size": stat.st_size,
-            "created": stat.st_ctime,
-            "modified": stat.st_mtime,
+            "title":
+                metadata["title"],
+            "artist":
+                metadata["artist"],
+            "artistId":
+                artist_id,
+            "album":
+                metadata["album"],
+            "albumId":
+                album_id,
+            "genre":
+                metadata["genre"],
+            "year":
+                metadata["year"],
+            "track":
+                metadata["track"],
+            "disc":
+                metadata["disc"],
+            "duration":
+                safe_int(
+                    metadata["duration"],
+                    0,
+                ),
+            "path":
+                path,
+            "suffix":
+                path.suffix.lower(),
+            "size":
+                stat.st_size,
+            "created":
+                stat.st_ctime,
+            "modified":
+                stat.st_mtime,
         }
 
-        songs.append(song)
+        songs.append(
+            song
+        )
 
         if artist_id not in artists:
+
             artists[artist_id] = {
-                "id": artist_id,
-                "name": metadata["artist"],
-                "albumIds": set(),
-                "songIds": [],
+                "id":
+                    artist_id,
+
+                "name":
+                    metadata["artist"],
+
+                "albumIds":
+                    set(),
+
+                "songIds":
+                    [],
             }
 
-        artists[artist_id]["albumIds"].add(
+        artists[
+            artist_id
+        ][
+            "albumIds"
+        ].add(
             album_id
         )
 
-        artists[artist_id]["songIds"].append(
+        artists[
+            artist_id
+        ][
+            "songIds"
+        ].append(
             song_id
         )
 
         if album_id not in albums:
+
             albums[album_id] = {
-                "id": album_id,
-                "name": metadata["album"],
-                "artist": metadata["artist"],
-                "artistId": artist_id,
-                "year": metadata["year"],
-                "genre": metadata["genre"],
-                "songIds": [],
-                "path": path,
+                "id":
+                    album_id,
+
+                "name":
+                    metadata["album"],
+
+                "artist":
+                    metadata["artist"],
+
+                "artistId":
+                    artist_id,
+
+                "year":
+                    metadata["year"],
+
+                "genre":
+                    metadata["genre"],
+
+                "songIds":
+                    [],
+
+                "path":
+                    path,
             }
 
-        albums[album_id]["songIds"].append(
+        albums[
+            album_id
+        ][
+            "songIds"
+        ].append(
             song_id
         )
 
         if metadata["genre"]:
-            genres[metadata["genre"]] = (
+
+            genres[
+                metadata["genre"]
+            ] = (
                 genres.get(
                     metadata["genre"],
                     0,
@@ -893,6 +1114,7 @@ async def build_library():
             )
 
     for artist in artists.values():
+
         artist["albumIds"] = list(
             artist["albumIds"]
         )
@@ -905,28 +1127,44 @@ async def build_library():
     }
 
 
-async def find_song(song_id):
+async def find_song(
+    song_id,
+):
+
     library = await build_library()
 
-    for song in library["songs"]:
+    for song in library[
+        "songs"
+    ]:
+
         if song["id"] == song_id:
             return song
 
     return None
 
 
-async def find_artist(artist_id):
+async def find_artist(
+    artist_id,
+):
+
     library = await build_library()
 
-    return library["artists"].get(
+    return library[
+        "artists"
+    ].get(
         artist_id
     )
 
 
-async def find_album(album_id):
+async def find_album(
+    album_id,
+):
+
     library = await build_library()
 
-    return library["albums"].get(
+    return library[
+        "albums"
+    ].get(
         album_id
     )
 
@@ -935,9 +1173,14 @@ async def find_album(album_id):
 # COVER ART
 # ============================================================
 
-def cover_cache_path(path):
+def cover_cache_path(
+    path,
+):
+
     digest = hashlib.md5(
-        str(path).encode("utf-8")
+        str(path).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
     return (
@@ -946,9 +1189,13 @@ def cover_cache_path(path):
     )
 
 
-async def ensure_cover(path):
+async def ensure_cover(
+    path,
+):
 
-    cover = cover_cache_path(path)
+    cover = cover_cache_path(
+        path
+    )
 
     if cover.exists():
         return cover
@@ -967,6 +1214,7 @@ async def ensure_cover(path):
     ]
 
     try:
+
         await asyncio.to_thread(
             subprocess.run,
             command,
@@ -974,31 +1222,46 @@ async def ensure_cover(path):
             stderr=subprocess.DEVNULL,
             timeout=10,
         )
+
     except Exception:
         pass
 
-    return cover if cover.exists() else None
+    return (
+        cover
+        if cover.exists()
+        else None
+    )
 
 
-async def resolve_cover_id(item_id):
+async def resolve_cover_id(
+    item_id,
+):
 
-    song = await find_song(item_id)
+    song = await find_song(
+        item_id
+    )
 
     if song:
         return song["path"]
 
-    album = await find_album(item_id)
+    album = await find_album(
+        item_id
+    )
 
     if album:
         return album["path"]
 
-    artist = await find_artist(item_id)
+    artist = await find_artist(
+        item_id
+    )
 
     if artist:
 
         library = await build_library()
 
-        for album_id in artist["albumIds"]:
+        for album_id in artist[
+            "albumIds"
+        ]:
 
             album = library[
                 "albums"
@@ -1007,16 +1270,20 @@ async def resolve_cover_id(item_id):
             )
 
             if album:
-                return album["path"]
+                return album[
+                    "path"
+                ]
 
     return None
 
 
 # ============================================================
-# DUPLICATES
+# DUPLICATE DETECTION
 # ============================================================
 
-async def is_duplicate(title):
+async def is_duplicate(
+    title,
+):
 
     files = await get_all_audio_files()
 
@@ -1032,15 +1299,19 @@ async def is_duplicate(title):
     )
 
 
-def cleanup_task_files(task_id):
+def cleanup_task_files(
+    task_id,
+):
 
     for path in DOWNLOAD_DIR.glob(
         f"*{task_id}*"
     ):
 
         try:
+
             if path.is_file():
                 path.unlink()
+
         except Exception:
             pass
 
@@ -1053,21 +1324,36 @@ async def download_worker():
 
     while True:
 
-        task_id = await TASK_QUEUE.get()
+        task_id = (
+            await TASK_QUEUE.get()
+        )
 
         try:
 
-            task = TASKS.get(task_id)
+            task = TASKS.get(
+                task_id
+            )
 
             if not task:
                 continue
 
-            if task.get("cancel_requested"):
+            if task.get(
+                "cancel_requested"
+            ):
 
-                task["status"] = "cancelled"
-                task["step"] = "Cancelled"
-                task["last_updated"] = (
-                    time.time() * 1000
+                task[
+                    "status"
+                ] = "cancelled"
+
+                task[
+                    "step"
+                ] = "Cancelled"
+
+                task[
+                    "last_updated"
+                ] = (
+                    time.time()
+                    * 1000
                 )
 
                 await notify_task_update(
@@ -1089,10 +1375,19 @@ async def download_worker():
                 "320K",
             )
 
-            task["status"] = "downloading"
-            task["step"] = "Downloading stream..."
-            task["last_updated"] = (
-                time.time() * 1000
+            task[
+                "status"
+            ] = "downloading"
+
+            task[
+                "step"
+            ] = "Downloading stream..."
+
+            task[
+                "last_updated"
+            ] = (
+                time.time()
+                * 1000
             )
 
             await notify_task_update(
@@ -1146,7 +1441,9 @@ async def download_worker():
                 )
             )
 
-            ACTIVE_PROCESSES[task_id] = process
+            ACTIVE_PROCESSES[
+                task_id
+            ] = process
 
             progress_regex = re.compile(
                 r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%"
@@ -1170,28 +1467,46 @@ async def download_worker():
                     errors="ignore",
                 ).strip()
 
-                pct_match = progress_regex.search(
-                    text
+                pct_match = (
+                    progress_regex.search(
+                        text
+                    )
                 )
 
                 if pct_match:
 
-                    task["percent"] = float(
-                        pct_match.group(1)
+                    task[
+                        "percent"
+                    ] = float(
+                        pct_match.group(
+                            1
+                        )
                     )
 
-                    speed_match = speed_regex.search(
-                        text
+                    speed_match = (
+                        speed_regex.search(
+                            text
+                        )
                     )
 
                     if speed_match:
-                        task["speed"] = (
-                            speed_match.group(1)
-                            .replace("~", "")
+
+                        task[
+                            "speed"
+                        ] = (
+                            speed_match.group(
+                                1
+                            ).replace(
+                                "~",
+                                "",
+                            )
                         )
 
-                    task["last_updated"] = (
-                        time.time() * 1000
+                    task[
+                        "last_updated"
+                    ] = (
+                        time.time()
+                        * 1000
                     )
 
                     await notify_task_update(
@@ -1208,13 +1523,25 @@ async def download_worker():
                     )
                 ):
 
-                    task["status"] = "processing"
-                    task["percent"] = 92
-                    task["step"] = (
+                    task[
+                        "status"
+                    ] = "processing"
+
+                    task[
+                        "percent"
+                    ] = 92
+
+                    task[
+                        "step"
+                    ] = (
                         "Processing metadata..."
                     )
-                    task["last_updated"] = (
-                        time.time() * 1000
+
+                    task[
+                        "last_updated"
+                    ] = (
+                        time.time()
+                        * 1000
                     )
 
                     await notify_task_update(
@@ -1229,17 +1556,28 @@ async def download_worker():
                 None,
             )
 
-            if task.get("cancel_requested"):
+            if task.get(
+                "cancel_requested"
+            ):
 
                 await asyncio.to_thread(
                     cleanup_task_files,
                     task_id,
                 )
 
-                task["status"] = "cancelled"
-                task["step"] = "Cancelled"
-                task["last_updated"] = (
-                    time.time() * 1000
+                task[
+                    "status"
+                ] = "cancelled"
+
+                task[
+                    "step"
+                ] = "Cancelled"
+
+                task[
+                    "last_updated"
+                ] = (
+                    time.time()
+                    * 1000
                 )
 
                 await notify_task_update(
@@ -1251,13 +1589,15 @@ async def download_worker():
 
             if process.returncode != 0:
 
-                stderr = (
-                    await process.stderr.read()
+                stderr = await (
+                    process.stderr.read()
                 )
 
-                error_text = stderr.decode(
-                    "utf-8",
-                    errors="ignore",
+                error_text = (
+                    stderr.decode(
+                        "utf-8",
+                        errors="ignore",
+                    )
                 )
 
                 await asyncio.to_thread(
@@ -1265,14 +1605,28 @@ async def download_worker():
                     task_id,
                 )
 
-                task["status"] = "error"
-                task["step"] = "Download failed"
-                task["error"] = (
-                    error_text[-1200:]
+                task[
+                    "status"
+                ] = "error"
+
+                task[
+                    "step"
+                ] = "Download failed"
+
+                task[
+                    "error"
+                ] = (
+                    error_text[
+                        -1200:
+                    ]
                     or "yt-dlp failed."
                 )
-                task["last_updated"] = (
-                    time.time() * 1000
+
+                task[
+                    "last_updated"
+                ] = (
+                    time.time()
+                    * 1000
                 )
 
                 await notify_task_update(
@@ -1300,13 +1654,25 @@ async def download_worker():
 
             if not possible_files:
 
-                task["status"] = "error"
-                task["step"] = "Download failed"
-                task["error"] = (
+                task[
+                    "status"
+                ] = "error"
+
+                task[
+                    "step"
+                ] = "Download failed"
+
+                task[
+                    "error"
+                ] = (
                     "Downloaded file not found."
                 )
-                task["last_updated"] = (
-                    time.time() * 1000
+
+                task[
+                    "last_updated"
+                ] = (
+                    time.time()
+                    * 1000
                 )
 
                 await notify_task_update(
@@ -1316,20 +1682,34 @@ async def download_worker():
 
                 continue
 
-            audio_file = possible_files[0]
+            audio_file = (
+                possible_files[0]
+            )
 
             extension = (
                 audio_file.suffix
                 or f".{fmt}"
             )
 
-            task["status"] = "processing"
-            task["percent"] = 96
-            task["step"] = (
+            task[
+                "status"
+            ] = "processing"
+
+            task[
+                "percent"
+            ] = 96
+
+            task[
+                "step"
+            ] = (
                 "Cleaning metadata..."
             )
-            task["last_updated"] = (
-                time.time() * 1000
+
+            task[
+                "last_updated"
+            ] = (
+                time.time()
+                * 1000
             )
 
             await notify_task_update(
@@ -1383,7 +1763,8 @@ async def download_worker():
             )
 
             if (
-                clean_process.returncode == 0
+                clean_process.returncode
+                == 0
                 and clean_file.exists()
             ):
 
@@ -1396,17 +1777,31 @@ async def download_worker():
 
             elif not audio_file.exists():
 
-                task["status"] = "error"
-                task["step"] = "Processing failed"
-                task["error"] = (
+                task[
+                    "status"
+                ] = "error"
+
+                task[
+                    "step"
+                ] = "Processing failed"
+
+                task[
+                    "error"
+                ] = (
                     clean_stderr.decode(
                         "utf-8",
                         errors="ignore",
-                    )[-1200:]
+                    )[
+                        -1200:
+                    ]
                     or "FFmpeg failed."
                 )
-                task["last_updated"] = (
-                    time.time() * 1000
+
+                task[
+                    "last_updated"
+                ] = (
+                    time.time()
+                    * 1000
                 )
 
                 await notify_task_update(
@@ -1429,7 +1824,8 @@ async def download_worker():
             ):
 
                 final_dir = (
-                    DOWNLOAD_DIR / artist
+                    DOWNLOAD_DIR
+                    / artist
                 )
 
                 final_dir.mkdir(
@@ -1438,14 +1834,17 @@ async def download_worker():
                 )
 
             else:
+
                 final_dir = DOWNLOAD_DIR
 
             final_name = (
-                f"{clean_title}{extension}"
+                f"{clean_title}"
+                f"{extension}"
             )
 
             final_path = (
-                final_dir / final_name
+                final_dir
+                / final_name
             )
 
             if (
@@ -1462,7 +1861,8 @@ async def download_worker():
                 )
 
                 final_path = (
-                    final_dir / final_name
+                    final_dir
+                    / final_name
                 )
 
             shutil.move(
@@ -1470,19 +1870,39 @@ async def download_worker():
                 str(final_path),
             )
 
-            task["final_name"] = str(
+            task[
+                "final_name"
+            ] = str(
                 final_path.relative_to(
                     DOWNLOAD_DIR
                 )
             )
 
-            task["status"] = "completed"
-            task["percent"] = 100
-            task["speed"] = ""
-            task["step"] = "Ready"
-            task["error"] = ""
-            task["last_updated"] = (
-                time.time() * 1000
+            task[
+                "status"
+            ] = "completed"
+
+            task[
+                "percent"
+            ] = 100
+
+            task[
+                "speed"
+            ] = ""
+
+            task[
+                "step"
+            ] = "Ready"
+
+            task[
+                "error"
+            ] = ""
+
+            task[
+                "last_updated"
+            ] = (
+                time.time()
+                * 1000
             )
 
             METADATA_CACHE.pop(
@@ -1500,7 +1920,9 @@ async def download_worker():
 
         except Exception as error:
 
-            task = TASKS.get(task_id)
+            task = TASKS.get(
+                task_id
+            )
 
             ACTIVE_PROCESSES.pop(
                 task_id,
@@ -1514,13 +1936,25 @@ async def download_worker():
 
             if task:
 
-                task["status"] = "error"
-                task["step"] = (
+                task[
+                    "status"
+                ] = "error"
+
+                task[
+                    "step"
+                ] = (
                     "Unexpected error"
                 )
-                task["error"] = str(error)
-                task["last_updated"] = (
-                    time.time() * 1000
+
+                task[
+                    "error"
+                ] = str(error)
+
+                task[
+                    "last_updated"
+                ] = (
+                    time.time()
+                    * 1000
                 )
 
                 await notify_task_update(
@@ -1555,7 +1989,10 @@ async def startup_event():
         db_load_tasks_sync
     )
 
-    now = time.time() * 1000
+    now = (
+        time.time()
+        * 1000
+    )
 
     for task in TASKS.values():
 
@@ -1566,12 +2003,23 @@ async def startup_event():
             "processing",
         }:
 
-            task["status"] = "queued"
-            task["step"] = (
+            task[
+                "status"
+            ] = "queued"
+
+            task[
+                "step"
+            ] = (
                 "Recovered after restart"
             )
-            task["cancel_requested"] = False
-            task["last_updated"] = now
+
+            task[
+                "cancel_requested"
+            ] = False
+
+            task[
+                "last_updated"
+            ] = now
 
             await db_save_task(
                 task,
@@ -1581,6 +2029,7 @@ async def startup_event():
     for _ in range(
         MAX_CONCURRENT_DOWNLOADS
     ):
+
         asyncio.create_task(
             download_worker()
         )
@@ -1597,7 +2046,7 @@ async def startup_event():
 
 
 # ============================================================
-# WEBSOCKET ENDPOINT
+# WEBSOCKET
 # ============================================================
 
 @app.websocket("/ws")
@@ -1612,6 +2061,7 @@ async def websocket_endpoint(
     try:
 
         while True:
+
             await websocket.receive_text()
 
     except WebSocketDisconnect:
@@ -1633,6 +2083,7 @@ async def websocket_endpoint(
 
 @app.get("/")
 async def home():
+
     return FileResponse(
         STATIC_DIR / "index.html"
     )
@@ -1651,6 +2102,7 @@ async def api_health():
 
 @app.get("/api/settings")
 async def api_get_settings():
+
     return public_settings()
 
 
@@ -1658,7 +2110,9 @@ async def api_get_settings():
 async def api_post_settings(
     data: dict = Body(...),
 ):
+
     save_settings(data)
+
     return public_settings()
 
 
@@ -1678,7 +2132,9 @@ async def youtube_search(
         + 1
     )
 
-    end = page * max_results
+    end = (
+        page * max_results
+    )
 
     command = [
         "yt-dlp",
@@ -1701,7 +2157,9 @@ async def youtube_search(
         )
     )
 
-    stdout, stderr = await process.communicate()
+    stdout, stderr = (
+        await process.communicate()
+    )
 
     if process.returncode != 0:
 
@@ -1709,8 +2167,12 @@ async def youtube_search(
             stderr.decode(
                 "utf-8",
                 errors="ignore",
-            )[-2000:]
-            or "yt-dlp search failed."
+            )[
+                -2000:
+            ]
+            or (
+                "yt-dlp search failed."
+            )
         )
 
     try:
@@ -1738,44 +2200,65 @@ async def youtube_search(
         if not item:
             continue
 
-        video_id = item.get("id")
+        video_id = item.get(
+            "id"
+        )
 
         if not video_id:
             continue
 
         duration = safe_int(
-            item.get("duration", 0),
+            item.get(
+                "duration",
+                0,
+            ),
             0,
         )
 
         results.append(
             {
                 "id": video_id,
-                "title": item.get(
-                    "title",
-                    "Unknown Track",
-                ),
-                "channel": (
-                    item.get("channel")
-                    or item.get("uploader")
-                    or "Unknown Artist"
-                ),
-                "duration": duration,
-                "duration_text": format_duration(
-                    duration
-                ),
-                "thumbnail": (
-                    item.get("thumbnail")
-                    or (
-                        "https://i.ytimg.com/"
-                        f"vi/{video_id}/"
-                        "hqdefault.jpg"
-                    )
-                ),
-                "url": (
-                    "https://www.youtube.com/"
-                    f"watch?v={video_id}"
-                ),
+
+                "title":
+                    item.get(
+                        "title",
+                        "Unknown Track",
+                    ),
+
+                "channel":
+                    (
+                        item.get("channel")
+                        or item.get(
+                            "uploader"
+                        )
+                        or "Unknown Artist"
+                    ),
+
+                "duration":
+                    duration,
+
+                "duration_text":
+                    format_duration(
+                        duration
+                    ),
+
+                "thumbnail":
+                    (
+                        item.get(
+                            "thumbnail"
+                        )
+                        or (
+                            "https://i.ytimg.com/"
+                            f"vi/{video_id}/"
+                            "hqdefault.jpg"
+                        )
+                    ),
+
+                "url":
+                    (
+                        "https://www.youtube.com/"
+                        f"watch?v={video_id}"
+                    ),
             }
         )
 
@@ -1812,7 +2295,10 @@ async def api_search(
         return await youtube_search(
             q,
             max_results,
-            max(1, page),
+            max(
+                1,
+                page,
+            ),
         )
 
     except Exception as error:
@@ -1833,6 +2319,7 @@ async def api_preview(
 ):
 
     if not url:
+
         raise HTTPException(
             status_code=400,
             detail="URL missing",
@@ -1850,7 +2337,9 @@ async def api_preview(
         )
     )
 
-    stdout, stderr = await process.communicate()
+    stdout, stderr = (
+        await process.communicate()
+    )
 
     if (
         process.returncode != 0
@@ -1863,8 +2352,12 @@ async def api_preview(
                 stderr.decode(
                     "utf-8",
                     errors="ignore",
-                )[-1000:]
-                or "Preview unavailable."
+                )[
+                    -1000:
+                ]
+                or (
+                    "Preview unavailable."
+                )
             ),
         )
 
@@ -1900,8 +2393,10 @@ async def api_preview(
 
             while True:
 
-                chunk = await ffmpeg.stdout.read(
-                    64 * 1024
+                chunk = (
+                    await ffmpeg.stdout.read(
+                        64 * 1024
+                    )
                 )
 
                 if not chunk:
@@ -1922,8 +2417,10 @@ async def api_preview(
         generator(),
         media_type="audio/mpeg",
         headers={
-            "Cache-Control": "no-cache",
-            "Access-Control-Allow-Origin": "*",
+            "Cache-Control":
+                "no-cache",
+            "Access-Control-Allow-Origin":
+                "*",
         },
     )
 
@@ -1937,9 +2434,12 @@ async def api_download(
     payload: dict = Body(...),
 ):
 
-    url = payload.get("url")
+    url = payload.get(
+        "url"
+    )
 
     if not url:
+
         raise HTTPException(
             status_code=400,
             detail="Missing URL",
@@ -1948,8 +2448,14 @@ async def api_download(
     for task in TASKS.values():
 
         if (
-            task.get("url") == url
-            and task.get("status") in {
+            task.get(
+                "url"
+            )
+            == url
+            and task.get(
+                "status"
+            )
+            in {
                 "queued",
                 "downloading",
                 "processing",
@@ -1957,63 +2463,103 @@ async def api_download(
         ):
 
             return {
-                "status": "already_queued",
-                "task_id": task["id"],
+                "status":
+                    "already_queued",
+                "task_id":
+                    task["id"],
             }
 
-    task_id = uuid.uuid4().hex[:12]
+    task_id = (
+        uuid.uuid4()
+        .hex[:12]
+    )
 
     task = {
-        "id": task_id,
-        "title": str(
-            payload.get(
-                "title",
-                "Unknown Track",
-            )
-        ),
-        "artist": str(
-            payload.get(
-                "artist",
-                "Unknown Artist",
-            )
-        ),
-        "album": str(
-            payload.get(
-                "title",
-                "Unknown Track",
-            )
-        ),
-        "url": url,
-        "elementId": str(
-            payload.get(
-                "elementId",
-                "",
-            )
-        ),
-        "status": "queued",
-        "percent": 0,
-        "speed": "",
-        "step": "Queued...",
-        "error": "",
-        "last_updated": (
-            time.time() * 1000
-        ),
-        "final_name": "",
-        "cancel_requested": False,
+
+        "id":
+            task_id,
+
+        "title":
+            str(
+                payload.get(
+                    "title",
+                    "Unknown Track",
+                )
+            ),
+
+        "artist":
+            str(
+                payload.get(
+                    "artist",
+                    "Unknown Artist",
+                )
+            ),
+
+        "album":
+            str(
+                payload.get(
+                    "title",
+                    "Unknown Track",
+                )
+            ),
+
+        "url":
+            url,
+
+        "elementId":
+            str(
+                payload.get(
+                    "elementId",
+                    "",
+                )
+            ),
+
+        "status":
+            "queued",
+
+        "percent":
+            0,
+
+        "speed":
+            "",
+
+        "step":
+            "Queued...",
+
+        "error":
+            "",
+
+        "last_updated":
+            (
+                time.time()
+                * 1000
+            ),
+
+        "final_name":
+            "",
+
+        "cancel_requested":
+            False,
     }
 
-    TASKS[task_id] = task
+    TASKS[
+        task_id
+    ] = task
 
     await notify_task_update(
         task,
         force_save=True,
     )
 
-    await TASK_QUEUE.put(task_id)
+    await TASK_QUEUE.put(
+        task_id
+    )
 
     return {
-        "status": "ok",
-        "task_id": task_id,
+        "status":
+            "ok",
+        "task_id":
+            task_id,
     }
 
 
@@ -2027,12 +2573,16 @@ async def api_tasks():
     tasks.sort(
         key=lambda task: (
             0
-            if task.get("status") in {
+            if task.get(
+                "status"
+            )
+            in {
                 "queued",
                 "downloading",
                 "processing",
             }
             else 1,
+
             -safe_float(
                 task.get(
                     "last_updated",
@@ -2052,18 +2602,25 @@ async def api_cancel_task(
     task_id: str,
 ):
 
-    task = TASKS.get(task_id)
+    task = TASKS.get(
+        task_id
+    )
 
     if not task:
+
         raise HTTPException(
             status_code=404,
             detail="Task not found",
         )
 
-    task["cancel_requested"] = True
+    task[
+        "cancel_requested"
+    ] = True
 
-    process = ACTIVE_PROCESSES.get(
-        task_id
+    process = (
+        ACTIVE_PROCESSES.get(
+            task_id
+        )
     )
 
     if process:
@@ -2073,10 +2630,19 @@ async def api_cancel_task(
         except Exception:
             pass
 
-    task["status"] = "cancelled"
-    task["step"] = "Cancelled"
-    task["last_updated"] = (
-        time.time() * 1000
+    task[
+        "status"
+    ] = "cancelled"
+
+    task[
+        "step"
+    ] = "Cancelled"
+
+    task[
+        "last_updated"
+    ] = (
+        time.time()
+        * 1000
     )
 
     await notify_task_update(
@@ -2085,8 +2651,10 @@ async def api_cancel_task(
     )
 
     return {
-        "status": "cancelled",
-        "task_id": task_id,
+        "status":
+            "cancelled",
+        "task_id":
+            task_id,
     }
 
 
@@ -2105,8 +2673,11 @@ async def api_clear_completed():
 
     ids = [
         task_id
-        for task_id, task in TASKS.items()
-        if task.get("status") in removable
+        for task_id, task
+        in TASKS.items()
+        if task.get(
+            "status"
+        ) in removable
     ]
 
     for task_id in ids:
@@ -2127,15 +2698,22 @@ async def api_clear_completed():
 
     await manager.broadcast(
         {
-            "type": "task_update",
-            "action": "cleared",
-            "count": len(ids),
+            "type":
+                "task_update",
+
+            "action":
+                "cleared",
+
+            "count":
+                len(ids),
         }
     )
 
     return {
-        "status": "cleared",
-        "count": len(ids),
+        "status":
+            "cleared",
+        "count":
+            len(ids),
     }
 
 
@@ -2146,15 +2724,20 @@ async def api_delete_task(
     task_id: str,
 ):
 
-    task = TASKS.get(task_id)
+    task = TASKS.get(
+        task_id
+    )
 
     if not task:
+
         raise HTTPException(
             status_code=404,
             detail="Task not found",
         )
 
-    if task.get("status") in {
+    if task.get(
+        "status"
+    ) in {
         "queued",
         "downloading",
         "processing",
@@ -2183,8 +2766,10 @@ async def api_delete_task(
     )
 
     return {
-        "status": "deleted",
-        "task_id": task_id,
+        "status":
+            "deleted",
+        "task_id":
+            task_id,
     }
 
 
@@ -2195,7 +2780,9 @@ async def api_delete_task(
 @app.get("/api/library")
 async def api_library():
 
-    files = await get_all_audio_files()
+    files = (
+        await get_all_audio_files()
+    )
 
     result = []
     total = 0
@@ -2211,122 +2798,204 @@ async def api_library():
 
         result.append(
             {
-                "name": str(
-                    path.relative_to(
-                        DOWNLOAD_DIR
-                    )
-                ),
-                "size": format_size(size),
-                "bytes": size,
+                "name":
+                    str(
+                        path.relative_to(
+                            DOWNLOAD_DIR
+                        )
+                    ),
+
+                "size":
+                    format_size(
+                        size
+                    ),
+
+                "bytes":
+                    size,
             }
         )
 
     result.sort(
         key=lambda item:
-            item["name"].lower()
+            item[
+                "name"
+            ].lower()
     )
 
     return {
-        "files": result,
-        "total_size": format_size(total),
-        "total_bytes": total,
+        "files":
+            result,
+
+        "total_size":
+            format_size(
+                total
+            ),
+
+        "total_bytes":
+            total,
     }
 
 
 @app.get("/api/stats")
 async def api_stats():
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
-    songs = library["songs"]
+    songs = library[
+        "songs"
+    ]
 
     artists = {
-        song["artist"]
+        song[
+            "artist"
+        ]
         for song in songs
     }
 
     albums = {
         (
-            song["artist"],
-            song["album"],
+            song[
+                "artist"
+            ],
+            song[
+                "album"
+            ],
         )
         for song in songs
     }
 
     total = sum(
-        song["size"]
+        song[
+            "size"
+        ]
         for song in songs
     )
 
     return {
-        "tracks": len(songs),
-        "artists": len(artists),
-        "albums": len(albums),
-        "total_bytes": total,
-        "folder_size": format_size(total),
+        "tracks":
+            len(songs),
+
+        "artists":
+            len(artists),
+
+        "albums":
+            len(albums),
+
+        "total_bytes":
+            total,
+
+        "folder_size":
+            format_size(
+                total
+            ),
     }
 
 
 @app.get("/api/home")
 async def api_home():
 
-    stats = await api_stats()
+    stats = (
+        await api_stats()
+    )
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     songs = sorted(
-        library["songs"],
+        library[
+            "songs"
+        ],
         key=lambda song:
-            song["modified"],
+            song[
+                "modified"
+            ],
         reverse=True,
     )
 
     settings = load_settings()
 
-    username = urllib.parse.quote(
-        settings.get(
-            "subsonic_user",
-            "admin",
+    username = (
+        urllib.parse.quote(
+            settings.get(
+                "subsonic_user",
+                "admin",
+            )
         )
     )
 
-    password = urllib.parse.quote(
-        settings.get(
-            "subsonic_password",
-            "",
+    password = (
+        urllib.parse.quote(
+            settings.get(
+                "subsonic_password",
+                "",
+            )
         )
     )
 
     recent = []
 
-    for song in songs[:12]:
+    for song in songs[
+        :12
+    ]:
 
         recent.append(
             {
-                "id": song["id"],
-                "title": song["title"],
-                "artist": song["artist"],
-                "album": song["album"],
-                "duration": song["duration"],
-                "cover": (
-                    "/rest/getCoverArt.view"
-                    "?id="
-                    + urllib.parse.quote(song["id"])
-                    + "&u="
-                    + username
-                    + "&p="
-                    + password
-                    + "&v=1.16.1"
-                    + "&c=XrobMusic"
-                    + "&f=json"
-                ),
+                "id":
+                    song[
+                        "id"
+                    ],
+
+                "title":
+                    song[
+                        "title"
+                    ],
+
+                "artist":
+                    song[
+                        "artist"
+                    ],
+
+                "album":
+                    song[
+                        "album"
+                    ],
+
+                "duration":
+                    song[
+                        "duration"
+                    ],
+
+                "cover":
+                    (
+                        "/rest/getCoverArt.view"
+                        "?id="
+                        + urllib.parse.quote(
+                            song[
+                                "id"
+                            ]
+                        )
+                        + "&u="
+                        + username
+                        + "&p="
+                        + password
+                        + "&v=1.16.1"
+                        + "&c=XrobMusic"
+                        + "&f=json"
+                    ),
             }
         )
 
     active = sum(
         1
-        for task in TASKS.values()
-        if task.get("status") in {
+        for task
+        in TASKS.values()
+        if task.get(
+            "status"
+        )
+        in {
             "queued",
             "downloading",
             "processing",
@@ -2334,9 +3003,14 @@ async def api_home():
     )
 
     return {
-        "stats": stats,
-        "active_downloads": active,
-        "recently_added": recent,
+        "stats":
+            stats,
+
+        "active_downloads":
+            active,
+
+        "recently_added":
+            recent,
     }
 
 
@@ -2347,11 +3021,16 @@ async def api_library_cover(
     filename: str,
 ):
 
-    path = await resolve_file(filename)
+    path = await resolve_file(
+        filename
+    )
 
-    cover = await ensure_cover(path)
+    cover = await ensure_cover(
+        path
+    )
 
     if cover:
+
         return FileResponse(
             cover,
             media_type="image/jpeg",
@@ -2359,16 +3038,27 @@ async def api_library_cover(
 
     return Response(
         content=(
-            "<svg xmlns='http://www.w3.org/2000/svg' "
-            "width='300' height='300'>"
-            "<rect width='100%' height='100%' "
+            "<svg "
+            "xmlns='http://www.w3.org/2000/svg' "
+            "width='300' "
+            "height='300'>"
+
+            "<rect "
+            "width='100%' "
+            "height='100%' "
             "fill='#202020'/>"
-            "<text x='50%' y='50%' "
-            "fill='#aaa' font-size='55' "
+
+            "<text "
+            "x='50%' "
+            "y='50%' "
+            "fill='#aaa' "
+            "font-size='55' "
             "text-anchor='middle' "
             "dominant-baseline='central'>"
             "🎵"
-            "</text></svg>"
+            "</text>"
+
+            "</svg>"
         ),
         media_type="image/svg+xml",
     )
@@ -2381,7 +3071,9 @@ async def api_library_stream(
     filename: str,
 ):
 
-    path = await resolve_file(filename)
+    path = await resolve_file(
+        filename
+    )
 
     return FileResponse(
         path,
@@ -2389,6 +3081,10 @@ async def api_library_stream(
             path.suffix.lower(),
             "audio/mpeg",
         ),
+        headers={
+            "Accept-Ranges":
+                "bytes",
+        },
     )
 
 
@@ -2399,11 +3095,15 @@ async def api_delete_library(
     filename: str,
 ):
 
-    path = await resolve_file(filename)
+    path = await resolve_file(
+        filename
+    )
 
     try:
 
-        cover = cover_cache_path(path)
+        cover = cover_cache_path(
+            path
+        )
 
         path.unlink()
 
@@ -2416,8 +3116,11 @@ async def api_delete_library(
         )
 
         return {
-            "status": "deleted",
-            "filename": filename,
+            "status":
+                "deleted",
+
+            "filename":
+                filename,
         }
 
     except Exception as error:
@@ -2429,7 +3132,7 @@ async def api_delete_library(
 
 
 # ============================================================
-# SUBSONIC AUTHENTICATION
+# SUBSONIC AUTH
 # ============================================================
 
 def subsonic_credentials():
@@ -2443,6 +3146,7 @@ def subsonic_credentials():
                 "admin",
             )
         ),
+
         str(
             settings.get(
                 "subsonic_password",
@@ -2460,61 +3164,90 @@ def validate_subsonic_auth(
         subsonic_credentials()
     )
 
-    supplied_user = request.query_params.get(
-        "u",
-        "",
+    supplied_user = (
+        request.query_params.get(
+            "u",
+            "",
+        )
     )
 
-    supplied_password = request.query_params.get(
-        "p",
-        "",
+    supplied_password = (
+        request.query_params.get(
+            "p",
+            "",
+        )
     )
 
-    token = request.query_params.get(
-        "t",
-        "",
+    token = (
+        request.query_params.get(
+            "t",
+            "",
+        )
     )
 
-    salt = request.query_params.get(
-        "s",
-        "",
+    salt = (
+        request.query_params.get(
+            "s",
+            "",
+        )
     )
 
     if supplied_user != username:
         return False
 
-    # t = MD5(password + salt)
+    # Token authentication:
+    # t = md5(password + salt)
     if token and salt:
 
         expected = hashlib.md5(
             (
-                password + salt
-            ).encode("utf-8")
+                password
+                + salt
+            ).encode(
+                "utf-8"
+            )
         ).hexdigest()
 
-        if token.lower() == expected.lower():
+        if (
+            token.lower()
+            == expected.lower()
+        ):
             return True
 
-    if supplied_password == password:
-        return True
-
-    # md5(password) compatibility
+    # Plain password.
     if (
         supplied_password
-        and len(supplied_password) == 32
+        == password
+    ):
+        return True
+
+    # md5(password)
+    if (
+        supplied_password
+        and len(
+            supplied_password
+        )
+        == 32
     ):
 
         expected = hashlib.md5(
-            password.encode("utf-8")
+            password.encode(
+                "utf-8"
+            )
         ).hexdigest()
 
-        if supplied_password.lower() == expected.lower():
+        if (
+            supplied_password.lower()
+            == expected.lower()
+        ):
             return True
 
     return False
 
 
-def require_auth(request):
+def require_auth(
+    request,
+):
 
     if not validate_subsonic_auth(
         request
@@ -2530,12 +3263,18 @@ def require_auth(request):
 
 
 # ============================================================
-# SUBSONIC RESPONSE SERIALIZER
+# SUBSONIC SERIALIZER
 # ============================================================
 
-def scalar(value):
+def scalar(
+    value,
+):
 
-    if isinstance(value, bool):
+    if isinstance(
+        value,
+        bool,
+    ):
+
         return (
             "true"
             if value
@@ -2594,13 +3333,17 @@ def append_xml_dict(
 
                 else:
 
-                    child.text = scalar(item)
+                    child.text = scalar(
+                        item
+                    )
 
         else:
 
             parent.set(
                 key,
-                scalar(value),
+                scalar(
+                    value
+                ),
             )
 
 
@@ -2651,7 +3394,9 @@ def append_xml_value(
 
             else:
 
-                child.text = scalar(item)
+                child.text = scalar(
+                    item
+                )
 
         return
 
@@ -2660,7 +3405,9 @@ def append_xml_value(
         key,
     )
 
-    child.text = scalar(value)
+    child.text = scalar(
+        value
+    )
 
 
 def make_subsonic_response(
@@ -2676,6 +3423,10 @@ def make_subsonic_response(
         or "xml"
     ).lower()
 
+    # ----------------------------------------
+    # JSON
+    # ----------------------------------------
+
     if fmt == "json":
 
         return JSONResponse(
@@ -2684,6 +3435,10 @@ def make_subsonic_response(
                     payload
             }
         )
+
+    # ----------------------------------------
+    # XML
+    # ----------------------------------------
 
     root_attributes = {}
 
@@ -2697,8 +3452,12 @@ def make_subsonic_response(
 
         if key in payload:
 
-            root_attributes[key] = scalar(
-                payload[key]
+            root_attributes[
+                key
+            ] = scalar(
+                payload[
+                    key
+                ]
             )
 
     root = ET.Element(
@@ -2734,10 +3493,13 @@ def make_subsonic_response(
             )
 
             if "name" in extension:
+
                 item.set(
                     "name",
                     scalar(
-                        extension["name"]
+                        extension[
+                            "name"
+                        ]
                     ),
                 )
 
@@ -2754,8 +3516,11 @@ def make_subsonic_response(
                 item.set(
                     "versions",
                     ",".join(
-                        scalar(version)
-                        for version in versions
+                        scalar(
+                            version
+                        )
+                        for version
+                        in versions
                     ),
                 )
 
@@ -2763,7 +3528,9 @@ def make_subsonic_response(
 
                 item.set(
                     "versions",
-                    scalar(versions),
+                    scalar(
+                        versions
+                    ),
                 )
 
     for key, value in payload.items():
@@ -2804,15 +3571,29 @@ def subsonic_error(
 
     return make_subsonic_response(
         {
-            "status": "failed",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "error": {
-                "code": str(code),
-                "message": message,
-            },
+            "status":
+                "failed",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "error":
+                {
+                    "code":
+                        str(code),
+
+                    "message":
+                        message,
+                },
         },
         request,
     )
@@ -2822,9 +3603,13 @@ def subsonic_error(
 # STARRED
 # ============================================================
 
-def is_starred_sync(item_id):
+def is_starred_sync(
+    item_id,
+):
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(
+        DB_FILE
+    ) as conn:
 
         row = conn.execute(
             """
@@ -2843,14 +3628,15 @@ def set_star_sync(
     enabled,
 ):
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(
+        DB_FILE
+    ) as conn:
 
         if enabled:
 
             conn.execute(
                 """
-                INSERT OR REPLACE INTO stars
-                (
+                INSERT OR REPLACE INTO stars (
                     item_id,
                     starred_at
                 )
@@ -2869,7 +3655,9 @@ def set_star_sync(
                 DELETE FROM stars
                 WHERE item_id = ?
                 """,
-                (item_id,),
+                (
+                    item_id,
+                ),
             )
 
         conn.commit()
@@ -2879,98 +3667,215 @@ def set_star_sync(
 # SUBSONIC OBJECTS
 # ============================================================
 
-def song_to_subsonic(song):
+def song_to_subsonic(
+    song,
+):
 
     track_value = safe_int(
-        song.get("track"),
+        song.get(
+            "track"
+        ),
         0,
     )
 
     result = {
-        "id": song["id"],
-        "parent": song["albumId"],
-        "isDir": False,
-        "title": song["title"],
-        "album": song["album"],
-        "artist": song["artist"],
-        "artistId": song["artistId"],
-        "albumId": song["albumId"],
-        "year": safe_int(
-            song.get("year"),
+
+        "id":
+            song["id"],
+
+        "parent":
+            song["albumId"],
+
+        "isDir":
+            False,
+
+        "title":
+            song["title"],
+
+        "album":
+            song["album"],
+
+        "artist":
+            song["artist"],
+
+        "artistId":
+            song["artistId"],
+
+        "albumId":
+            song["albumId"],
+
+        "year":
+            safe_int(
+                song.get(
+                    "year"
+                ),
+                0,
+            ),
+
+        "genre":
+            song.get(
+                "genre",
+                "",
+            ),
+
+        "coverArt":
+            song["id"],
+
+        "size":
+            song["size"],
+
+        "contentType":
+            MEDIA_TYPES.get(
+                song["suffix"],
+                "audio/mpeg",
+            ),
+
+        "suffix":
+            song[
+                "suffix"
+            ].lstrip("."),
+
+        "duration":
+            safe_int(
+                song.get(
+                    "duration"
+                ),
+                0,
+            ),
+
+        "path":
+            str(
+                song[
+                    "path"
+                ].relative_to(
+                    DOWNLOAD_DIR
+                )
+            ),
+
+        "type":
+            "music",
+
+        "mediaType":
+            "song",
+
+        "isVideo":
+            False,
+
+        "playCount":
             0,
-        ),
-        "genre": song.get(
-            "genre",
+
+        "played":
+            False,
+
+        "starred":
+            bool(
+                is_starred_sync(
+                    song[
+                        "id"
+                    ]
+                )
+            ),
+
+        "comment":
             "",
-        ),
-        "coverArt": song["id"],
-        "size": song["size"],
-        "contentType": MEDIA_TYPES.get(
-            song["suffix"],
-            "audio/mpeg",
-        ),
-        "suffix": song["suffix"].lstrip(
-            "."
-        ),
-        "duration": safe_int(
-            song.get("duration"),
+
+        "sortName":
+            song["title"],
+
+        "musicBrainzId":
+            "",
+
+        "isrc":
+            [],
+
+        "moods":
+            [],
+
+        "explicitStatus":
+            "",
+
+        "bitRate":
             0,
-        ),
-        "path": str(
-            song["path"].relative_to(
-                DOWNLOAD_DIR
-            )
-        ),
-        "type": "music",
-        "mediaType": "song",
-        "isVideo": False,
-        "playCount": 0,
-        "played": False,
-        "starred": bool(
-            is_starred_sync(
-                song["id"]
-            )
-        ),
-        "comment": "",
-        "sortName": song["title"],
-        "musicBrainzId": "",
-        "isrc": [],
-        "moods": [],
-        "explicitStatus": "",
-        "bitRate": 0,
-        "bitDepth": 0,
-        "samplingRate": 0,
-        "channelCount": 0,
+
+        "bitDepth":
+            0,
+
+        "samplingRate":
+            0,
+
+        "channelCount":
+            0,
     }
 
-    if song.get("genre"):
-        result["genres"] = [
+    if song.get(
+        "genre"
+    ):
+
+        result[
+            "genres"
+        ] = [
             {
-                "name": song["genre"]
+                "name":
+                    song[
+                        "genre"
+                    ]
             }
         ]
+
     else:
-        result["genres"] = []
 
-    result["artists"] = [
+        result[
+            "genres"
+        ] = []
+
+    result[
+        "artists"
+    ] = [
         {
-            "id": song["artistId"],
-            "name": song["artist"],
+            "id":
+                song[
+                    "artistId"
+                ],
+
+            "name":
+                song[
+                    "artist"
+                ],
         }
     ]
 
-    result["albumArtists"] = [
+    result[
+        "albumArtists"
+    ] = [
         {
-            "id": song["artistId"],
-            "name": song["artist"],
+            "id":
+                song[
+                    "artistId"
+                ],
+
+            "name":
+                song[
+                    "artist"
+                ],
         }
     ]
 
-    result["displayArtist"] = song["artist"]
-    result["displayAlbumArtist"] = song["artist"]
+    result[
+        "displayArtist"
+    ] = song[
+        "artist"
+    ]
+
+    result[
+        "displayAlbumArtist"
+    ] = song[
+        "artist"
+    ]
 
     if track_value > 0:
-        result["track"] = track_value
+        result[
+            "track"
+        ] = track_value
 
     return result
 
@@ -2998,12 +3903,15 @@ def album_to_subsonic(
                 "genre",
                 "",
             )
+
             for song in songs
+
             if song.get(
                 "genre",
                 "",
             )
         ),
+
         album.get(
             "genre",
             "",
@@ -3011,26 +3919,72 @@ def album_to_subsonic(
     )
 
     return {
-        "id": album["id"],
-        "parent": album["artistId"],
-        "isDir": True,
-        "title": album["name"],
-        "name": album["name"],
-        "album": album["name"],
-        "artist": album["artist"],
-        "artistId": album["artistId"],
-        "year": safe_int(
-            album.get(
-                "year"
+
+        "id":
+            album[
+                "id"
+            ],
+
+        "parent":
+            album[
+                "artistId"
+            ],
+
+        "isDir":
+            True,
+
+        "title":
+            album[
+                "name"
+            ],
+
+        "name":
+            album[
+                "name"
+            ],
+
+        "album":
+            album[
+                "name"
+            ],
+
+        "artist":
+            album[
+                "artist"
+            ],
+
+        "artistId":
+            album[
+                "artistId"
+            ],
+
+        "year":
+            safe_int(
+                album.get(
+                    "year"
+                ),
+                0,
             ),
+
+        "genre":
+            genre,
+
+        "coverArt":
+            album[
+                "id"
+            ],
+
+        "songCount":
+            len(songs),
+
+        "duration":
+            duration,
+
+        "playCount":
             0,
-        ),
-        "genre": genre,
-        "coverArt": album["id"],
-        "songCount": len(songs),
-        "duration": duration,
-        "playCount": 0,
-        "isVideo": False,
+
+        "isVideo":
+            False,
     }
 
 
@@ -3039,12 +3993,28 @@ def artist_to_subsonic(
 ):
 
     return {
-        "id": artist["id"],
-        "name": artist["name"],
-        "albumCount": len(
-            artist["albumIds"]
-        ),
-        "coverArt": artist["id"],
+
+        "id":
+            artist[
+                "id"
+            ],
+
+        "name":
+            artist[
+                "name"
+            ],
+
+        "albumCount":
+            len(
+                artist[
+                    "albumIds"
+                ]
+            ),
+
+        "coverArt":
+            artist[
+                "id"
+            ],
     }
 
 
@@ -3052,26 +4022,41 @@ def artist_to_subsonic(
 # PING
 # ============================================================
 
-@app.get("/rest/ping.view")
-@app.get("/rest/ping")
+@app.get(
+    "/rest/ping.view"
+)
+@app.get(
+    "/rest/ping"
+)
 async def rest_ping(
     request: Request,
 ):
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
         },
+
         request,
     )
 
 
 # ============================================================
-# OPENSUBSONIC EXTENSIONS
+# OPENSONIC EXTENSIONS
 # ============================================================
 
 @app.get(
@@ -3086,13 +4071,26 @@ async def rest_extensions(
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "openSubsonicExtensions": [],
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "openSubsonicExtensions":
+                [],
         },
+
         request,
     )
 
@@ -3101,34 +4099,57 @@ async def rest_extensions(
 # LICENSE
 # ============================================================
 
-@app.get("/rest/getLicense.view")
-@app.get("/rest/getLicense")
+@app.get(
+    "/rest/getLicense.view"
+)
+@app.get(
+    "/rest/getLicense"
+)
 async def rest_license(
     request: Request,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "license": {
-                "valid": True,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "license":
+                {
+                    "valid":
+                        True,
+                },
         },
+
         request,
     )
 
 
 # ============================================================
-# MUSIC FOLDERS
+# GET MUSIC FOLDERS
+#
+# IMPORTANT:
+# id is NUMBER 1, not string "1".
 # ============================================================
 
 @app.get(
@@ -3141,37 +4162,63 @@ async def rest_music_folders(
     request: Request,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "musicFolders": {
-                "musicFolder": [
-                    {
-                        "id": "1",
-                        "name": "Music",
-                    }
-                ]
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "musicFolders":
+                {
+                    "musicFolder":
+                        [
+                            {
+                                "id":
+                                    MUSIC_FOLDER_ID,
+
+                                "name":
+                                    MUSIC_FOLDER_NAME,
+                            }
+                        ]
+                },
         },
+
         request,
     )
 
 
 # ============================================================
 # GET USER
+#
+# IMPORTANT:
+# musicFolderId is NUMBER [1], not ["1"].
 # ============================================================
 
-@app.get("/rest/getUser.view")
-@app.get("/rest/getUser")
+@app.get(
+    "/rest/getUser.view"
+)
+@app.get(
+    "/rest/getUser"
+)
 async def rest_get_user(
     request: Request,
     username: Optional[str] = Query(
@@ -3179,7 +4226,9 @@ async def rest_get_user(
     ),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
@@ -3193,7 +4242,10 @@ async def rest_get_user(
         or configured_user
     )
 
-    if requested_user != configured_user:
+    if (
+        requested_user
+        != configured_user
+    ):
 
         return subsonic_error(
             request,
@@ -3203,38 +4255,87 @@ async def rest_get_user(
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "user": {
-                "username": configured_user,
-                "email": "",
-                "scrobblingEnabled": True,
-                "adminRole": True,
-                "settingsRole": True,
-                "downloadRole": True,
-                "uploadRole": False,
-                "playlistRole": True,
-                "coverArtRole": True,
-                "commentRole": True,
-                "podcastRole": False,
-                "shareRole": False,
-                "jukeboxRole": False,
-                "streamRole": True,
-                "videoConversionRole": False,
-                "musicFolderId": ["1"],
-                "maxBitRate": 0,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "user":
+                {
+
+                    "username":
+                        configured_user,
+
+                    "email":
+                        "",
+
+                    "scrobblingEnabled":
+                        True,
+
+                    "adminRole":
+                        True,
+
+                    "settingsRole":
+                        True,
+
+                    "downloadRole":
+                        True,
+
+                    "uploadRole":
+                        False,
+
+                    "playlistRole":
+                        True,
+
+                    "coverArtRole":
+                        True,
+
+                    "commentRole":
+                        True,
+
+                    "podcastRole":
+                        False,
+
+                    "shareRole":
+                        False,
+
+                    "jukeboxRole":
+                        False,
+
+                    "streamRole":
+                        True,
+
+                    "videoConversionRole":
+                        False,
+
+                    # IMPORTANT: numeric
+                    "musicFolderId":
+                        [
+                            MUSIC_FOLDER_ID
+                        ],
+
+                    "maxBitRate":
+                        0,
+                },
         },
+
         request,
     )
 
 
 # ============================================================
 # GET SCAN STATUS
-# FIX FOR ARPEGGI
 # ============================================================
 
 @app.get(
@@ -3247,19 +4348,18 @@ async def rest_get_scan_status(
     request: Request,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    # Xrob Music is filesystem based.
-    # There is no separate long-running scanner.
-    #
-    # We therefore report the library as not currently
-    # scanning while providing a useful current count.
     try:
 
-        library = await build_library()
+        library = (
+            await build_library()
+        )
 
         count = (
             len(
@@ -3288,16 +4388,32 @@ async def rest_get_scan_status(
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "scanStatus": {
-                "scanning": False,
-                "count": count,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "scanStatus":
+                {
+                    "scanning":
+                        False,
+
+                    "count":
+                        count,
+                },
         },
+
         request,
     )
 
@@ -3316,15 +4432,18 @@ async def rest_start_scan(
     request: Request,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    # Trigger a lightweight filesystem rebuild.
     try:
 
-        library = await build_library()
+        library = (
+            await build_library()
+        )
 
         count = (
             len(
@@ -3353,27 +4472,45 @@ async def rest_start_scan(
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "scanStatus": {
-                "scanning": False,
-                "count": count,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "scanStatus":
+                {
+                    "scanning":
+                        False,
+
+                    "count":
+                        count,
+                },
         },
+
         request,
     )
 
 
 # ============================================================
-# BUILD ARTIST INDEXES
+# ARTIST INDEX
 # ============================================================
 
 async def build_artist_indexes():
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     grouped = {}
 
@@ -3385,15 +4522,16 @@ async def build_artist_indexes():
             artist.get(
                 "name",
                 "",
-            )
-            .strip()
+            ).strip()
         )
 
         if not name:
             continue
 
         letter = (
-            name[:1].upper()
+            name[
+                0
+            ].upper()
             if name
             else "#"
         )
@@ -3417,18 +4555,26 @@ async def build_artist_indexes():
 
         artists.sort(
             key=lambda item:
-                item["name"].lower()
+                item[
+                    "name"
+                ].lower()
         )
 
         result.append(
             {
-                "name": letter,
-                "artist": [
-                    artist_to_subsonic(
-                        artist
-                    )
-                    for artist in artists
-                ],
+
+                "name":
+                    letter,
+
+                "artist":
+                    [
+                        artist_to_subsonic(
+                            artist
+                        )
+
+                        for artist
+                        in artists
+                    ],
             }
         )
 
@@ -3439,31 +4585,56 @@ async def build_artist_indexes():
 # GET ARTISTS
 # ============================================================
 
-@app.get("/rest/getArtists.view")
-@app.get("/rest/getArtists")
+@app.get(
+    "/rest/getArtists.view"
+)
+@app.get(
+    "/rest/getArtists"
+)
 async def rest_artists(
     request: Request,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    indexes = await build_artist_indexes()
+    indexes = (
+        await build_artist_indexes()
+    )
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "artists": {
-                "ignoredArticles": "",
-                "index": indexes,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "artists":
+                {
+
+                    "ignoredArticles":
+                        "",
+
+                    "index":
+                        indexes,
+                },
         },
+
         request,
     )
 
@@ -3472,11 +4643,15 @@ async def rest_artists(
 # GET INDEXES
 # ============================================================
 
-@app.get("/rest/getIndexes.view")
-@app.get("/rest/getIndexes")
+@app.get(
+    "/rest/getIndexes.view"
+)
+@app.get(
+    "/rest/getIndexes"
+)
 async def rest_indexes(
     request: Request,
-    musicFolderId: Optional[str] = Query(
+    musicFolderId: Optional[int] = Query(
         None
     ),
     ifModifiedSince: Optional[int] = Query(
@@ -3484,12 +4659,16 @@ async def rest_indexes(
     ),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     grouped = {}
 
@@ -3501,15 +4680,16 @@ async def rest_indexes(
             artist.get(
                 "name",
                 "",
-            )
-            .strip()
+            ).strip()
         )
 
         if not name:
             continue
 
         letter = (
-            name[:1].upper()
+            name[
+                0
+            ].upper()
             if name
             else "#"
         )
@@ -3519,14 +4699,21 @@ async def rest_indexes(
             [],
         ).append(
             {
-                "id": artist["id"],
-                "name": name,
-                "albumCount": len(
-                    artist.get(
-                        "albumIds",
-                        [],
-                    )
-                ),
+                "id":
+                    artist[
+                        "id"
+                    ],
+
+                "name":
+                    name,
+
+                "albumCount":
+                    len(
+                        artist.get(
+                            "albumIds",
+                            [],
+                        )
+                    ),
             }
         )
 
@@ -3542,13 +4729,19 @@ async def rest_indexes(
 
         artist_list.sort(
             key=lambda item:
-                item["name"].lower()
+                item[
+                    "name"
+                ].lower()
         )
 
         index_list.append(
             {
-                "name": letter,
-                "artist": artist_list,
+
+                "name":
+                    letter,
+
+                "artist":
+                    artist_list,
             }
         )
 
@@ -3561,49 +4754,89 @@ async def rest_indexes(
                 ),
                 0,
             )
-            for song in library[
+
+            for song
+            in library[
                 "songs"
             ]
         ),
         default=time.time(),
     )
 
-    # JSON number, not string.
+    # IMPORTANT:
+    # numeric JSON value, not string.
     last_modified = int(
-        latest_modified * 1000
+        latest_modified
+        * 1000
     )
 
     if (
-        ifModifiedSince is not None
-        and last_modified <= ifModifiedSince
+        ifModifiedSince
+        is not None
+        and last_modified
+        <= ifModifiedSince
     ):
 
         return make_subsonic_response(
             {
-                "status": "ok",
-                "version": SUBSONIC_VERSION,
-                "serverVersion": SERVER_VERSION,
-                "openSubsonic": True,
-                "type": "Xrob Music",
+
+                "status":
+                    "ok",
+
+                "version":
+                    SUBSONIC_VERSION,
+
+                "serverVersion":
+                    SERVER_VERSION,
+
+                "openSubsonic":
+                    True,
+
+                "type":
+                    "Xrob Music",
             },
+
             request,
         )
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "indexes": {
-                "shortcut": [],
-                "index": index_list,
-                "child": [],
-                "lastModified": last_modified,
-                "ignoredArticles": "",
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "indexes":
+                {
+
+                    "shortcut":
+                        [],
+
+                    "index":
+                        index_list,
+
+                    "child":
+                        [],
+
+                    "lastModified":
+                        last_modified,
+
+                    "ignoredArticles":
+                        "",
+                },
         },
+
         request,
     )
 
@@ -3612,19 +4845,27 @@ async def rest_indexes(
 # GET ARTIST
 # ============================================================
 
-@app.get("/rest/getArtist.view")
-@app.get("/rest/getArtist")
+@app.get(
+    "/rest/getArtist.view"
+)
+@app.get(
+    "/rest/getArtist"
+)
 async def rest_artist(
     request: Request,
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    artist = await find_artist(id)
+    artist = await find_artist(
+        id
+    )
 
     if not artist:
 
@@ -3634,11 +4875,14 @@ async def rest_artist(
             "Artist not found.",
         )
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     albums = []
 
-    for album_id in artist[
+    for album_id
+    in artist[
         "albumIds"
     ]:
 
@@ -3653,11 +4897,19 @@ async def rest_artist(
 
         songs = [
             song
-            for song in library[
+
+            for song
+            in library[
                 "songs"
             ]
-            if song["id"]
-            in album["songIds"]
+
+            if song[
+                "id"
+            ]
+
+            in album[
+                "songIds"
+            ]
         ]
 
         albums.append(
@@ -3669,23 +4921,41 @@ async def rest_artist(
 
     albums.sort(
         key=lambda item:
-            item["name"].lower()
+            item[
+                "name"
+            ].lower()
     )
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "artist": {
-                **artist_to_subsonic(
-                    artist
-                ),
-                "album": albums,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "artist":
+                {
+
+                    **artist_to_subsonic(
+                        artist
+                    ),
+
+                    "album":
+                        albums,
+                },
         },
+
         request,
     )
 
@@ -3694,19 +4964,27 @@ async def rest_artist(
 # GET ALBUM
 # ============================================================
 
-@app.get("/rest/getAlbum.view")
-@app.get("/rest/getAlbum")
+@app.get(
+    "/rest/getAlbum.view"
+)
+@app.get(
+    "/rest/getAlbum"
+)
 async def rest_album(
     request: Request,
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     album = library[
         "albums"
@@ -3724,33 +5002,59 @@ async def rest_album(
 
     songs = [
         song
-        for song in library[
+
+        for song
+        in library[
             "songs"
         ]
-        if song["id"]
-        in album["songIds"]
+
+        if song[
+            "id"
+        ]
+
+        in album[
+            "songIds"
+        ]
     ]
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "album": {
-                **album_to_subsonic(
-                    album,
-                    songs,
-                ),
-                "song": [
-                    song_to_subsonic(
-                        song
-                    )
-                    for song in songs
-                ],
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "album":
+                {
+
+                    **album_to_subsonic(
+                        album,
+                        songs,
+                    ),
+
+                    "song":
+                        [
+                            song_to_subsonic(
+                                song
+                            )
+
+                            for song
+                            in songs
+                        ],
+                },
         },
+
         request,
     )
 
@@ -3759,8 +5063,12 @@ async def rest_album(
 # GET ALBUM LIST 2
 # ============================================================
 
-@app.get("/rest/getAlbumList2.view")
-@app.get("/rest/getAlbumList2")
+@app.get(
+    "/rest/getAlbumList2.view"
+)
+@app.get(
+    "/rest/getAlbumList2"
+)
 async def rest_album_list2(
     request: Request,
     type: str = Query(
@@ -3777,31 +5085,44 @@ async def rest_album_list2(
     genre: Optional[str] = Query(
         None
     ),
-    musicFolderId: Optional[str] = Query(
+    musicFolderId: Optional[int] = Query(
         None
     ),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     album_data = []
 
-    for album in library[
+    for album
+    in library[
         "albums"
     ].values():
 
         songs = [
             song
-            for song in library[
+
+            for song
+            in library[
                 "songs"
             ]
-            if song["id"]
-            in album["songIds"]
+
+            if song[
+                "id"
+            ]
+
+            in album[
+                "songIds"
+            ]
         ]
 
         item = album_to_subsonic(
@@ -3809,7 +5130,9 @@ async def rest_album_list2(
             songs,
         )
 
-        item["_latest"] = max(
+        item[
+            "_latest"
+        ] = max(
             (
                 safe_float(
                     song.get(
@@ -3818,12 +5141,16 @@ async def rest_album_list2(
                     ),
                     0,
                 )
-                for song in songs
+
+                for song
+                in songs
             ),
             default=0,
         )
 
-        item["_play_count"] = sum(
+        item[
+            "_play_count"
+        ] = sum(
             safe_int(
                 song.get(
                     "playCount",
@@ -3831,49 +5158,63 @@ async def rest_album_list2(
                 ),
                 0,
             )
-            for song in songs
+
+            for song
+            in songs
         )
 
         album_data.append(
             item
         )
 
-    # Filters
     if fromYear is not None:
 
         album_data = [
             album
-            for album in album_data
+
+            for album
+            in album_data
+
             if safe_int(
                 album.get(
                     "year",
                     0,
                 ),
                 0,
-            ) >= fromYear
+            )
+            >= fromYear
         ]
 
     if toYear is not None:
 
         album_data = [
             album
-            for album in album_data
+
+            for album
+            in album_data
+
             if safe_int(
                 album.get(
                     "year",
                     0,
                 ),
                 0,
-            ) <= toYear
+            )
+            <= toYear
         ]
 
     if genre:
 
-        target_genre = genre.lower()
+        target_genre = (
+            genre.lower()
+        )
 
         album_data = [
             album
-            for album in album_data
+
+            for album
+            in album_data
+
             if album.get(
                 "genre",
                 "",
@@ -3882,10 +5223,10 @@ async def rest_album_list2(
         ]
 
     album_type = (
-        type or "alphabeticalByName"
+        type
+        or "alphabeticalByName"
     )
 
-    # Arpeggi asks for these.
     if album_type == "frequent":
 
         album_data.sort(
@@ -3949,7 +5290,10 @@ async def rest_album_list2(
             reverse=True,
         )
 
-    elif album_type == "alphabeticalByArtist":
+    elif (
+        album_type
+        == "alphabeticalByArtist"
+    ):
 
         album_data.sort(
             key=lambda item: (
@@ -3990,7 +5334,8 @@ async def rest_album_list2(
 
     result = []
 
-    for album in album_data[
+    for album
+    in album_data[
         start:end
     ]:
 
@@ -4010,21 +5355,39 @@ async def rest_album_list2(
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "albumList2": {
-                "album": result,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "albumList2":
+                {
+                    "album":
+                        result,
+                },
         },
+
         request,
     )
 
 
-@app.get("/rest/getAlbumList.view")
-@app.get("/rest/getAlbumList")
+@app.get(
+    "/rest/getAlbumList.view"
+)
+@app.get(
+    "/rest/getAlbumList"
+)
 async def rest_album_list(
     request: Request,
     type: str = Query(
@@ -4053,7 +5416,7 @@ async def rest_album_list(
 
 
 # ============================================================
-# GET MUSIC DIRECTORY
+# MUSIC DIRECTORY
 # ============================================================
 
 @app.get(
@@ -4067,38 +5430,75 @@ async def rest_music_directory(
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     children = []
 
-    if id == "1":
+    if (
+        str(id)
+        == str(
+            MUSIC_FOLDER_ID
+        )
+    ):
 
-        for artist in sorted(
+        for artist
+        in sorted(
             library[
                 "artists"
             ].values(),
+
             key=lambda item:
-                item["name"].lower(),
+                item[
+                    "name"
+                ].lower(),
         ):
 
             children.append(
                 {
-                    "id": artist["id"],
-                    "parent": "1",
-                    "isDir": True,
-                    "title": artist["name"],
-                    "name": artist["name"],
-                    "type": "artist",
-                    "coverArt": artist["id"],
+
+                    "id":
+                        artist[
+                            "id"
+                        ],
+
+                    "parent":
+                        MUSIC_FOLDER_ID,
+
+                    "isDir":
+                        True,
+
+                    "title":
+                        artist[
+                            "name"
+                        ],
+
+                    "name":
+                        artist[
+                            "name"
+                        ],
+
+                    "type":
+                        "artist",
+
+                    "coverArt":
+                        artist[
+                            "id"
+                        ],
                 }
             )
 
-    elif id.startswith("artist-"):
+    elif id.startswith(
+        "artist-"
+    ):
 
         artist = library[
             "artists"
@@ -4108,8 +5508,11 @@ async def rest_music_directory(
 
         if artist:
 
-            for album_id in sorted(
-                artist["albumIds"]
+            for album_id
+            in sorted(
+                artist[
+                    "albumIds"
+                ]
             ):
 
                 album = library[
@@ -4123,25 +5526,39 @@ async def rest_music_directory(
 
                 songs = [
                     song
-                    for song in library[
+
+                    for song
+                    in library[
                         "songs"
                     ]
-                    if song["id"]
-                    in album["songIds"]
+
+                    if song[
+                        "id"
+                    ]
+
+                    in album[
+                        "songIds"
+                    ]
                 ]
 
-                item = album_to_subsonic(
-                    album,
-                    songs,
+                item = (
+                    album_to_subsonic(
+                        album,
+                        songs,
+                    )
                 )
 
-                item["type"] = "album"
+                item[
+                    "type"
+                ] = "album"
 
                 children.append(
                     item
                 )
 
-    elif id.startswith("album-"):
+    elif id.startswith(
+        "album-"
+    ):
 
         album = library[
             "albums"
@@ -4153,31 +5570,62 @@ async def rest_music_directory(
 
             songs = [
                 song
-                for song in library[
+
+                for song
+                in library[
                     "songs"
                 ]
-                if song["id"]
-                in album["songIds"]
+
+                if song[
+                    "id"
+                ]
+
+                in album[
+                    "songIds"
+                ]
             ]
 
             children.extend(
-                song_to_subsonic(song)
-                for song in songs
+                song_to_subsonic(
+                    song
+                )
+
+                for song
+                in songs
             )
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "directory": {
-                "id": id,
-                "name": "Music",
-                "child": children,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "directory":
+                {
+
+                    "id":
+                        id,
+
+                    "name":
+                        MUSIC_FOLDER_NAME,
+
+                    "child":
+                        children,
+                },
         },
+
         request,
     )
 
@@ -4186,19 +5634,27 @@ async def rest_music_directory(
 # GET SONG
 # ============================================================
 
-@app.get("/rest/getSong.view")
-@app.get("/rest/getSong")
+@app.get(
+    "/rest/getSong.view"
+)
+@app.get(
+    "/rest/getSong"
+)
 async def rest_song(
     request: Request,
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    song = await find_song(id)
+    song = await find_song(
+        id
+    )
 
     if not song:
 
@@ -4210,15 +5666,28 @@ async def rest_song(
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "song": song_to_subsonic(
-                song
-            ),
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "song":
+                song_to_subsonic(
+                    song
+                ),
         },
+
         request,
     )
 
@@ -4239,35 +5708,49 @@ async def search_impl(
     response_key,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     q = query.lower().strip()
 
     matching_artists = [
         artist
-        for artist in library[
+
+        for artist
+        in library[
             "artists"
         ].values()
-        if q in artist[
+
+        if q
+        in artist[
             "name"
         ].lower()
     ]
 
     matching_albums = [
         album
-        for album in library[
+
+        for album
+        in library[
             "albums"
         ].values()
+
         if (
-            q in album[
+            q
+            in album[
                 "name"
             ].lower()
-            or q in album[
+
+            or q
+            in album[
                 "artist"
             ].lower()
         )
@@ -4275,7 +5758,8 @@ async def search_impl(
 
     matching_songs = []
 
-    for song in library[
+    for song
+    in library[
         "songs"
     ]:
 
@@ -4286,26 +5770,40 @@ async def search_impl(
         ).lower()
 
         if q in haystack:
+
             matching_songs.append(
                 song
             )
 
     artist_objects = [
-        artist_to_subsonic(artist)
-        for artist in matching_artists
+        artist_to_subsonic(
+            artist
+        )
+
+        for artist
+        in matching_artists
     ]
 
     album_objects = []
 
-    for album in matching_albums:
+    for album
+    in matching_albums:
 
         album_songs = [
             song
-            for song in library[
+
+            for song
+            in library[
                 "songs"
             ]
-            if song["id"]
-            in album["songIds"]
+
+            if song[
+                "id"
+            ]
+
+            in album[
+                "songIds"
+            ]
         ]
 
         album_objects.append(
@@ -4316,50 +5814,77 @@ async def search_impl(
         )
 
     song_objects = [
-        song_to_subsonic(song)
-        for song in matching_songs
+        song_to_subsonic(
+            song
+        )
+
+        for song
+        in matching_songs
     ]
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            response_key: {
-                "artist": artist_objects[
-                    artist_offset:
-                    artist_offset
-                    + max(
-                        0,
-                        artist_count,
-                    )
-                ],
-                "album": album_objects[
-                    album_offset:
-                    album_offset
-                    + max(
-                        0,
-                        album_count,
-                    )
-                ],
-                "song": song_objects[
-                    song_offset:
-                    song_offset
-                    + max(
-                        0,
-                        song_count,
-                    )
-                ],
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            response_key:
+                {
+
+                    "artist":
+                        artist_objects[
+                            artist_offset:
+                            artist_offset
+                            + max(
+                                0,
+                                artist_count,
+                            )
+                        ],
+
+                    "album":
+                        album_objects[
+                            album_offset:
+                            album_offset
+                            + max(
+                                0,
+                                album_count,
+                            )
+                        ],
+
+                    "song":
+                        song_objects[
+                            song_offset:
+                            song_offset
+                            + max(
+                                0,
+                                song_count,
+                            )
+                        ],
+                },
         },
+
         request,
     )
 
 
-@app.get("/rest/search2.view")
-@app.get("/rest/search2")
+@app.get(
+    "/rest/search2.view"
+)
+@app.get(
+    "/rest/search2"
+)
 async def rest_search2(
     request: Request,
     query: str = Query(""),
@@ -4384,8 +5909,12 @@ async def rest_search2(
     )
 
 
-@app.get("/rest/search3.view")
-@app.get("/rest/search3")
+@app.get(
+    "/rest/search3.view"
+)
+@app.get(
+    "/rest/search3"
+)
 async def rest_search3(
     request: Request,
     query: str = Query(""),
@@ -4425,41 +5954,65 @@ async def rest_random_songs(
     size: int = Query(10),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    library = await build_library()
-
-    songs = list(
-        library["songs"]
+    library = (
+        await build_library()
     )
 
-    random.shuffle(songs)
+    songs = list(
+        library[
+            "songs"
+        ]
+    )
+
+    random.shuffle(
+        songs
+    )
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "randomSongs": {
-                "song": [
-                    song_to_subsonic(
-                        song
-                    )
-                    for song
-                    in songs[
-                        :max(
-                            1,
-                            size,
-                        )
-                    ]
-                ],
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "randomSongs":
+                {
+
+                    "song":
+                        [
+                            song_to_subsonic(
+                                song
+                            )
+
+                            for song
+                            in songs[
+                                :max(
+                                    1,
+                                    size,
+                                )
+                            ]
+                        ],
+                },
         },
+
         request,
     )
 
@@ -4468,18 +6021,26 @@ async def rest_random_songs(
 # GENRES
 # ============================================================
 
-@app.get("/rest/getGenres.view")
-@app.get("/rest/getGenres")
+@app.get(
+    "/rest/getGenres.view"
+)
+@app.get(
+    "/rest/getGenres"
+)
 async def rest_genres(
     request: Request,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     genres = []
 
@@ -4491,23 +6052,44 @@ async def rest_genres(
 
         genres.append(
             {
-                "value": name,
-                "songCount": count,
-                "albumCount": 0,
+
+                "value":
+                    name,
+
+                "songCount":
+                    count,
+
+                "albumCount":
+                    0,
             }
         )
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "genres": {
-                "genre": genres,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "genres":
+                {
+
+                    "genre":
+                        genres,
+                },
         },
+
         request,
     )
 
@@ -4525,42 +6107,70 @@ async def rest_songs_by_genre(
     offset: int = Query(0),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     songs = [
         song
-        for song in library[
+
+        for song
+        in library[
             "songs"
         ]
+
         if (
-            song["genre"].lower()
+            song[
+                "genre"
+            ].lower()
             == genre.lower()
         )
     ]
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "songsByGenre": {
-                "song": [
-                    song_to_subsonic(song)
-                    for song
-                    in songs[
-                        offset:
-                        offset + count
-                    ]
-                ],
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "songsByGenre":
+                {
+
+                    "song":
+                        [
+                            song_to_subsonic(
+                                song
+                            )
+
+                            for song
+                            in songs[
+                                offset:
+                                offset
+                                + count
+                            ]
+                        ],
+                },
         },
+
         request,
     )
 
@@ -4569,19 +6179,27 @@ async def rest_songs_by_genre(
 # STREAM
 # ============================================================
 
-@app.get("/rest/stream.view")
-@app.get("/rest/stream")
+@app.get(
+    "/rest/stream.view"
+)
+@app.get(
+    "/rest/stream"
+)
 async def rest_stream(
     request: Request,
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    song = await find_song(id)
+    song = await find_song(
+        id
+    )
 
     if not song:
 
@@ -4592,14 +6210,24 @@ async def rest_stream(
         )
 
     return FileResponse(
-        song["path"],
-        media_type=MEDIA_TYPES.get(
-            song["suffix"],
-            "audio/mpeg",
-        ),
+        song[
+            "path"
+        ],
+
+        media_type=
+            MEDIA_TYPES.get(
+                song[
+                    "suffix"
+                ],
+                "audio/mpeg",
+            ),
+
         headers={
-            "Accept-Ranges": "bytes",
-            "Access-Control-Allow-Origin": "*",
+            "Accept-Ranges":
+                "bytes",
+
+            "Access-Control-Allow-Origin":
+                "*",
         },
     )
 
@@ -4608,19 +6236,27 @@ async def rest_stream(
 # DOWNLOAD
 # ============================================================
 
-@app.get("/rest/download.view")
-@app.get("/rest/download")
+@app.get(
+    "/rest/download.view"
+)
+@app.get(
+    "/rest/download"
+)
 async def rest_download(
     request: Request,
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    song = await find_song(id)
+    song = await find_song(
+        id
+    )
 
     if not song:
 
@@ -4631,12 +6267,21 @@ async def rest_download(
         )
 
     return FileResponse(
-        song["path"],
-        media_type=MEDIA_TYPES.get(
-            song["suffix"],
-            "application/octet-stream",
-        ),
-        filename=song["path"].name,
+        song[
+            "path"
+        ],
+
+        media_type=
+            MEDIA_TYPES.get(
+                song[
+                    "suffix"
+                ],
+                "application/octet-stream",
+            ),
+
+        filename=song[
+            "path"
+        ].name,
     )
 
 
@@ -4644,27 +6289,37 @@ async def rest_download(
 # COVER ART
 # ============================================================
 
-@app.get("/rest/getCoverArt.view")
-@app.get("/rest/getCoverArt")
+@app.get(
+    "/rest/getCoverArt.view"
+)
+@app.get(
+    "/rest/getCoverArt"
+)
 async def rest_cover_art(
     request: Request,
     id: str = Query(...),
     size: int = Query(0),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    path = await resolve_cover_id(id)
+    path = await resolve_cover_id(
+        id
+    )
 
     if not path:
         return Response(
             status_code=404
         )
 
-    cover = await ensure_cover(path)
+    cover = await ensure_cover(
+        path
+    )
 
     if not cover:
         return Response(
@@ -4673,7 +6328,10 @@ async def rest_cover_art(
 
     return FileResponse(
         cover,
-        media_type="image/jpeg",
+
+        media_type=
+            "image/jpeg",
+
         headers={
             "Cache-Control":
                 "public, max-age=86400",
@@ -4682,17 +6340,23 @@ async def rest_cover_art(
 
 
 # ============================================================
-# STAR / UNSTAR
+# STAR
 # ============================================================
 
-@app.get("/rest/star.view")
-@app.get("/rest/star")
+@app.get(
+    "/rest/star.view"
+)
+@app.get(
+    "/rest/star"
+)
 async def rest_star(
     request: Request,
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
@@ -4705,24 +6369,45 @@ async def rest_star(
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
         },
+
         request,
     )
 
 
-@app.get("/rest/unstar.view")
-@app.get("/rest/unstar")
+# ============================================================
+# UNSTAR
+# ============================================================
+
+@app.get(
+    "/rest/unstar.view"
+)
+@app.get(
+    "/rest/unstar"
+)
 async def rest_unstar(
     request: Request,
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
@@ -4735,15 +6420,30 @@ async def rest_unstar(
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
         },
+
         request,
     )
 
+
+# ============================================================
+# STARRED 2
+# ============================================================
 
 @app.get(
     "/rest/getStarred2.view"
@@ -4753,17 +6453,21 @@ async def rest_unstar(
 )
 async def rest_starred2(
     request: Request,
-    musicFolderId: Optional[str] = Query(
+    musicFolderId: Optional[int] = Query(
         None
     ),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(
+        DB_FILE
+    ) as conn:
 
         rows = conn.execute(
             "SELECT item_id FROM stars"
@@ -4774,27 +6478,51 @@ async def rest_starred2(
         for row in rows
     }
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     songs = [
-        song_to_subsonic(song)
-        for song in library[
+        song_to_subsonic(
+            song
+        )
+
+        for song
+        in library[
             "songs"
         ]
-        if song["id"] in starred_ids
+
+        if song[
+            "id"
+        ] in starred_ids
     ]
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "starred2": {
-                "song": songs,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "starred2":
+                {
+
+                    "song":
+                        songs,
+                },
         },
+
         request,
     )
 
@@ -4809,7 +6537,9 @@ def playlists_sync():
         DB_FILE
     ) as conn:
 
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = (
+            sqlite3.Row
+        )
 
         rows = conn.execute(
             """
@@ -4833,7 +6563,9 @@ def playlist_sync(
         DB_FILE
     ) as conn:
 
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = (
+            sqlite3.Row
+        )
 
         row = conn.execute(
             """
@@ -4841,10 +6573,16 @@ def playlist_sync(
             FROM playlists
             WHERE id = ?
             """,
-            (playlist_id,),
+            (
+                playlist_id,
+            ),
         ).fetchone()
 
-        return dict(row) if row else None
+        return (
+            dict(row)
+            if row
+            else None
+        )
 
 
 @app.get(
@@ -4857,18 +6595,23 @@ async def rest_playlists(
     request: Request,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    playlists = await asyncio.to_thread(
-        playlists_sync
+    playlists = (
+        await asyncio.to_thread(
+            playlists_sync
+        )
     )
 
     result = []
 
-    for playlist in playlists:
+    for playlist
+    in playlists:
 
         ids = json.loads(
             playlist.get(
@@ -4879,28 +6622,65 @@ async def rest_playlists(
 
         result.append(
             {
-                "id": playlist["id"],
-                "name": playlist["name"],
-                "comment": playlist["comment"],
-                "owner": playlist["owner"],
-                "public": bool(
-                    playlist["public"]
-                ),
-                "songCount": len(ids),
+
+                "id":
+                    playlist[
+                        "id"
+                    ],
+
+                "name":
+                    playlist[
+                        "name"
+                    ],
+
+                "comment":
+                    playlist[
+                        "comment"
+                    ],
+
+                "owner":
+                    playlist[
+                        "owner"
+                    ],
+
+                "public":
+                    bool(
+                        playlist[
+                            "public"
+                        ]
+                    ),
+
+                "songCount":
+                    len(ids),
             }
         )
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "playlists": {
-                "playlist": result,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "playlists":
+                {
+
+                    "playlist":
+                        result,
+                },
         },
+
         request,
     )
 
@@ -4916,14 +6696,18 @@ async def rest_playlist(
     id: str = Query(...),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    playlist = await asyncio.to_thread(
-        playlist_sync,
-        id,
+    playlist = (
+        await asyncio.to_thread(
+            playlist_sync,
+            id,
+        )
     )
 
     if not playlist:
@@ -4941,7 +6725,9 @@ async def rest_playlist(
         )
     )
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     songs = []
 
@@ -4950,38 +6736,85 @@ async def rest_playlist(
         song = next(
             (
                 item
-                for item in library[
+
+                for item
+                in library[
                     "songs"
                 ]
-                if item["id"] == song_id
+
+                if item[
+                    "id"
+                ]
+                == song_id
             ),
+
             None,
         )
 
         if song:
+
             songs.append(
-                song_to_subsonic(song)
+                song_to_subsonic(
+                    song
+                )
             )
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "playlist": {
-                "id": playlist["id"],
-                "name": playlist["name"],
-                "comment": playlist["comment"],
-                "owner": playlist["owner"],
-                "public": bool(
-                    playlist["public"]
-                ),
-                "songCount": len(songs),
-                "entry": songs,
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "playlist":
+                {
+
+                    "id":
+                        playlist[
+                            "id"
+                        ],
+
+                    "name":
+                        playlist[
+                            "name"
+                        ],
+
+                    "comment":
+                        playlist[
+                            "comment"
+                        ],
+
+                    "owner":
+                        playlist[
+                            "owner"
+                        ],
+
+                    "public":
+                        bool(
+                            playlist[
+                                "public"
+                            ]
+                        ),
+
+                    "songCount":
+                        len(songs),
+
+                    "entry":
+                        songs,
+                },
         },
+
         request,
     )
 
@@ -4990,27 +6823,44 @@ async def rest_playlist(
 # SCROBBLE
 # ============================================================
 
-@app.get("/rest/scrobble.view")
-@app.get("/rest/scrobble")
+@app.get(
+    "/rest/scrobble.view"
+)
+@app.get(
+    "/rest/scrobble"
+)
 async def rest_scrobble(
     request: Request,
     id: str = Query(""),
     submission: bool = Query(True),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
         },
+
         request,
     )
 
@@ -5029,22 +6879,38 @@ async def rest_now_playing(
     request: Request,
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "nowPlaying": {
-                "entry": [],
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "nowPlaying":
+                {
+                    "entry":
+                        [],
+                },
         },
+
         request,
     )
 
@@ -5065,12 +6931,16 @@ async def rest_similar_songs(
     count: int = Query(20),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
-    target = await find_song(id)
+    target = await find_song(
+        id
+    )
 
     if not target:
 
@@ -5080,37 +6950,70 @@ async def rest_similar_songs(
             "Song not found.",
         )
 
-    library = await build_library()
+    library = (
+        await build_library()
+    )
 
     similar = [
         song
-        for song in library[
+
+        for song
+        in library[
             "songs"
         ]
+
         if (
-            song["id"] != id
-            and song["artist"]
-            == target["artist"]
+            song[
+                "id"
+            ] != id
+
+            and song[
+                "artist"
+            ]
+            == target[
+                "artist"
+            ]
         )
     ]
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "similarSongs2": {
-                "song": [
-                    song_to_subsonic(song)
-                    for song
-                    in similar[
-                        :max(0, count)
-                    ]
-                ],
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "similarSongs2":
+                {
+
+                    "song":
+                        [
+                            song_to_subsonic(
+                                song
+                            )
+
+                            for song
+                            in similar[
+                                :max(
+                                    0,
+                                    count,
+                                )
+                            ]
+                        ],
+                },
         },
+
         request,
     )
 
@@ -5130,22 +7033,39 @@ async def rest_lyrics(
     id: str = Query(""),
 ):
 
-    error = require_auth(request)
+    error = require_auth(
+        request
+    )
 
     if error:
         return error
 
     return make_subsonic_response(
         {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "lyricsList": {
-                "structuredLyrics": [],
-            },
+
+            "status":
+                "ok",
+
+            "version":
+                SUBSONIC_VERSION,
+
+            "serverVersion":
+                SERVER_VERSION,
+
+            "openSubsonic":
+                True,
+
+            "type":
+                "Xrob Music",
+
+            "lyricsList":
+                {
+
+                    "structuredLyrics":
+                        [],
+                },
         },
+
         request,
     )
 
