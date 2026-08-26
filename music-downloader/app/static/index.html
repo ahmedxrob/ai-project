@@ -1,53 +1,50 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
 
-    <meta charset="UTF-8">
+<meta charset="UTF-8">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
 
-    <meta
-        name="theme-color"
-        content="#121212"
-    >
+<meta
+    name="theme-color"
+    content="#121212"
+>
 
-    <meta
-        name="description"
-        content="Xrob Music — self-hosted music downloader and OpenSubsonic server"
-    >
+<title>Xrob Music</title>
 
-    <title>Xrob Music</title>
+<link
+    rel="preconnect"
+    href="https://fonts.googleapis.com"
+>
 
+<link
+    rel="preconnect"
+    href="https://fonts.gstatic.com"
+    crossorigin
+>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link
-        rel="preconnect"
-        href="https://fonts.gstatic.com"
-        crossorigin
-    >
+<link
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet"
+>
 
-    <link
-        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
-        rel="stylesheet"
-    >
-
-    <link
-        rel="stylesheet"
-        href="/static/style.css?v=20260826"
-    >
+<link
+    rel="stylesheet"
+    href="/static/style.css?v=196"
+>
 
 </head>
 
 <body>
 
-
 <div
     id="toast-container"
     aria-live="polite"
-    aria-atomic="true"
 ></div>
 
 
@@ -60,1084 +57,854 @@
 
 <div class="app-shell">
 
+<nav
+    class="side-nav"
+    aria-label="Main Navigation"
+>
 
-    <!-- ========================================================
-         SIDEBAR
-         ======================================================== -->
+    <div class="side-brand">
 
-    <nav
-        class="side-nav"
-        aria-label="Main Navigation"
+        <svg
+            width="38"
+            height="38"
+            viewBox="0 0 512 512"
+            aria-hidden="true"
+        >
+            <defs>
+                <linearGradient
+                    id="waveGrad"
+                    x1="0%"
+                    y1="0%"
+                    x2="100%"
+                    y2="100%"
+                >
+                    <stop
+                        offset="0%"
+                        stop-color="#00F2FE"
+                    />
+                    <stop
+                        offset="100%"
+                        stop-color="#4FACFE"
+                    />
+                </linearGradient>
+            </defs>
+
+            <rect
+                width="512"
+                height="512"
+                rx="112"
+                fill="#0F172A"
+            />
+
+            <path
+                d="M256 128V300M196 248L256 312L316 248"
+                stroke="url(#waveGrad)"
+                stroke-width="28"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                fill="none"
+            />
+
+            <path
+                d="M196 376H316"
+                stroke="url(#waveGrad)"
+                stroke-width="24"
+                stroke-linecap="round"
+            />
+        </svg>
+
+        <h1>Xrob Music</h1>
+
+    </div>
+
+
+    <ul
+        class="nav-list"
+        role="tablist"
     >
 
-        <div class="side-brand">
-
-            <svg
-                width="38"
-                height="38"
-                viewBox="0 0 512 512"
+        <li>
+            <button
+                class="nav-link active"
+                id="btn-home"
+                onclick="navigate('home')"
             >
+                <span>⌂</span>
+                Home
+            </button>
+        </li>
 
-                <defs>
-                    <linearGradient
-                        id="waveGrad"
-                        x1="0%"
-                        y1="0%"
-                        x2="100%"
-                        y2="100%"
-                    >
-                        <stop
-                            offset="0%"
-                            stop-color="#00F2FE"
-                        />
+        <li>
+            <button
+                class="nav-link"
+                id="btn-search"
+                onclick="navigate('search')"
+            >
+                <span>🔍</span>
+                Search & Download
+            </button>
+        </li>
 
-                        <stop
-                            offset="100%"
-                            stop-color="#4FACFE"
-                        />
-                    </linearGradient>
-                </defs>
+        <li>
+            <button
+                class="nav-link"
+                id="btn-downloads"
+                onclick="navigate('downloads')"
+            >
+                <span>⬇️</span>
+                Downloads
+                (<span id="queueCount">0</span>)
+            </button>
+        </li>
 
-                <rect
-                    width="512"
-                    height="512"
-                    rx="112"
-                    fill="#0F172A"
-                />
+        <li>
+            <button
+                class="nav-link"
+                id="btn-library"
+                onclick="navigate('library')"
+            >
+                <span>📂</span>
+                Library
+                (<span id="sideLibCount">0</span>)
+            </button>
+        </li>
 
-                <rect
-                    x="112"
-                    y="216"
-                    width="24"
-                    height="80"
-                    rx="12"
-                    fill="url(#waveGrad)"
-                    opacity=".4"
-                />
+        <li>
+            <button
+                class="nav-link"
+                id="btn-settings"
+                onclick="navigate('settings')"
+            >
+                <span>⚙️</span>
+                Settings
+            </button>
+        </li>
 
-                <rect
-                    x="160"
-                    y="176"
-                    width="24"
-                    height="160"
-                    rx="12"
-                    fill="url(#waveGrad)"
-                    opacity=".75"
-                />
+    </ul>
 
-                <rect
-                    x="328"
-                    y="176"
-                    width="24"
-                    height="160"
-                    rx="12"
-                    fill="url(#waveGrad)"
-                    opacity=".75"
-                />
+</nav>
 
-                <rect
-                    x="376"
-                    y="216"
-                    width="24"
-                    height="80"
-                    rx="12"
-                    fill="url(#waveGrad)"
-                    opacity=".4"
-                />
 
-                <path
-                    d="M256 128V300M196 248L256 312L316 248"
-                    stroke="url(#waveGrad)"
-                    stroke-width="28"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    fill="none"
-                />
+<div class="app-column">
 
-                <path
-                    d="M196 376H316"
-                    stroke="url(#waveGrad)"
-                    stroke-width="24"
-                    stroke-linecap="round"
-                />
 
-            </svg>
+<header class="mobile-header">
 
-            <h1>Xrob Music</h1>
+    <div class="side-brand">
+
+        <svg
+            width="30"
+            height="30"
+            viewBox="0 0 512 512"
+        >
+            <rect
+                width="512"
+                height="512"
+                rx="112"
+                fill="#0F172A"
+            />
+
+            <path
+                d="M256 128V300M196 248L256 312L316 248"
+                stroke="#4FACFE"
+                stroke-width="30"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                fill="none"
+            />
+
+            <path
+                d="M196 376H316"
+                stroke="#4FACFE"
+                stroke-width="22"
+                stroke-linecap="round"
+            />
+        </svg>
+
+        <h1>Xrob Music</h1>
+
+    </div>
+
+</header>
+
+
+<main class="main-content">
+
+
+<section
+    id="tab-home"
+    class="tab-content active"
+>
+
+    <div class="home-hero">
+
+        <div>
+
+            <div class="home-eyebrow">
+                YOUR MUSIC
+            </div>
+
+            <h2 class="home-title">
+                Welcome to Xrob Music
+            </h2>
+
+            <p class="home-subtitle">
+                Your self-hosted music downloader,
+                library and OpenSubsonic server.
+            </p>
+
+        </div>
+
+        <button
+            class="home-search-button"
+            onclick="navigate('search')"
+        >
+            🔍 Find Music
+        </button>
+
+    </div>
+
+
+    <div class="home-stats-grid">
+
+        <div class="home-stat-card">
+            <div class="home-stat-icon">🎵</div>
+            <div>
+                <strong id="homeTracks">0</strong>
+                <span>Tracks</span>
+            </div>
+        </div>
+
+        <div class="home-stat-card">
+            <div class="home-stat-icon">👤</div>
+            <div>
+                <strong id="homeArtists">0</strong>
+                <span>Artists</span>
+            </div>
+        </div>
+
+        <div class="home-stat-card">
+            <div class="home-stat-icon">💿</div>
+            <div>
+                <strong id="homeAlbums">0</strong>
+                <span>Albums</span>
+            </div>
+        </div>
+
+        <div class="home-stat-card">
+            <div class="home-stat-icon">⬇️</div>
+            <div>
+                <strong id="homeDownloads">0</strong>
+                <span>Active Downloads</span>
+            </div>
+        </div>
+
+    </div>
+
+
+    <div class="home-section-header">
+
+        <div>
+            <h3>Recently Added</h3>
+            <p>Your latest music</p>
+        </div>
+
+        <button
+            class="btn-refresh"
+            onclick="navigate('library')"
+        >
+            View Library
+        </button>
+
+    </div>
+
+
+    <div
+        id="recentTracks"
+        class="recent-grid"
+    ></div>
+
+
+    <div class="home-connect-card">
+
+        <div class="home-connect-icon">
+            📱
+        </div>
+
+        <div class="home-connect-content">
+
+            <h3>
+                Connect Arpeggi directly
+            </h3>
+
+            <p>
+                Xrob Music provides its own
+                OpenSubsonic server.
+                No Navidrome is required.
+            </p>
+
+        </div>
+
+        <button
+            class="btn-refresh"
+            onclick="navigate('settings')"
+        >
+            Arpeggi Setup
+        </button>
+
+    </div>
+
+</section>
+
+
+<section
+    id="tab-search"
+    class="tab-content"
+>
+
+    <div class="page-heading">
+        <h2>Search Music</h2>
+        <p>
+            Search and download music to your library.
+        </p>
+    </div>
+
+
+    <div class="search-card">
+
+        <input
+            id="query"
+            type="search"
+            placeholder="Search track, artist, or album..."
+            autocomplete="off"
+        >
+
+        <button
+            id="searchBtn"
+        >
+            Search
+        </button>
+
+    </div>
+
+
+    <div
+        id="statusMsg"
+        class="status-msg"
+    ></div>
+
+
+    <div
+        id="results"
+        class="results-grid"
+    ></div>
+
+
+    <div
+        id="infiniteLoader"
+        class="status-msg"
+        style="display:none;"
+    >
+        Loading more...
+    </div>
+
+</section>
+
+
+<section
+    id="tab-downloads"
+    class="tab-content"
+>
+
+    <div class="downloads-page-header">
+
+        <div>
+
+            <h2 class="downloads-page-title">
+                Downloads
+            </h2>
+
+            <p class="downloads-page-subtitle">
+                Manage your active queue and download history.
+            </p>
 
         </div>
 
 
-        <ul
-            class="nav-list"
-            role="tablist"
+        <div class="downloads-header-actions">
+
+            <button
+                class="btn-refresh"
+                onclick="clearDoneTasks()"
+            >
+                🧹 Clear Completed
+            </button>
+
+            <button
+                class="btn-refresh"
+                onclick="loadDownloads()"
+            >
+                🔄 Refresh
+            </button>
+
+        </div>
+
+    </div>
+
+
+    <div class="downloads-overview">
+
+        <div class="overview-card">
+            <div class="overview-icon">⬇️</div>
+
+            <div>
+                <strong
+                    id="downloadQueueCount"
+                    class="overview-value"
+                >
+                    0
+                </strong>
+
+                <span class="overview-label">
+                    Active in Queue
+                </span>
+            </div>
+        </div>
+
+
+        <div class="overview-card">
+            <div class="overview-icon">🎵</div>
+
+            <div>
+                <strong
+                    id="downloadStatTracks"
+                    class="overview-value"
+                >
+                    0
+                </strong>
+
+                <span class="overview-label">
+                    Library Tracks
+                </span>
+            </div>
+        </div>
+
+
+        <div class="overview-card">
+            <div class="overview-icon">💿</div>
+
+            <div>
+                <strong
+                    id="downloadStatAlbums"
+                    class="overview-value"
+                >
+                    0
+                </strong>
+
+                <span class="overview-label">
+                    Albums
+                </span>
+            </div>
+        </div>
+
+    </div>
+
+
+    <div
+        id="downloadsList"
+        class="downloads-list"
+    ></div>
+
+</section>
+
+
+<section
+    id="tab-library"
+    class="tab-content"
+>
+
+    <div class="page-heading">
+        <h2>Library</h2>
+        <p>Your local Xrob Music collection.</p>
+    </div>
+
+
+    <div class="search-card">
+
+        <input
+            id="libSearchQuery"
+            type="search"
+            placeholder="🔍 Filter local library tracks..."
+            oninput="filterLibrary()"
         >
 
-            <li>
+    </div>
+
+
+    <div class="library-stats-bar">
+
+        <span>
+            🎵 Tracks:
+            <strong id="statTracks">0</strong>
+        </span>
+
+        <span>
+            👤 Artists:
+            <strong id="statArtists">0</strong>
+        </span>
+
+        <span>
+            💿 Albums:
+            <strong id="statAlbums">0</strong>
+        </span>
+
+        <span>
+            💾 Size:
+            <strong id="libFolderSize">0 MB</strong>
+        </span>
+
+        <button
+            class="btn-refresh"
+            onclick="loadLibrary()"
+        >
+            🔄 Refresh
+        </button>
+
+    </div>
+
+
+    <div
+        id="libraryList"
+        class="results-grid"
+    ></div>
+
+</section>
+
+
+<section
+    id="tab-settings"
+    class="tab-content"
+>
+
+    <div class="page-heading">
+        <h2>Settings</h2>
+        <p>
+            Configure Xrob Music and Arpeggi.
+        </p>
+    </div>
+
+
+    <div class="settings-card">
+
+
+        <div class="settings-divider">
+            OpenSubsonic / Arpeggi
+        </div>
+
+
+        <div class="setting-row">
+
+            <div>
+                <div class="setting-label">
+                    Xrob Music Server
+                </div>
+
+                <div class="setting-desc">
+                    Use this address in Arpeggi.
+                </div>
+            </div>
+
+
+            <div class="inline-control">
+
+                <input
+                    id="amperfy-server-url"
+                    type="text"
+                    readonly
+                >
+
                 <button
-                    class="nav-link active"
-                    id="btn-home"
-                    role="tab"
-                    aria-selected="true"
-                    aria-controls="tab-home"
-                    onclick="navigate('home')"
+                    id="amperfy-copy-url"
+                    class="btn-refresh"
                 >
-                    <span>⌂</span>
-                    Home
+                    📋 Copy
                 </button>
-            </li>
-
-
-            <li>
-                <button
-                    class="nav-link"
-                    id="btn-search"
-                    role="tab"
-                    aria-selected="false"
-                    aria-controls="tab-search"
-                    onclick="navigate('search')"
-                >
-                    <span>🔍</span>
-                    Search & Download
-                </button>
-            </li>
-
-
-            <li>
-                <button
-                    class="nav-link"
-                    id="btn-downloads"
-                    role="tab"
-                    aria-selected="false"
-                    aria-controls="tab-downloads"
-                    onclick="navigate('downloads')"
-                >
-                    <span>⬇️</span>
-                    Downloads
-                    (<span id="queueCount">0</span>)
-                </button>
-            </li>
-
-
-            <li>
-                <button
-                    class="nav-link"
-                    id="btn-library"
-                    role="tab"
-                    aria-selected="false"
-                    aria-controls="tab-library"
-                    onclick="navigate('library')"
-                >
-                    <span>📂</span>
-                    Library
-                    (<span id="sideLibCount">0</span>)
-                </button>
-            </li>
-
-
-            <li>
-                <button
-                    class="nav-link"
-                    id="btn-settings"
-                    role="tab"
-                    aria-selected="false"
-                    aria-controls="tab-settings"
-                    onclick="navigate('settings')"
-                >
-                    <span>⚙️</span>
-                    Settings
-                </button>
-            </li>
-
-        </ul>
-
-    </nav>
-
-
-    <!-- ========================================================
-         APP COLUMN
-         ======================================================== -->
-
-    <div class="app-column">
-
-
-        <!-- MOBILE HEADER -->
-
-        <header class="mobile-header">
-
-            <div class="side-brand">
-
-                <svg
-                    width="30"
-                    height="30"
-                    viewBox="0 0 512 512"
-                >
-
-                    <rect
-                        width="512"
-                        height="512"
-                        rx="112"
-                        fill="#0F172A"
-                    />
-
-                    <path
-                        d="M256 128V300M196 248L256 312L316 248"
-                        stroke="#4FACFE"
-                        stroke-width="30"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        fill="none"
-                    />
-
-                    <path
-                        d="M196 376H316"
-                        stroke="#4FACFE"
-                        stroke-width="22"
-                        stroke-linecap="round"
-                    />
-
-                </svg>
-
-                <h1>Xrob Music</h1>
 
             </div>
 
-        </header>
+        </div>
 
 
-        <!-- MAIN -->
+        <div class="setting-row">
 
-        <main
-            class="main-content"
-            id="main-content"
+            <div>
+                <div class="setting-label">
+                    OpenSubsonic Username
+                </div>
+
+                <div class="setting-desc">
+                    Configured in the Home Assistant add-on settings.
+                </div>
+            </div>
+
+            <input
+                id="set_subsonic_user"
+                type="text"
+                readonly
+            >
+
+        </div>
+
+
+        <div class="setting-row">
+
+            <div>
+                <div class="setting-label">
+                    OpenSubsonic Password
+                </div>
+
+                <div class="setting-desc">
+                    Change this privately in the Home Assistant add-on configuration.
+                </div>
+            </div>
+
+            <input
+                type="password"
+                value="********"
+                readonly
+            >
+
+        </div>
+
+
+        <div class="setting-row">
+
+            <div>
+                <div class="setting-label">
+                    Server Status
+                </div>
+
+                <div class="setting-desc">
+                    Check whether OpenSubsonic responds correctly.
+                </div>
+            </div>
+
+            <button
+                id="amperfy-test-button"
+                class="btn-refresh"
+            >
+                🔌 Test Connection
+            </button>
+
+        </div>
+
+
+        <div
+            id="amperfy-status"
+            class="integration-status"
         >
+            Ready
+        </div>
 
 
-            <!-- ==================================================
-                 HOME
-                 ================================================== -->
+        <div class="setting-row">
 
-            <section
-                id="tab-home"
-                class="tab-content active"
-                role="tabpanel"
-                aria-labelledby="btn-home"
+            <div>
+                <div class="setting-label">
+                    OpenSubsonic
+                </div>
+
+                <div class="setting-desc">
+                    Server compatibility status.
+                </div>
+            </div>
+
+            <strong
+                id="amperfy-open-subsonic"
+                class="integration-ok"
             >
+                Checking...
+            </strong>
 
-                <div class="home-hero">
-
-                    <div>
-
-                        <div class="home-eyebrow">
-                            YOUR MUSIC
-                        </div>
-
-                        <h2 class="home-title">
-                            Welcome to Xrob Music
-                        </h2>
-
-                        <p class="home-subtitle">
-                            Your self-hosted music library,
-                            downloader and OpenSubsonic server.
-                        </p>
-
-                    </div>
+        </div>
 
 
-                    <button
-                        class="home-search-button"
-                        onclick="navigate('search')"
-                    >
-                        🔍 Find Music
-                    </button>
+        <div class="settings-divider">
+            Downloader
+        </div>
 
+
+        <div class="setting-row">
+
+            <div>
+                <div class="setting-label">
+                    Audio Format
                 </div>
 
+                <div class="setting-desc">
+                    Preferred download format.
+                </div>
+            </div>
 
-                <div class="home-stats-grid">
+            <select id="set_format">
+                <option value="mp3">MP3</option>
+                <option value="flac">FLAC (Lossless)</option>
+                <option value="m4a">M4A (AAC)</option>
+                <option value="opus">OPUS</option>
+            </select>
 
-                    <div class="home-stat-card">
-                        <div class="home-stat-icon">🎵</div>
-                        <div>
-                            <strong id="homeTracks">0</strong>
-                            <span>Tracks</span>
-                        </div>
-                    </div>
-
-
-                    <div class="home-stat-card">
-                        <div class="home-stat-icon">👤</div>
-                        <div>
-                            <strong id="homeArtists">0</strong>
-                            <span>Artists</span>
-                        </div>
-                    </div>
+        </div>
 
 
-                    <div class="home-stat-card">
-                        <div class="home-stat-icon">💿</div>
-                        <div>
-                            <strong id="homeAlbums">0</strong>
-                            <span>Albums</span>
-                        </div>
-                    </div>
+        <div class="setting-row">
 
-
-                    <div class="home-stat-card">
-                        <div class="home-stat-icon">⬇️</div>
-                        <div>
-                            <strong id="homeDownloads">0</strong>
-                            <span>Active Downloads</span>
-                        </div>
-                    </div>
-
+            <div>
+                <div class="setting-label">
+                    Audio Quality
                 </div>
 
+                <div class="setting-desc">
+                    Bitrate for lossy formats.
+                </div>
+            </div>
 
-                <div class="home-section-header">
+            <select id="set_quality">
+                <option value="320K">320 Kbps</option>
+                <option value="256K">256 Kbps</option>
+                <option value="192K">192 Kbps</option>
+                <option value="128K">128 Kbps</option>
+            </select>
 
-                    <div>
-                        <h3>Recently Added</h3>
-                        <p>Your latest music</p>
-                    </div>
+        </div>
 
-                    <button
-                        class="btn-refresh"
-                        onclick="navigate('library')"
-                    >
-                        View Library
-                    </button>
 
+        <div class="setting-row">
+
+            <div>
+                <div class="setting-label">
+                    Embed Album Art
                 </div>
 
-
-                <div
-                    id="recentTracks"
-                    class="recent-grid"
-                ></div>
-
-
-                <div class="home-connect-card">
-
-                    <div class="home-connect-icon">
-                        📱
-                    </div>
-
-                    <div class="home-connect-content">
-
-                        <h3>Use Arpeggi on iPhone</h3>
-
-                        <p>
-                            Xrob Music now exposes its own
-                            OpenSubsonic server. Connect Arpeggi
-                            directly to this server — no Navidrome required.
-                        </p>
-
-                    </div>
-
-                    <button
-                        class="btn-refresh"
-                        onclick="navigate('settings')"
-                    >
-                        Open Setup
-                    </button>
-
+                <div class="setting-desc">
+                    Embed cover artwork into downloaded files.
                 </div>
+            </div>
 
-            </section>
+            <label class="switch">
 
-
-            <!-- ==================================================
-                 SEARCH
-                 ================================================== -->
-
-            <section
-                id="tab-search"
-                class="tab-content"
-                role="tabpanel"
-                aria-labelledby="btn-search"
-            >
-
-                <div class="page-heading">
-                    <div>
-                        <h2>Search Music</h2>
-                        <p>Find tracks and download them to your library.</p>
-                    </div>
-                </div>
-
-
-                <div class="search-card">
-
-                    <label
-                        for="query"
-                        class="sr-only"
-                    >
-                        Search tracks, artists or albums
-                    </label>
-
-                    <input
-                        id="query"
-                        type="search"
-                        placeholder="Search track, artist, or album..."
-                        autocomplete="off"
-                        spellcheck="false"
-                    >
-
-                    <button
-                        id="searchBtn"
-                        type="button"
-                    >
-                        Search
-                    </button>
-
-                </div>
-
-
-                <div
-                    id="statusMsg"
-                    class="status-msg"
-                    aria-live="polite"
-                ></div>
-
-
-                <div
-                    id="results"
-                    class="results-grid"
-                ></div>
-
-
-                <div
-                    id="infiniteLoader"
-                    class="status-msg"
-                    style="display:none;"
+                <input
+                    type="checkbox"
+                    id="set_thumb"
                 >
-                    Loading more tracks...
+
+                <span class="slider"></span>
+
+            </label>
+
+        </div>
+
+
+        <div class="setting-row">
+
+            <div>
+                <div class="setting-label">
+                    Embed Metadata
                 </div>
 
-            </section>
+                <div class="setting-desc">
+                    Add tags to downloaded files.
+                </div>
+            </div>
+
+            <label class="switch">
+
+                <input
+                    type="checkbox"
+                    id="set_meta"
+                >
+
+                <span class="slider"></span>
+
+            </label>
+
+        </div>
 
 
-            <!-- ==================================================
-                 DOWNLOADS
-                 ================================================== -->
+        <div class="setting-row">
 
-            <section
-                id="tab-downloads"
-                class="tab-content"
-                role="tabpanel"
-                aria-labelledby="btn-downloads"
+            <div>
+                <div class="setting-label">
+                    Organize by Artist
+                </div>
+
+                <div class="setting-desc">
+                    Store music in artist folders.
+                </div>
+            </div>
+
+            <label class="switch">
+
+                <input
+                    type="checkbox"
+                    id="set_organize"
+                >
+
+                <span class="slider"></span>
+
+            </label>
+
+        </div>
+
+
+        <div class="setting-row">
+
+            <div>
+                <div class="setting-label">
+                    Max Search Results
+                </div>
+
+                <div class="setting-desc">
+                    Results returned per search page.
+                </div>
+            </div>
+
+            <input
+                id="set_max_results"
+                type="number"
+                min="5"
+                max="50"
+                value="20"
             >
 
-                <div class="downloads-page-header">
+        </div>
 
-                    <div>
-                        <h2 class="downloads-page-title">
-                            Downloads
-                        </h2>
 
-                        <p class="downloads-page-subtitle">
-                            Manage your queue and download history.
-                        </p>
-                    </div>
+        <button
+            class="save-btn"
+            onclick="saveSettings()"
+        >
+            Save Settings
+        </button>
 
 
-                    <div class="downloads-header-actions">
-
-                        <button
-                            class="btn-refresh"
-                            onclick="clearDoneTasks()"
-                        >
-                            🧹 Clear Completed
-                        </button>
-
-                        <button
-                            class="btn-refresh"
-                            onclick="loadDownloads()"
-                        >
-                            🔄 Refresh
-                        </button>
-
-                    </div>
-
-                </div>
-
-
-                <div class="downloads-overview">
-
-                    <div class="overview-card">
-
-                        <div class="overview-icon">
-                            ⬇️
-                        </div>
-
-                        <div>
-
-                            <strong
-                                id="downloadQueueCount"
-                                class="overview-value"
-                            >
-                                0
-                            </strong>
-
-                            <span class="overview-label">
-                                Active in Queue
-                            </span>
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="overview-card">
-
-                        <div class="overview-icon">
-                            🎵
-                        </div>
-
-                        <div>
-
-                            <strong
-                                id="downloadStatTracks"
-                                class="overview-value"
-                            >
-                                0
-                            </strong>
-
-                            <span class="overview-label">
-                                Library Tracks
-                            </span>
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="overview-card">
-
-                        <div class="overview-icon">
-                            💿
-                        </div>
-
-                        <div>
-
-                            <strong
-                                id="downloadStatAlbums"
-                                class="overview-value"
-                            >
-                                0
-                            </strong>
-
-                            <span class="overview-label">
-                                Albums
-                            </span>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-
-                <div
-                    id="downloadsList"
-                    class="downloads-list"
-                ></div>
-
-            </section>
-
-
-            <!-- ==================================================
-                 LIBRARY
-                 ================================================== -->
-
-            <section
-                id="tab-library"
-                class="tab-content"
-                role="tabpanel"
-                aria-labelledby="btn-library"
-            >
-
-                <div class="page-heading">
-
-                    <div>
-                        <h2>Library</h2>
-                        <p>Your local Xrob Music collection.</p>
-                    </div>
-
-                </div>
-
-
-                <div class="search-card">
-
-                    <input
-                        id="libSearchQuery"
-                        type="search"
-                        placeholder="🔍 Filter local library tracks..."
-                        autocomplete="off"
-                        oninput="filterLibrary()"
-                    >
-
-                </div>
-
-
-                <div class="library-stats-bar">
-
-                    <span>
-                        🎵 Tracks:
-                        <strong id="statTracks">0</strong>
-                    </span>
-
-                    <span>
-                        👤 Artists:
-                        <strong id="statArtists">0</strong>
-                    </span>
-
-                    <span>
-                        💿 Albums:
-                        <strong id="statAlbums">0</strong>
-                    </span>
-
-                    <span>
-                        💾 Size:
-                        <strong id="libFolderSize">0 MB</strong>
-                    </span>
-
-                    <button
-                        class="btn-refresh"
-                        onclick="loadLibrary()"
-                    >
-                        🔄 Refresh
-                    </button>
-
-                </div>
-
-
-                <div
-                    id="libraryList"
-                    class="results-grid"
-                ></div>
-
-            </section>
-
-
-            <!-- ==================================================
-                 SETTINGS
-                 ================================================== -->
-
-            <section
-                id="tab-settings"
-                class="tab-content"
-                role="tabpanel"
-                aria-labelledby="btn-settings"
-            >
-
-                <div class="page-heading">
-
-                    <div>
-                        <h2>Settings</h2>
-                        <p>Configure Xrob Music and its OpenSubsonic server.</p>
-                    </div>
-
-                </div>
-
-
-                <div class="settings-card">
-
-
-                    <!-- THEME -->
-
-                    <div class="setting-row">
-
-                        <div>
-                            <div class="setting-label">
-                                Theme
-                            </div>
-
-                            <div class="setting-desc">
-                                Choose dark or light mode.
-                            </div>
-                        </div>
-
-                        <select id="set_theme">
-
-                            <option value="dark">
-                                Dark Mode
-                            </option>
-
-                            <option value="light">
-                                Light Mode
-                            </option>
-
-                        </select>
-
-                    </div>
-
-
-                    <!-- NOTIFICATIONS -->
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Desktop Notifications
-                            </div>
-
-                            <div class="setting-desc">
-                                Alert when downloads finish.
-                            </div>
-
-                        </div>
-
-                        <button
-                            class="btn-refresh"
-                            onclick="requestNotificationPermission()"
-                        >
-                            Enable Notifications
-                        </button>
-
-                    </div>
-
-
-                    <!-- OPEN SUBSONIC -->
-
-                    <div class="settings-divider">
-                        OpenSubsonic / Arpeggi
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Xrob Music Server
-                            </div>
-
-                            <div class="setting-desc">
-                                This is the address Arpeggi should connect to.
-                            </div>
-
-                        </div>
-
-                        <div class="inline-control">
-
-                            <input
-                                id="amperfy-server-url"
-                                type="text"
-                                readonly
-                            >
-
-                            <button
-                                id="amperfy-copy-url"
-                                class="btn-refresh"
-                            >
-                                Copy
-                            </button>
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                OpenSubsonic Status
-                            </div>
-
-                            <div class="setting-desc">
-                                Test that Xrob Music can respond to Arpeggi.
-                            </div>
-
-                        </div>
-
-                        <button
-                            id="amperfy-test-button"
-                            class="btn-refresh"
-                        >
-                            🔌 Test Connection
-                        </button>
-
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                OpenSubsonic Username
-                            </div>
-
-                            <div class="setting-desc">
-                                Username used by Arpeggi to log into Xrob Music.
-                            </div>
-
-                        </div>
-
-                        <input
-                            id="set_subsonic_user"
-                            type="text"
-                            placeholder="admin"
-                        >
-
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                OpenSubsonic Password
-                            </div>
-
-                            <div class="setting-desc">
-                                Password used by Arpeggi.
-                            </div>
-
-                        </div>
-
-                        <input
-                            id="set_subsonic_password"
-                            type="password"
-                            placeholder="Password"
-                            autocomplete="new-password"
-                        >
-
-                    </div>
-
-
-                    <div
-                        id="amperfy-status"
-                        class="integration-status"
-                    >
-                        Ready
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                OpenSubsonic Version
-                            </div>
-
-                            <div class="setting-desc">
-                                Xrob Music server compatibility.
-                            </div>
-
-                        </div>
-
-                        <strong
-                            id="amperfy-open-subsonic"
-                            class="integration-ok"
-                        >
-                            Checking...
-                        </strong>
-
-                    </div>
-
-
-                    <!-- DOWNLOAD -->
-
-                    <div class="settings-divider">
-                        Downloader
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Audio Format
-                            </div>
-
-                            <div class="setting-desc">
-                                Preferred output format.
-                            </div>
-
-                        </div>
-
-                        <select id="set_format">
-
-                            <option value="mp3">MP3</option>
-                            <option value="flac">FLAC (Lossless)</option>
-                            <option value="m4a">M4A (AAC)</option>
-                            <option value="opus">OPUS</option>
-
-                        </select>
-
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Audio Quality
-                            </div>
-
-                            <div class="setting-desc">
-                                Target bitrate for lossy formats.
-                            </div>
-
-                        </div>
-
-                        <select id="set_quality">
-
-                            <option value="320K">320 Kbps</option>
-                            <option value="256K">256 Kbps</option>
-                            <option value="192K">192 Kbps</option>
-                            <option value="128K">128 Kbps</option>
-
-                        </select>
-
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Embed Album Art
-                            </div>
-
-                            <div class="setting-desc">
-                                Include cover art in downloads.
-                            </div>
-
-                        </div>
-
-                        <label class="switch">
-
-                            <input
-                                type="checkbox"
-                                id="set_thumb"
-                            >
-
-                            <span class="slider"></span>
-
-                        </label>
-
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Embed Metadata
-                            </div>
-
-                            <div class="setting-desc">
-                                Write music metadata into downloaded files.
-                            </div>
-
-                        </div>
-
-                        <label class="switch">
-
-                            <input
-                                type="checkbox"
-                                id="set_meta"
-                            >
-
-                            <span class="slider"></span>
-
-                        </label>
-
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Organize by Artist
-                            </div>
-
-                            <div class="setting-desc">
-                                Store tracks inside artist folders.
-                            </div>
-
-                        </div>
-
-                        <label class="switch">
-
-                            <input
-                                type="checkbox"
-                                id="set_organize"
-                            >
-
-                            <span class="slider"></span>
-
-                        </label>
-
-                    </div>
-
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Max Search Results
-                            </div>
-
-                            <div class="setting-desc">
-                                Results returned per search page.
-                            </div>
-
-                        </div>
-
-                        <input
-                            id="set_max_results"
-                            type="number"
-                            min="5"
-                            max="50"
-                            value="20"
-                        >
-
-                    </div>
-
-
-                    <button
-                        class="save-btn"
-                        onclick="saveSettings()"
-                    >
-                        Save Settings
-                    </button>
-
-
-                    <div
-                        id="settingsMsg"
-                        class="status-msg"
-                    ></div>
-
-                </div>
-
-            </section>
-
-        </main>
+        <div
+            id="settingsMsg"
+            class="status-msg"
+        ></div>
 
     </div>
+
+</section>
+
+
+</main>
+
+</div>
 
 </div>
 
 
-<!-- ============================================================
-     GLOBAL PLAYER
-     ============================================================ -->
+<!-- GLOBAL PLAYER -->
 
 <div
     id="global-player-bar"
@@ -1149,8 +916,8 @@
 
         <img
             id="gp-art"
-            src="https://via.placeholder.com/60?text=🎵"
-            alt="Album Art"
+            src="https://via.placeholder.com/60?text=Music"
+            alt=""
         >
 
         <div class="gp-text">
@@ -1173,7 +940,6 @@
         <button
             id="gp-play-btn"
             class="gp-play-btn"
-            aria-label="Play or pause"
         >
             ▶
         </button>
@@ -1226,13 +992,8 @@
 </div>
 
 
-<!-- ============================================================
-     MOBILE NAV
-     ============================================================ -->
-
 <nav
     class="bottom-nav"
-    aria-label="Mobile Navigation"
 >
 
     <button
@@ -1244,7 +1005,6 @@
         Home
     </button>
 
-
     <button
         class="nav-link"
         id="mob-btn-search"
@@ -1253,7 +1013,6 @@
         <span>🔍</span>
         Search
     </button>
-
 
     <button
         class="nav-link"
@@ -1265,7 +1024,6 @@
         (<span id="mobQueueCount">0</span>)
     </button>
 
-
     <button
         class="nav-link"
         id="mob-btn-library"
@@ -1275,7 +1033,6 @@
         Library
         (<span id="mobLibCount">0</span>)
     </button>
-
 
     <button
         class="nav-link"
@@ -1289,8 +1046,8 @@
 </nav>
 
 
-<script src="/static/app.js?v=20260826"></script>
-<script src="/static/amperfy.js?v=20260826"></script>
+<script src="/static/app.js?v=196"></script>
+<script src="/static/amperfy.js?v=196"></script>
 
 </body>
 </html>
