@@ -1,589 +1,877 @@
 /* ============================================================
-   XROB MUSIC — DIRECT AMPERFY / SUBSONIC CLIENT HELPER
+   XROB MUSIC — OPEN SUBSONIC / ARPEGGI INTEGRATION
+   File: static/amperfy.js
+
+   Purpose:
+   - Manage Xrob Music's OpenSubsonic connection UI
+   - Test server availability
+   - Show OpenSubsonic server information
+   - Copy connection URL
+   - Generate connection instructions
+   - Keep Arpeggi-related browser logic separate
+     from the main application logic
+
+   IMPORTANT:
+   Arpeggi connects directly to main.py's OpenSubsonic
+   endpoints. This file does NOT try to act as an
+   OpenSubsonic server.
    ============================================================ */
 
+
 (function () {
+
     "use strict";
 
-    const STORAGE_KEY = "xrob_amperfy_settings";
 
-    const DEFAULTS = {
-        host: window.location.origin,
-        username: "admin",
-        password: "",
-        serverName: "Xrob Music"
-    };
+    /* ========================================================
+       CONFIG
+       ======================================================== */
 
-    // =========================================================
-    // HELPERS
-    // =========================================================
+    const API_PREFIX = "/api";
 
-    function normalizeHost(host) {
-        host = String(host || "").trim();
 
-        if (!host) {
-            host = window.location.origin;
-        }
+    /* ========================================================
+       HELPERS
+       ======================================================== */
 
-        return host.replace(/\/+$/, "");
+    function byId(id) {
+        return document.getElementById(id);
     }
 
-    function loadSettings() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
 
-            if (!raw) {
-                return { ...DEFAULTS };
-            }
+    function getServerBaseUrl() {
 
-            const parsed = JSON.parse(raw);
+        /*
+         * Remove trailing slash.
+         *
+         * Example:
+         * http://192.168.1.73:8100/
+         *
+         * becomes:
+         * http://192.168.1.73:8100
+         */
 
-            return {
-                ...DEFAULTS,
-                ...(parsed || {})
-            };
-        } catch (error) {
-            console.warn(
-                "[Xrob Amperfy] Failed to load settings:",
-                error
-            );
-
-            return { ...DEFAULTS };
-        }
-    }
-
-    function saveSettings(settings) {
-        try {
-            const clean = {
-                ...DEFAULTS,
-                ...(settings || {})
-            };
-
-            clean.host = normalizeHost(clean.host);
-
-            localStorage.setItem(
-                STORAGE_KEY,
-                JSON.stringify(clean)
-            );
-
-            return clean;
-        } catch (error) {
-            console.warn(
-                "[Xrob Amperfy] Failed to save settings:",
-                error
-            );
-
-            return settings;
-        }
-    }
-
-    function getServerUrl() {
-        const settings = loadSettings();
-
-        return normalizeHost(
-            settings.host || window.location.origin
+        return window.location.origin.replace(
+            /\/+$/,
+            ""
         );
     }
 
-    // =========================================================
-    // SUBSONIC API
-    // =========================================================
-
-    /*
-     * IMPORTANT:
-     *
-     * Xrob Music exposes Subsonic through:
-     *
-     *     /api/subsonic
-     *
-     * Therefore Amperfy must NOT use:
-     *
-     *     /rest
-     *
-     * or Navidrome.
-     */
-
-    function getSubsonicUrl() {
-        return `${getServerUrl()}/api/subsonic`;
-    }
-
-    function getPingUrl() {
-        const settings = loadSettings();
-
-        const params = new URLSearchParams({
-            u: settings.username || "admin",
-            p: settings.password || "",
-            v: "1.16.1",
-            c: "Amperfy",
-            f: "json"
-        });
-
-        return `${getSubsonicUrl()}/ping.view?${params.toString()}`;
-    }
-
-    // =========================================================
-    // CONNECTION INFO
-    // =========================================================
-
-    function getConnectionInfo() {
-        const settings = loadSettings();
-
-        return {
-            server: getServerUrl(),
-
-            /*
-             * This is the address Amperfy should use.
-             */
-            subsonic: getSubsonicUrl(),
-
-            username: settings.username || "admin",
-
-            serverName:
-                settings.serverName || "Xrob Music"
-        };
-    }
-
-    // =========================================================
-    // TEST CONNECTION
-    // =========================================================
-
-    async function testConnection() {
-        const settings = loadSettings();
-
-        const username =
-            settings.username || "admin";
-
-        const password =
-            settings.password || "";
-
-        const params = new URLSearchParams({
-            u: username,
-            p: password,
-            v: "1.16.1",
-            c: "Amperfy",
-            f: "json"
-        });
-
-        const url =
-            `${getSubsonicUrl()}/ping.view?${params.toString()}`;
-
-        try {
-            const response = await fetch(url, {
-                method: "GET",
-                cache: "no-store",
-                headers: {
-                    "Accept": "application/json"
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error(
-                    `HTTP ${response.status}`
-                );
-            }
-
-            const data = await response.json();
-
-            /*
-             * Subsonic normally returns:
-             *
-             * {
-             *   "subsonic-response": {
-             *      "status": "ok",
-             *      ...
-             *   }
-             * }
-             */
-
-            const root =
-                data["subsonic-response"] ||
-                data.subsonicResponse ||
-                data;
-
-            if (
-                root.status &&
-                String(root.status).toLowerCase() !== "ok"
-            ) {
-                const errorMessage =
-                    root.error?.message ||
-                    root.error?.[0]?.message ||
-                    "Subsonic server returned an error.";
-
-                throw new Error(errorMessage);
-            }
-
-            return {
-                ok: true,
-                data,
-                server: getServerUrl(),
-                api: getSubsonicUrl()
-            };
-        } catch (error) {
-            console.error(
-                "[Xrob Amperfy] Connection test failed:",
-                error
-            );
-
-            throw error;
-        }
-    }
-
-    // =========================================================
-    // SERVER STATUS
-    // =========================================================
-
-    async function getServerStatus() {
-        try {
-            const response = await fetch(
-                `${getServerUrl()}/api/amperfy/status`,
-                {
-                    method: "GET",
-                    cache: "no-store",
-                    headers: {
-                        "Accept": "application/json"
-                    }
-                }
-            );
-
-            if (!response.ok) {
-                throw new Error(
-                    `HTTP ${response.status}`
-                );
-            }
-
-            return await response.json();
-        } catch (error) {
-            return {
-                status: "error",
-                server: "Xrob Music",
-                subsonic: false,
-                music_files: 0,
-                error: error.message
-            };
-        }
-    }
-
-    // =========================================================
-    // CONFIGURE
-    // =========================================================
-
-    function configure(options = {}) {
-        const current = loadSettings();
-
-        const updated = {
-            ...current,
-            ...options
-        };
-
-        return saveSettings(updated);
-    }
-
-    // =========================================================
-    // SETUP INFORMATION
-    // =========================================================
-
-    function getSetupInfo() {
-        const info = getConnectionInfo();
-
-        return {
-            serverUrl: info.server,
-
-            /*
-             * Direct Subsonic endpoint.
-             */
-            apiUrl: info.subsonic,
-
-            username: info.username,
-
-            instructions: [
-                "Open Amperfy on iOS.",
-                "Add a new Subsonic server.",
-                `Server URL: ${info.subsonic}`,
-                `Username: ${info.username}`,
-                "Password: Your Xrob Music Subsonic password.",
-                "Do not use Navidrome.",
-                "Do not use /rest."
-            ]
-        };
-    }
-
-    // =========================================================
-    // COPY
-    // =========================================================
-
-    async function copyText(text) {
-        if (
-            navigator.clipboard &&
-            navigator.clipboard.writeText
-        ) {
-            await navigator.clipboard.writeText(text);
-            return text;
-        }
-
-        const textarea =
-            document.createElement("textarea");
-
-        textarea.value = text;
-
-        textarea.style.position = "fixed";
-        textarea.style.left = "-9999px";
-
-        document.body.appendChild(textarea);
-
-        textarea.focus();
-        textarea.select();
-
-        document.execCommand("copy");
-
-        textarea.remove();
-
-        return text;
-    }
-
-    async function copyServerUrl() {
-        return copyText(getServerUrl());
-    }
-
-    async function copySubsonicUrl() {
-        return copyText(getSubsonicUrl());
-    }
-
-    // =========================================================
-    // OPEN SERVER
-    // =========================================================
-
-    function openServer() {
-        window.open(
-            getServerUrl(),
-            "_blank",
-            "noopener,noreferrer"
-        );
-    }
-
-    // =========================================================
-    // UI HELPERS
-    // =========================================================
 
     function showMessage(
+        elementId,
         message,
         type = "info"
     ) {
+
         const element =
-            document.getElementById("amperfyStatus");
+            byId(elementId);
 
         if (!element) {
             return;
         }
 
-        element.textContent = message;
 
-        element.className =
-            `amperfy-status ${type}`;
-    }
+        element.textContent =
+            message;
 
-    async function testConnectionUI() {
-        const button =
-            document.getElementById(
-                "amperfyTestBtn"
-            );
 
-        if (button) {
-            button.disabled = true;
-            button.textContent = "⏳ Testing...";
-        }
+        element.dataset.state =
+            type;
 
-        showMessage(
-            "Connecting to Xrob Music Subsonic API...",
-            "loading"
+
+        element.classList.remove(
+            "success",
+            "error",
+            "info"
         );
 
+
+        element.classList.add(
+            type
+        );
+    }
+
+
+    function showToastSafe(
+        message
+    ) {
+
+        if (
+            typeof window.showToast ===
+            "function"
+        ) {
+
+            window.showToast(
+                message
+            );
+
+            return;
+        }
+
+
+        console.log(
+            message
+        );
+    }
+
+
+    function setButtonLoading(
+        button,
+        loading,
+        loadingText = "Checking..."
+    ) {
+
+        if (!button) {
+            return;
+        }
+
+
+        if (loading) {
+
+            if (
+                !button.dataset.originalText
+            ) {
+
+                button.dataset.originalText =
+                    button.textContent;
+            }
+
+
+            button.disabled =
+                true;
+
+
+            button.textContent =
+                loadingText;
+
+        } else {
+
+            button.disabled =
+                false;
+
+
+            if (
+                button.dataset.originalText
+            ) {
+
+                button.textContent =
+                    button.dataset.originalText;
+            }
+        }
+    }
+
+
+    async function safeJson(
+        response
+    ) {
+
         try {
-            const result =
-                await testConnection();
+
+            return await response.json();
+
+        } catch (error) {
+
+            return {};
+        }
+    }
+
+
+    /* ========================================================
+       OPEN SUBSONIC SERVER URL
+       ======================================================== */
+
+    function getOpenSubsonicUrl() {
+
+        /*
+         * OpenSubsonic clients such as Arpeggi normally
+         * connect to the server root, then call:
+         *
+         * /rest/ping.view
+         *
+         * Therefore we return the Xrob Music server root.
+         */
+
+        return getServerBaseUrl();
+    }
+
+
+    /* ========================================================
+       REST ENDPOINT HELPERS
+       ======================================================== */
+
+    function getRestUrl(
+        endpoint,
+        params = {}
+    ) {
+
+        const url =
+            new URL(
+                `/rest/${endpoint}`,
+                getServerBaseUrl()
+            );
+
+
+        Object.entries(
+            params
+        ).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+
+                    url.searchParams.set(
+                        key,
+                        value
+                    );
+                }
+            }
+        );
+
+
+        return url.toString();
+    }
+
+
+    /* ========================================================
+       TEST OPEN SUBSONIC
+       ======================================================== */
+
+    async function testOpenSubsonic() {
+
+        const button =
+            byId(
+                "amperfy-test-button"
+            );
+
+
+        setButtonLoading(
+            button,
+            true,
+            "Testing..."
+        );
+
+
+        showMessage(
+            "amperfy-status",
+            "Connecting to Xrob Music OpenSubsonic server...",
+            "info"
+        );
+
+
+        try {
+
+            const url =
+                getRestUrl(
+                    "ping.view",
+                    {
+                        v: "1.16.1",
+                        c: "XrobMusic",
+                        f: "json"
+                    }
+                );
+
+
+            const response =
+                await fetch(
+                    url,
+                    {
+                        method: "GET",
+                        cache: "no-store"
+                    }
+                );
+
+
+            const data =
+                await safeJson(
+                    response
+                );
+
+
+            if (!response.ok) {
+
+                throw new Error(
+                    `HTTP ${response.status}`
+                );
+            }
+
+
+            const root =
+                data["subsonic-response"] ||
+                data["subsonicResponse"] ||
+                data;
+
+
+            const status =
+                root.status;
+
+
+            if (
+                status &&
+                status.toLowerCase() !==
+                    "ok"
+            ) {
+
+                const message =
+                    root.error?.message ||
+                    "OpenSubsonic server returned an error.";
+
+                throw new Error(
+                    message
+                );
+            }
+
 
             showMessage(
-                "✓ Amperfy / Subsonic connection successful.",
+                "amperfy-status",
+                "✅ Xrob Music OpenSubsonic server is online.",
                 "success"
             );
 
-            return result;
+
+            showToastSafe(
+                "✅ Arpeggi/OpenSubsonic connection works"
+            );
+
+
+            await loadOpenSubsonicInfo();
+
+
+            return true;
+
+
         } catch (error) {
+
+            console.error(
+                "OpenSubsonic test failed:",
+                error
+            );
+
+
             showMessage(
-                `✕ Connection failed: ${error.message}`,
+                "amperfy-status",
+                "❌ OpenSubsonic connection failed: " +
+                    (
+                        error.message ||
+                        "Unknown error"
+                    ),
                 "error"
             );
 
-            throw error;
-        } finally {
-            if (button) {
-                button.disabled = false;
-                button.textContent = "🔌 Test Connection";
-            }
-        }
-    }
 
-    function loadUI() {
-        const settings = loadSettings();
-
-        const host =
-            document.getElementById("set_amperfy_host");
-
-        const user =
-            document.getElementById("set_amperfy_user");
-
-        const password =
-            document.getElementById("set_amperfy_password");
-
-        const serverName =
-            document.getElementById("set_amperfy_server_name");
-
-        const api =
-            document.getElementById("amperfyApiUrl");
-
-        if (host) {
-            host.value =
-                settings.host || window.location.origin;
-        }
-
-        if (user) {
-            user.value =
-                settings.username || "admin";
-        }
-
-        if (password) {
-            password.value =
-                settings.password || "";
-        }
-
-        if (serverName) {
-            serverName.value =
-                settings.serverName || "Xrob Music";
-        }
-
-        if (api) {
-            api.value = getSubsonicUrl();
-        }
-    }
-
-    function saveUI() {
-        const host =
-            document.getElementById("set_amperfy_host");
-
-        const user =
-            document.getElementById("set_amperfy_user");
-
-        const password =
-            document.getElementById("set_amperfy_password");
-
-        const serverName =
-            document.getElementById(
-                "set_amperfy_server_name"
+            showToastSafe(
+                "❌ OpenSubsonic connection failed"
             );
 
-        const settings = {
-            host:
-                host?.value ||
-                window.location.origin,
 
-            username:
-                user?.value ||
-                "admin",
+            return false;
 
-            password:
-                password?.value ||
-                "",
 
-            serverName:
-                serverName?.value ||
-                "Xrob Music"
-        };
+        } finally {
 
-        saveSettings(settings);
-
-        const api =
-            document.getElementById("amperfyApiUrl");
-
-        if (api) {
-            api.value = getSubsonicUrl();
+            setButtonLoading(
+                button,
+                false
+            );
         }
-
-        showMessage(
-            "✓ Amperfy settings saved.",
-            "success"
-        );
-
-        return settings;
     }
 
-    // =========================================================
-    // AUTO INITIALIZATION
-    // =========================================================
 
-    document.addEventListener(
-        "DOMContentLoaded",
-        function () {
-            loadUI();
+    /* ========================================================
+       LOAD SERVER INFORMATION
+       ======================================================== */
 
-            const host =
-                document.getElementById(
-                    "set_amperfy_host"
-                );
+    async function loadOpenSubsonicInfo() {
 
-            if (host) {
-                host.addEventListener(
-                    "input",
-                    function () {
-                        const api =
-                            document.getElementById(
-                                "amperfyApiUrl"
-                            );
+        try {
 
-                        if (api) {
-                            api.value =
-                                `${normalizeHost(
-                                    host.value
-                                )}/api/subsonic`;
-                        }
+            const url =
+                getRestUrl(
+                    "getOpenSubsonicExtensions.view",
+                    {
+                        v: "1.16.1",
+                        c: "XrobMusic",
+                        f: "json"
                     }
                 );
+
+
+            const response =
+                await fetch(
+                    url,
+                    {
+                        cache: "no-store"
+                    }
+                );
+
+
+            if (!response.ok) {
+                return;
             }
+
+
+            const data =
+                await safeJson(
+                    response
+                );
+
+
+            const root =
+                data["subsonic-response"] ||
+                data;
+
+
+            const serverVersion =
+                root.serverVersion ||
+                "";
+
+
+            const openSubsonic =
+                root.openSubsonic;
+
+
+            const versionElement =
+                byId(
+                    "amperfy-server-version"
+                );
+
+
+            const openSubsonicElement =
+                byId(
+                    "amperfy-open-subsonic"
+                );
+
+
+            if (versionElement) {
+
+                versionElement.textContent =
+                    serverVersion ||
+                    "Xrob Music";
+            }
+
+
+            if (openSubsonicElement) {
+
+                openSubsonicElement.textContent =
+                    openSubsonic
+                        ? "Supported"
+                        : "Standard Subsonic";
+            }
+
+
+        } catch (error) {
+
+            console.warn(
+                "Could not load OpenSubsonic info:",
+                error
+            );
         }
-    );
+    }
 
-    // =========================================================
-    // PUBLIC API
-    // =========================================================
 
-    window.XrobAmperfy = {
-        loadSettings,
-        saveSettings,
-        configure,
+    /* ========================================================
+       GET MUSIC FOLDERS TEST
+       ======================================================== */
 
-        getServerUrl,
-        getSubsonicUrl,
-        getRestUrl: getSubsonicUrl,
+    async function testMusicFolders() {
 
-        getConnectionInfo,
-        getSetupInfo,
+        try {
 
-        getServerStatus,
+            const url =
+                getRestUrl(
+                    "getMusicFolders.view",
+                    {
+                        v: "1.16.1",
+                        c: "XrobMusic",
+                        f: "json"
+                    }
+                );
 
-        testConnection,
-        testConnectionUI,
 
-        copyServerUrl,
-        copySubsonicUrl,
+            const response =
+                await fetch(
+                    url,
+                    {
+                        cache: "no-store"
+                    }
+                );
 
-        openServer,
 
-        loadUI,
-        saveUI,
+            const data =
+                await safeJson(
+                    response
+                );
 
-        showMessage
+
+            if (!response.ok) {
+                return false;
+            }
+
+
+            const root =
+                data["subsonic-response"] ||
+                data;
+
+
+            return (
+                root.status === "ok"
+            );
+
+
+        } catch (error) {
+
+            console.warn(
+                "Music folders test failed:",
+                error
+            );
+
+            return false;
+        }
+    }
+
+
+    /* ========================================================
+       COPY SERVER URL
+       ======================================================== */
+
+    async function copyServerUrl() {
+
+        const url =
+            getOpenSubsonicUrl();
+
+
+        try {
+
+            await navigator.clipboard.writeText(
+                url
+            );
+
+
+            showToastSafe(
+                "📋 Xrob Music server URL copied"
+            );
+
+
+        } catch (error) {
+
+            console.warn(
+                "Clipboard unavailable:",
+                error
+            );
+
+
+            window.prompt(
+                "Copy your Xrob Music server URL:",
+                url
+            );
+        }
+    }
+
+
+    /* ========================================================
+       ARPEGGI CONNECTION INFORMATION
+       ======================================================== */
+
+    function getArpeggiConnectionInfo() {
+
+        return {
+            serverUrl:
+                getOpenSubsonicUrl(),
+
+            apiUrl:
+                `${getOpenSubsonicUrl()}/rest`,
+
+            pingUrl:
+                `${getOpenSubsonicUrl()}/rest/ping.view`,
+        };
+    }
+
+
+    /* ========================================================
+       OPEN ARPEGGI HELP
+       ======================================================== */
+
+    function showArpeggiInstructions() {
+
+        const info =
+            getArpeggiConnectionInfo();
+
+
+        const message = [
+            "Xrob Music → Arpeggi",
+            "",
+            `Server URL: ${info.serverUrl}`,
+            "",
+            "In Arpeggi:",
+            "1. Add a new server.",
+            "2. Enter the Xrob Music server URL.",
+            "3. Enter your Xrob Music username.",
+            "4. Enter your Xrob Music password.",
+            "5. Connect.",
+            "",
+            "Arpeggi will communicate directly with Xrob Music's OpenSubsonic API."
+        ].join(
+            "\n"
+        );
+
+
+        window.alert(
+            message
+        );
+    }
+
+
+    /* ========================================================
+       SERVER HEALTH
+       ======================================================== */
+
+    async function checkServerHealth() {
+
+        try {
+
+            const response =
+                await fetch(
+                    `${API_PREFIX}/health`,
+                    {
+                        cache:
+                            "no-store"
+                    }
+                );
+
+
+            if (
+                response.ok
+            ) {
+
+                return await safeJson(
+                    response
+                );
+            }
+
+
+        } catch (error) {
+
+            console.warn(
+                "Health check failed:",
+                error
+            );
+        }
+
+
+        return null;
+    }
+
+
+    /* ========================================================
+       REFRESH ARPEGGI STATUS
+       ======================================================== */
+
+    async function refreshArpeggiStatus() {
+
+        const statusElement =
+            byId(
+                "amperfy-status"
+            );
+
+
+        if (statusElement) {
+
+            statusElement.textContent =
+                "Checking Xrob Music...";
+        }
+
+
+        const health =
+            await checkServerHealth();
+
+
+        if (
+            health &&
+            statusElement
+        ) {
+
+            statusElement.textContent =
+                "✅ Xrob Music server is running.";
+        }
+
+
+        await testOpenSubsonic();
+    }
+
+
+    /* ========================================================
+       INITIALIZE UI
+       ======================================================== */
+
+    function initAmperfyUI() {
+
+        const testButton =
+            byId(
+                "amperfy-test-button"
+            );
+
+
+        if (
+            testButton &&
+            !testButton.dataset.bound
+        ) {
+
+            testButton.dataset.bound =
+                "true";
+
+
+            testButton.addEventListener(
+                "click",
+                testOpenSubsonic
+            );
+        }
+
+
+        const copyButton =
+            byId(
+                "amperfy-copy-url"
+            );
+
+
+        if (
+            copyButton &&
+            !copyButton.dataset.bound
+        ) {
+
+            copyButton.dataset.bound =
+                "true";
+
+
+            copyButton.addEventListener(
+                "click",
+                copyServerUrl
+            );
+        }
+
+
+        const helpButton =
+            byId(
+                "amperfy-help-button"
+            );
+
+
+        if (
+            helpButton &&
+            !helpButton.dataset.bound
+        ) {
+
+            helpButton.dataset.bound =
+                "true";
+
+
+            helpButton.addEventListener(
+                "click",
+                showArpeggiInstructions
+            );
+        }
+
+
+        const serverUrlElement =
+            byId(
+                "amperfy-server-url"
+            );
+
+
+        if (serverUrlElement) {
+
+            serverUrlElement.value =
+                getOpenSubsonicUrl();
+        }
+
+
+        const serverUrlText =
+            byId(
+                "amperfy-server-url-text"
+            );
+
+
+        if (serverUrlText) {
+
+            serverUrlText.textContent =
+                getOpenSubsonicUrl();
+        }
+
+
+        /*
+         * Don't automatically spam the server on every page
+         * load. Only test when the Settings page/UI exists.
+         */
+
+        if (
+            testButton
+        ) {
+
+            setTimeout(
+                () => {
+                    loadOpenSubsonicInfo();
+                },
+                300
+            );
+        }
+    }
+
+
+    /* ========================================================
+       PUBLIC API
+       ======================================================== */
+
+    window.XrobArpeggi = {
+
+        getServerUrl:
+            getOpenSubsonicUrl,
+
+        getRestUrl:
+            getRestUrl,
+
+        testConnection:
+            testOpenSubsonic,
+
+        testMusicFolders:
+            testMusicFolders,
+
+        loadServerInfo:
+            loadOpenSubsonicInfo,
+
+        copyServerUrl:
+            copyServerUrl,
+
+        showInstructions:
+            showArpeggiInstructions,
+
+        refreshStatus:
+            refreshArpeggiStatus,
+
+        getConnectionInfo:
+            getArpeggiConnectionInfo,
     };
 
-    console.info(
-        "[Xrob Music] Direct Amperfy/Subsonic helper loaded."
-    );
+
+    /* ========================================================
+       START
+       ======================================================== */
+
+    if (
+        document.readyState ===
+        "loading"
+    ) {
+
+        document.addEventListener(
+            "DOMContentLoaded",
+            initAmperfyUI
+        );
+
+    } else {
+
+        initAmperfyUI();
+    }
+
 
 })();
