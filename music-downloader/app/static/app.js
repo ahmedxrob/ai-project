@@ -1,19 +1,22 @@
 /* ============================================================
    XROB MUSIC
-   Spotify / Deezer inspired frontend
-   Backend/API endpoints preserved
+   COMPLETE FRONTEND
+   Search + Player + Downloads Queue + Library + Settings
+   ============================================================ */
 
-   Download Queue:
-   - Search -> Download
-   - Automatically navigate to Downloads
-   - Downloads page is the single queue/history location
-   - Live updates via WebSocket + polling
+
+/* ============================================================
+   GLOBAL STATE
    ============================================================ */
 
 let pollTimer = null;
+let socket = null;
+
 let completedSet = new Set();
+
 let libraryFilesSet = new Set();
 let rawLibraryFiles = [];
+
 let activePreviewBtn = null;
 
 let currentPage = 1;
@@ -26,65 +29,155 @@ let lastRenderedTaskSignature = "";
 
 
 /* ============================================================
-   GLOBAL PLAYER
+   GLOBAL PLAYER ELEMENTS
    ============================================================ */
 
-const globalAudio = document.getElementById("global-audio-element");
-const gpBar = document.getElementById("global-player-bar");
-const gpPlayBtn = document.getElementById("gp-play-btn");
-const gpSeek = document.getElementById("gp-seek");
-const gpVolume = document.getElementById("gp-volume");
-const gpCurTime = document.getElementById("gp-cur-time");
-const gpDurTime = document.getElementById("gp-dur-time");
-const gpTitle = document.getElementById("gp-title");
-const gpArtist = document.getElementById("gp-artist");
-const gpArt = document.getElementById("gp-art");
+const globalAudio =
+    document.getElementById(
+        "global-audio-element"
+    );
+
+const gpBar =
+    document.getElementById(
+        "global-player-bar"
+    );
+
+const gpPlayBtn =
+    document.getElementById(
+        "gp-play-btn"
+    );
+
+const gpSeek =
+    document.getElementById(
+        "gp-seek"
+    );
+
+const gpVolume =
+    document.getElementById(
+        "gp-volume"
+    );
+
+const gpCurTime =
+    document.getElementById(
+        "gp-cur-time"
+    );
+
+const gpDurTime =
+    document.getElementById(
+        "gp-dur-time"
+    );
+
+const gpTitle =
+    document.getElementById(
+        "gp-title"
+    );
+
+const gpArtist =
+    document.getElementById(
+        "gp-artist"
+    );
+
+const gpArt =
+    document.getElementById(
+        "gp-art"
+    );
+
+
+/* ============================================================
+   AUDIO VISUALIZER
+   ============================================================ */
 
 let audioCtx = null;
 let analyser = null;
 let sourceNode = null;
 let visualizerAnimationFrame = null;
 
-const canvas = document.getElementById("visualizer-canvas");
-const canvasCtx = canvas ? canvas.getContext("2d") : null;
+const canvas =
+    document.getElementById(
+        "visualizer-canvas"
+    );
 
+const canvasCtx =
+    canvas
+        ? canvas.getContext("2d")
+        : null;
 
-/* ============================================================
-   AUDIO CONTEXT / VISUALIZER
-   ============================================================ */
 
 function initAudioContext() {
-    if (audioCtx || !globalAudio) return;
+
+    if (
+        audioCtx ||
+        !globalAudio
+    ) {
+        return;
+    }
 
     try {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-        analyser = audioCtx.createAnalyser();
+        audioCtx =
+            new (
+                window.AudioContext ||
+                window.webkitAudioContext
+            )();
+
+        analyser =
+            audioCtx.createAnalyser();
+
         analyser.fftSize = 64;
+
         analyser.smoothingTimeConstant = 0.8;
 
-        sourceNode = audioCtx.createMediaElementSource(globalAudio);
+        sourceNode =
+            audioCtx.createMediaElementSource(
+                globalAudio
+            );
 
-        sourceNode.connect(analyser);
-        analyser.connect(audioCtx.destination);
+        sourceNode.connect(
+            analyser
+        );
+
+        analyser.connect(
+            audioCtx.destination
+        );
 
         drawVisualizer();
-    } catch (e) {
-        console.warn("Audio visualizer unavailable:", e);
+
+    } catch (error) {
+
+        console.warn(
+            "Visualizer unavailable:",
+            error
+        );
     }
 }
 
 
 function drawVisualizer() {
-    if (!analyser || !canvasCtx || !canvas) return;
+
+    if (
+        !analyser ||
+        !canvasCtx ||
+        !canvas
+    ) {
+        return;
+    }
 
     visualizerAnimationFrame =
-        requestAnimationFrame(drawVisualizer);
+        requestAnimationFrame(
+            drawVisualizer
+        );
 
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+    const bufferLength =
+        analyser.frequencyBinCount;
 
-    analyser.getByteFrequencyData(dataArray);
+    const dataArray =
+        new Uint8Array(
+            bufferLength
+        );
+
+    analyser.getByteFrequencyData(
+        dataArray
+    );
 
     canvasCtx.clearRect(
         0,
@@ -94,11 +187,18 @@ function drawVisualizer() {
     );
 
     const barWidth =
-        (canvas.width / bufferLength) * 1.6;
+        (
+            canvas.width /
+            bufferLength
+        ) * 1.6;
 
     let x = 0;
 
-    for (let i = 0; i < bufferLength; i++) {
+    for (
+        let i = 0;
+        i < bufferLength;
+        i++
+    ) {
 
         const value =
             dataArray[i] / 255;
@@ -106,15 +206,20 @@ function drawVisualizer() {
         const barHeight =
             Math.max(
                 2,
-                value * canvas.height
+                value *
+                    canvas.height
             );
 
-        canvasCtx.fillStyle = "#1db954";
+        canvasCtx.fillStyle =
+            "#1db954";
 
         canvasCtx.fillRect(
             x,
             canvas.height - barHeight,
-            Math.max(1, barWidth - 1),
+            Math.max(
+                1,
+                barWidth - 1
+            ),
             barHeight
         );
 
@@ -127,23 +232,34 @@ function drawVisualizer() {
    PLAYER HELPERS
    ============================================================ */
 
-function formatSecs(sec) {
+function formatSecs(seconds) {
 
-    sec = Math.floor(sec || 0);
+    seconds =
+        Math.floor(
+            seconds || 0
+        );
 
-    const m =
-        Math.floor(sec / 60);
+    const minutes =
+        Math.floor(
+            seconds / 60
+        );
 
-    const s =
-        sec % 60;
+    const secs =
+        seconds % 60;
 
-    return `${m}:${s < 10 ? "0" : ""}${s}`;
+    return (
+        `${minutes}:` +
+        `${secs < 10 ? "0" : ""}` +
+        `${secs}`
+    );
 }
 
 
 function updatePlayerProgress() {
 
-    if (!globalAudio) return;
+    if (!globalAudio) {
+        return;
+    }
 
     const duration =
         globalAudio.duration;
@@ -153,20 +269,28 @@ function updatePlayerProgress() {
         !isFinite(duration)
     ) {
 
-        if (gpSeek)
+        if (gpSeek) {
             gpSeek.value = 0;
+        }
 
-        if (gpCurTime)
-            gpCurTime.textContent = "0:00";
+        if (gpCurTime) {
+            gpCurTime.textContent =
+                "0:00";
+        }
 
         return;
     }
 
     const percentage =
-        (globalAudio.currentTime / duration) * 100;
+        (
+            globalAudio.currentTime /
+            duration
+        ) * 100;
 
-    if (gpSeek)
-        gpSeek.value = percentage;
+    if (gpSeek) {
+        gpSeek.value =
+            percentage;
+    }
 
     if (gpCurTime) {
         gpCurTime.textContent =
@@ -177,12 +301,16 @@ function updatePlayerProgress() {
 
     if (gpDurTime) {
         gpDurTime.textContent =
-            formatSecs(duration);
+            formatSecs(
+                duration
+            );
     }
 }
 
 
-function setPlayerPlayingState(isPlaying) {
+function setPlayerPlayingState(
+    isPlaying
+) {
 
     if (gpPlayBtn) {
 
@@ -215,14 +343,21 @@ function setPlayerPlayingState(isPlaying) {
 }
 
 
-function resetPreviewButton(btn) {
+function resetPreviewButton(
+    button
+) {
 
-    if (!btn) return;
+    if (!button) {
+        return;
+    }
 
-    btn.classList.remove("playing");
+    button.classList.remove(
+        "playing"
+    );
 
-    btn.innerHTML =
-        btn.dataset.type === "library"
+    button.innerHTML =
+        button.dataset.type ===
+        "library"
             ? "▶ Play"
             : "▶ Preview";
 }
@@ -235,16 +370,21 @@ function updatePlayerInfo(
 ) {
 
     if (gpTitle) {
+
         gpTitle.textContent =
-            title || "Unknown Track";
+            title ||
+            "Unknown Track";
     }
 
     if (gpArtist) {
+
         gpArtist.textContent =
-            artist || "Unknown Artist";
+            artist ||
+            "Unknown Artist";
     }
 
     if (gpArt) {
+
         gpArt.src =
             artUrl ||
             "https://via.placeholder.com/300?text=🎵";
@@ -259,34 +399,47 @@ function updatePlayerInfo(
 if (globalAudio) {
 
     globalAudio.ontimeupdate = () => {
+
         updatePlayerProgress();
     };
 
 
     globalAudio.onloadedmetadata = () => {
+
         updatePlayerProgress();
     };
 
 
     globalAudio.onplay = () => {
-        setPlayerPlayingState(true);
+
+        setPlayerPlayingState(
+            true
+        );
     };
 
 
     globalAudio.onpause = () => {
-        setPlayerPlayingState(false);
+
+        setPlayerPlayingState(
+            false
+        );
     };
 
 
     globalAudio.onended = () => {
 
-        setPlayerPlayingState(false);
+        setPlayerPlayingState(
+            false
+        );
 
-        if (gpSeek)
+        if (gpSeek) {
             gpSeek.value = 0;
+        }
 
-        if (gpCurTime)
-            gpCurTime.textContent = "0:00";
+        if (gpCurTime) {
+            gpCurTime.textContent =
+                "0:00";
+        }
 
         if (activePreviewBtn) {
 
@@ -298,6 +451,7 @@ if (globalAudio) {
         }
 
         if (gpBar) {
+
             gpBar.classList.remove(
                 "is-playing"
             );
@@ -307,75 +461,96 @@ if (globalAudio) {
 
     globalAudio.onerror = () => {
 
-        setPlayerPlayingState(false);
+        setPlayerPlayingState(
+            false
+        );
 
         if (activePreviewBtn) {
 
-            activePreviewBtn.innerHTML =
-                "❌ Error";
-
-            const failedBtn =
+            const failedButton =
                 activePreviewBtn;
 
-            setTimeout(() => {
+            failedButton.innerHTML =
+                "❌ Error";
 
-                resetPreviewButton(
-                    failedBtn
-                );
+            setTimeout(
+                () => {
 
-            }, 2000);
+                    if (
+                        failedButton ===
+                        activePreviewBtn
+                    ) {
+
+                        resetPreviewButton(
+                            failedButton
+                        );
+                    }
+                },
+                2000
+            );
         }
     };
 }
 
 
 /* ============================================================
-   PLAY / PAUSE
+   PLAYER PLAY / PAUSE
    ============================================================ */
 
 if (gpPlayBtn) {
 
-    gpPlayBtn.onclick = async () => {
+    gpPlayBtn.onclick =
+        async () => {
 
-        if (!globalAudio) return;
-
-        initAudioContext();
-
-        if (
-            audioCtx &&
-            audioCtx.state === "suspended"
-        ) {
-            await audioCtx.resume();
-        }
-
-        if (globalAudio.paused) {
-
-            try {
-
-                await globalAudio.play();
-
-                setPlayerPlayingState(true);
-
-            } catch (err) {
-
-                console.error(
-                    "Playback failed:",
-                    err
-                );
+            if (!globalAudio) {
+                return;
             }
 
-        } else {
+            initAudioContext();
 
-            globalAudio.pause();
+            if (
+                audioCtx &&
+                audioCtx.state ===
+                    "suspended"
+            ) {
 
-            setPlayerPlayingState(false);
-        }
-    };
+                await audioCtx.resume();
+            }
+
+            if (
+                globalAudio.paused
+            ) {
+
+                try {
+
+                    await globalAudio.play();
+
+                    setPlayerPlayingState(
+                        true
+                    );
+
+                } catch (error) {
+
+                    console.error(
+                        "Playback failed:",
+                        error
+                    );
+                }
+
+            } else {
+
+                globalAudio.pause();
+
+                setPlayerPlayingState(
+                    false
+                );
+            }
+        };
 }
 
 
 /* ============================================================
-   SEEK
+   PLAYER SEEK
    ============================================================ */
 
 if (gpSeek) {
@@ -385,11 +560,16 @@ if (gpSeek) {
         if (
             globalAudio &&
             globalAudio.duration &&
-            isFinite(globalAudio.duration)
+            isFinite(
+                globalAudio.duration
+            )
         ) {
 
             globalAudio.currentTime =
-                (gpSeek.value / 100) *
+                (
+                    gpSeek.value /
+                    100
+                ) *
                 globalAudio.duration;
         }
     };
@@ -397,14 +577,16 @@ if (gpSeek) {
 
 
 /* ============================================================
-   VOLUME
+   PLAYER VOLUME
    ============================================================ */
 
 if (gpVolume) {
 
     gpVolume.oninput = () => {
 
-        if (!globalAudio) return;
+        if (!globalAudio) {
+            return;
+        }
 
         globalAudio.volume =
             parseFloat(
@@ -424,7 +606,9 @@ if (gpVolume) {
         );
 
 
-    if (savedVolume !== null) {
+    if (
+        savedVolume !== null
+    ) {
 
         gpVolume.value =
             savedVolume;
@@ -443,19 +627,26 @@ if (gpVolume) {
 
 
 /* ============================================================
-   GLOBAL PLAYER STREAM
+   STOP PREVIEW
    ============================================================ */
 
 function stopCurrentPreview() {
 
-    if (!globalAudio) return;
+    if (!globalAudio) {
+        return;
+    }
 
     globalAudio.pause();
 
-    globalAudio.removeAttribute("src");
+    globalAudio.removeAttribute(
+        "src"
+    );
+
     globalAudio.load();
 
-    setPlayerPlayingState(false);
+    setPlayerPlayingState(
+        false
+    );
 
     if (activePreviewBtn) {
 
@@ -466,19 +657,28 @@ function stopCurrentPreview() {
         activePreviewBtn = null;
     }
 
-    if (gpSeek)
+    if (gpSeek) {
         gpSeek.value = 0;
+    }
 
-    if (gpCurTime)
-        gpCurTime.textContent = "0:00";
+    if (gpCurTime) {
+        gpCurTime.textContent =
+            "0:00";
+    }
 
-    if (gpDurTime)
-        gpDurTime.textContent = "0:00";
+    if (gpDurTime) {
+        gpDurTime.textContent =
+            "0:00";
+    }
 }
 
 
+/* ============================================================
+   AUDIO STREAM
+   ============================================================ */
+
 function toggleAudioStream(
-    btn,
+    button,
     streamUrl,
     type = "search",
     title = "Track",
@@ -486,54 +686,81 @@ function toggleAudioStream(
     artUrl = ""
 ) {
 
-    if (!globalAudio || !btn) return;
+    if (
+        !globalAudio ||
+        !button
+    ) {
+        return;
+    }
 
     initAudioContext();
 
     if (
         audioCtx &&
-        audioCtx.state === "suspended"
+        audioCtx.state ===
+            "suspended"
     ) {
+
         audioCtx.resume();
     }
 
+    let absoluteUrl = "";
 
-    const absoluteUrl =
-        new URL(
-            streamUrl,
-            window.location.href
-        ).href;
+    try {
+
+        absoluteUrl =
+            new URL(
+                streamUrl,
+                window.location.href
+            ).href;
+
+    } catch (error) {
+
+        console.error(
+            "Invalid audio URL:",
+            error
+        );
+
+        return;
+    }
 
 
-    /* Same track -> toggle */
+    /* Same track */
 
     if (
-        activePreviewBtn === btn &&
-        globalAudio.src === absoluteUrl
+        activePreviewBtn === button &&
+        globalAudio.src ===
+            absoluteUrl
     ) {
 
-        if (globalAudio.paused) {
+        if (
+            globalAudio.paused
+        ) {
 
-            globalAudio.play()
-                .then(() => {
+            globalAudio
+                .play()
+                .then(
+                    () => {
 
-                    setPlayerPlayingState(true);
+                        setPlayerPlayingState(
+                            true
+                        );
 
-                    btn.innerHTML =
-                        type === "library"
-                            ? "❚❚ Pause"
-                            : "❚❚ Pause";
-
-                })
+                        button.innerHTML =
+                            "❚❚ Pause";
+                    }
+                )
                 .catch(() => {});
 
         } else {
 
             globalAudio.pause();
 
-            setPlayerPlayingState(false);
+            setPlayerPlayingState(
+                false
+            );
 
-            btn.innerHTML =
+            button.innerHTML =
                 type === "library"
                     ? "▶ Play"
                     : "▶ Preview";
@@ -543,6 +770,8 @@ function toggleAudioStream(
     }
 
 
+    /* Stop old */
+
     if (activePreviewBtn) {
 
         resetPreviewButton(
@@ -551,13 +780,13 @@ function toggleAudioStream(
     }
 
 
-    btn.dataset.type =
+    button.dataset.type =
         type;
 
     activePreviewBtn =
-        btn;
+        button;
 
-    btn.innerHTML =
+    button.innerHTML =
         "⏳ Loading...";
 
 
@@ -579,14 +808,19 @@ function toggleAudioStream(
     }
 
 
-    if (gpSeek)
+    if (gpSeek) {
         gpSeek.value = 0;
+    }
 
-    if (gpCurTime)
-        gpCurTime.textContent = "0:00";
+    if (gpCurTime) {
+        gpCurTime.textContent =
+            "0:00";
+    }
 
-    if (gpDurTime)
-        gpDurTime.textContent = "0:00";
+    if (gpDurTime) {
+        gpDurTime.textContent =
+            "0:00";
+    }
 
 
     globalAudio.pause();
@@ -597,53 +831,61 @@ function toggleAudioStream(
     globalAudio.load();
 
 
-    globalAudio.play()
-        .then(() => {
+    globalAudio
+        .play()
+        .then(
+            () => {
 
-            if (gpBar) {
+                if (gpBar) {
 
-                gpBar.classList.remove(
-                    "loading"
-                );
-            }
-
-            setPlayerPlayingState(true);
-
-            btn.innerHTML =
-                "❚❚ Pause";
-
-        })
-        .catch(err => {
-
-            console.error(
-                "Audio playback error:",
-                err
-            );
-
-            if (gpBar) {
-
-                gpBar.classList.remove(
-                    "loading"
-                );
-            }
-
-            btn.innerHTML =
-                "❌ Error";
-
-            setTimeout(() => {
-
-                if (
-                    btn ===
-                    activePreviewBtn
-                ) {
-
-                    resetPreviewButton(
-                        btn
+                    gpBar.classList.remove(
+                        "loading"
                     );
                 }
 
-            }, 2000);
-        });
+                setPlayerPlayingState(
+                    true
+                );
+
+                button.innerHTML =
+                    "❚❚ Pause";
+            }
+        )
+        .catch(
+            error => {
+
+                console.error(
+                    "Audio playback error:",
+                    error
+                );
+
+                if (gpBar) {
+
+                    gpBar.classList.remove(
+                        "loading"
+                    );
+                }
+
+                button.innerHTML =
+                    "❌ Error";
+
+                setTimeout(
+                    () => {
+
+                        if (
+                            button ===
+                            activePreviewBtn
+                        ) {
+
+                            resetPreviewButton(
+                                button
+                            );
+                        }
+                    },
+                    2000
+                );
+            }
+        );
 }
 
 
@@ -651,12 +893,11 @@ function toggleAudioStream(
    WEBSOCKET
    ============================================================ */
 
-let socket = null;
-
 function initWebSocket() {
 
     const protocol =
-        window.location.protocol === "https:"
+        window.location.protocol ===
+        "https:"
             ? "wss:"
             : "ws:";
 
@@ -668,9 +909,10 @@ function initWebSocket() {
                 `${protocol}//${window.location.host}/ws`
             );
 
-    } catch (e) {
+    } catch (error) {
 
         startTaskPolling();
+
         return;
     }
 
@@ -688,7 +930,9 @@ function initWebSocket() {
         try {
 
             const data =
-                JSON.parse(event.data);
+                JSON.parse(
+                    event.data
+                );
 
             if (
                 data.type ===
@@ -698,7 +942,13 @@ function initWebSocket() {
                 pollTasks();
             }
 
-        } catch (e) {}
+        } catch (error) {
+
+            console.warn(
+                "Invalid WebSocket data:",
+                error
+            );
+        }
     };
 
 
@@ -714,19 +964,23 @@ function initWebSocket() {
     socket.onerror = () => {
 
         try {
+
             socket.close();
-        } catch (e) {}
+
+        } catch (error) {}
     };
 }
 
 
 function startTaskPolling() {
 
-    if (pollTimer) return;
+    if (pollTimer) {
+        return;
+    }
 
     pollTimer =
         setInterval(
-            pollTasks,
+            () => pollTasks(),
             2000
         );
 }
@@ -738,7 +992,9 @@ function startTaskPolling() {
 
 function requestNotificationPermission() {
 
-    if (!("Notification" in window)) {
+    if (
+        !("Notification" in window)
+    ) {
 
         showToast(
             "⚠️ Browser notifications are not supported."
@@ -750,25 +1006,32 @@ function requestNotificationPermission() {
 
     Notification
         .requestPermission()
-        .then(permission => {
+        .then(
+            permission => {
 
-            if (permission === "granted") {
+                if (
+                    permission ===
+                    "granted"
+                ) {
 
-                showToast(
-                    "✅ Notifications enabled!"
-                );
+                    showToast(
+                        "✅ Notifications enabled!"
+                    );
 
-            } else {
+                } else {
 
-                showToast(
-                    "⚠️ Notification permission denied."
-                );
+                    showToast(
+                        "⚠️ Notification permission denied."
+                    );
+                }
             }
-        });
+        );
 }
 
 
-function notifyTrackComplete(title) {
+function notifyTrackComplete(
+    title
+) {
 
     showToast(
         `🎉 ${title} is ready in your library`
@@ -777,7 +1040,8 @@ function notifyTrackComplete(title) {
 
     if (
         "Notification" in window &&
-        Notification.permission === "granted"
+        Notification.permission ===
+            "granted"
     ) {
 
         new Notification(
@@ -786,25 +1050,30 @@ function notifyTrackComplete(title) {
                 body:
                     `${title} is now downloaded and ready in your library.`,
                 icon:
-                    "https://via.placeholder.com/64?text=🎵"
+                    "https://via.placeholder.com/64?text=🎵",
             }
         );
     }
 }
 
 
-function showToast(message) {
+function showToast(
+    message
+) {
 
     const container =
         document.getElementById(
             "toast-container"
         );
 
-    if (!container) return;
-
+    if (!container) {
+        return;
+    }
 
     const toast =
-        document.createElement("div");
+        document.createElement(
+            "div"
+        );
 
     toast.className =
         "toast";
@@ -812,24 +1081,26 @@ function showToast(message) {
     toast.textContent =
         message;
 
-
     container.appendChild(
         toast
     );
 
+    setTimeout(
+        () => {
 
-    setTimeout(() => {
+            toast.style.opacity =
+                "0";
 
-        toast.style.opacity = "0";
-        toast.style.transform =
-            "translateX(20px)";
+            toast.style.transform =
+                "translateX(20px)";
 
-        setTimeout(
-            () => toast.remove(),
-            250
-        );
-
-    }, 4000);
+            setTimeout(
+                () => toast.remove(),
+                250
+            );
+        },
+        4000
+    );
 }
 
 
@@ -837,7 +1108,9 @@ function showToast(message) {
    THEME
    ============================================================ */
 
-function toggleTheme(theme) {
+function toggleTheme(
+    theme
+) {
 
     document.documentElement
         .setAttribute(
@@ -881,94 +1154,102 @@ function navigate(
 }
 
 
-function switchTab(tab) {
+function switchTab(
+    tab
+) {
 
     document
-        .querySelectorAll(".tab-content")
-        .forEach(c => {
-
-            c.classList.remove(
-                "active"
-            );
-        });
+        .querySelectorAll(
+            ".tab-content"
+        )
+        .forEach(
+            content =>
+                content.classList.remove(
+                    "active"
+                )
+        );
 
 
     document
-        .querySelectorAll(".nav-link")
-        .forEach(b => {
+        .querySelectorAll(
+            ".nav-link"
+        )
+        .forEach(
+            button => {
 
-            b.classList.remove(
-                "active"
-            );
+                button.classList.remove(
+                    "active"
+                );
 
-            b.setAttribute(
-                "aria-selected",
-                "false"
-            );
-        });
+                button.setAttribute(
+                    "aria-selected",
+                    "false"
+                );
+            }
+        );
 
 
-    const activeContent =
+    const content =
         document.getElementById(
             `tab-${tab}`
         );
 
 
-    if (activeContent) {
+    if (content) {
 
-        activeContent.classList.add(
+        content.classList.add(
             "active"
         );
     }
 
 
-    const sideBtn =
+    const sideButton =
         document.getElementById(
             `btn-${tab}`
         );
 
 
-    const mobBtn =
+    const mobileButton =
         document.getElementById(
             `mob-btn-${tab}`
         );
 
 
-    if (sideBtn) {
+    if (sideButton) {
 
-        sideBtn.classList.add(
+        sideButton.classList.add(
             "active"
         );
 
-        sideBtn.setAttribute(
+        sideButton.setAttribute(
             "aria-selected",
             "true"
         );
     }
 
 
-    if (mobBtn) {
+    if (mobileButton) {
 
-        mobBtn.classList.add(
+        mobileButton.classList.add(
             "active"
         );
 
-        mobBtn.setAttribute(
+        mobileButton.setAttribute(
             "aria-selected",
             "true"
         );
-    }
-
-
-    if (tab === "library") {
-
-        loadLibrary();
     }
 
 
     if (tab === "downloads") {
 
         loadDownloads();
+    }
+
+
+    if (tab === "library") {
+
+        loadLibrary();
     }
 
 
@@ -988,20 +1269,29 @@ function handleDeepLink() {
         );
 
 
+    const allowedTabs = [
+        "search",
+        "downloads",
+        "library",
+        "settings",
+    ];
+
+
     if (
-        [
-            "search",
-            "downloads",
-            "library",
-            "settings"
-        ].includes(hash)
+        allowedTabs.includes(
+            hash
+        )
     ) {
 
-        switchTab(hash);
+        switchTab(
+            hash
+        );
 
     } else {
 
-        switchTab("search");
+        switchTab(
+            "search"
+        );
     }
 }
 
@@ -1016,9 +1306,13 @@ window.addEventListener(
    HELPERS
    ============================================================ */
 
-function normalizeKey(value) {
+function normalizeKey(
+    value
+) {
 
-    return (value || "")
+    return (
+        value || ""
+    )
         .toLowerCase()
         .replace(
             /\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(ed)?|audio)\b/gi,
@@ -1031,9 +1325,13 @@ function normalizeKey(value) {
 }
 
 
-function escapeHtml(t) {
+function escapeHtml(
+    value
+) {
 
-    return String(t ?? "")
+    return String(
+        value ?? ""
+    )
         .replace(
             /&/g,
             "&amp;"
@@ -1065,79 +1363,87 @@ async function loadSettings() {
 
     try {
 
-        const res =
+        const response =
             await fetch(
-                "api/settings"
+                "api/settings",
+                {
+                    cache:
+                        "no-store",
+                }
             );
 
-
-        const s =
-            await res.json();
+        const settings =
+            await response.json();
 
 
         const setValue =
-            (id, value) => {
+            (
+                id,
+                value
+            ) => {
 
-                const el =
+                const element =
                     document.getElementById(
                         id
                     );
 
-                if (el)
-                    el.value =
+                if (element) {
+                    element.value =
                         value;
+                }
             };
 
 
         const setChecked =
-            (id, value) => {
+            (
+                id,
+                value
+            ) => {
 
-                const el =
+                const element =
                     document.getElementById(
                         id
                     );
 
-                if (el)
-                    el.checked =
+                if (element) {
+                    element.checked =
                         !!value;
+                }
             };
 
 
         setValue(
             "set_format",
-            s.audio_format || "mp3"
+            settings.audio_format ||
+                "mp3"
         );
-
 
         setValue(
             "set_quality",
-            s.audio_quality || "320K"
+            settings.audio_quality ||
+                "320K"
         );
-
 
         setChecked(
             "set_thumb",
-            s.embed_thumbnail
+            settings.embed_thumbnail
         );
-
 
         setChecked(
             "set_meta",
-            s.embed_metadata
+            settings.embed_metadata
         );
-
-
-        setValue(
-            "set_max_results",
-            s.max_results || 20
-        );
-
 
         setChecked(
             "set_organize",
-            s.organize_by_artist
+            settings.organize_by_artist
         );
 
+        setValue(
+            "set_max_results",
+            settings.max_results ||
+                20
+        );
 
         setValue(
             "set_theme",
@@ -1146,29 +1452,29 @@ async function loadSettings() {
             ) || "dark"
         );
 
-
         setValue(
             "set_navidrome_url",
-            s.navidrome_url || ""
+            settings.navidrome_url ||
+                ""
         );
-
 
         setValue(
             "set_navidrome_user",
-            s.navidrome_user || ""
+            settings.navidrome_user ||
+                ""
         );
-
 
         setValue(
             "set_navidrome_token",
-            s.navidrome_token || ""
+            settings.navidrome_token ||
+                ""
         );
 
-    } catch (e) {
+    } catch (error) {
 
         console.warn(
-            "Settings load failed:",
-            e
+            "Failed to load settings:",
+            error
         );
     }
 }
@@ -1181,61 +1487,63 @@ async function saveSettings() {
         audio_format:
             document.getElementById(
                 "set_format"
-            ).value,
+            )?.value || "mp3",
 
         audio_quality:
             document.getElementById(
                 "set_quality"
-            ).value,
+            )?.value || "320K",
 
         embed_thumbnail:
             document.getElementById(
                 "set_thumb"
-            ).checked,
+            )?.checked ?? true,
 
         embed_metadata:
             document.getElementById(
                 "set_meta"
-            ).checked,
+            )?.checked ?? true,
 
         max_results:
             parseInt(
                 document.getElementById(
                     "set_max_results"
-                ).value
+                )?.value || "20",
+                10
             ) || 20,
 
         organize_by_artist:
             document.getElementById(
                 "set_organize"
-            ).checked,
+            )?.checked ?? false,
 
         navidrome_url:
             document.getElementById(
                 "set_navidrome_url"
-            ).value,
+            )?.value || "",
 
         navidrome_user:
             document.getElementById(
                 "set_navidrome_user"
-            ).value,
+            )?.value || "",
 
         navidrome_token:
             document.getElementById(
                 "set_navidrome_token"
-            ).value
+            )?.value || "",
     };
 
 
-    const msg =
+    const message =
         document.getElementById(
             "settingsMsg"
         );
 
 
-    if (msg)
-        msg.textContent =
+    if (message) {
+        message.textContent =
             "Saving...";
+    }
 
 
     try {
@@ -1244,26 +1552,27 @@ async function saveSettings() {
             await fetch(
                 "api/settings",
                 {
-                    method: "POST",
+                    method:
+                        "POST",
+
                     headers: {
                         "Content-Type":
-                            "application/json"
+                            "application/json",
                     },
+
                     body:
-                        JSON.stringify(data)
+                        JSON.stringify(
+                            data
+                        ),
                 }
             );
 
 
-        if (!response.ok)
+        if (!response.ok) {
             throw new Error(
-                "Failed to save settings"
+                "Failed to save settings."
             );
-
-
-        if (msg)
-            msg.textContent =
-                "✅ Settings saved!";
+        }
 
 
         showToast(
@@ -1271,18 +1580,28 @@ async function saveSettings() {
         );
 
 
-        setTimeout(() => {
+        if (message) {
 
-            if (msg)
-                msg.textContent = "";
+            message.textContent =
+                "✅ Settings saved!";
 
-        }, 3000);
+            setTimeout(
+                () => {
+                    message.textContent =
+                        "";
+                },
+                3000
+            );
+        }
 
-    } catch (e) {
 
-        if (msg)
-            msg.textContent =
+    } catch (error) {
+
+        if (message) {
+
+            message.textContent =
                 "❌ Failed to save settings.";
+        }
 
         showToast(
             "❌ Failed to save settings"
@@ -1299,20 +1618,25 @@ async function refreshLibraryCache() {
 
     try {
 
-        const res =
+        const response =
             await fetch(
-                "api/library"
+                "api/library",
+                {
+                    cache:
+                        "no-store",
+                }
             );
 
 
-        if (!res.ok)
+        if (!response.ok) {
             throw new Error(
-                "Library request failed"
+                "Library request failed."
             );
+        }
 
 
         const data =
-            await res.json();
+            await response.json();
 
 
         libraryFilesSet.clear();
@@ -1322,21 +1646,22 @@ async function refreshLibraryCache() {
 
 
         rawLibraryFiles.forEach(
-            f => {
+            file => {
 
                 const name =
                     String(
-                        f.name || ""
+                        file.name || ""
                     );
 
+                const slash =
+                    name.lastIndexOf(
+                        "/"
+                    );
 
                 const dot =
-                    name.lastIndexOf(".");
-
-
-                const slash =
-                    name.lastIndexOf("/");
-
+                    name.lastIndexOf(
+                        "."
+                    );
 
                 const baseName =
                     name.substring(
@@ -1345,7 +1670,6 @@ async function refreshLibraryCache() {
                             ? dot
                             : name.length
                     ) || name;
-
 
                 libraryFilesSet.add(
                     normalizeKey(
@@ -1365,18 +1689,15 @@ async function refreshLibraryCache() {
                 "sideLibCount"
             );
 
-
-        const mobCount =
+        const mobileCount =
             document.getElementById(
                 "mobLibCount"
             );
-
 
         const detailCount =
             document.getElementById(
                 "libCountDetail"
             );
-
 
         const folderSize =
             document.getElementById(
@@ -1384,246 +1705,425 @@ async function refreshLibraryCache() {
             );
 
 
-        if (sideCount)
+        if (sideCount) {
             sideCount.textContent =
                 count;
+        }
 
-
-        if (mobCount)
-            mobCount.textContent =
+        if (mobileCount) {
+            mobileCount.textContent =
                 count;
+        }
 
-
-        if (detailCount)
+        if (detailCount) {
             detailCount.textContent =
                 count;
+        }
 
-
-        if (folderSize)
+        if (folderSize) {
             folderSize.textContent =
-                data.total_size || "0 MB";
+                data.total_size ||
+                "0 MB";
+        }
 
-
-    } catch (e) {
+    } catch (error) {
 
         console.warn(
-            "Library cache update failed:",
-            e
+            "Library cache failed:",
+            error
         );
     }
 }
 
 
 /* ============================================================
-   SEARCH RESULTS
+   SEARCH RENDERING
    ============================================================ */
 
-function renderItems(data) {
-
-    const results =
-        document.getElementById(
-            "results"
-        );
-
-
-    if (!results) return;
-
-
-    data.forEach(item => {
-
-        const cleanedTitle =
-            normalizeKey(
-                item.title || "Unknown"
-            );
-
-
-        const isInLibrary =
-            libraryFilesSet.has(
-                cleanedTitle
-            );
-
-
-        const card =
-            document.createElement(
-                "div"
-            );
-
-
-        card.className =
-            "result-card";
-
-
-        card.dataset.elementId =
-            item.id || "";
-
-
-        const thumbUrl =
-            escapeHtml(
-                item.thumbnail || ""
-            );
-
-
-        const titleHtml =
-            escapeHtml(
-                item.title || "Unknown Track"
-            );
-
-
-        const artistHtml =
-            escapeHtml(
-                item.channel || "Unknown Artist"
-            );
-
-
-        const durHtml =
-            escapeHtml(
-                item.duration_text || ""
-            );
-
-
-        card.innerHTML = `
-            <div class="thumb-wrapper">
-                <img
-                    src="${thumbUrl}"
-                    alt="Cover art for ${titleHtml}"
-                    onerror="this.src='https://via.placeholder.com/110x65?text=Music'"
-                />
-                ${
-                    durHtml
-                        ? `<span class="badge-duration">
-                            ${durHtml}
-                        </span>`
-                        : ""
-                }
-            </div>
-
-            <div class="track-info">
-                <div class="track-title">
-                    ${titleHtml}
-                </div>
-
-                <div class="track-artist">
-                    👤 ${artistHtml}
-                </div>
-            </div>
-
-            <div
-                class="btn-group"
-                data-group-id="${escapeHtml(item.id || "")}"
-            ></div>
-        `;
-
-
-        const btnGroup =
-            card.querySelector(
-                ".btn-group"
-            );
-
-
-        if (isInLibrary) {
-
-            renderLibraryBadge(
-                btnGroup
-            );
-
-        } else {
-
-            const prevBtn =
-                document.createElement(
-                    "button"
-                );
-
-
-            prevBtn.className =
-                "btn-preview";
-
-
-            prevBtn.setAttribute(
-                "aria-label",
-                `Preview ${titleHtml}`
-            );
-
-
-            prevBtn.innerHTML =
-                "▶ Preview";
-
-
-            prevBtn.onclick = () =>
-                toggleAudioStream(
-                    prevBtn,
-                    "api/preview?url=" +
-                        encodeURIComponent(
-                            item.url
-                        ),
-                    "search",
-                    item.title,
-                    item.channel,
-                    item.thumbnail
-                );
-
-
-            const dlBtn =
-                document.createElement(
-                    "button"
-                );
-
-
-            dlBtn.className =
-                "btn-download";
-
-
-            dlBtn.dataset.id =
-                item.id || "";
-
-
-            dlBtn.setAttribute(
-                "aria-label",
-                `Download ${titleHtml}`
-            );
-
-
-            dlBtn.innerHTML =
-                "⬇️ Save";
-
-
-            dlBtn.onclick = () =>
-                startDownload(
-                    item.url,
-                    item.title,
-                    item.id,
-                    item.channel,
-                    dlBtn
-                );
-
-
-            btnGroup.appendChild(
-                prevBtn
-            );
-
-
-            btnGroup.appendChild(
-                dlBtn
-            );
-        }
-
-
-        results.appendChild(
-            card
-        );
-    });
-}
-
-
-function renderLibraryBadge(container) {
-
-    if (!container) return;
-
+function renderLibraryBadge(
+    container
+) {
+
+    if (!container) {
+        return;
+    }
 
     container.innerHTML = `
         <div class="badge-library">
             ✅ In Library
         </div>
     `;
+}
+
+
+function markSearchItemAsLibrary(
+    task
+) {
+
+    if (
+        !task ||
+        !task.elementId
+    ) {
+        return;
+    }
+
+
+    let group = null;
+
+
+    try {
+
+        group =
+            document.querySelector(
+                `div[data-group-id="${CSS.escape(
+                    String(
+                        task.elementId
+                    )
+                )}"]`
+            );
+
+    } catch (error) {
+
+        group =
+            document.querySelector(
+                `div[data-group-id="${String(
+                    task.elementId
+                ).replace(
+                    /"/g,
+                    '\\"'
+                )}"]`
+            );
+    }
+
+
+    if (group) {
+
+        renderLibraryBadge(
+            group
+        );
+    }
+}
+
+
+function updateSearchDownloadButtons(
+    tasks
+) {
+
+    const activeIds =
+        new Set(
+            tasks
+                .filter(
+                    task =>
+                        [
+                            "queued",
+                            "downloading",
+                            "processing",
+                        ].includes(
+                            task.status
+                        )
+                )
+                .map(
+                    task =>
+                        String(
+                            task.elementId ||
+                            ""
+                        )
+                )
+                .filter(Boolean)
+        );
+
+
+    document
+        .querySelectorAll(
+            ".btn-download[data-id]"
+        )
+        .forEach(
+            button => {
+
+                const id =
+                    String(
+                        button.dataset.id ||
+                        ""
+                    );
+
+                if (!id) {
+                    return;
+                }
+
+
+                if (
+                    activeIds.has(
+                        id
+                    )
+                ) {
+
+                    button.disabled =
+                        true;
+
+                    button.classList.add(
+                        "is-queued"
+                    );
+
+                    button.innerHTML =
+                        "⏳ Queued";
+
+                } else if (
+                    !button.classList.contains(
+                        "is-completed"
+                    )
+                ) {
+
+                    button.disabled =
+                        false;
+
+                    button.classList.remove(
+                        "is-queued"
+                    );
+
+                    if (
+                        button.textContent
+                            .includes(
+                                "Queued"
+                            )
+                    ) {
+
+                        button.innerHTML =
+                            "⬇️ Save";
+                    }
+                }
+            }
+        );
+
+
+    tasks
+        .filter(
+            task =>
+                task.status ===
+                "completed"
+        )
+        .forEach(
+            markSearchItemAsLibrary
+        );
+}
+
+
+function renderItems(
+    data
+) {
+
+    const results =
+        document.getElementById(
+            "results"
+        );
+
+    if (!results) {
+        return;
+    }
+
+
+    data.forEach(
+        item => {
+
+            const cleanedTitle =
+                normalizeKey(
+                    item.title ||
+                    "Unknown"
+                );
+
+
+            const isInLibrary =
+                libraryFilesSet.has(
+                    cleanedTitle
+                );
+
+
+            const card =
+                document.createElement(
+                    "div"
+                );
+
+
+            card.className =
+                "result-card";
+
+
+            card.dataset.elementId =
+                item.id || "";
+
+
+            const title =
+                escapeHtml(
+                    item.title ||
+                    "Unknown Track"
+                );
+
+
+            const artist =
+                escapeHtml(
+                    item.channel ||
+                    "Unknown Artist"
+                );
+
+
+            const thumbnail =
+                escapeHtml(
+                    item.thumbnail ||
+                    ""
+                );
+
+
+            const duration =
+                escapeHtml(
+                    item.duration_text ||
+                    ""
+                );
+
+
+            card.innerHTML = `
+                <div class="thumb-wrapper">
+
+                    <img
+                        src="${thumbnail}"
+                        alt="Cover art for ${title}"
+                        onerror="
+                            this.src='https://via.placeholder.com/110x65?text=Music'
+                        "
+                    >
+
+                    ${
+                        duration
+                            ? `
+                                <span class="badge-duration">
+                                    ${duration}
+                                </span>
+                            `
+                            : ""
+                    }
+
+                </div>
+
+
+                <div class="track-info">
+
+                    <div class="track-title">
+                        ${title}
+                    </div>
+
+                    <div class="track-artist">
+                        👤 ${artist}
+                    </div>
+
+                </div>
+
+
+                <div
+                    class="btn-group"
+                    data-group-id="${escapeHtml(
+                        item.id || ""
+                    )}"
+                ></div>
+            `;
+
+
+            const group =
+                card.querySelector(
+                    ".btn-group"
+                );
+
+
+            if (isInLibrary) {
+
+                renderLibraryBadge(
+                    group
+                );
+
+            } else {
+
+                const previewButton =
+                    document.createElement(
+                        "button"
+                    );
+
+
+                previewButton.className =
+                    "btn-preview";
+
+                previewButton.dataset.type =
+                    "search";
+
+                previewButton.innerHTML =
+                    "▶ Preview";
+
+
+                previewButton.setAttribute(
+                    "aria-label",
+                    `Preview ${title}`
+                );
+
+
+                previewButton.onclick =
+                    () =>
+                        toggleAudioStream(
+                            previewButton,
+                            "api/preview?url=" +
+                                encodeURIComponent(
+                                    item.url
+                                ),
+                            "search",
+                            item.title,
+                            item.channel,
+                            item.thumbnail
+                        );
+
+
+                const downloadButton =
+                    document.createElement(
+                        "button"
+                    );
+
+
+                downloadButton.className =
+                    "btn-download";
+
+                downloadButton.dataset.id =
+                    item.id || "";
+
+                downloadButton.innerHTML =
+                    "⬇️ Save";
+
+
+                downloadButton.setAttribute(
+                    "aria-label",
+                    `Download ${title}`
+                );
+
+
+                downloadButton.onclick =
+                    () =>
+                        startDownload(
+                            item.url,
+                            item.title,
+                            item.id,
+                            item.channel,
+                            downloadButton
+                        );
+
+
+                group.appendChild(
+                    previewButton
+                );
+
+                group.appendChild(
+                    downloadButton
+                );
+            }
+
+
+            results.appendChild(
+                card
+            );
+        }
+    );
 }
 
 
@@ -1638,18 +2138,15 @@ async function searchMusic() {
             "query"
         );
 
-
-    const statusMsg =
+    const statusMessage =
         document.getElementById(
             "statusMsg"
         );
-
 
     const results =
         document.getElementById(
             "results"
         );
-
 
     const searchButton =
         document.getElementById(
@@ -1665,9 +2162,11 @@ async function searchMusic() {
 
     if (!query) {
 
-        if (statusMsg)
-            statusMsg.textContent =
+        if (statusMessage) {
+
+            statusMessage.textContent =
                 "Type something to search.";
+        }
 
         return;
     }
@@ -1677,23 +2176,29 @@ async function searchMusic() {
         query;
 
     currentPage = 1;
-
     hasMoreResults = true;
-
     isLoadingMore = false;
 
 
-    if (statusMsg)
-        statusMsg.textContent =
+    if (statusMessage) {
+
+        statusMessage.textContent =
             "🔍 Searching YouTube...";
+    }
 
 
-    if (results)
-        results.innerHTML = "";
+    if (results) {
+
+        results.innerHTML =
+            "";
+    }
 
 
-    if (searchButton)
-        searchButton.disabled = true;
+    if (searchButton) {
+
+        searchButton.disabled =
+            true;
+    }
 
 
     await refreshLibraryCache();
@@ -1703,14 +2208,26 @@ async function searchMusic() {
 
         const response =
             await fetch(
-                `api/search?q=${encodeURIComponent(query)}&page=1`
+                `api/search?q=${encodeURIComponent(
+                    query
+                )}&page=1`
             );
 
 
-        if (!response.ok)
+        if (!response.ok) {
+
+            const data =
+                await response
+                    .json()
+                    .catch(
+                        () => ({})
+                    );
+
             throw new Error(
-                "Search failed"
+                data.detail ||
+                "Search failed."
             );
+        }
 
 
         const data =
@@ -1722,39 +2239,51 @@ async function searchMusic() {
             data.length === 0
         ) {
 
-            if (statusMsg)
-                statusMsg.textContent =
+            if (statusMessage) {
+
+                statusMessage.textContent =
                     "No results found.";
+            }
 
-
-            hasMoreResults = false;
+            hasMoreResults =
+                false;
 
             return;
         }
 
 
-        if (statusMsg)
-            statusMsg.textContent = "";
+        if (statusMessage) {
+
+            statusMessage.textContent =
+                "";
+        }
 
 
         renderItems(
             data
         );
 
-    } catch (err) {
 
-        if (statusMsg)
-            statusMsg.textContent =
+    } catch (error) {
+
+        if (statusMessage) {
+
+            statusMessage.textContent =
                 "❌ " +
                 (
-                    err.message ||
+                    error.message ||
                     "Search failed."
                 );
+        }
+
 
     } finally {
 
-        if (searchButton)
-            searchButton.disabled = false;
+        if (searchButton) {
+
+            searchButton.disabled =
+                false;
+        }
     }
 }
 
@@ -1765,8 +2294,9 @@ async function loadMoreResults() {
         isLoadingMore ||
         !hasMoreResults ||
         !currentQuery
-    )
+    ) {
         return;
+    }
 
 
     isLoadingMore = true;
@@ -1780,23 +2310,29 @@ async function loadMoreResults() {
         );
 
 
-    if (loader)
+    if (loader) {
+
         loader.style.display =
             "block";
+    }
 
 
     try {
 
         const response =
             await fetch(
-                `api/search?q=${encodeURIComponent(currentQuery)}&page=${currentPage}`
+                `api/search?q=${encodeURIComponent(
+                    currentQuery
+                )}&page=${currentPage}`
             );
 
 
-        if (!response.ok)
+        if (!response.ok) {
+
             throw new Error(
-                "Load failed"
+                "Load failed."
             );
+        }
 
 
         const data =
@@ -1808,7 +2344,8 @@ async function loadMoreResults() {
             data.length === 0
         ) {
 
-            hasMoreResults = false;
+            hasMoreResults =
+                false;
 
         } else {
 
@@ -1817,133 +2354,146 @@ async function loadMoreResults() {
             );
         }
 
-    } catch (e) {
 
-        hasMoreResults = false;
+    } catch (error) {
+
+        hasMoreResults =
+            false;
 
     } finally {
 
-        if (loader)
+        if (loader) {
+
             loader.style.display =
                 "none";
+        }
 
-        isLoadingMore = false;
+        isLoadingMore =
+            false;
     }
 }
 
 
 /* ============================================================
-   DOWNLOAD QUEUE HELPERS
+   DOWNLOAD HELPERS
    ============================================================ */
 
-function isActiveTask(task) {
+function isActiveTask(
+    task
+) {
 
     return [
         "queued",
         "downloading",
-        "processing"
+        "processing",
     ].includes(
         task.status
     );
 }
 
 
-function isFinishedTask(task) {
+function isFinishedTask(
+    task
+) {
 
     return [
         "completed",
         "error",
         "failed",
         "cancelled",
-        "canceled"
+        "canceled",
     ].includes(
         task.status
     );
 }
 
 
-function getTaskStatusMeta(task) {
+function getTaskStatusMeta(
+    task
+) {
 
     const status =
         String(
-            task.status || "queued"
+            task.status ||
+            "queued"
         ).toLowerCase();
 
 
-    const map = {
+    const statuses = {
 
         queued: {
             label: "Queued",
             icon: "⏳",
-            className: "status-queued"
+            className:
+                "status-queued",
         },
 
         downloading: {
             label: "Downloading",
             icon: "⬇️",
-            className: "status-downloading"
+            className:
+                "status-downloading",
         },
 
         processing: {
             label: "Processing",
             icon: "⚙️",
-            className: "status-processing"
+            className:
+                "status-processing",
         },
 
         completed: {
             label: "Completed",
             icon: "✓",
-            className: "status-completed"
+            className:
+                "status-completed",
         },
 
         error: {
             label: "Failed",
             icon: "⚠️",
-            className: "status-error"
+            className:
+                "status-error",
         },
 
         failed: {
             label: "Failed",
             icon: "⚠️",
-            className: "status-error"
+            className:
+                "status-error",
         },
 
         cancelled: {
             label: "Cancelled",
             icon: "✕",
-            className: "status-cancelled"
+            className:
+                "status-cancelled",
         },
 
         canceled: {
             label: "Cancelled",
             icon: "✕",
-            className: "status-cancelled"
-        }
+            className:
+                "status-cancelled",
+        },
     };
 
 
     return (
-        map[status] ||
+        statuses[status] ||
         {
-            label:
-                status
-                    .replace(
-                        /[-_]/g,
-                        " "
-                    )
-                    .replace(
-                        /^\w/,
-                        c =>
-                            c.toUpperCase()
-                    ),
+            label: "Queued",
             icon: "•",
-            className: "status-queued"
+            className:
+                "status-queued",
         }
     );
 }
 
 
-function updateQueueCounters(tasks) {
+function updateQueueCounters(
+    tasks
+) {
 
     const activeCount =
         tasks.filter(
@@ -1956,12 +2506,10 @@ function updateQueueCounters(tasks) {
             "queueCount"
         );
 
-
-    const downloadQueueTitle =
+    const downloadQueueCount =
         document.getElementById(
             "downloadQueueCount"
         );
-
 
     const mobileQueueCount =
         document.getElementById(
@@ -1969,112 +2517,23 @@ function updateQueueCounters(tasks) {
         );
 
 
-    if (queueCount)
+    if (queueCount) {
+
         queueCount.textContent =
             activeCount;
+    }
 
+    if (downloadQueueCount) {
 
-    if (downloadQueueTitle)
-        downloadQueueTitle.textContent =
+        downloadQueueCount.textContent =
             activeCount;
+    }
 
+    if (mobileQueueCount) {
 
-    if (mobileQueueCount)
         mobileQueueCount.textContent =
             activeCount;
-}
-
-
-function updateSearchDownloadButtons(
-    tasks
-) {
-
-    const activeIds =
-        new Set(
-            tasks
-                .filter(isActiveTask)
-                .map(
-                    t =>
-                        String(
-                            t.elementId || ""
-                        )
-                )
-                .filter(Boolean)
-        );
-
-
-    document
-        .querySelectorAll(
-            ".btn-download[data-id]"
-        )
-        .forEach(btn => {
-
-            const id =
-                String(
-                    btn.dataset.id || ""
-                );
-
-
-            if (!id) return;
-
-
-            if (activeIds.has(id)) {
-
-                btn.disabled =
-                    true;
-
-                btn.classList.add(
-                    "is-queued"
-                );
-
-                btn.innerHTML =
-                    "⏳ Queued";
-
-            } else {
-
-                if (
-                    !btn.disabled ||
-                    !btn.classList.contains(
-                        "is-completed"
-                    )
-                ) {
-
-                    btn.classList.remove(
-                        "is-queued"
-                    );
-                }
-            }
-        });
-
-
-    tasks
-        .filter(
-            t =>
-                [
-                    "completed"
-                ].includes(
-                    t.status
-                )
-        )
-        .forEach(task => {
-
-            if (!task.elementId)
-                return;
-
-
-            const group =
-                document.querySelector(
-                    `div[data-group-id="${CSS.escape(String(task.elementId))}"]`
-                );
-
-
-            if (group) {
-
-                renderLibraryBadge(
-                    group
-                );
-            }
-        });
+    }
 }
 
 
@@ -2111,62 +2570,68 @@ async function startDownload(
                 "api/download",
                 {
                     method: "POST",
+
                     headers: {
                         "Content-Type":
-                            "application/json"
+                            "application/json",
                     },
+
                     body:
                         JSON.stringify({
                             url,
                             title,
                             elementId,
-                            artist
-                        })
+                            artist,
+                        }),
                 }
             );
 
 
+        const data =
+            await response
+                .json()
+                .catch(
+                    () => ({})
+                );
+
+
         if (!response.ok) {
 
-            const error =
-                await response
-                    .json()
-                    .catch(
-                        () => ({})
-                    );
-
-
             throw new Error(
-                error.detail ||
+                data.detail ||
                 "Failed to enqueue download."
             );
         }
 
 
-        showToast(
-            `⬇️ Added "${title}" to Downloads`
-        );
+        if (
+            data.status ===
+            "already_queued"
+        ) {
+
+            showToast(
+                "⏳ This track is already in Downloads"
+            );
+
+        } else {
+
+            showToast(
+                `⬇️ Added "${title}" to Downloads`
+            );
+        }
 
 
-        /*
-         * Downloads is now the single queue screen.
-         * Open it immediately after enqueueing.
-         */
         navigate(
             "downloads"
         );
 
 
-        /*
-         * Fetch tasks immediately so the new item
-         * appears without waiting for WebSocket/polling.
-         */
         await pollTasks(
             true
         );
 
 
-    } catch (e) {
+    } catch (error) {
 
         if (sourceButton) {
 
@@ -2185,7 +2650,7 @@ async function startDownload(
         showToast(
             "❌ " +
             (
-                e.message ||
+                error.message ||
                 "Failed to enqueue download."
             )
         );
@@ -2194,72 +2659,28 @@ async function startDownload(
 
 
 /* ============================================================
-   TASK SORTING
+   TASK SIGNATURE
    ============================================================ */
 
-function taskTimestamp(task) {
+function createTaskSignature(
+    tasks
+) {
 
-    const value =
-        task.last_updated ??
-        task.updated_at ??
-        task.created_at ??
-        task.timestamp ??
-        0;
-
-
-    if (
-        typeof value === "number" &&
-        value < 10000000000
-    ) {
-
-        return value * 1000;
-    }
-
-
-    const parsed =
-        Date.parse(value);
-
-
-    if (!Number.isNaN(parsed))
-        return parsed;
-
-
-    return Number(value) || 0;
-}
-
-
-function sortTasks(tasks) {
-
-    return [...tasks].sort(
-        (a, b) => {
-
-            const activeA =
-                isActiveTask(a);
-
-            const activeB =
-                isActiveTask(b);
-
-
-            if (
-                activeA &&
-                !activeB
-            )
-                return -1;
-
-
-            if (
-                !activeA &&
-                activeB
-            )
-                return 1;
-
-
-            return (
-                taskTimestamp(b) -
-                taskTimestamp(a)
-            );
-        }
-    );
+    return tasks
+        .map(
+            task =>
+                [
+                    task.id,
+                    task.status,
+                    task.percent,
+                    task.step,
+                    task.error,
+                    task.speed,
+                    task.last_updated,
+                ].join(":")
+        )
+        .sort()
+        .join("|");
 }
 
 
@@ -2295,42 +2716,25 @@ function buildDownloadCard(
     const active =
         isActiveTask(task);
 
-
     const completed =
         task.status ===
         "completed";
 
-
-    const error =
+    const failed =
         [
             "error",
-            "failed"
+            "failed",
         ].includes(
             task.status
         );
-
 
     const cancelled =
         [
             "cancelled",
-            "canceled"
+            "canceled",
         ].includes(
             task.status
         );
-
-
-    const card =
-        document.createElement(
-            "article"
-        );
-
-
-    card.className =
-        "download-card";
-
-
-    card.dataset.taskId =
-        task.id || "";
 
 
     const title =
@@ -2350,15 +2754,11 @@ function buildDownloadCard(
     const step =
         escapeHtml(
             task.step ||
-            (
-                task.status === "queued"
-                    ? "Waiting in queue..."
-                    : ""
-            )
+            ""
         );
 
 
-    const errorMessage =
+    const error =
         escapeHtml(
             task.error ||
             ""
@@ -2372,42 +2772,32 @@ function buildDownloadCard(
         );
 
 
-    const statusText =
-        error
+    const statusMessage =
+        failed
             ? (
-                errorMessage ||
+                error ||
                 "Download failed"
             )
             : cancelled
                 ? "Download cancelled"
                 : completed
                     ? "Saved to your library"
-                    : (
-                        step ||
-                        meta.label
-                    );
+                    : step ||
+                        meta.label;
 
 
-    const buttonHtml =
-        active
-            ? `
-                <button
-                    type="button"
-                    class="btn-danger download-cancel-btn"
-                    data-task-id="${escapeHtml(String(task.id || ""))}"
-                >
-                    ✕ Cancel
-                </button>
-            `
-            : `
-                <button
-                    type="button"
-                    class="download-remove-btn"
-                    data-task-id="${escapeHtml(String(task.id || ""))}"
-                >
-                    Remove
-                </button>
-            `;
+    const card =
+        document.createElement(
+            "article"
+        );
+
+
+    card.className =
+        "download-card";
+
+
+    card.dataset.taskId =
+        task.id || "";
 
 
     const queueBadge =
@@ -2420,9 +2810,40 @@ function buildDownloadCard(
             : "";
 
 
+    const action =
+        active
+            ? `
+                <button
+                    type="button"
+                    class="btn-danger download-cancel-btn"
+                    data-task-id="${escapeHtml(
+                        String(
+                            task.id || ""
+                        )
+                    )}"
+                >
+                    ✕ Cancel
+                </button>
+            `
+            : `
+                <button
+                    type="button"
+                    class="download-remove-btn"
+                    data-task-id="${escapeHtml(
+                        String(
+                            task.id || ""
+                        )
+                    )}"
+                >
+                    Remove
+                </button>
+            `;
+
+
     card.innerHTML = `
 
         <div class="download-art">
+
             <div class="download-art-icon">
                 🎵
             </div>
@@ -2430,6 +2851,7 @@ function buildDownloadCard(
             <div class="download-art-overlay">
                 ${meta.icon}
             </div>
+
         </div>
 
 
@@ -2455,10 +2877,18 @@ function buildDownloadCard(
                     ${queueBadge}
 
                     <span
-                        class="download-status ${meta.className}"
+                        class="
+                            download-status
+                            ${meta.className}
+                        "
                     >
-                        <span class="status-dot"></span>
+
+                        <span
+                            class="status-dot"
+                        ></span>
+
                         ${meta.label}
+
                     </span>
 
                 </div>
@@ -2471,11 +2901,22 @@ function buildDownloadCard(
                 <div class="download-progress-track">
 
                     <div
-                        class="download-progress-fill ${error || cancelled ? "is-error" : ""} ${completed ? "is-complete" : ""}"
-                        style="width:${percent}%"
+                        class="
+                            download-progress-fill
+                            ${failed || cancelled
+                                ? "is-error"
+                                : ""}
+                            ${completed
+                                ? "is-complete"
+                                : ""}
+                        "
+                        style="
+                            width:${percent}%;
+                        "
                     ></div>
 
                 </div>
+
 
                 <span class="download-percent">
                     ${percent}%
@@ -2487,26 +2928,43 @@ function buildDownloadCard(
             <div class="download-bottom">
 
                 <div class="download-message">
-                    ${statusText}
+                    ${statusMessage}
                 </div>
+
 
                 <div class="download-meta">
 
                     ${
                         speed
-                            ? `<span>${speed}</span>`
+                            ? `
+                                <span>
+                                    ${speed}
+                                </span>
+                            `
                             : ""
                     }
 
+
                     ${
-                        active && task.status === "queued"
-                            ? `<span>Waiting for downloader</span>`
+                        active &&
+                        task.status ===
+                            "queued"
+                            ? `
+                                <span>
+                                    Waiting for downloader
+                                </span>
+                            `
                             : ""
                     }
+
 
                     ${
                         completed
-                            ? `<span>✓ Ready in Library</span>`
+                            ? `
+                                <span>
+                                    ✓ Ready in Library
+                                </span>
+                            `
                             : ""
                     }
 
@@ -2518,40 +2976,40 @@ function buildDownloadCard(
 
 
         <div class="download-actions">
-
-            ${buttonHtml}
-
+            ${action}
         </div>
     `;
 
 
-    const cancelBtn =
+    const cancelButton =
         card.querySelector(
             ".download-cancel-btn"
         );
 
 
-    if (cancelBtn) {
+    if (cancelButton) {
 
-        cancelBtn.onclick = () =>
-            cancelTask(
-                task.id
-            );
+        cancelButton.onclick =
+            () =>
+                cancelTask(
+                    task.id
+                );
     }
 
 
-    const removeBtn =
+    const removeButton =
         card.querySelector(
             ".download-remove-btn"
         );
 
 
-    if (removeBtn) {
+    if (removeButton) {
 
-        removeBtn.onclick = () =>
-            removeDownloadCard(
-                task.id
-            );
+        removeButton.onclick =
+            () =>
+                removeDownloadTask(
+                    task.id
+                );
     }
 
 
@@ -2560,7 +3018,7 @@ function buildDownloadCard(
 
 
 /* ============================================================
-   DOWNLOAD PAGE RENDER
+   RENDER DOWNLOADS
    ============================================================ */
 
 function renderDownloads(
@@ -2573,23 +3031,41 @@ function renderDownloads(
         );
 
 
-    if (!list) return;
+    if (!list) {
+        return;
+    }
 
 
     const activeTasks =
-        sortTasks(
-            tasks.filter(
+        tasks
+            .filter(
                 isActiveTask
             )
-        );
+            .sort(
+                (a, b) =>
+                    Number(
+                        b.last_updated || 0
+                    ) -
+                    Number(
+                        a.last_updated || 0
+                    )
+            );
 
 
     const finishedTasks =
-        sortTasks(
-            tasks.filter(
+        tasks
+            .filter(
                 isFinishedTask
             )
-        );
+            .sort(
+                (a, b) =>
+                    Number(
+                        b.last_updated || 0
+                    ) -
+                    Number(
+                        a.last_updated || 0
+                    )
+            );
 
 
     updateQueueCounters(
@@ -2597,18 +3073,18 @@ function renderDownloads(
     );
 
 
-    list.innerHTML = "";
+    list.innerHTML =
+        "";
 
 
-    /*
-     * ACTIVE QUEUE
-     */
+    /* --------------------------------------------------------
+       ACTIVE QUEUE
+       -------------------------------------------------------- */
 
     const activeSection =
         document.createElement(
             "section"
         );
-
 
     activeSection.className =
         "downloads-section";
@@ -2619,6 +3095,7 @@ function renderDownloads(
         <div class="downloads-section-header">
 
             <div>
+
                 <div class="downloads-section-title">
                     Active Queue
                 </div>
@@ -2630,7 +3107,9 @@ function renderDownloads(
                             : "Nothing is currently downloading"
                     }
                 </div>
+
             </div>
+
 
             <span class="section-count">
                 ${activeTasks.length}
@@ -2640,22 +3119,26 @@ function renderDownloads(
     `;
 
 
-    if (activeTasks.length) {
+    if (
+        activeTasks.length
+    ) {
 
-        const activeList =
+        const stack =
             document.createElement(
                 "div"
             );
 
-
-        activeList.className =
+        stack.className =
             "download-stack";
 
 
         activeTasks.forEach(
-            (task, index) => {
+            (
+                task,
+                index
+            ) => {
 
-                activeList.appendChild(
+                stack.appendChild(
                     buildDownloadCard(
                         task,
                         index + 1
@@ -2666,8 +3149,9 @@ function renderDownloads(
 
 
         activeSection.appendChild(
-            activeList
+            stack
         );
+
 
     } else {
 
@@ -2682,13 +3166,19 @@ function renderDownloads(
 
 
         empty.innerHTML = `
-            <div class="empty-icon">🎧</div>
+
+            <div class="empty-icon">
+                🎧
+            </div>
+
             <div class="empty-title">
                 Queue is empty
             </div>
+
             <div class="empty-text">
                 Search for a track and press Download to add it here.
             </div>
+
             <button
                 type="button"
                 class="save-btn empty-action"
@@ -2698,14 +3188,20 @@ function renderDownloads(
         `;
 
 
-        empty
-            .querySelector(
+        const searchButton =
+            empty.querySelector(
                 ".empty-action"
-            )
-            .onclick = () =>
-                navigate(
-                    "search"
-                );
+            );
+
+
+        if (searchButton) {
+
+            searchButton.onclick =
+                () =>
+                    navigate(
+                        "search"
+                    );
+        }
 
 
         activeSection.appendChild(
@@ -2719,25 +3215,25 @@ function renderDownloads(
     );
 
 
-    /*
-     * RECENT HISTORY
-     */
+    /* --------------------------------------------------------
+       RECENT DOWNLOADS
+       -------------------------------------------------------- */
 
-    const recentSection =
+    const historySection =
         document.createElement(
             "section"
         );
 
+    historySection.className =
+        "downloads-section";
 
-    recentSection.className =
-        "downloads-section downloads-history";
 
-
-    recentSection.innerHTML = `
+    historySection.innerHTML = `
 
         <div class="downloads-section-header">
 
             <div>
+
                 <div class="downloads-section-title">
                     Recent Downloads
                 </div>
@@ -2745,7 +3241,9 @@ function renderDownloads(
                 <div class="downloads-section-subtitle">
                     Completed and previous download jobs
                 </div>
+
             </div>
+
 
             <span class="section-count">
                 ${finishedTasks.length}
@@ -2755,22 +3253,23 @@ function renderDownloads(
     `;
 
 
-    if (finishedTasks.length) {
+    if (
+        finishedTasks.length
+    ) {
 
-        const historyList =
+        const stack =
             document.createElement(
                 "div"
             );
 
-
-        historyList.className =
+        stack.className =
             "download-stack";
 
 
         finishedTasks.forEach(
             task => {
 
-                historyList.appendChild(
+                stack.appendChild(
                     buildDownloadCard(
                         task
                     )
@@ -2779,35 +3278,35 @@ function renderDownloads(
         );
 
 
-        recentSection.appendChild(
-            historyList
+        historySection.appendChild(
+            stack
         );
+
 
     } else {
 
-        const emptyHistory =
+        const empty =
             document.createElement(
                 "div"
             );
 
 
-        emptyHistory.className =
+        empty.className =
             "downloads-history-empty";
 
 
-        emptyHistory.innerHTML = `
-            No completed downloads yet.
-        `;
+        empty.textContent =
+            "No completed downloads yet.";
 
 
-        recentSection.appendChild(
-            emptyHistory
+        historySection.appendChild(
+            empty
         );
     }
 
 
     list.appendChild(
-        recentSection
+        historySection
     );
 
 
@@ -2818,30 +3317,8 @@ function renderDownloads(
 }
 
 
-function createTaskSignature(
-    tasks
-) {
-
-    return tasks
-        .map(
-            t =>
-                [
-                    t.id,
-                    t.status,
-                    t.percent,
-                    t.step,
-                    t.error,
-                    t.speed,
-                    t.last_updated
-                ].join(":")
-        )
-        .sort()
-        .join("|");
-}
-
-
 /* ============================================================
-   POLL TASKS
+   TASK POLLING
    ============================================================ */
 
 async function pollTasks(
@@ -2850,23 +3327,25 @@ async function pollTasks(
 
     try {
 
-        const res =
+        const response =
             await fetch(
                 "api/tasks",
                 {
-                    cache: "no-store"
+                    cache:
+                        "no-store",
                 }
             );
 
 
-        if (!res.ok)
+        if (!response.ok) {
             throw new Error(
-                "Failed to load tasks"
+                "Failed to load tasks."
             );
+        }
 
 
         const tasks =
-            await res.json();
+            await response.json();
 
 
         latestTasks =
@@ -2875,57 +3354,45 @@ async function pollTasks(
                 : [];
 
 
-        /*
-         * Notify once when a task becomes completed.
-         */
-
         let libraryNeedsUpdate =
             false;
 
 
-        latestTasks.forEach(
-            task => {
+        for (
+            const task
+            of latestTasks
+        ) {
 
-                if (
-                    task.status ===
-                    "completed"
-                ) {
+            if (
+                task.status ===
+                    "completed" &&
+                !completedSet.has(
+                    task.id
+                )
+            ) {
 
-                    if (
-                        !completedSet.has(
-                            task.id
-                        )
-                    ) {
+                completedSet.add(
+                    task.id
+                );
 
-                        completedSet.add(
-                            task.id
-                        );
+                libraryNeedsUpdate =
+                    true;
 
+                notifyTrackComplete(
+                    task.title ||
+                    "Track"
+                );
 
-                        libraryNeedsUpdate =
-                            true;
-
-
-                        notifyTrackComplete(
-                            task.title ||
-                            "Track"
-                        );
-
-
-                        markSearchItemAsLibrary(
-                            task
-                        );
-                    }
-                }
+                markSearchItemAsLibrary(
+                    task
+                );
             }
-        );
+        }
 
 
-        /*
-         * Update library cache only when needed.
-         */
-
-        if (libraryNeedsUpdate) {
+        if (
+            libraryNeedsUpdate
+        ) {
 
             await refreshLibraryCache();
 
@@ -2958,11 +3425,6 @@ async function pollTasks(
         );
 
 
-        /*
-         * Only render downloads when needed
-         * or when task state actually changed.
-         */
-
         const signature =
             createTaskSignature(
                 latestTasks
@@ -2985,7 +3447,8 @@ async function pollTasks(
         if (
             forceRender ||
             downloadsActive ||
-            signature !== lastRenderedTaskSignature
+            signature !==
+                lastRenderedTaskSignature
         ) {
 
             renderDownloads(
@@ -2993,67 +3456,44 @@ async function pollTasks(
             );
         }
 
-    } catch (e) {
+
+    } catch (error) {
 
         console.warn(
             "Task polling failed:",
-            e
-        );
-    }
-}
-
-
-function markSearchItemAsLibrary(
-    task
-) {
-
-    if (!task || !task.elementId)
-        return;
-
-
-    let group = null;
-
-
-    try {
-
-        group =
-            document.querySelector(
-                `div[data-group-id="${CSS.escape(String(task.elementId))}"]`
-            );
-
-    } catch (e) {
-
-        group =
-            document.querySelector(
-                `div[data-group-id="${String(task.elementId).replace(/"/g, '\\"')}"]`
-            );
-    }
-
-
-    if (group) {
-
-        renderLibraryBadge(
-            group
+            error
         );
     }
 }
 
 
 /* ============================================================
-   DOWNLOAD MANAGEMENT
+   CANCEL TASK
    ============================================================ */
 
 async function cancelTask(
     taskId
 ) {
 
-    if (!taskId) return;
+    if (!taskId) {
+        return;
+    }
+
+
+    const card =
+        document.querySelector(
+            `.download-card[data-task-id="${CSS.escape(
+                String(taskId)
+            )}"]`
+        );
 
 
     const button =
-        document.querySelector(
-            `.download-cancel-btn[data-task-id="${CSS.escape(String(taskId))}"]`
-        );
+        card
+            ? card.querySelector(
+                  ".download-cancel-btn"
+              )
+            : null;
 
 
     if (button) {
@@ -3070,17 +3510,31 @@ async function cancelTask(
 
         const response =
             await fetch(
-                `api/tasks/${encodeURIComponent(taskId)}/cancel`,
+                `api/tasks/${encodeURIComponent(
+                    taskId
+                )}/cancel`,
                 {
-                    method: "POST"
+                    method:
+                        "POST",
                 }
             );
 
 
-        if (!response.ok)
+        const data =
+            await response
+                .json()
+                .catch(
+                    () => ({})
+                );
+
+
+        if (!response.ok) {
+
             throw new Error(
-                "Failed to cancel download"
+                data.detail ||
+                "Failed to cancel download."
             );
+        }
 
 
         showToast(
@@ -3092,12 +3546,13 @@ async function cancelTask(
             true
         );
 
-    } catch (e) {
+
+    } catch (error) {
 
         showToast(
             "❌ " +
             (
-                e.message ||
+                error.message ||
                 "Failed to cancel download."
             )
         );
@@ -3110,43 +3565,102 @@ async function cancelTask(
 }
 
 
-async function removeDownloadCard(
+/* ============================================================
+   REMOVE ONE FINISHED TASK
+   ============================================================ */
+
+async function removeDownloadTask(
     taskId
 ) {
 
-    if (!taskId) return;
+    if (!taskId) {
+        return;
+    }
 
 
-    /*
-     * Your current backend already exposes
-     * clear-completed, but not a generic per-task
-     * delete endpoint in the code you gave me.
-     *
-     * Until there is one, we remove only the visible
-     * card and immediately re-sync.
-     */
+    try {
 
-    const card =
-        document.querySelector(
-            `.download-card[data-task-id="${CSS.escape(String(taskId))}"]`
+        const response =
+            await fetch(
+                `api/tasks/${encodeURIComponent(
+                    taskId
+                )}`,
+                {
+                    method:
+                        "DELETE",
+                    cache:
+                        "no-store",
+                }
+            );
+
+
+        const data =
+            await response
+                .json()
+                .catch(
+                    () => ({})
+                );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Failed to remove download."
+            );
+        }
+
+
+        completedSet.delete(
+            taskId
         );
 
 
-    if (card) {
+        showToast(
+            "🗑 Download removed from history"
+        );
 
-        card.style.opacity = "0";
-        card.style.transform =
-            "translateY(6px)";
 
-        setTimeout(
-            () => card.remove(),
-            180
+        await pollTasks(
+            true
+        );
+
+
+    } catch (error) {
+
+        showToast(
+            "❌ " +
+            (
+                error.message ||
+                "Failed to remove download."
+            )
         );
     }
 }
 
 
+/* ============================================================
+   CLEAR COMPLETED
+   IMPORTANT FIX
+   ============================================================ */
+
 async function clearDoneTasks() {
+
+    const button =
+        document.querySelector(
+            ".downloads-header-actions .btn-refresh:first-child"
+        );
+
+
+    if (button) {
+
+        button.disabled =
+            true;
+
+        button.textContent =
+            "🧹 Clearing...";
+    }
+
 
     try {
 
@@ -3154,38 +3668,81 @@ async function clearDoneTasks() {
             await fetch(
                 "api/tasks/clear-completed",
                 {
-                    method: "DELETE"
+                    method:
+                        "DELETE",
+                    cache:
+                        "no-store",
                 }
             );
 
 
-        if (!response.ok)
+        const data =
+            await response
+                .json()
+                .catch(
+                    () => ({})
+                );
+
+
+        if (!response.ok) {
+
             throw new Error(
-                "Failed to clear finished downloads."
+                data.detail ||
+                "Failed to clear completed downloads."
             );
-
-
-        showToast(
-            "🧹 Completed downloads cleared"
-        );
+        }
 
 
         completedSet.clear();
 
 
-        await pollTasks(
-            true
+        latestTasks = [];
+
+
+        lastRenderedTaskSignature =
+            "";
+
+
+        showToast(
+            `🧹 Cleared ${
+                data.count || 0
+            } finished downloads`
         );
 
-    } catch (e) {
+
+        /*
+         * Immediately reload from backend.
+         */
+        await loadDownloads();
+
+
+    } catch (error) {
+
+        console.error(
+            "Clear completed error:",
+            error
+        );
+
 
         showToast(
             "❌ " +
             (
-                e.message ||
-                "Failed to clear finished downloads."
+                error.message ||
+                "Failed to clear completed downloads."
             )
         );
+
+
+    } finally {
+
+        if (button) {
+
+            button.disabled =
+                false;
+
+            button.textContent =
+                "🧹 Clear Completed";
+        }
     }
 }
 
@@ -3202,7 +3759,9 @@ async function loadDownloads() {
         );
 
 
-    if (!list) return;
+    if (!list) {
+        return;
+    }
 
 
     if (
@@ -3232,16 +3791,18 @@ async function loadStats() {
 
     try {
 
-        const stats =
+        const response =
             await fetch(
                 "api/stats",
                 {
-                    cache: "no-store"
+                    cache:
+                        "no-store",
                 }
-            )
-            .then(
-                r => r.json()
             );
+
+
+        const stats =
+            await response.json();
 
 
         const tracks =
@@ -3249,12 +3810,10 @@ async function loadStats() {
                 "statTracks"
             );
 
-
         const artists =
             document.getElementById(
                 "statArtists"
             );
-
 
         const albums =
             document.getElementById(
@@ -3262,21 +3821,63 @@ async function loadStats() {
             );
 
 
-        if (tracks)
+        /*
+         * These IDs are used by Library.
+         */
+        if (tracks) {
+
             tracks.textContent =
                 stats.tracks || 0;
+        }
 
+        if (artists) {
 
-        if (artists)
             artists.textContent =
                 stats.artists || 0;
+        }
 
+        if (albums) {
 
-        if (albums)
             albums.textContent =
                 stats.albums || 0;
+        }
 
-    } catch (e) {}
+
+        /*
+         * These IDs are used by Downloads.
+         * This prevents duplicate-ID problems.
+         */
+        const downloadTracks =
+            document.getElementById(
+                "downloadStatTracks"
+            );
+
+        const downloadAlbums =
+            document.getElementById(
+                "downloadStatAlbums"
+            );
+
+
+        if (downloadTracks) {
+
+            downloadTracks.textContent =
+                stats.tracks || 0;
+        }
+
+        if (downloadAlbums) {
+
+            downloadAlbums.textContent =
+                stats.albums || 0;
+        }
+
+
+    } catch (error) {
+
+        console.warn(
+            "Stats load failed:",
+            error
+        );
+    }
 }
 
 
@@ -3292,16 +3893,17 @@ async function loadLibrary() {
         );
 
 
-    if (!list) return;
+    if (!list) {
+        return;
+    }
 
 
-    list.innerHTML =
-        `
+    list.innerHTML = `
         <div class="library-loading">
             <div class="loader-spinner"></div>
             Loading library...
         </div>
-        `;
+    `;
 
 
     try {
@@ -3312,14 +3914,14 @@ async function loadLibrary() {
 
         filterLibrary();
 
-    } catch (e) {
 
-        list.innerHTML =
-            `
+    } catch (error) {
+
+        list.innerHTML = `
             <div class="status-msg">
                 Failed to load library.
             </div>
-            `;
+        `;
     }
 }
 
@@ -3332,19 +3934,21 @@ function filterLibrary() {
         );
 
 
-    const searchInput =
+    const input =
         document.getElementById(
             "libSearchQuery"
         );
 
 
-    if (!list) return;
+    if (!list) {
+        return;
+    }
 
 
-    const q =
+    const query =
         (
-            searchInput
-                ? searchInput.value
+            input
+                ? input.value
                 : ""
         )
         .toLowerCase()
@@ -3353,12 +3957,12 @@ function filterLibrary() {
 
     const filtered =
         rawLibraryFiles.filter(
-            f =>
+            file =>
                 String(
-                    f.name || ""
+                    file.name || ""
                 )
                 .toLowerCase()
-                .includes(q)
+                .includes(query)
         );
 
 
@@ -3366,10 +3970,12 @@ function filterLibrary() {
         filtered.length === 0
     ) {
 
-        list.innerHTML =
-            `
-            <div class="downloads-empty library-empty">
-                <div class="empty-icon">🎵</div>
+        list.innerHTML = `
+            <div class="downloads-empty">
+
+                <div class="empty-icon">
+                    🎵
+                </div>
 
                 <div class="empty-title">
                     ${
@@ -3386,8 +3992,9 @@ function filterLibrary() {
                             : "Try a different search."
                     }
                 </div>
+
             </div>
-            `;
+        `;
 
         return;
     }
@@ -3398,7 +4005,7 @@ function filterLibrary() {
 
 
     filtered.forEach(
-        f => {
+        file => {
 
             const card =
                 document.createElement(
@@ -3410,24 +4017,33 @@ function filterLibrary() {
                 "result-card";
 
 
-            const encName =
+            const encodedName =
                 encodeURIComponent(
-                    f.name
+                    file.name
                 );
 
 
             const coverUrl =
                 "api/library/cover/" +
-                encName;
+                encodedName;
 
 
             const streamUrl =
                 "api/library/stream/" +
-                encName;
+                encodedName;
 
 
-            const fallbackSvg =
-                `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110" viewBox="0 0 110 110"><rect width="100%" height="100%" fill="%231e293b"/><text x="50%" y="50%" fill="%239ca3af" font-size="24" text-anchor="middle" dominant-baseline="central">🎵</text></svg>`;
+            const fallback =
+                `data:image/svg+xml;utf8,` +
+                `<svg xmlns="http://www.w3.org/2000/svg" ` +
+                `width="110" height="110">` +
+                `<rect width="100%" height="100%" ` +
+                `fill="%231e293b"/>` +
+                `<text x="50%" y="50%" ` +
+                `fill="%239ca3af" font-size="24" ` +
+                `text-anchor="middle" ` +
+                `dominant-baseline="central">` +
+                `🎵</text></svg>`;
 
 
             card.innerHTML = `
@@ -3436,12 +4052,14 @@ function filterLibrary() {
 
                     <img
                         src="${coverUrl}"
-                        alt="Album cover for ${escapeHtml(f.name)}"
+                        alt="Album cover for ${escapeHtml(
+                            file.name
+                        )}"
                         onerror="
                             this.onerror=null;
-                            this.src='${fallbackSvg}'
+                            this.src='${fallback}'
                         "
-                    />
+                    >
 
                 </div>
 
@@ -3449,11 +4067,18 @@ function filterLibrary() {
                 <div class="track-info">
 
                     <div class="track-title">
-                        ${escapeHtml(f.name)}
+                        ${escapeHtml(
+                            file.name
+                        )}
                     </div>
 
                     <div class="track-artist">
-                        📦 ${escapeHtml(f.size || "Unknown size")}
+                        📦 ${
+                            escapeHtml(
+                                file.size ||
+                                "Unknown size"
+                            )
+                        }
                     </div>
 
                 </div>
@@ -3463,7 +4088,7 @@ function filterLibrary() {
 
                     <button
                         class="btn-preview"
-                        aria-label="Play ${escapeHtml(f.name)}"
+                        type="button"
                     >
                         ▶ Play
                     </button>
@@ -3471,7 +4096,7 @@ function filterLibrary() {
 
                     <button
                         class="btn-danger"
-                        aria-label="Delete ${escapeHtml(f.name)}"
+                        type="button"
                     >
                         🗑 Delete
                     </button>
@@ -3480,33 +4105,35 @@ function filterLibrary() {
             `;
 
 
-            const playBtn =
+            const playButton =
                 card.querySelector(
                     ".btn-preview"
                 );
 
 
-            playBtn.onclick = () =>
-                toggleAudioStream(
-                    playBtn,
-                    streamUrl,
-                    "library",
-                    f.name,
-                    "Local Library",
-                    coverUrl
-                );
+            playButton.onclick =
+                () =>
+                    toggleAudioStream(
+                        playButton,
+                        streamUrl,
+                        "library",
+                        file.name,
+                        "Local Library",
+                        coverUrl
+                    );
 
 
-            const delBtn =
+            const deleteButton =
                 card.querySelector(
                     ".btn-danger"
                 );
 
 
-            delBtn.onclick = () =>
-                deleteFile(
-                    f.name
-                );
+            deleteButton.onclick =
+                () =>
+                    deleteFile(
+                        file.name
+                    );
 
 
             list.appendChild(
@@ -3529,8 +4156,9 @@ async function deleteFile(
         !confirm(
             `Delete "${filename}"?`
         )
-    )
+    ) {
         return;
+    }
 
 
     try {
@@ -3542,15 +4170,26 @@ async function deleteFile(
                         filename
                     ),
                 {
-                    method: "DELETE"
+                    method:
+                        "DELETE",
                 }
             );
 
 
-        if (!response.ok)
+        if (!response.ok) {
+
+            const data =
+                await response
+                    .json()
+                    .catch(
+                        () => ({})
+                    );
+
             throw new Error(
-                "Delete failed"
+                data.detail ||
+                "Delete failed."
             );
+        }
 
 
         showToast(
@@ -3565,10 +4204,14 @@ async function deleteFile(
         filterLibrary();
 
 
-    } catch (e) {
+    } catch (error) {
 
         showToast(
-            "❌ Failed to delete file."
+            "❌ " +
+            (
+                error.message ||
+                "Failed to delete file."
+            )
         );
     }
 }
@@ -3603,14 +4246,41 @@ if (queryInput) {
 
     queryInput.addEventListener(
         "keydown",
-        e => {
+        event => {
 
-            if (e.key === "Enter") {
+            if (
+                event.key ===
+                "Enter"
+            ) {
 
-                e.preventDefault();
+                event.preventDefault();
 
                 searchMusic();
             }
+        }
+    );
+}
+
+
+/* ============================================================
+   THEME SELECT
+   ============================================================ */
+
+const themeSelect =
+    document.getElementById(
+        "set_theme"
+    );
+
+
+if (themeSelect) {
+
+    themeSelect.addEventListener(
+        "change",
+        event => {
+
+            toggleTheme(
+                event.target.value
+            );
         }
     );
 }
@@ -3635,21 +4305,25 @@ window.addEventListener(
             !searchTab.classList.contains(
                 "active"
             )
-        )
+        ) {
             return;
+        }
 
 
         if (
             window.innerHeight +
-            window.scrollY >=
+                window.scrollY >=
             document.body.offsetHeight -
-            500
+                500
         ) {
 
             loadMoreResults();
         }
     },
-    { passive: true }
+    {
+        passive:
+            true,
+    }
 );
 
 
@@ -3661,18 +4335,66 @@ async function initializeApp() {
 
     await refreshLibraryCache();
 
+
+    /*
+     * Load existing tasks first and mark old
+     * completed tasks as already known so they
+     * don't trigger fake notifications after reload.
+     */
+    try {
+
+        const response =
+            await fetch(
+                "api/tasks",
+                {
+                    cache:
+                        "no-store",
+                }
+            );
+
+
+        const tasks =
+            await response.json();
+
+
+        latestTasks =
+            Array.isArray(tasks)
+                ? tasks
+                : [];
+
+
+        latestTasks
+            .filter(
+                task =>
+                    task.status ===
+                    "completed"
+            )
+            .forEach(
+                task =>
+                    completedSet.add(
+                        task.id
+                    )
+            );
+
+
+    } catch (error) {
+
+        console.warn(
+            "Initial task load failed:",
+            error
+        );
+    }
+
+
     await pollTasks(
         true
     );
+
 
     handleDeepLink();
 
     initWebSocket();
 
-    /*
-     * Fallback polling.
-     * WebSocket remains the fast update mechanism.
-     */
     startTaskPolling();
 }
 
