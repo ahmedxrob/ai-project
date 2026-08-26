@@ -1,18 +1,35 @@
 let socket = null;
-let completedSet = new Set();
 
-let rawLibraryFiles = [];
-let libraryFilesSet = new Set();
+let completedSet =
+    new Set();
 
-let activePreviewBtn = null;
+let rawLibraryFiles =
+    [];
 
-let currentPage = 1;
-let currentQuery = "";
-let isLoadingMore = false;
-let hasMoreResults = true;
+let libraryFilesSet =
+    new Set();
 
-let latestTasks = [];
-let lastTaskSignature = "";
+let activePreviewBtn =
+    null;
+
+let currentPage =
+    1;
+
+let currentQuery =
+    "";
+
+let isLoadingMore =
+    false;
+
+let hasMoreResults =
+    true;
+
+let latestTasks =
+    [];
+
+let lastTaskSignature =
+    "";
+
 
 const audio =
     document.getElementById(
@@ -74,9 +91,14 @@ const canvasCtx =
         ? canvas.getContext("2d")
         : null;
 
-let audioContext = null;
-let analyser = null;
-let sourceNode = null;
+let audioContext =
+    null;
+
+let analyser =
+    null;
+
+let sourceNode =
+    null;
 
 
 /* ============================================================
@@ -84,18 +106,37 @@ let sourceNode = null;
    ============================================================ */
 
 function escapeHtml(value) {
+
     return String(
         value ?? ""
     )
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
+        .replaceAll(
+            "&",
+            "&amp;"
+        )
+        .replaceAll(
+            "<",
+            "&lt;"
+        )
+        .replaceAll(
+            ">",
+            "&gt;"
+        )
+        .replaceAll(
+            '"',
+            "&quot;"
+        )
+        .replaceAll(
+            "'",
+            "&#039;"
+        );
 }
 
 
-function normalizeKey(value) {
+function normalizeKey(
+    value
+) {
+
     return String(
         value || ""
     )
@@ -111,7 +152,10 @@ function normalizeKey(value) {
 }
 
 
-function showToast(message) {
+function showToast(
+    message
+) {
+
     const container =
         document.getElementById(
             "toast-container"
@@ -150,7 +194,10 @@ window.showToast =
    THEME
    ============================================================ */
 
-function toggleTheme(theme) {
+function toggleTheme(
+    theme
+) {
+
     document.documentElement
         .setAttribute(
             "data-theme",
@@ -178,8 +225,10 @@ function navigate(
     tab,
     updateHash = true
 ) {
+
     if (updateHash) {
-        location.hash = tab;
+        location.hash =
+            tab;
     }
 
     switchTab(
@@ -188,7 +237,9 @@ function navigate(
 }
 
 
-function switchTab(tab) {
+function switchTab(
+    tab
+) {
 
     document
         .querySelectorAll(
@@ -223,23 +274,22 @@ function switchTab(tab) {
         );
     }
 
-    const desktop =
-        document.getElementById(
+    document
+        .getElementById(
             `btn-${tab}`
+        )
+        ?.classList.add(
+            "active"
         );
 
-    const mobile =
-        document.getElementById(
+    document
+        .getElementById(
             `mob-btn-${tab}`
+        )
+        ?.classList.add(
+            "active"
         );
 
-    desktop?.classList.add(
-        "active"
-    );
-
-    mobile?.classList.add(
-        "active"
-    );
 
     if (tab === "home") {
         loadHome();
@@ -261,13 +311,13 @@ function switchTab(tab) {
 
 function handleHash() {
 
-    const tab =
+    const hash =
         location.hash.replace(
             "#",
             ""
         );
 
-    const allowed = [
+    const tabs = [
         "home",
         "search",
         "downloads",
@@ -276,11 +326,12 @@ function handleHash() {
     ];
 
     switchTab(
-        allowed.includes(tab)
-            ? tab
+        tabs.includes(hash)
+            ? hash
             : "home"
     );
 }
+
 
 window.addEventListener(
     "hashchange",
@@ -292,7 +343,9 @@ window.addEventListener(
    PLAYER
    ============================================================ */
 
-function formatSeconds(seconds) {
+function formatSeconds(
+    seconds
+) {
 
     seconds =
         Math.floor(
@@ -302,9 +355,9 @@ function formatSeconds(seconds) {
     return (
         Math.floor(
             seconds / 60
-        ) +
-        ":" +
-        String(
+        )
+        + ":"
+        + String(
             seconds % 60
         ).padStart(
             2,
@@ -327,7 +380,9 @@ function updateProgress() {
         )
     ) {
 
-        seek.value = 0;
+        seek.value =
+            0;
+
         curTime.textContent =
             "0:00";
 
@@ -336,9 +391,11 @@ function updateProgress() {
 
     seek.value =
         (
-            audio.currentTime /
+            audio.currentTime
+            /
             audio.duration
-        ) * 100;
+        )
+        * 100;
 
     curTime.textContent =
         formatSeconds(
@@ -357,13 +414,16 @@ function updatePlayingState(
 ) {
 
     if (playBtn) {
+
         playBtn.textContent =
             playing
                 ? "❚❚"
                 : "▶";
     }
 
-    if (activePreviewBtn) {
+    if (
+        activePreviewBtn
+    ) {
 
         activePreviewBtn.classList.toggle(
             "playing",
@@ -386,7 +446,8 @@ function resetPreviewButton(
     );
 
     button.textContent =
-        button.dataset.type === "library"
+        button.dataset.type ===
+            "library"
             ? "▶ Play"
             : "▶ Preview";
 }
@@ -410,15 +471,20 @@ function initAudioContext() {
             )();
 
         analyser =
-            audioContext.createAnalyser();
+            audioContext
+                .createAnalyser();
 
         analyser.fftSize =
             64;
 
+        analyser.smoothingTimeConstant =
+            0.8;
+
         sourceNode =
-            audioContext.createMediaElementSource(
-                audio
-            );
+            audioContext
+                .createMediaElementSource(
+                    audio
+                );
 
         sourceNode.connect(
             analyser
@@ -431,8 +497,9 @@ function initAudioContext() {
         drawVisualizer();
 
     } catch (error) {
+
         console.warn(
-            "Visualizer unavailable",
+            "Audio visualizer unavailable:",
             error
         );
     }
@@ -472,30 +539,32 @@ function drawVisualizer() {
     );
 
     const barWidth =
-        canvas.width / length;
+        canvas.width /
+        length;
 
     for (
-        let index = 0;
-        index < length;
-        index++
+        let i = 0;
+        i < length;
+        i++
     ) {
 
         const height =
             Math.max(
                 2,
                 (
-                    data[index] /
+                    data[i] /
                     255
-                ) *
-                canvas.height
+                )
+                * canvas.height
             );
 
         canvasCtx.fillStyle =
             "#1ed760";
 
         canvasCtx.fillRect(
-            index * barWidth,
-            canvas.height - height,
+            i * barWidth,
+            canvas.height -
+                height,
             Math.max(
                 1,
                 barWidth - 1
@@ -509,7 +578,7 @@ function drawVisualizer() {
 function updatePlayerInfo(
     title,
     artist,
-    cover
+    art
 ) {
 
     playerTitle.textContent =
@@ -521,7 +590,7 @@ function updatePlayerInfo(
         "Unknown Artist";
 
     playerArt.src =
-        cover ||
+        art ||
         "https://via.placeholder.com/60?text=Music";
 }
 
@@ -532,7 +601,7 @@ function toggleAudioStream(
     type,
     title,
     artist,
-    cover
+    art
 ) {
 
     if (
@@ -549,17 +618,22 @@ function toggleAudioStream(
         audioContext.state ===
             "suspended"
     ) {
+
         audioContext.resume();
     }
 
+    const absoluteUrl =
+        new URL(
+            url,
+            location.href
+        ).href;
+
     if (
-        activePreviewBtn === button
+        activePreviewBtn ===
+            button
         &&
         audio.src ===
-            new URL(
-                url,
-                location.href
-            ).href
+            absoluteUrl
     ) {
 
         if (audio.paused) {
@@ -591,7 +665,7 @@ function toggleAudioStream(
     updatePlayerInfo(
         title,
         artist,
-        cover
+        art
     );
 
     player.style.display =
@@ -600,7 +674,7 @@ function toggleAudioStream(
     audio.pause();
 
     audio.src =
-        url;
+        absoluteUrl;
 
     audio.load();
 
@@ -612,7 +686,13 @@ function toggleAudioStream(
             }
         )
         .catch(
-            () => {
+            error => {
+
+                console.error(
+                    "Playback failed:",
+                    error
+                );
+
                 button.textContent =
                     "❌ Error";
 
@@ -669,6 +749,7 @@ audio?.addEventListener(
             "0:00";
 
         if (activePreviewBtn) {
+
             resetPreviewButton(
                 activePreviewBtn
             );
@@ -684,10 +765,13 @@ playBtn?.addEventListener(
     () => {
 
         if (audio.paused) {
+
             audio.play().catch(
                 console.error
             );
+
         } else {
+
             audio.pause();
         }
     }
@@ -708,9 +792,11 @@ seek?.addEventListener(
                 (
                     Number(
                         seek.value
-                    ) / 100
+                    )
+                    / 100
                 )
-                * audio.duration;
+                *
+                audio.duration;
         }
     }
 );
@@ -721,6 +807,7 @@ const savedVolume =
     );
 
 if (savedVolume !== null) {
+
     volume.value =
         savedVolume;
 
@@ -842,12 +929,20 @@ async function loadSettings() {
 
         setValue(
             "amperfy-server-url",
-            location.origin
+            window.XrobArpeggi
+                ?.getServerUrl?.()
+                || (
+                    location.protocol
+                    + "//"
+                    + location.hostname
+                    + ":8100"
+                )
         );
 
     } catch (error) {
+
         console.warn(
-            "Settings:",
+            "Settings load:",
             error
         );
     }
@@ -859,35 +954,53 @@ async function saveSettings() {
     const data = {
 
         audio_format:
-            document.getElementById(
-                "set_format"
-            )?.value || "mp3",
+            document
+                .getElementById(
+                    "set_format"
+                )
+                ?.value
+            || "mp3",
 
         audio_quality:
-            document.getElementById(
-                "set_quality"
-            )?.value || "320K",
+            document
+                .getElementById(
+                    "set_quality"
+                )
+                ?.value
+            || "320K",
 
         embed_thumbnail:
-            document.getElementById(
-                "set_thumb"
-            )?.checked ?? true,
+            document
+                .getElementById(
+                    "set_thumb"
+                )
+                ?.checked
+            ?? true,
 
         embed_metadata:
-            document.getElementById(
-                "set_meta"
-            )?.checked ?? true,
+            document
+                .getElementById(
+                    "set_meta"
+                )
+                ?.checked
+            ?? true,
 
         organize_by_artist:
-            document.getElementById(
-                "set_organize"
-            )?.checked ?? false,
+            document
+                .getElementById(
+                    "set_organize"
+                )
+                ?.checked
+            ?? false,
 
         max_results:
             Number(
-                document.getElementById(
-                    "set_max_results"
-                )?.value || 20
+                document
+                    .getElementById(
+                        "set_max_results"
+                    )
+                    ?.value
+                || 20
             ),
     };
 
@@ -912,8 +1025,13 @@ async function saveSettings() {
                 }
             );
 
+        const result =
+            await response.json();
+
         if (!response.ok) {
+
             throw new Error(
+                result.detail ||
                 "Failed to save settings."
             );
         }
@@ -929,8 +1047,15 @@ async function saveSettings() {
 
     } catch (error) {
 
+        document.getElementById(
+            "settingsMsg"
+        ).textContent =
+            "❌ " +
+            error.message;
+
         showToast(
-            "❌ Failed to save settings"
+            "❌ " +
+            error.message
         );
     }
 }
@@ -995,10 +1120,15 @@ async function refreshLibraryCache() {
             }
         );
 
-        document.getElementById(
-            "sideLibCount"
-        ).textContent =
-            rawLibraryFiles.length;
+        const side =
+            document.getElementById(
+                "sideLibCount"
+            );
+
+        if (side) {
+            side.textContent =
+                rawLibraryFiles.length;
+        }
 
         const mobile =
             document.getElementById(
@@ -1010,13 +1140,19 @@ async function refreshLibraryCache() {
                 rawLibraryFiles.length;
         }
 
-        document.getElementById(
-            "libFolderSize"
-        ).textContent =
-            data.total_size
-            || "0 MB";
+        const size =
+            document.getElementById(
+                "libFolderSize"
+            );
+
+        if (size) {
+            size.textContent =
+                data.total_size
+                || "0 MB";
+        }
 
     } catch (error) {
+
         console.warn(
             "Library:",
             error
@@ -1041,7 +1177,7 @@ async function loadStats() {
         const stats =
             await response.json();
 
-        const mapping = {
+        const values = {
             statTracks:
                 stats.tracks || 0,
 
@@ -1068,7 +1204,7 @@ async function loadStats() {
         };
 
         Object.entries(
-            mapping
+            values
         ).forEach(
             ([id, value]) => {
 
@@ -1192,10 +1328,12 @@ function filterLibrary() {
 
             card.innerHTML = `
                 <div class="thumb-wrapper">
+
                     <img
                         src="${cover}"
                         alt=""
                     >
+
                 </div>
 
                 <div class="track-info">
@@ -1282,8 +1420,8 @@ async function deleteFile(
 
         const response =
             await fetch(
-                "api/library/" +
-                encodeURIComponent(
+                "api/library/"
+                + encodeURIComponent(
                     filename
                 ),
                 {
@@ -1293,7 +1431,16 @@ async function deleteFile(
             );
 
         if (!response.ok) {
+
+            const error =
+                await response.json()
+                    .catch(
+                        () => ({})
+                    );
+
             throw new Error(
+                error.detail
+                ||
                 "Delete failed."
             );
         }
@@ -1339,17 +1486,24 @@ async function searchMusic() {
         input.value.trim();
 
     if (!query) {
+
         status.textContent =
             "Enter a search term.";
+
         return;
     }
 
     currentQuery =
         query;
 
-    currentPage = 1;
-    hasMoreResults = true;
-    isLoadingMore = false;
+    currentPage =
+        1;
+
+    hasMoreResults =
+        true;
+
+    isLoadingMore =
+        false;
 
     status.textContent =
         "🔍 Searching...";
@@ -1382,6 +1536,7 @@ async function searchMusic() {
             await response.json();
 
         if (!response.ok) {
+
             throw new Error(
                 data.detail ||
                 "Search failed."
@@ -1536,10 +1691,10 @@ function renderItems(
                     () =>
                         toggleAudioStream(
                             preview,
-                            "api/preview?url=" +
-                                encodeURIComponent(
-                                    item.url
-                                ),
+                            "api/preview?url="
+                            + encodeURIComponent(
+                                item.url
+                            ),
                             "search",
                             item.title,
                             item.channel,
@@ -1591,8 +1746,10 @@ function renderItems(
 async function loadMoreResults() {
 
     if (
-        isLoadingMore ||
-        !hasMoreResults ||
+        isLoadingMore
+        ||
+        !hasMoreResults
+        ||
         !currentQuery
     ) {
         return;
@@ -1628,7 +1785,8 @@ async function loadMoreResults() {
             await response.json();
 
         if (
-            !data ||
+            !data
+            ||
             !data.length
         ) {
 
@@ -1665,6 +1823,7 @@ document.getElementById(
     searchMusic
 );
 
+
 document.getElementById(
     "query"
 )?.addEventListener(
@@ -1675,6 +1834,7 @@ document.getElementById(
             event.key ===
             "Enter"
         ) {
+
             searchMusic();
         }
     }
@@ -1682,7 +1842,7 @@ document.getElementById(
 
 
 /* ============================================================
-   DOWNLOAD PAGE
+   DOWNLOADS
    ============================================================ */
 
 function isActiveTask(
@@ -1720,61 +1880,54 @@ function getTaskStatus(
 ) {
 
     const map = {
-        queued:
-            [
-                "Queued",
-                "⏳",
-                "status-queued",
-            ],
 
-        downloading:
-            [
-                "Downloading",
-                "⬇️",
-                "status-downloading",
-            ],
+        queued: [
+            "Queued",
+            "⏳",
+            "status-queued",
+        ],
 
-        processing:
-            [
-                "Processing",
-                "⚙️",
-                "status-processing",
-            ],
+        downloading: [
+            "Downloading",
+            "⬇️",
+            "status-downloading",
+        ],
 
-        completed:
-            [
-                "Completed",
-                "✓",
-                "status-completed",
-            ],
+        processing: [
+            "Processing",
+            "⚙️",
+            "status-processing",
+        ],
 
-        error:
-            [
-                "Failed",
-                "⚠️",
-                "status-error",
-            ],
+        completed: [
+            "Completed",
+            "✓",
+            "status-completed",
+        ],
 
-        failed:
-            [
-                "Failed",
-                "⚠️",
-                "status-error",
-            ],
+        error: [
+            "Failed",
+            "⚠️",
+            "status-error",
+        ],
 
-        cancelled:
-            [
-                "Cancelled",
-                "✕",
-                "status-cancelled",
-            ],
+        failed: [
+            "Failed",
+            "⚠️",
+            "status-error",
+        ],
 
-        canceled:
-            [
-                "Cancelled",
-                "✕",
-                "status-cancelled",
-            ],
+        cancelled: [
+            "Cancelled",
+            "✕",
+            "status-cancelled",
+        ],
+
+        canceled: [
+            "Cancelled",
+            "✕",
+            "status-cancelled",
+        ],
     };
 
     return (
@@ -1839,7 +1992,8 @@ function createDownloadCard(
                 100,
                 Math.round(
                     Number(
-                        task.percent || 0
+                        task.percent
+                        || 0
                     )
                 )
             )
@@ -1878,19 +2032,20 @@ function createDownloadCard(
 
                     <div class="download-title">
                         ${escapeHtml(
-                            task.title ||
-                            "Unknown Track"
+                            task.title
+                            || "Unknown Track"
                         )}
                     </div>
 
                     <div class="download-artist">
                         ${escapeHtml(
-                            task.artist ||
-                            "Unknown Artist"
+                            task.artist
+                            || "Unknown Artist"
                         )}
                     </div>
 
                 </div>
+
 
                 <div
                     class="download-status-wrap"
@@ -1907,10 +2062,7 @@ function createDownloadCard(
                     }
 
                     <span
-                        class="
-                            download-status
-                            ${statusClass}
-                        "
+                        class="download-status ${statusClass}"
                     >
                         <span class="status-dot"></span>
                         ${label}
@@ -1943,15 +2095,16 @@ function createDownloadCard(
 
                 <div class="download-message">
                     ${escapeHtml(
-                        task.error ||
-                        task.step ||
-                        ""
+                        task.error
+                        || task.step
+                        || ""
                     )}
                 </div>
 
                 <div class="download-meta">
                     ${escapeHtml(
-                        task.speed || ""
+                        task.speed
+                        || ""
                     )}
                 </div>
 
@@ -2120,6 +2273,7 @@ function renderDownloads(
         );
     }
 
+
     list.appendChild(
         activeSection
     );
@@ -2197,6 +2351,7 @@ function renderDownloads(
         );
     }
 
+
     list.appendChild(
         history
     );
@@ -2218,10 +2373,14 @@ function taskSignature(
                     task.step,
                     task.error,
                     task.last_updated,
-                ].join("|")
+                ].join(
+                    "|"
+                )
         )
         .sort()
-        .join(";");
+        .join(
+            ";"
+        );
 }
 
 
@@ -2268,8 +2427,8 @@ async function pollTasks(
 
                     showToast(
                         `🎉 ${
-                            task.title ||
-                            "Track"
+                            task.title
+                            || "Track"
                         } is ready`
                     );
                 }
@@ -2290,14 +2449,6 @@ async function pollTasks(
             ||
             signature !==
                 lastTaskSignature
-            ||
-            document
-                .getElementById(
-                    "tab-downloads"
-                )
-                ?.classList.contains(
-                    "active"
-                )
         ) {
 
             renderDownloads(
@@ -2373,8 +2524,10 @@ async function startDownload(
             await response.json();
 
         if (!response.ok) {
+
             throw new Error(
-                data.detail ||
+                data.detail
+                ||
                 "Failed to queue download."
             );
         }
@@ -2436,9 +2589,11 @@ async function cancelTask(
             await response.json();
 
         if (!response.ok) {
+
             throw new Error(
                 data.detail
-                || "Failed to cancel."
+                ||
+                "Failed to cancel."
             );
         }
 
@@ -2483,9 +2638,11 @@ async function removeDownloadTask(
             await response.json();
 
         if (!response.ok) {
+
             throw new Error(
                 data.detail
-                || "Failed to remove."
+                ||
+                "Failed to remove."
             );
         }
 
@@ -2521,6 +2678,7 @@ async function clearDoneTasks() {
                 {
                     method:
                         "DELETE",
+
                     cache:
                         "no-store",
                 }
@@ -2530,9 +2688,11 @@ async function clearDoneTasks() {
             await response.json();
 
         if (!response.ok) {
+
             throw new Error(
                 data.detail
-                || "Failed to clear."
+                ||
+                "Failed to clear."
             );
         }
 
@@ -2561,7 +2721,8 @@ async function clearDoneTasks() {
 
         showToast(
             `🧹 Cleared ${
-                data.count || 0
+                data.count
+                || 0
             } downloads`
         );
 
@@ -2724,6 +2885,7 @@ function initWebSocket() {
             );
 
     } catch {
+
         return;
     }
 
@@ -2741,6 +2903,7 @@ function initWebSocket() {
                     data.type ===
                     "task_update"
                 ) {
+
                     pollTasks();
                 }
 
@@ -2759,7 +2922,7 @@ function initWebSocket() {
 
 
 /* ============================================================
-   SCROLL
+   INFINITE SCROLL
    ============================================================ */
 
 window.addEventListener(
@@ -2779,10 +2942,10 @@ window.addEventListener(
             )
             &&
             window.innerHeight
-                + window.scrollY
-                >=
-                document.body.offsetHeight
-                - 500
+            + window.scrollY
+            >=
+            document.body.offsetHeight
+            - 500
         ) {
 
             loadMoreResults();
@@ -2819,6 +2982,7 @@ async function initializeApp() {
         2000
     );
 }
+
 
 document.addEventListener(
     "DOMContentLoaded",
