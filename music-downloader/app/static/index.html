@@ -35,7 +35,7 @@
 
 <link
     rel="stylesheet"
-    href="/static/style.css?v=196"
+    href="/static/style.css?v=197"
 >
 
 </head>
@@ -57,10 +57,8 @@
 
 <div class="app-shell">
 
-<nav
-    class="side-nav"
-    aria-label="Main Navigation"
->
+
+<nav class="side-nav">
 
     <div class="side-brand">
 
@@ -70,7 +68,9 @@
             viewBox="0 0 512 512"
             aria-hidden="true"
         >
+
             <defs>
+
                 <linearGradient
                     id="waveGrad"
                     x1="0%"
@@ -78,15 +78,19 @@
                     x2="100%"
                     y2="100%"
                 >
+
                     <stop
                         offset="0%"
                         stop-color="#00F2FE"
                     />
+
                     <stop
                         offset="100%"
                         stop-color="#4FACFE"
                     />
+
                 </linearGradient>
+
             </defs>
 
             <rect
@@ -94,6 +98,46 @@
                 height="512"
                 rx="112"
                 fill="#0F172A"
+            />
+
+            <rect
+                x="112"
+                y="216"
+                width="24"
+                height="80"
+                rx="12"
+                fill="url(#waveGrad)"
+                opacity=".4"
+            />
+
+            <rect
+                x="160"
+                y="176"
+                width="24"
+                height="160"
+                rx="12"
+                fill="url(#waveGrad)"
+                opacity=".75"
+            />
+
+            <rect
+                x="328"
+                y="176"
+                width="24"
+                height="160"
+                rx="12"
+                fill="url(#waveGrad)"
+                opacity=".75"
+            />
+
+            <rect
+                x="376"
+                y="216"
+                width="24"
+                height="80"
+                rx="12"
+                fill="url(#waveGrad)"
+                opacity=".4"
             />
 
             <path
@@ -111,6 +155,7 @@
                 stroke-width="24"
                 stroke-linecap="round"
             />
+
         </svg>
 
         <h1>Xrob Music</h1>
@@ -118,10 +163,7 @@
     </div>
 
 
-    <ul
-        class="nav-list"
-        role="tablist"
-    >
+    <ul class="nav-list">
 
         <li>
             <button
@@ -197,6 +239,7 @@
             height="30"
             viewBox="0 0 512 512"
         >
+
             <rect
                 width="512"
                 height="512"
@@ -219,6 +262,7 @@
                 stroke-width="22"
                 stroke-linecap="round"
             />
+
         </svg>
 
         <h1>Xrob Music</h1>
@@ -249,7 +293,7 @@
             </h2>
 
             <p class="home-subtitle">
-                Your self-hosted music downloader,
+                Your self-hosted downloader,
                 library and OpenSubsonic server.
             </p>
 
@@ -305,8 +349,13 @@
     <div class="home-section-header">
 
         <div>
+
             <h3>Recently Added</h3>
-            <p>Your latest music</p>
+
+            <p>
+                Your latest music
+            </p>
+
         </div>
 
         <button
@@ -338,7 +387,7 @@
             </h3>
 
             <p>
-                Xrob Music provides its own
+                Xrob Music includes its own
                 OpenSubsonic server.
                 No Navidrome is required.
             </p>
@@ -363,10 +412,15 @@
 >
 
     <div class="page-heading">
-        <h2>Search Music</h2>
+
+        <h2>
+            Search Music
+        </h2>
+
         <p>
             Search and download music to your library.
         </p>
+
     </div>
 
 
@@ -379,9 +433,7 @@
             autocomplete="off"
         >
 
-        <button
-            id="searchBtn"
-        >
+        <button id="searchBtn">
             Search
         </button>
 
@@ -430,7 +482,6 @@
 
         </div>
 
-
         <div class="downloads-header-actions">
 
             <button
@@ -455,9 +506,13 @@
     <div class="downloads-overview">
 
         <div class="overview-card">
-            <div class="overview-icon">⬇️</div>
+
+            <div class="overview-icon">
+                ⬇️
+            </div>
 
             <div>
+
                 <strong
                     id="downloadQueueCount"
                     class="overview-value"
@@ -468,14 +523,20 @@
                 <span class="overview-label">
                     Active in Queue
                 </span>
+
             </div>
+
         </div>
 
 
         <div class="overview-card">
-            <div class="overview-icon">🎵</div>
+
+            <div class="overview-icon">
+                🎵
+            </div>
 
             <div>
+
                 <strong
                     id="downloadStatTracks"
                     class="overview-value"
@@ -486,14 +547,20 @@
                 <span class="overview-label">
                     Library Tracks
                 </span>
+
             </div>
+
         </div>
 
 
         <div class="overview-card">
-            <div class="overview-icon">💿</div>
+
+            <div class="overview-icon">
+                💿
+            </div>
 
             <div>
+
                 <strong
                     id="downloadStatAlbums"
                     class="overview-value"
@@ -504,7 +571,9 @@
                 <span class="overview-label">
                     Albums
                 </span>
+
             </div>
+
         </div>
 
     </div>
@@ -524,8 +593,15 @@
 >
 
     <div class="page-heading">
-        <h2>Library</h2>
-        <p>Your local Xrob Music collection.</p>
+
+        <h2>
+            Library
+        </h2>
+
+        <p>
+            Your local Xrob Music collection.
+        </p>
+
     </div>
 
 
@@ -587,10 +663,15 @@
 >
 
     <div class="page-heading">
-        <h2>Settings</h2>
+
+        <h2>
+            Settings
+        </h2>
+
         <p>
             Configure Xrob Music and Arpeggi.
         </p>
+
     </div>
 
 
@@ -605,6 +686,7 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     Xrob Music Server
                 </div>
@@ -612,8 +694,8 @@
                 <div class="setting-desc">
                     Use this address in Arpeggi.
                 </div>
-            </div>
 
+            </div>
 
             <div class="inline-control">
 
@@ -638,6 +720,7 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     OpenSubsonic Username
                 </div>
@@ -645,6 +728,7 @@
                 <div class="setting-desc">
                     Configured in the Home Assistant add-on settings.
                 </div>
+
             </div>
 
             <input
@@ -659,13 +743,15 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     OpenSubsonic Password
                 </div>
 
                 <div class="setting-desc">
-                    Change this privately in the Home Assistant add-on configuration.
+                    Change this privately in the add-on configuration.
                 </div>
+
             </div>
 
             <input
@@ -680,13 +766,15 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     Server Status
                 </div>
 
                 <div class="setting-desc">
-                    Check whether OpenSubsonic responds correctly.
+                    Test the Xrob Music OpenSubsonic server.
                 </div>
+
             </div>
 
             <button
@@ -703,20 +791,22 @@
             id="amperfy-status"
             class="integration-status"
         >
-            Ready
+            Checking...
         </div>
 
 
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     OpenSubsonic
                 </div>
 
                 <div class="setting-desc">
-                    Server compatibility status.
+                    Server compatibility.
                 </div>
+
             </div>
 
             <strong
@@ -737,6 +827,7 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     Audio Format
                 </div>
@@ -744,13 +835,27 @@
                 <div class="setting-desc">
                     Preferred download format.
                 </div>
+
             </div>
 
             <select id="set_format">
-                <option value="mp3">MP3</option>
-                <option value="flac">FLAC (Lossless)</option>
-                <option value="m4a">M4A (AAC)</option>
-                <option value="opus">OPUS</option>
+
+                <option value="mp3">
+                    MP3
+                </option>
+
+                <option value="flac">
+                    FLAC (Lossless)
+                </option>
+
+                <option value="m4a">
+                    M4A (AAC)
+                </option>
+
+                <option value="opus">
+                    OPUS
+                </option>
+
             </select>
 
         </div>
@@ -759,6 +864,7 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     Audio Quality
                 </div>
@@ -766,13 +872,27 @@
                 <div class="setting-desc">
                     Bitrate for lossy formats.
                 </div>
+
             </div>
 
             <select id="set_quality">
-                <option value="320K">320 Kbps</option>
-                <option value="256K">256 Kbps</option>
-                <option value="192K">192 Kbps</option>
-                <option value="128K">128 Kbps</option>
+
+                <option value="320K">
+                    320 Kbps
+                </option>
+
+                <option value="256K">
+                    256 Kbps
+                </option>
+
+                <option value="192K">
+                    192 Kbps
+                </option>
+
+                <option value="128K">
+                    128 Kbps
+                </option>
+
             </select>
 
         </div>
@@ -781,13 +901,15 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     Embed Album Art
                 </div>
 
                 <div class="setting-desc">
-                    Embed cover artwork into downloaded files.
+                    Embed cover artwork into downloads.
                 </div>
+
             </div>
 
             <label class="switch">
@@ -807,6 +929,7 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     Embed Metadata
                 </div>
@@ -814,6 +937,7 @@
                 <div class="setting-desc">
                     Add tags to downloaded files.
                 </div>
+
             </div>
 
             <label class="switch">
@@ -833,13 +957,15 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     Organize by Artist
                 </div>
 
                 <div class="setting-desc">
-                    Store music in artist folders.
+                    Store downloads in artist folders.
                 </div>
+
             </div>
 
             <label class="switch">
@@ -859,13 +985,15 @@
         <div class="setting-row">
 
             <div>
+
                 <div class="setting-label">
                     Max Search Results
                 </div>
 
                 <div class="setting-desc">
-                    Results returned per search page.
+                    Number of results per search page.
                 </div>
+
             </div>
 
             <input
@@ -992,9 +1120,7 @@
 </div>
 
 
-<nav
-    class="bottom-nav"
->
+<nav class="bottom-nav">
 
     <button
         class="nav-link active"
@@ -1046,8 +1172,8 @@
 </nav>
 
 
-<script src="/static/app.js?v=196"></script>
-<script src="/static/amperfy.js?v=196"></script>
+<script src="/static/app.js?v=197"></script>
+<script src="/static/amperfy.js?v=197"></script>
 
 </body>
 </html>
