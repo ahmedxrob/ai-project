@@ -2436,6 +2436,13 @@ async def api_home():
                         safe="/",
                     )
                 ),
+                "stream": (
+                    "/api/library/stream/"
+                    + urllib.parse.quote(
+                        str(song["path"].relative_to(DOWNLOAD_DIR)),
+                        safe="/",
+                    )
+                ),
             }
         )
 
