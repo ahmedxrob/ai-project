@@ -3403,19 +3403,30 @@ async function loadHome() {
 
                 card.addEventListener(
                     "click",
-                    () =>
+                    () => {
+
+                        const streamUrl =
+                            track.stream ||
+                            "";
+
+                        if (!streamUrl) {
+
+                            showToast(
+                                "❌ Track stream URL unavailable"
+                            );
+
+                            return;
+                        }
+
                         toggleAudioStream(
                             card,
-                            `rest/stream.view?id=${
-                                encodeURIComponent(
-                                    track.id
-                                )
-                            }`,
+                            streamUrl,
                             "home",
                             track.title,
                             track.artist,
                             track.cover
-                        )
+                        );
+                    }
                 );
 
 
