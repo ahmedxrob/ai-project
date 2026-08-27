@@ -239,6 +239,137 @@ function updateLoadingCircle(
     }
 }
 
+/* ============================================================
+   SEARCH LOADING CIRCLE
+   ============================================================ */
+function updateSearchLoading(
+    percent,
+    text = ""
+) {
+
+    const safePercent =
+        Math.max(
+            0,
+            Math.min(
+                100,
+                Math.round(
+                    Number(percent) || 0
+                )
+            )
+        );
+
+    const loading =
+        document.getElementById(
+            "searchLoading"
+        );
+
+    const percentElement =
+        document.getElementById(
+            "searchLoadingPercent"
+        );
+
+    const circle =
+        document.getElementById(
+            "searchLoadingCircle"
+        );
+
+    const textElement =
+        document.getElementById(
+            "searchLoadingText"
+        );
+
+    if (!loading) {
+        return;
+    }
+
+    loading.style.display = "flex";
+
+    if (percentElement) {
+        percentElement.textContent =
+            `${safePercent}%`;
+    }
+
+    if (textElement && text) {
+        textElement.textContent =
+            text;
+    }
+
+    if (circle) {
+
+        const circumference =
+            263.9;
+
+        circle.style.strokeDasharray =
+            circumference;
+
+        circle.style.strokeDashoffset =
+            circumference -
+            (
+                safePercent / 100
+            ) *
+            circumference;
+    }
+}
+
+function smoothSearchLoading(
+    from,
+    to,
+    text,
+    duration = 400
+) {
+
+    const start =
+        performance.now();
+
+    function animate(now) {
+
+        const progress =
+            Math.min(
+                (now - start) /
+                duration,
+                1
+            );
+
+        const percent =
+            Math.round(
+                from +
+                (
+                    to - from
+                ) *
+                progress
+            );
+
+        updateSearchLoading(
+            percent,
+            text
+        );
+
+        if (progress < 1) {
+
+            requestAnimationFrame(
+                animate
+            );
+        }
+    }
+
+    requestAnimationFrame(
+        animate
+    );
+}
+
+function hideSearchLoading() {
+
+    const loading =
+        document.getElementById(
+            "searchLoading"
+        );
+
+    if (loading) {
+        loading.style.display =
+            "none";
+    }
+}
+
 function smoothLoading(
     type,
     from,
@@ -2627,65 +2758,88 @@ async function searchMusic() {
             "query"
         );
 
-
     const results =
         document.getElementById(
             "results"
         );
-
 
     const status =
         document.getElementById(
             "statusMsg"
         );
 
-
     if (!input || !results || !status) {
         return;
     }
 
-
     const query =
         input.value.trim();
-
 
     if (!query) {
 
         status.textContent =
             "Enter a search term.";
 
+        hideSearchLoading();
+
         return;
     }
-
 
     currentQuery = query;
     currentPage = 1;
     hasMoreResults = true;
     isLoadingMore = false;
 
+    /*
+     * Hide the normal text status.
+     */
+    status.textContent = "";
 
-    status.textContent =
-        "🔍 Searching...";
-
+    /*
+     * Start circular search loader.
+     */
+    updateSearchLoading(
+        5,
+        "Synchronizing..."
+    );
 
     results.innerHTML = "";
-
-
-    await refreshLibraryCache();
-
 
     const button =
         document.getElementById(
             "searchBtn"
         );
 
-
     if (button) {
         button.disabled = true;
     }
 
-
     try {
+
+        /*
+         * STEP 1
+         * Synchronize library
+         */
+        smoothSearchLoading(
+            5,
+            20,
+            "Synchronizing library...",
+            300
+        );
+
+        await refreshLibraryCache();
+
+
+        /*
+         * STEP 2
+         * Search server
+         */
+        smoothSearchLoading(
+            20,
+            45,
+            "Searching for music...",
+            400
+        );
 
         const response =
             await fetch(
@@ -2696,6 +2850,15 @@ async function searchMusic() {
                     cache: "no-store"
                 }
             );
+
+
+        /*
+         * Search request finished.
+         */
+        updateSearchLoading(
+            65,
+            "Processing results..."
+        );
 
 
         const data =
@@ -2714,13 +2877,23 @@ async function searchMusic() {
         }
 
 
+        /*
+         * No results
+         */
         if (
             !Array.isArray(data) ||
             !data.length
         ) {
 
-            status.textContent =
-                "No results found.";
+            updateSearchLoading(
+                100,
+                "No results found"
+            );
+
+            setTimeout(
+                hideSearchLoading,
+                500
+            );
 
             hasMoreResults = false;
 
@@ -2728,11 +2901,48 @@ async function searchMusic() {
         }
 
 
-        status.textContent = "";
+        /*
+         * STEP 3
+         * Render results
+         */
+        updateSearchLoading(
+            80,
+            "Loading results..."
+        );
 
         renderItems(data);
 
+
+        /*
+         * Search ready.
+         */
+        updateSearchLoading(
+            100,
+            "Search ready"
+        );
+
+        setTimeout(
+            hideSearchLoading,
+            400
+        );
+
+
     } catch (error) {
+
+        console.error(
+            "Search failed:",
+            error
+        );
+
+        updateSearchLoading(
+            100,
+            "Search failed"
+        );
+
+        setTimeout(
+            hideSearchLoading,
+            1000
+        );
 
         status.textContent =
             "❌ " +
