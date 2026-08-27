@@ -40,13 +40,14 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=200"
+        href="/static/style.css?v=201"
     >
 
 </head>
 
 
 <body>
+
 
 <div
     id="toast-container"
@@ -63,6 +64,11 @@
 
 
 <div class="app-shell">
+
+
+    <!-- =========================================================
+         SIDE NAVIGATION
+         ========================================================= -->
 
     <nav
         class="side-nav"
@@ -175,12 +181,15 @@
             </svg>
 
 
-            <h1>Xrob Music</h1>
+            <h1>
+                Xrob Music
+            </h1>
 
         </div>
 
 
         <ul class="nav-list">
+
 
             <li>
 
@@ -273,6 +282,7 @@
 
             </li>
 
+
         </ul>
 
     </nav>
@@ -281,7 +291,9 @@
     <div class="app-column">
 
 
-        <!-- MOBILE HEADER -->
+        <!-- =====================================================
+             MOBILE HEADER
+             ===================================================== -->
 
         <header class="mobile-header">
 
@@ -322,7 +334,9 @@
                 </svg>
 
 
-                <h1>Xrob Music</h1>
+                <h1>
+                    Xrob Music
+                </h1>
 
             </div>
 
@@ -340,6 +354,7 @@
                 id="tab-home"
                 class="tab-content active"
             >
+
 
                 <div class="home-hero">
 
@@ -375,6 +390,8 @@
 
                 </div>
 
+
+                <!-- HOME STATS -->
 
                 <div class="home-stats-grid">
 
@@ -466,6 +483,8 @@
                 </div>
 
 
+                <!-- RECENTLY ADDED HEADER -->
+
                 <div class="home-section-header">
 
                     <div>
@@ -494,11 +513,72 @@
                 </div>
 
 
+                <!-- ==================================================
+                     RECENTLY ADDED LOADING
+                     ================================================== -->
+
+                <div
+                    id="recentTracksLoading"
+                    class="xrob-loading"
+                    aria-live="polite"
+                    aria-label="Loading recently added music"
+                >
+
+                    <div class="xrob-loader-circle">
+
+                        <svg
+                            class="xrob-loader-svg"
+                            viewBox="0 0 100 100"
+                            aria-hidden="true"
+                        >
+
+                            <circle
+                                class="xrob-loader-track"
+                                cx="50"
+                                cy="50"
+                                r="42"
+                            ></circle>
+
+                            <circle
+                                id="recentLoadingCircle"
+                                class="xrob-loader-progress"
+                                cx="50"
+                                cy="50"
+                                r="42"
+                            ></circle>
+
+                        </svg>
+
+
+                        <div
+                            id="recentLoadingPercent"
+                            class="xrob-loader-percent"
+                        >
+                            0%
+                        </div>
+
+                    </div>
+
+
+                    <div
+                        id="recentLoadingText"
+                        class="xrob-loader-text"
+                    >
+                        Loading Recently Added...
+                    </div>
+
+                </div>
+
+
+                <!-- RECENT TRACKS -->
+
                 <div
                     id="recentTracks"
                     class="recent-grid"
                 ></div>
 
+
+                <!-- ARPEGGI CARD -->
 
                 <div class="home-connect-card">
 
@@ -535,6 +615,7 @@
 
                 </div>
 
+
             </section>
 
 
@@ -546,6 +627,7 @@
                 id="tab-search"
                 class="tab-content"
             >
+
 
                 <div class="page-heading">
 
@@ -575,7 +657,9 @@
                         type="button"
                         id="searchBtn"
                     >
+
                         Search
+
                     </button>
 
                 </div>
@@ -605,6 +689,7 @@
 
                 </div>
 
+
             </section>
 
 
@@ -616,6 +701,7 @@
                 id="tab-downloads"
                 class="tab-content"
             >
+
 
                 <div class="downloads-page-header">
 
@@ -734,6 +820,7 @@
 
                     </div>
 
+
                 </div>
 
 
@@ -741,6 +828,7 @@
                     id="downloadsList"
                     class="downloads-list"
                 ></div>
+
 
             </section>
 
@@ -753,6 +841,7 @@
                 id="tab-library"
                 class="tab-content"
             >
+
 
                 <div class="page-heading">
 
@@ -783,9 +872,11 @@
 
                 <div class="library-stats-bar">
 
+
                     <span>
 
                         🎵 Tracks:
+
                         <strong id="statTracks">
                             0
                         </strong>
@@ -796,6 +887,7 @@
                     <span>
 
                         👤 Artists:
+
                         <strong id="statArtists">
                             0
                         </strong>
@@ -806,6 +898,7 @@
                     <span>
 
                         💿 Albums:
+
                         <strong id="statAlbums">
                             0
                         </strong>
@@ -816,6 +909,7 @@
                     <span>
 
                         💾 Size:
+
                         <strong id="libFolderSize">
                             0 MB
                         </strong>
@@ -833,13 +927,76 @@
 
                     </button>
 
+
                 </div>
 
+
+                <!-- ==================================================
+                     LIBRARY LOADING
+                     ================================================== -->
+
+                <div
+                    id="libraryLoading"
+                    class="xrob-loading"
+                    aria-live="polite"
+                    aria-label="Loading music library"
+                >
+
+                    <div class="xrob-loader-circle">
+
+                        <svg
+                            class="xrob-loader-svg"
+                            viewBox="0 0 100 100"
+                            aria-hidden="true"
+                        >
+
+                            <circle
+                                class="xrob-loader-track"
+                                cx="50"
+                                cy="50"
+                                r="42"
+                            ></circle>
+
+                            <circle
+                                id="libraryLoadingCircle"
+                                class="xrob-loader-progress"
+                                cx="50"
+                                cy="50"
+                                r="42"
+                            ></circle>
+
+                        </svg>
+
+
+                        <div
+                            id="libraryLoadingPercent"
+                            class="xrob-loader-percent"
+                        >
+                            0%
+                        </div>
+
+                    </div>
+
+
+                    <div
+                        id="libraryLoadingText"
+                        class="xrob-loader-text"
+                    >
+
+                        Loading Library...
+
+                    </div>
+
+                </div>
+
+
+                <!-- LIBRARY LIST -->
 
                 <div
                     id="libraryList"
                     class="results-grid"
                 ></div>
+
 
             </section>
 
@@ -852,6 +1009,7 @@
                 id="tab-settings"
                 class="tab-content"
             >
+
 
                 <div class="page-heading">
 
@@ -873,6 +1031,8 @@
                         OpenSubsonic / Arpeggi
                     </div>
 
+
+                    <!-- SERVER URL -->
 
                     <div class="setting-row">
 
@@ -914,6 +1074,8 @@
                     </div>
 
 
+                    <!-- USERNAME -->
+
                     <div class="setting-row">
 
                         <div>
@@ -938,6 +1100,8 @@
 
                     </div>
 
+
+                    <!-- PASSWORD -->
 
                     <div class="setting-row">
 
@@ -964,6 +1128,8 @@
 
                     </div>
 
+
+                    <!-- STATUS -->
 
                     <div class="setting-row">
 
@@ -1036,6 +1202,8 @@
                     </div>
 
 
+                    <!-- FORMAT -->
+
                     <div class="setting-row">
 
                         <div>
@@ -1073,6 +1241,8 @@
 
                     </div>
 
+
+                    <!-- QUALITY -->
 
                     <div class="setting-row">
 
@@ -1112,6 +1282,8 @@
                     </div>
 
 
+                    <!-- ART -->
+
                     <div class="setting-row">
 
                         <div>
@@ -1140,6 +1312,8 @@
 
                     </div>
 
+
+                    <!-- METADATA -->
 
                     <div class="setting-row">
 
@@ -1170,6 +1344,8 @@
                     </div>
 
 
+                    <!-- ORGANIZE -->
+
                     <div class="setting-row">
 
                         <div>
@@ -1198,6 +1374,8 @@
 
                     </div>
 
+
+                    <!-- MAX RESULTS -->
 
                     <div class="setting-row">
 
@@ -1246,12 +1424,15 @@
 
                 </div>
 
+
             </section>
 
 
         </main>
 
+
     </div>
+
 
 </div>
 
@@ -1265,6 +1446,7 @@
     class="global-player-bar"
     style="display:none;"
 >
+
 
     <div class="gp-track-details">
 
@@ -1293,6 +1475,9 @@
 
     <div class="gp-controls">
 
+
+        <!-- PREVIOUS -->
+
         <div class="gp-main-controls">
 
             <button
@@ -1302,9 +1487,13 @@
                 aria-label="Previous track"
                 title="Previous track"
             >
+
                 ⏮
+
             </button>
 
+
+            <!-- PLAY -->
 
             <button
                 type="button"
@@ -1313,9 +1502,13 @@
                 aria-label="Play or pause"
                 title="Play / Pause"
             >
+
                 ▶
+
             </button>
 
+
+            <!-- NEXT -->
 
             <button
                 type="button"
@@ -1324,11 +1517,15 @@
                 aria-label="Next track"
                 title="Next track"
             >
+
                 ⏭
+
             </button>
 
         </div>
 
+
+        <!-- PROGRESS -->
 
         <div class="gp-progress-container">
 
@@ -1354,10 +1551,14 @@
 
         </div>
 
+
     </div>
 
 
+    <!-- VOLUME / VISUALIZER -->
+
     <div class="gp-extra">
+
 
         <canvas
             id="visualizer-canvas"
@@ -1384,6 +1585,7 @@
 
     </div>
 
+
 </div>
 
 
@@ -1395,6 +1597,7 @@
     class="bottom-nav"
     aria-label="Mobile navigation"
 >
+
 
     <button
         type="button"
@@ -1467,6 +1670,7 @@
 
     </button>
 
+
 </nav>
 
 
@@ -1474,8 +1678,9 @@
      SCRIPTS
      ============================================================ -->
 
-<script src="/static/app.js?v=200"></script>
-<script src="/static/amperfy.js?v=200"></script>
+<script src="/static/app.js?v=201"></script>
+<script src="/static/amperfy.js?v=201"></script>
+
 
 </body>
 </html>
