@@ -22,6 +22,9 @@ const RECENT_CACHE_KEY =
 let recentTracksCache = [];
 
 let activePreviewBtn = null;
+let currentPlayerSource = null;
+// "home" or "library"
+let currentLibraryIndex = -1;
 
 let currentPage = 1;
 let currentQuery = "";
@@ -139,6 +142,15 @@ function cacheDom() {
 /* ============================================================
    HELPERS
    ============================================================ */
+
+function getLibraryQueue() {
+
+    return Array.isArray(
+        rawLibraryFiles
+    )
+        ? rawLibraryFiles
+        : [];
+}
 
 /* ============================================================
    LOADING CIRCLE
@@ -1111,30 +1123,59 @@ function bindAudioEvents() {
                     "0:00";
             }
 
-            /*
-             * HOME RECENTLY ADDED AUTO-QUEUE
-             */
-            const queue =
-                window.xrobHomeQueue || [];
-
-            const currentIndex =
-                Number.isInteger(
-                    window.xrobHomeQueueIndex
-                )
-                    ? window.xrobHomeQueueIndex
-                    : -1;
-
             if (
-                queue.length &&
-                currentIndex >= 0 &&
-                currentIndex < queue.length - 1
+                currentPlayerSource ===
+                "home"
             ) {
 
-                playHomeTrack(
-                    currentIndex + 1
-                );
+                const queue =
+                    window.xrobHomeQueue || [];
 
-                return;
+                const currentIndex =
+                    Number.isInteger(
+                        window.xrobHomeQueueIndex
+                    )
+                        ? window.xrobHomeQueueIndex
+                        : -1;
+
+                if (
+                    queue.length &&
+                    currentIndex >= 0 &&
+                    currentIndex <
+                        queue.length - 1
+                ) {
+
+                    playHomeTrack(
+                        currentIndex + 1
+                    );
+
+                    return;
+                }
+            }
+
+
+            if (
+                currentPlayerSource ===
+                "library"
+            ) {
+
+                const queue =
+                    getLibraryQueue();
+
+                const nextIndex =
+                    currentLibraryIndex + 1;
+
+                if (
+                    queue.length &&
+                    nextIndex < queue.length
+                ) {
+
+                    playLibraryTrack(
+                        nextIndex
+                    );
+
+                    return;
+                }
             }
 
             /*
@@ -1204,12 +1245,12 @@ function bindPlayerControls() {
 
     prevBtn?.addEventListener(
         "click",
-        playPreviousHomeTrack
+        playPreviousTrack
     );
 
     nextBtn?.addEventListener(
         "click",
-        playNextHomeTrack
+        playNextTrack
     );
 
 
@@ -2206,6 +2247,9 @@ function filterLibrary() {
             card.className =
                 "result-card";
 
+            card.dataset.libraryName =
+                file.name;
+
 
             card.innerHTML = `
 
@@ -2312,19 +2356,27 @@ function filterLibrary() {
                 "click",
                 (event) => {
 
-                    // Don't play when clicking the Delete button
                     if (
                         event.target.closest(".btn-danger")
                     ) {
                         return;
                     }
 
-                    // Don't trigger twice when clicking the Play button
                     if (
                         event.target.closest(".btn-preview")
                     ) {
                         return;
                     }
+
+                    currentPlayerSource =
+                        "library";
+
+                    currentLibraryIndex =
+                        rawLibraryFiles.findIndex(
+                            libraryFile =>
+                                libraryFile.name ===
+                                file.name
+                        );
 
                     if (play) {
 
@@ -2355,6 +2407,74 @@ function filterLibrary() {
 
             list.appendChild(card);
         }
+    );
+}
+
+
+function playLibraryTrack(
+    index
+) {
+
+    const queue =
+        getLibraryQueue();
+
+    if (
+        index < 0 ||
+        index >= queue.length
+    ) {
+        return;
+    }
+
+    const file =
+        queue[index];
+
+    currentPlayerSource =
+        "library";
+
+    currentLibraryIndex =
+        index;
+
+    const encoded =
+        encodeURIComponent(
+            file.name
+        );
+
+    const cover =
+        `api/library/cover/${encoded}`;
+
+    const stream =
+        `api/library/stream/${encoded}`;
+
+    /*
+     * We need a real button because
+     * toggleAudioStream expects one.
+     */
+    let button =
+        document.querySelector(
+            `.result-card[data-library-name="${CSS.escape(file.name)}"] .btn-preview`
+        );
+
+    if (!button) {
+
+        button =
+            document.createElement(
+                "button"
+            );
+
+        button.className =
+            "btn-preview";
+
+        button.dataset.type =
+            "library";
+    }
+
+    toggleAudioStream(
+        button,
+        stream,
+        "library",
+        file.name,
+        "Local Library",
+        cover
     );
 }
 
@@ -3905,94 +4025,192 @@ async function clearDoneTasks() {
    HOME
    ============================================================ */
 
-function playNextHomeTrack() {
-
-    const queue =
-        window.xrobHomeQueue || [];
-
-    if (!queue.length) {
-        return;
-    }
-
-    const currentIndex =
-        Number.isInteger(
-            window.xrobHomeQueueIndex
-        )
-            ? window.xrobHomeQueueIndex
-            : -1;
-
-    const nextIndex =
-        currentIndex + 1;
-
-    if (
-        nextIndex >= queue.length
-    ) {
-
-        showToast(
-            "🎵 End of Recently Added"
-        );
-
-        return;
-    }
-
-    window.xrobHomeQueueIndex =
-        nextIndex;
-
-    playHomeTrack(
-        nextIndex
-    );
-}
-
-function playPreviousHomeTrack() {
-
-    const queue =
-        window.xrobHomeQueue || [];
-
-    if (!queue.length) {
-        return;
-    }
-
-    const currentIndex =
-        Number.isInteger(
-            window.xrobHomeQueueIndex
-        )
-            ? window.xrobHomeQueueIndex
-            : 0;
+function playNextTrack() {
 
     /*
-     * If the song has played more than 3 seconds,
-     * Previous restarts the current track.
+     * HOME
      */
     if (
-        audio &&
-        audio.currentTime > 3
+        currentPlayerSource ===
+        "home"
     ) {
 
-        audio.currentTime = 0;
+        const queue =
+            window.xrobHomeQueue || [];
 
-        return;
-    }
+        if (!queue.length) {
+            return;
+        }
 
-    const previousIndex =
-        currentIndex - 1;
+        const currentIndex =
+            Number.isInteger(
+                window.xrobHomeQueueIndex
+            )
+                ? window.xrobHomeQueueIndex
+                : -1;
 
-    if (
-        previousIndex < 0
-    ) {
+        const nextIndex =
+            currentIndex + 1;
 
-        showToast(
-            "🎵 This is the first Recently Added track"
+        if (
+            nextIndex >= queue.length
+        ) {
+
+            showToast(
+                "🎵 End of Recently Added"
+            );
+
+            return;
+        }
+
+        playHomeTrack(
+            nextIndex
         );
 
         return;
     }
 
-    window.xrobHomeQueueIndex =
-        previousIndex;
 
-    playHomeTrack(
-        previousIndex
-    );
+    /*
+     * LIBRARY
+     */
+    if (
+        currentPlayerSource ===
+        "library"
+    ) {
+
+        const queue =
+            getLibraryQueue();
+
+        if (!queue.length) {
+            return;
+        }
+
+        const nextIndex =
+            currentLibraryIndex + 1;
+
+        if (
+            nextIndex >= queue.length
+        ) {
+
+            showToast(
+                "🎵 End of Library"
+            );
+
+            return;
+        }
+
+        playLibraryTrack(
+            nextIndex
+        );
+
+        return;
+    }
+}
+
+function playPreviousTrack() {
+
+    /*
+     * HOME QUEUE
+     */
+    if (
+        currentPlayerSource ===
+        "home"
+    ) {
+
+        const queue =
+            window.xrobHomeQueue || [];
+
+        if (!queue.length) {
+            return;
+        }
+
+        const currentIndex =
+            Number.isInteger(
+                window.xrobHomeQueueIndex
+            )
+                ? window.xrobHomeQueueIndex
+                : 0;
+
+        /*
+         * More than 3 seconds:
+         * restart current track.
+         */
+        if (
+            audio &&
+            audio.currentTime > 3
+        ) {
+
+            audio.currentTime = 0;
+
+            return;
+        }
+
+        const previousIndex =
+            currentIndex - 1;
+
+        if (
+            previousIndex < 0
+        ) {
+
+            showToast(
+                "🎵 This is the first track"
+            );
+
+            return;
+        }
+
+        playHomeTrack(
+            previousIndex
+        );
+
+        return;
+    }
+
+
+    /*
+     * LIBRARY QUEUE
+     */
+    if (
+        currentPlayerSource ===
+        "library"
+    ) {
+
+        const queue =
+            getLibraryQueue();
+
+        if (!queue.length) {
+            return;
+        }
+
+        if (
+            audio &&
+            audio.currentTime > 3
+        ) {
+
+            audio.currentTime = 0;
+
+            return;
+        }
+
+        const previousIndex =
+            currentLibraryIndex - 1;
+
+        if (
+            previousIndex < 0
+        ) {
+
+            showToast(
+                "🎵 This is the first library track"
+            );
+
+            return;
+        }
+
+        playLibraryTrack(
+            previousIndex
+        );
+    }
 }
 
 
@@ -4706,6 +4924,8 @@ function bindArpeggiCopy() {
    ============================================================ */
 
 function playHomeTrack(index) {
+
+    currentPlayerSource = "home";
 
     const queue =
         window.xrobHomeQueue || [];
