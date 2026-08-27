@@ -631,7 +631,7 @@ def read_metadata_sync(path):
             "-print_format",
             "json",
             "-show_entries",
-            "format=duration:format_tags",
+            "format=duration,size,bit_rate,format_name:stream=index,codec_type,codec_name,bit_rate,sample_rate,channels,bits_per_raw_sample,bits_per_sample",
             str(path),
         ]
 
@@ -655,19 +655,36 @@ def read_metadata_sync(path):
                 {},
             )
 
+            streams = raw.get("streams") or []
+            audio_stream = next(
+                (
+                    stream
+                    for stream in streams
+                    if stream.get("codec_type") == "audio"
+                ),
+                {},
+            )
+
             tags = fmt.get(
                 "tags",
                 {},
             )
 
+            # Normalize common tag casing used by different containers.
+            normalized_tags = {
+                str(key).lower(): value
+                for key, value in tags.items()
+            }
+
             metadata = {
                 "title": clean_metadata_text(
-                    tags.get("title"),
+                    normalized_tags.get("title"),
                     path.stem,
                 ),
                 "artist": clean_metadata_text(
-                    tags.get("artist")
-                    or tags.get("album_artist"),
+                    normalized_tags.get("artist")
+                    or normalized_tags.get("album_artist")
+                    or normalized_tags.get("albumartist"),
                     (
                         path.parent.name
                         if path.parent != DOWNLOAD_DIR
@@ -675,31 +692,56 @@ def read_metadata_sync(path):
                     ),
                 ),
                 "album": clean_metadata_text(
-                    tags.get("album"),
+                    normalized_tags.get("album"),
                     path.stem,
                 ),
                 "genre": clean_metadata_text(
-                    tags.get("genre"),
+                    normalized_tags.get("genre"),
                     "",
                 ),
                 "year": clean_metadata_text(
-                    tags.get("date")
-                    or tags.get("year"),
+                    normalized_tags.get("date")
+                    or normalized_tags.get("year"),
                     "",
                 ),
                 "track": clean_metadata_text(
-                    tags.get("track"),
+                    normalized_tags.get("tracknumber")
+                    or normalized_tags.get("track"),
                     "",
                 ),
                 "disc": clean_metadata_text(
-                    tags.get("disc"),
+                    normalized_tags.get("discnumber")
+                    or normalized_tags.get("disc"),
                     "",
                 ),
                 "duration": safe_float(
                     fmt.get("duration"),
                     0,
                 ),
+                "bit_rate": safe_int(
+                    safe_float(audio_stream.get("bit_rate"), 0) / 1000,
+                    0,
+                ),
+                "sample_rate": safe_int(
+                    audio_stream.get("sample_rate"),
+                    0,
+                ),
+                "channels": safe_int(
+                    audio_stream.get("channels"),
+                    0,
+                ),
+                "bit_depth": safe_int(
+                    audio_stream.get("bits_per_raw_sample")
+                    or audio_stream.get("bits_per_sample"),
+                    0,
+                ),
             }
+
+            if metadata["bit_rate"] <= 0:
+                metadata["bit_rate"] = safe_int(
+                    safe_float(fmt.get("bit_rate"), 0) / 1000,
+                    0,
+                )
 
         if not metadata:
             metadata = {
@@ -715,6 +757,10 @@ def read_metadata_sync(path):
                 "track": "",
                 "disc": "",
                 "duration": 0,
+                "bit_rate": 0,
+                "sample_rate": 0,
+                "channels": 0,
+                "bit_depth": 0,
             }
 
         METADATA_CACHE[cache_key] = (
@@ -738,6 +784,10 @@ def read_metadata_sync(path):
             "track": "",
             "disc": "",
             "duration": 0,
+            "bit_rate": 0,
+            "sample_rate": 0,
+            "channels": 0,
+            "bit_depth": 0,
         }
 
 
@@ -842,6 +892,10 @@ async def build_library():
                 metadata["duration"],
                 0,
             ),
+            "bit_rate": safe_int(metadata.get("bit_rate"), 0),
+            "bit_depth": safe_int(metadata.get("bit_depth"), 0),
+            "sample_rate": safe_int(metadata.get("sample_rate"), 0),
+            "channels": safe_int(metadata.get("channels"), 0),
             "path": path,
             "suffix": path.suffix.lower(),
             "size": stat.st_size,
@@ -2822,20 +2876,24 @@ def subsonic_error(
 # STARRED
 # ============================================================
 
-def is_starred_sync(item_id):
+def get_starred_at_sync(item_id):
 
     with sqlite3.connect(DB_FILE) as conn:
 
         row = conn.execute(
             """
-            SELECT 1
+            SELECT starred_at
             FROM stars
             WHERE item_id = ?
             """,
             (item_id,),
         ).fetchone()
 
-    return bool(row)
+    return float(row[0]) if row else None
+
+
+def is_starred_sync(item_id):
+    return get_starred_at_sync(item_id) is not None
 
 
 def set_star_sync(
@@ -2916,6 +2974,22 @@ def song_to_subsonic(song):
             song.get("duration"),
             0,
         ),
+        "bitRate": safe_int(
+            song.get("bit_rate"),
+            0,
+        ),
+        "bitDepth": safe_int(
+            song.get("bit_depth"),
+            0,
+        ),
+        "samplingRate": safe_int(
+            song.get("sample_rate"),
+            0,
+        ),
+        "channelCount": safe_int(
+            song.get("channels"),
+            0,
+        ),
         "path": str(
             song["path"].relative_to(
                 DOWNLOAD_DIR
@@ -2925,22 +2999,12 @@ def song_to_subsonic(song):
         "mediaType": "song",
         "isVideo": False,
         "playCount": 0,
-        "played": False,
-        "starred": bool(
-            is_starred_sync(
-                song["id"]
-            )
-        ),
         "comment": "",
         "sortName": song["title"],
         "musicBrainzId": "",
         "isrc": [],
         "moods": [],
         "explicitStatus": "",
-        "bitRate": 0,
-        "bitDepth": 0,
-        "samplingRate": 0,
-        "channelCount": 0,
     }
 
     if song.get("genre"):
@@ -2951,6 +3015,23 @@ def song_to_subsonic(song):
         ]
     else:
         result["genres"] = []
+
+    # OpenSubsonic defines starred/played as ISO-8601 date strings,
+    # not booleans. Only include starred when the song is actually starred.
+    starred_at = get_starred_at_sync(song["id"])
+    if starred_at is not None:
+        result["starred"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(starred_at),
+        )
+
+    # Creation time is also an ISO-8601 string when supplied.
+    created_at = safe_float(song.get("created"), 0)
+    if created_at > 0:
+        result["created"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(created_at),
+        )
 
     result["artists"] = [
         {
@@ -2971,6 +3052,13 @@ def song_to_subsonic(song):
 
     if track_value > 0:
         result["track"] = track_value
+
+    disc_value = safe_int(
+        song.get("disc"),
+        0,
+    )
+    if disc_value > 0:
+        result["discNumber"] = disc_value
 
     return result
 
