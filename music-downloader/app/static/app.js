@@ -124,6 +124,108 @@ function cacheDom() {
    HELPERS
    ============================================================ */
 
+/* ============================================================
+   LOADING CIRCLE
+   ============================================================ */function updateLoadingCircle(
+    type,
+    percent,
+    text = ""
+) {
+
+    const safePercent =
+        Math.max(
+            0,
+            Math.min(
+                100,
+                Math.round(
+                    Number(percent) || 0
+                )
+            )
+        );
+
+    const isLibrary =
+        type === "library";
+
+    const loading =
+        document.getElementById(
+            isLibrary
+                ? "libraryLoading"
+                : "recentTracksLoading"
+        );
+
+    const percentElement =
+        document.getElementById(
+            isLibrary
+                ? "libraryLoadingPercent"
+                : "recentLoadingPercent"
+        );
+
+    const circle =
+        document.getElementById(
+            isLibrary
+                ? "libraryLoadingCircle"
+                : "recentLoadingCircle"
+        );
+
+    const textElement =
+        document.getElementById(
+            isLibrary
+                ? "libraryLoadingText"
+                : "recentLoadingText"
+        );
+
+    if (!loading) {
+        return;
+    }
+
+    loading.style.display =
+        "flex";
+
+    if (percentElement) {
+
+        percentElement.textContent =
+            `${safePercent}%`;
+    }
+
+    if (textElement && text) {
+
+        textElement.textContent =
+            text;
+    }
+
+    if (circle) {
+
+        const circumference =
+            263.9;
+
+        circle.style.strokeDasharray =
+            circumference;
+
+        circle.style.strokeDashoffset =
+            circumference -
+            (
+                safePercent / 100
+            ) *
+            circumference;
+    }
+}function hideLoadingCircle(
+    type
+) {
+
+    const element =
+        document.getElementById(
+            type === "library"
+                ? "libraryLoading"
+                : "recentTracksLoading"
+        );
+
+    if (element) {
+
+        element.style.display =
+            "none";
+    }
+}
+
 function escapeHtml(value) {
 
     return String(value ?? "")
@@ -1488,20 +1590,66 @@ async function loadLibrary() {
             "libraryList"
         );
 
-
     if (!list) {
         return;
     }
 
+    updateLoadingCircle(
+        "library",
+        5,
+        "Preparing library..."
+    );
 
-    list.innerHTML =
-        '<div class="library-loading">Loading library...</div>';
+    list.innerHTML = "";
 
+    updateLoadingCircle(
+        "library",
+        20,
+        "Loading music files..."
+    );
 
-    await refreshLibraryCache();
-    await loadStats();
+    try {
+        await refreshLibraryCache();
 
-    filterLibrary();
+        updateLoadingCircle(
+            "library",
+            65,
+            "Reading library information..."
+        );
+
+        await loadStats();
+
+        updateLoadingCircle(
+            "library",
+            85,
+            "Preparing tracks..."
+        );
+
+        filterLibrary();
+
+        updateLoadingCircle(
+            "library",
+            100,
+            "Library ready"
+        );
+
+        setTimeout(
+            () =>
+                hideLoadingCircle(
+                    "library"
+                ),
+            250
+        );
+    } catch (error) {
+        hideLoadingCircle(
+            "library"
+        );
+
+        console.warn(
+            "Library:",
+            error
+        );
+    }
 }
 
 
@@ -3395,6 +3543,12 @@ function playPreviousHomeTrack() {
 
 async function loadHome() {
 
+    updateLoadingCircle(
+        "recent",
+        5,
+        "Loading Recently Added..."
+    );
+
     try {
 
         const response =
@@ -3413,6 +3567,12 @@ async function loadHome() {
 
         const data =
             await response.json();
+
+        updateLoadingCircle(
+            "recent",
+            60,
+            "Preparing your music..."
+        );
 
         const stats =
             data.stats || {};
@@ -3471,6 +3631,10 @@ async function loadHome() {
 
         if (!recent.length) {
 
+            hideLoadingCircle(
+                "recent"
+            );
+
             container.innerHTML = `
                 <div class="home-empty">
                     No music in your library yet.
@@ -3486,6 +3650,12 @@ async function loadHome() {
          */
         window.xrobHomeQueue = recent;
         window.xrobHomeQueueIndex = -1;
+
+        updateLoadingCircle(
+            "recent",
+            80,
+            "Building Recently Added..."
+        );
 
         recent.forEach(
             (track, index) => {
@@ -3583,7 +3753,24 @@ async function loadHome() {
             }
         );
 
+        updateLoadingCircle(
+            "recent",
+            100,
+            "Recently Added ready"
+        );
+        setTimeout(
+            () =>
+                hideLoadingCircle(
+                    "recent"
+                ),
+            250
+        );
+
     } catch (error) {
+
+        hideLoadingCircle(
+            "recent"
+        );
 
         console.warn(
             "Home:",
