@@ -12,6 +12,15 @@ let completedSet = new Set();
 let rawLibraryFiles = [];
 let libraryFilesSet = new Set();
 
+let libraryLoadedFromCache = false;
+
+const LIBRARY_CACHE_KEY =
+    "xrob_music_library_cache";
+
+const RECENT_CACHE_KEY =
+    "xrob_music_recently_added_cache";
+let recentTracksCache = [];
+
 let activePreviewBtn = null;
 
 let currentPage = 1;
@@ -40,6 +49,13 @@ let canvasCtx = null;
 let audioContext = null;
 let analyser = null;
 let sourceNode = null;
+
+let savedPlayerState = {
+    track: null,
+    currentTime: 0,
+    volume: 0.8,
+    queueIndex: -1
+};
 
 
 /* ============================================================
@@ -438,6 +454,141 @@ window.addEventListener(
 /* ============================================================
    PLAYER
    ============================================================ */
+
+function savePlayerState() {
+
+    if (!audio) {
+        return;
+    }
+
+    const state = {
+        src: audio.src || "",
+        currentTime:
+            Number(audio.currentTime || 0),
+
+        volume:
+            Number(audio.volume || 0.8),
+
+        title:
+            playerTitle?.textContent || "",
+
+        artist:
+            playerArtist?.textContent || "",
+
+        art:
+            playerArt?.src || "",
+
+        queueIndex:
+            Number.isInteger(
+                window.xrobHomeQueueIndex
+            )
+                ? window.xrobHomeQueueIndex
+                : -1
+    };
+
+    localStorage.setItem(
+        "xrob_music_player_state",
+        JSON.stringify(state)
+    );
+}
+
+
+function restorePlayerState() {
+
+    if (!audio) {
+        return;
+    }
+
+    try {
+
+        const raw =
+            localStorage.getItem(
+                "xrob_music_player_state"
+            );
+
+        if (!raw) {
+            return;
+        }
+
+        const state =
+            JSON.parse(raw);
+
+        if (
+            state.volume !== undefined &&
+            Number.isFinite(
+                Number(state.volume)
+            )
+        ) {
+
+            audio.volume =
+                Number(state.volume);
+
+            if (volume) {
+                volume.value =
+                    Number(state.volume);
+            }
+        }
+
+        if (!state.src) {
+            return;
+        }
+
+        audio.src =
+            state.src;
+
+        audio.load();
+
+        updatePlayerInfo(
+            state.title,
+            state.artist,
+            state.art
+        );
+
+        if (player) {
+            player.style.display =
+                "grid";
+        }
+
+        /*
+         * Restore position after metadata loads.
+         */
+        audio.addEventListener(
+            "loadedmetadata",
+            function restorePosition() {
+
+                if (
+                    Number.isFinite(
+                        Number(state.currentTime)
+                    )
+                ) {
+
+                    audio.currentTime =
+                        Math.min(
+                            Number(
+                                state.currentTime
+                            ),
+                            audio.duration || 0
+                        );
+                }
+
+                audio.removeEventListener(
+                    "loadedmetadata",
+                    restorePosition
+                );
+
+                updateProgress();
+            }
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "Could not restore player:",
+            error
+        );
+    }
+}
+
 
 function formatSeconds(seconds) {
 
@@ -902,7 +1053,12 @@ function bindAudioEvents() {
 
     audio.addEventListener(
         "timeupdate",
-        updateProgress
+        () => {
+
+            updateProgress();
+            savePlayerState();
+
+        }
     );
 
 
@@ -1115,25 +1271,17 @@ function bindPlayerControls() {
         "input",
         () => {
 
-            if (!audio) {
-                return;
-            }
-
-            const value =
-                Math.max(
-                    0,
-                    Math.min(
-                        1,
-                        Number(volume.value)
-                    )
+            audio.volume =
+                Number(
+                    volume.value
                 );
-
-            audio.volume = value;
 
             localStorage.setItem(
                 "xrob_music_volume",
-                String(value)
+                volume.value
             );
+
+            savePlayerState();
         }
     );
 }
@@ -1393,6 +1541,180 @@ async function saveSettings() {
 
 
 /* ============================================================
+   CACHE HELPERS
+   ============================================================ */
+
+function saveLibraryCache() {
+
+    try {
+
+        localStorage.setItem(
+            LIBRARY_CACHE_KEY,
+            JSON.stringify({
+                files: rawLibraryFiles,
+                savedAt: Date.now()
+            })
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "Library cache save failed:",
+            error
+        );
+    }
+}
+
+
+function loadLibraryCache() {
+
+    try {
+
+        const raw =
+            localStorage.getItem(
+                LIBRARY_CACHE_KEY
+            );
+
+        if (!raw) {
+            return false;
+        }
+
+        const cache =
+            JSON.parse(raw);
+
+        if (
+            !cache ||
+            !Array.isArray(
+                cache.files
+            )
+        ) {
+            return false;
+        }
+
+        rawLibraryFiles =
+            cache.files;
+
+        libraryLoadedFromCache =
+            true;
+
+        libraryFilesSet.clear();
+
+        rawLibraryFiles.forEach(
+            file => {
+
+                const name =
+                    String(
+                        file.name || ""
+                    );
+
+                const slash =
+                    name.lastIndexOf(
+                        "/"
+                    );
+
+                const dot =
+                    name.lastIndexOf(
+                        "."
+                    );
+
+                const base =
+                    name.substring(
+                        slash + 1,
+                        dot > slash
+                            ? dot
+                            : name.length
+                    );
+
+                libraryFilesSet.add(
+                    normalizeKey(
+                        base
+                    )
+                );
+            }
+        );
+
+        return true;
+
+    } catch (error) {
+
+        console.warn(
+            "Library cache load failed:",
+            error
+        );
+
+        return false;
+    }
+}
+
+
+function saveRecentlyAddedCache(
+    tracks
+) {
+
+    try {
+
+        localStorage.setItem(
+            RECENT_CACHE_KEY,
+            JSON.stringify({
+                tracks:
+                    Array.isArray(tracks)
+                        ? tracks
+                        : [],
+                savedAt:
+                    Date.now()
+            })
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "Recently Added cache save failed:",
+            error
+        );
+    }
+}
+
+
+function loadRecentlyAddedCache() {
+
+    try {
+
+        const raw =
+            localStorage.getItem(
+                RECENT_CACHE_KEY
+            );
+
+        if (!raw) {
+            return [];
+        }
+
+        const cache =
+            JSON.parse(raw);
+
+        if (
+            !cache ||
+            !Array.isArray(
+                cache.tracks
+            )
+        ) {
+            return [];
+        }
+
+        return cache.tracks;
+
+    } catch (error) {
+
+        console.warn(
+            "Recently Added cache load failed:",
+            error
+        );
+
+        return [];
+    }
+}
+
+
+/* ============================================================
    LIBRARY
    ============================================================ */
 
@@ -1422,10 +1744,12 @@ async function refreshLibraryCache() {
 
 
         rawLibraryFiles =
-            Array.isArray(data.files)
-                ? data.files
-                : [];
+            data.files || [];
 
+        saveLibraryCache();
+
+        libraryLoadedFromCache =
+            false;
 
         libraryFilesSet.clear();
 
@@ -1631,68 +1955,73 @@ async function loadLibrary() {
         return;
     }
 
-    /*
-     * Show loader immediately.
-     */
-    updateLoadingCircle(
-        "library",
-        5,
-        "Preparing library..."
-    );
+    const hasCache =
+        loadLibraryCache();
 
-    list.innerHTML = "";
+
+    if (hasCache) {
+
+        /*
+         * Show cached library immediately.
+         */
+        filterLibrary();
+
+        updateLoadingCircle(
+            "library",
+            60,
+            "Refreshing library..."
+        );
+
+    } else {
+
+        /*
+         * First ever load.
+         */
+        updateLoadingCircle(
+            "library",
+            5,
+            "Preparing library..."
+        );
+
+        list.innerHTML = "";
+    }
 
 
     try {
 
         updateLoadingCircle(
             "library",
-            20,
-            "Loading music files..."
+            25,
+            "Checking music files..."
         );
 
-        /*
-         * This is the important part:
-         * wait for the actual library, because the
-         * library cannot render without it.
-         */
         await refreshLibraryCache();
 
 
         updateLoadingCircle(
             "library",
-            70,
+            80,
             "Preparing tracks..."
         );
 
 
-        /*
-         * Render the library NOW.
-         *
-         * Statistics must not block the library.
-         */
         filterLibrary();
 
 
         updateLoadingCircle(
             "library",
-            90,
+            95,
             "Updating statistics..."
         );
 
 
-        /*
-         * Run stats separately.
-         * We do NOT await it.
-         */
-        loadStats()
-            .catch(
-                error =>
-                    console.warn(
-                        "Library stats:",
-                        error
-                    )
-            );
+        loadStats().catch(
+            error =>
+                console.warn(
+                    "Library stats:",
+                    error
+                )
+        );
 
 
         updateLoadingCircle(
@@ -1717,6 +2046,28 @@ async function loadLibrary() {
             "Library loading failed:",
             error
         );
+
+        /*
+         * If the server is unavailable but we have
+         * cached data, KEEP showing the library.
+         */
+        if (
+            hasCache &&
+            rawLibraryFiles.length
+        ) {
+
+            filterLibrary();
+
+            hideLoadingCircle(
+                "library"
+            );
+
+            showToast(
+                "⚠️ Showing cached library"
+            );
+
+            return;
+        }
 
 
         hideLoadingCircle(
@@ -3644,6 +3995,180 @@ function playPreviousHomeTrack() {
     );
 }
 
+
+function renderRecentlyAdded(
+    recent
+) {
+
+    const container =
+        document.getElementById(
+            "recentTracks"
+        );
+
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = "";
+
+    if (
+        !Array.isArray(recent) ||
+        !recent.length
+    ) {
+
+        container.innerHTML = `
+            <div class="home-empty">
+                No music in your library yet.
+            </div>
+        `;
+
+        return;
+    }
+
+
+    /*
+     * Save queue for Previous / Next / Auto-next.
+     */
+    window.xrobHomeQueue =
+        recent;
+
+    /*
+     * Don't reset the queue position if
+     * we're refreshing an existing queue.
+     */
+    if (
+        !Number.isInteger(
+            window.xrobHomeQueueIndex
+        )
+    ) {
+
+        window.xrobHomeQueueIndex =
+            -1;
+    }
+
+
+    recent.forEach(
+        (
+            track,
+            index
+        ) => {
+
+            const card =
+                document.createElement(
+                    "button"
+                );
+
+            card.type =
+                "button";
+
+            card.className =
+                "recent-card";
+
+            card.dataset.type =
+                "home";
+
+
+            const img =
+                document.createElement(
+                    "img"
+                );
+
+            img.src =
+                track.cover ||
+                "https://via.placeholder.com/100?text=Music";
+
+            img.alt = "";
+
+            img.loading =
+                "lazy";
+
+
+            img.addEventListener(
+                "error",
+                () => {
+
+                    img.src =
+                        "https://via.placeholder.com/100?text=Music";
+
+                },
+                {
+                    once: true
+                }
+            );
+
+
+            const title =
+                document.createElement(
+                    "div"
+                );
+
+            title.className =
+                "recent-card-title";
+
+            title.textContent =
+                track.title ||
+                "Unknown Track";
+
+
+            const artist =
+                document.createElement(
+                    "div"
+                );
+
+            artist.className =
+                "recent-card-artist";
+
+            artist.textContent =
+                track.artist ||
+                "Unknown Artist";
+
+
+            card.appendChild(
+                img
+            );
+
+            card.appendChild(
+                title
+            );
+
+            card.appendChild(
+                artist
+            );
+
+
+            /*
+             * Save card reference.
+             */
+            track._card =
+                card;
+
+
+            /*
+             * Click = play track.
+             */
+            card.addEventListener(
+                "click",
+                () => {
+
+                    window.xrobHomeQueueIndex =
+                        index;
+
+                    playHomeTrack(
+                        index
+                    );
+                }
+            );
+
+
+            container.appendChild(
+                card
+            );
+
+        }
+    );
+}
+
+
 async function loadHome() {
 
     const container =
@@ -3655,39 +4180,99 @@ async function loadHome() {
         return;
     }
 
+
+    /*
+     * ---------------------------------------------
+     * LOAD CACHED RECENTLY ADDED IMMEDIATELY
+     * ---------------------------------------------
+     */
+
+    const cachedRecent =
+        loadRecentlyAddedCache();
+
+
+    if (
+        cachedRecent.length
+    ) {
+
+        recentTracksCache =
+            cachedRecent;
+
+        renderRecentlyAdded(
+            cachedRecent
+        );
+
+        /*
+         * Hide the loader immediately because
+         * we already have usable cached content.
+         */
+        hideLoadingCircle(
+            "recent"
+        );
+
+    } else {
+
+        /*
+         * First load.
+         */
+        updateLoadingCircle(
+            "recent",
+            5,
+            "Loading Recently Added..."
+        );
+
+        container.innerHTML =
+            "";
+    }
+
+
+    /*
+     * ---------------------------------------------
+     * FETCH FRESH HOME DATA
+     * ---------------------------------------------
+     */
+
     const controller =
         new AbortController();
 
     const timeout =
         setTimeout(
-            () => controller.abort(),
+            () =>
+                controller.abort(),
             15000
         );
 
-    updateLoadingCircle(
-        "recent",
-        5,
-        "Loading Recently Added..."
-    );
-
-    container.innerHTML = "";
 
     try {
 
-        updateLoadingCircle(
-            "recent",
-            15,
-            "Connecting to Xrob Music..."
-        );
+        /*
+         * Only show loading progress when
+         * there is no cached data.
+         */
+        if (
+            !cachedRecent.length
+        ) {
+
+            updateLoadingCircle(
+                "recent",
+                15,
+                "Connecting to Xrob Music..."
+            );
+        }
+
 
         const response =
             await fetch(
                 "api/home",
                 {
-                    cache: "no-store",
-                    signal: controller.signal
+                    cache:
+                        "no-store",
+
+                    signal:
+                        controller.signal
                 }
             );
+
 
         if (!response.ok) {
 
@@ -3696,17 +4281,14 @@ async function loadHome() {
             );
         }
 
-        updateLoadingCircle(
-            "recent",
-            65,
-            "Preparing your music..."
-        );
 
         const data =
             await response.json();
 
+
         const stats =
             data.stats || {};
+
 
         const setText = (
             id,
@@ -3714,13 +4296,17 @@ async function loadHome() {
         ) => {
 
             const element =
-                document.getElementById(id);
+                document.getElementById(
+                    id
+                );
 
             if (element) {
+
                 element.textContent =
                     value ?? 0;
             }
         };
+
 
         setText(
             "homeTracks",
@@ -3751,170 +4337,31 @@ async function loadHome() {
                 : [];
 
 
-        updateLoadingCircle(
-            "recent",
-            85,
-            "Building Recently Added..."
-        );
+        /*
+         * ---------------------------------------------
+         * SAVE FRESH RECENTLY ADDED CACHE
+         * ---------------------------------------------
+         */
 
-
-        if (!recent.length) {
-
-            container.innerHTML = `
-                <div class="home-empty">
-                    No music in your library yet.
-                </div>
-            `;
-
-            updateLoadingCircle(
-                "recent",
-                100,
-                "Recently Added ready"
-            );
-
-            setTimeout(
-                () =>
-                    hideLoadingCircle(
-                        "recent"
-                    ),
-                250
-            );
-
-            return;
-        }
-
-
-        /* ---------------------------------------------
-           Save queue for Previous / Next / Auto-next
-           --------------------------------------------- */
-
-        window.xrobHomeQueue =
+        recentTracksCache =
             recent;
 
-        window.xrobHomeQueueIndex =
-            -1;
-
-
-        /* ---------------------------------------------
-           Render cards
-           --------------------------------------------- */
-
-        recent.forEach(
-            (
-                track,
-                index
-            ) => {
-
-                const card =
-                    document.createElement(
-                        "button"
-                    );
-
-                card.type =
-                    "button";
-
-                card.className =
-                    "recent-card";
-
-                card.dataset.type =
-                    "home";
-
-
-                const img =
-                    document.createElement(
-                        "img"
-                    );
-
-                img.src =
-                    track.cover ||
-                    "https://via.placeholder.com/100?text=Music";
-
-                img.alt = "";
-
-                img.loading =
-                    "lazy";
-
-
-                img.addEventListener(
-                    "error",
-                    () => {
-
-                        img.src =
-                            "https://via.placeholder.com/100?text=Music";
-
-                    },
-                    {
-                        once: true
-                    }
-                );
-
-
-                const title =
-                    document.createElement(
-                        "div"
-                    );
-
-                title.className =
-                    "recent-card-title";
-
-                title.textContent =
-                    track.title ||
-                    "Unknown Track";
-
-
-                const artist =
-                    document.createElement(
-                        "div"
-                    );
-
-                artist.className =
-                    "recent-card-artist";
-
-                artist.textContent =
-                    track.artist ||
-                    "Unknown Artist";
-
-
-                card.appendChild(
-                    img
-                );
-
-                card.appendChild(
-                    title
-                );
-
-                card.appendChild(
-                    artist
-                );
-
-
-                /* Save card reference */
-                track._card =
-                    card;
-
-
-                /* Click = play */
-                card.addEventListener(
-                    "click",
-                    () => {
-
-                        window.xrobHomeQueueIndex =
-                            index;
-
-                        playHomeTrack(
-                            index
-                        );
-                    }
-                );
-
-
-                container.appendChild(
-                    card
-                );
-            }
+        saveRecentlyAddedCache(
+            recent
         );
 
 
+        /*
+         * Refresh the visible tracks.
+         */
+        renderRecentlyAdded(
+            recent
+        );
+
+
+        /*
+         * Fresh data is ready.
+         */
         updateLoadingCircle(
             "recent",
             100,
@@ -3927,7 +4374,7 @@ async function loadHome() {
                 hideLoadingCircle(
                     "recent"
                 ),
-            300
+            250
         );
 
 
@@ -3939,38 +4386,31 @@ async function loadHome() {
         );
 
 
+        /*
+         * If cached Recently Added exists,
+         * KEEP IT visible.
+         */
         if (
-            error.name ===
-            "AbortError"
+            cachedRecent.length
         ) {
 
-            container.innerHTML = `
-                <div class="home-empty">
+            renderRecentlyAdded(
+                cachedRecent
+            );
 
-                    <div class="empty-icon">
-                        ⚠️
-                    </div>
+            hideLoadingCircle(
+                "recent"
+            );
 
-                    <div class="empty-title">
-                        Home loading timed out
-                    </div>
-
-                    <div class="empty-text">
-                        Xrob Music did not respond within 15 seconds.
-                    </div>
-
-                    <button
-                        type="button"
-                        class="save-btn"
-                        onclick="loadHome()"
-                    >
-                        🔄 Try Again
-                    </button>
-
-                </div>
-            `;
+            showToast(
+                "⚠️ Showing cached Recently Added"
+            );
 
         } else {
+
+            hideLoadingCircle(
+                "recent"
+            );
 
             container.innerHTML = `
                 <div class="home-empty">
@@ -4001,11 +4441,6 @@ async function loadHome() {
                 </div>
             `;
         }
-
-
-        hideLoadingCircle(
-            "recent"
-        );
 
     } finally {
 
@@ -4364,6 +4799,9 @@ async function initializeApp() {
 
 
     initWebSocket();
+
+
+    restorePlayerState();
 
 
     /*
