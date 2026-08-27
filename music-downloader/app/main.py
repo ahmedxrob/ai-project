@@ -3244,7 +3244,7 @@ async def rest_music_folders(
             "musicFolders": {
                 "musicFolder": [
                     {
-                        "id": "1",
+                        "id": 1,
                         "name": "Music",
                     }
                 ]
@@ -3312,7 +3312,7 @@ async def rest_get_user(
                 "jukeboxRole": False,
                 "streamRole": True,
                 "videoConversionRole": False,
-                "musicFolderId": ["1"],
+                "musicFolderId": [1],
                 "maxBitRate": 0,
             },
         },
