@@ -239,6 +239,52 @@ function updateLoadingCircle(
     }
 }
 
+function smoothLoading(
+    type,
+    from,
+    to,
+    text,
+    duration = 400
+) {
+
+    const start =
+        performance.now();
+
+    function animate(now) {
+
+        const progress =
+            Math.min(
+                (now - start) /
+                duration,
+                1
+            );
+
+        const percent =
+            Math.round(
+                from +
+                (to - from) *
+                progress
+            );
+
+        updateLoadingCircle(
+            type,
+            percent,
+            text
+        );
+
+        if (progress < 1) {
+
+            requestAnimationFrame(
+                animate
+            );
+        }
+    }
+
+    requestAnimationFrame(
+        animate
+    );
+}
+
 function hideLoadingCircle(
     type
 ) {
@@ -682,16 +728,6 @@ function updatePlayingState(playing) {
                 : "▶";
     }
 
-    /*
-     * Only toggle the visual state.
-     *
-     * IMPORTANT:
-     * Do NOT change textContent here.
-     *
-     * Home recent cards contain an image and text.
-     * Changing textContent on those cards destroys their HTML.
-     */
-
     if (activePreviewBtn) {
 
         activePreviewBtn.classList.toggle(
@@ -713,10 +749,6 @@ function resetPreviewButton(button) {
     const type =
         button.dataset?.type || "search";
 
-    /*
-     * Search/library buttons are normal buttons.
-     * Home cards are NOT normal preview buttons.
-     */
     if (
         button.classList.contains("btn-preview")
     ) {
@@ -923,9 +955,6 @@ function toggleAudioStream(
     }
 
 
-    /*
-     * Clicking the same track toggles play/pause.
-     */
     if (
         activePreviewBtn === button &&
         audio.src === absoluteUrl
@@ -952,9 +981,6 @@ function toggleAudioStream(
     }
 
 
-    /*
-     * Stop previous track.
-     */
     if (activePreviewBtn) {
 
         resetPreviewButton(
@@ -969,11 +995,6 @@ function toggleAudioStream(
         type || "search";
 
 
-    /*
-     * Only actual preview buttons receive loading text.
-     *
-     * Home recent cards should remain intact.
-     */
     if (
         button.classList.contains("btn-preview")
     ) {
@@ -1178,9 +1199,6 @@ function bindAudioEvents() {
                 }
             }
 
-            /*
-             * No more Home tracks.
-             */
             if (activePreviewBtn) {
 
                 resetPreviewButton(
@@ -1840,6 +1858,18 @@ async function refreshLibraryCache() {
         }
 
 
+        const statTracks =
+            document.getElementById(
+                "statTracks"
+            );
+
+
+        if (statTracks) {
+            statTracks.textContent =
+                rawLibraryFiles.length;
+        }
+
+
         const mobile =
             document.getElementById(
                 "mobLibCount"
@@ -1996,79 +2026,136 @@ async function loadLibrary() {
         return;
     }
 
+
     const hasCache =
         loadLibraryCache();
 
 
-    if (hasCache) {
+    if (!hasCache) {
 
-        /*
-         * Show cached library immediately.
-         */
-        filterLibrary();
+        list.innerHTML = "";
 
-        updateLoadingCircle(
-            "library",
-            60,
-            "Refreshing library..."
-        );
-
-    } else {
-
-        /*
-         * First ever load.
-         */
         updateLoadingCircle(
             "library",
             5,
             "Preparing library..."
         );
 
-        list.innerHTML = "";
+    } else {
+
+        filterLibrary();
+
+        updateLoadingCircle(
+            "library",
+            10,
+            "Refreshing library..."
+        );
     }
 
 
     try {
 
-        updateLoadingCircle(
+        /* ----------------------------------------
+           STEP 1 — GET ACTUAL FILE LIST
+           ---------------------------------------- */
+
+        smoothLoading(
             "library",
-            25,
-            "Checking music files..."
+            10,
+            20,
+            "Checking music files...",
+            300
         );
 
         await refreshLibraryCache();
 
 
-        updateLoadingCircle(
+        /*
+         * Tracks and size are already known now.
+         * Update them immediately instead of waiting
+         * for /api/stats.
+         */
+
+        const trackCount =
+            rawLibraryFiles.length;
+
+        const trackElement =
+            document.getElementById(
+                "statTracks"
+            );
+
+        if (trackElement) {
+
+            trackElement.textContent =
+                trackCount;
+        }
+
+
+        const sizeElement =
+            document.getElementById(
+                "libFolderSize"
+            );
+
+
+        /*
+         * refreshLibraryCache() already updates
+         * libFolderSize from /api/library.
+         */
+
+
+        smoothLoading(
             "library",
-            80,
-            "Preparing tracks..."
+            20,
+            45,
+            "Preparing tracks...",
+            500
         );
 
+
+        /* ----------------------------------------
+           STEP 2 — RENDER FILES
+           ---------------------------------------- */
 
         filterLibrary();
 
 
-        updateLoadingCircle(
+        smoothLoading(
             "library",
-            95,
-            "Updating statistics..."
+            45,
+            65,
+            "Calculating artists and albums...",
+            500
         );
 
 
-        loadStats().catch(
-            error =>
-                console.warn(
-                    "Library stats:",
-                    error
-                )
+        /* ----------------------------------------
+           STEP 3 — GET METADATA STATS
+           ---------------------------------------- */
+
+        await loadStats();
+
+
+        smoothLoading(
+            "library",
+            65,
+            90,
+            "Finishing library...",
+            400
         );
 
 
-        updateLoadingCircle(
+        /*
+         * Re-render once statistics are ready.
+         */
+        filterLibrary();
+
+
+        smoothLoading(
             "library",
+            90,
             100,
-            "Library ready"
+            "Library ready",
+            300
         );
 
 
@@ -2088,32 +2175,28 @@ async function loadLibrary() {
             error
         );
 
+
+        hideLoadingCircle(
+            "library"
+        );
+
+
         /*
-         * If the server is unavailable but we have
-         * cached data, KEEP showing the library.
+         * Keep cached library visible if the
+         * server temporarily fails.
          */
         if (
-            hasCache &&
             rawLibraryFiles.length
         ) {
 
             filterLibrary();
 
-            hideLoadingCircle(
-                "library"
-            );
-
             showToast(
-                "⚠️ Showing cached library"
+                "⚠️ Showing saved library"
             );
 
             return;
         }
-
-
-        hideLoadingCircle(
-            "library"
-        );
 
 
         list.innerHTML = `
@@ -2351,7 +2434,6 @@ function filterLibrary() {
                 );
             }
 
-            /* PLAY LIBRARY TRACK BY CLICKING THE CARD */
             card.addEventListener(
                 "click",
                 (event) => {
@@ -2445,10 +2527,6 @@ function playLibraryTrack(
     const stream =
         `api/library/stream/${encoded}`;
 
-    /*
-     * We need a real button because
-     * toggleAudioStream expects one.
-     */
     let button =
         document.querySelector(
             `.result-card[data-library-name="${CSS.escape(file.name)}"] .btn-preview`
@@ -2979,10 +3057,6 @@ async function loadMoreResults() {
             error
         );
 
-        /*
-         * Do not permanently disable infinite scroll
-         * just because one request failed.
-         */
         showToast(
             "⚠️ Could not load more results"
         );
@@ -4027,9 +4101,6 @@ async function clearDoneTasks() {
 
 function playNextTrack() {
 
-    /*
-     * HOME
-     */
     if (
         currentPlayerSource ===
         "home"
@@ -4071,9 +4142,6 @@ function playNextTrack() {
     }
 
 
-    /*
-     * LIBRARY
-     */
     if (
         currentPlayerSource ===
         "library"
@@ -4110,9 +4178,6 @@ function playNextTrack() {
 
 function playPreviousTrack() {
 
-    /*
-     * HOME QUEUE
-     */
     if (
         currentPlayerSource ===
         "home"
@@ -4132,10 +4197,6 @@ function playPreviousTrack() {
                 ? window.xrobHomeQueueIndex
                 : 0;
 
-        /*
-         * More than 3 seconds:
-         * restart current track.
-         */
         if (
             audio &&
             audio.currentTime > 3
@@ -4168,9 +4229,6 @@ function playPreviousTrack() {
     }
 
 
-    /*
-     * LIBRARY QUEUE
-     */
     if (
         currentPlayerSource ===
         "library"
@@ -4244,16 +4302,9 @@ function renderRecentlyAdded(
     }
 
 
-    /*
-     * Save queue for Previous / Next / Auto-next.
-     */
     window.xrobHomeQueue =
         recent;
 
-    /*
-     * Don't reset the queue position if
-     * we're refreshing an existing queue.
-     */
     if (
         !Number.isInteger(
             window.xrobHomeQueueIndex
@@ -4354,16 +4405,10 @@ function renderRecentlyAdded(
             );
 
 
-            /*
-             * Save card reference.
-             */
             track._card =
                 card;
 
 
-            /*
-             * Click = play track.
-             */
             card.addEventListener(
                 "click",
                 () => {
@@ -4399,12 +4444,6 @@ async function loadHome() {
     }
 
 
-    /*
-     * ---------------------------------------------
-     * LOAD CACHED RECENTLY ADDED IMMEDIATELY
-     * ---------------------------------------------
-     */
-
     const cachedRecent =
         loadRecentlyAddedCache();
 
@@ -4420,19 +4459,12 @@ async function loadHome() {
             cachedRecent
         );
 
-        /*
-         * Hide the loader immediately because
-         * we already have usable cached content.
-         */
         hideLoadingCircle(
             "recent"
         );
 
     } else {
 
-        /*
-         * First load.
-         */
         updateLoadingCircle(
             "recent",
             5,
@@ -4443,12 +4475,6 @@ async function loadHome() {
             "";
     }
 
-
-    /*
-     * ---------------------------------------------
-     * FETCH FRESH HOME DATA
-     * ---------------------------------------------
-     */
 
     const controller =
         new AbortController();
@@ -4463,10 +4489,6 @@ async function loadHome() {
 
     try {
 
-        /*
-         * Only show loading progress when
-         * there is no cached data.
-         */
         if (
             !cachedRecent.length
         ) {
@@ -4555,12 +4577,6 @@ async function loadHome() {
                 : [];
 
 
-        /*
-         * ---------------------------------------------
-         * SAVE FRESH RECENTLY ADDED CACHE
-         * ---------------------------------------------
-         */
-
         recentTracksCache =
             recent;
 
@@ -4569,17 +4585,11 @@ async function loadHome() {
         );
 
 
-        /*
-         * Refresh the visible tracks.
-         */
         renderRecentlyAdded(
             recent
         );
 
 
-        /*
-         * Fresh data is ready.
-         */
         updateLoadingCircle(
             "recent",
             100,
@@ -4604,10 +4614,6 @@ async function loadHome() {
         );
 
 
-        /*
-         * If cached Recently Added exists,
-         * KEEP IT visible.
-         */
         if (
             cachedRecent.length
         ) {
@@ -4891,9 +4897,6 @@ function bindArpeggiCopy() {
 
             } catch {
 
-                /*
-                 * Fallback for older browsers / HTTP.
-                 */
                 try {
 
                     input.focus();
@@ -5005,9 +5008,6 @@ async function initializeApp() {
     bindArpeggiCopy();
 
 
-    /*
-     * Load initial data.
-     */
     await refreshLibraryCache();
 
     await pollTasks(true);
@@ -5024,10 +5024,6 @@ async function initializeApp() {
     restorePlayerState();
 
 
-    /*
-     * Fallback polling remains active even if
-     * WebSocket isn't available.
-     */
     setInterval(
         () => pollTasks(),
         2000
@@ -5035,10 +5031,6 @@ async function initializeApp() {
 }
 
 
-/*
- * The script is loaded at the end of <body>,
- * but this also works safely if it is moved.
- */
 if (
     document.readyState === "loading"
 ) {
