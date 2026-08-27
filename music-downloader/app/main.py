@@ -665,10 +665,12 @@ def read_metadata_sync(path):
                 {},
             )
 
-            tags = fmt.get(
-                "tags",
-                {},
-            )
+            tags = dict(fmt.get("tags") or {})
+            stream_tags = dict(audio_stream.get("tags") or {})
+
+            # Merge container-level and audio-stream-level tags. Stream tags
+            # win when a container stores the authoritative music metadata there.
+            tags.update(stream_tags)
 
             # Normalize common tag casing used by different containers.
             normalized_tags = {
@@ -821,6 +823,7 @@ def make_artist_id(name):
         name,
         "Unknown Artist",
     )
+    name = re.sub(r"\s+", " ", name).strip()
 
     digest = hashlib.sha1(
         name.encode("utf-8")
@@ -2953,6 +2956,7 @@ def song_to_subsonic(song):
         "artist": song["artist"],
         "artistId": song["artistId"],
         "albumId": song["albumId"],
+        "albumArtist": song["artist"],
         "year": safe_int(
             song.get("year"),
             0,
@@ -3098,6 +3102,15 @@ def album_to_subsonic(
         ),
     )
 
+    latest = max(
+        (safe_float(song.get("modified", 0), 0) for song in songs),
+        default=0,
+    )
+    created = min(
+        (safe_float(song.get("created", 0), 0) for song in songs),
+        default=latest,
+    )
+
     return {
         "id": album["id"],
         "parent": album["artistId"],
@@ -3106,6 +3119,7 @@ def album_to_subsonic(
         "name": album["name"],
         "album": album["name"],
         "artist": album["artist"],
+        "albumArtist": album["artist"],
         "artistId": album["artistId"],
         "year": safe_int(
             album.get(
@@ -3119,6 +3133,14 @@ def album_to_subsonic(
         "duration": duration,
         "playCount": 0,
         "isVideo": False,
+        "created": (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created))
+            if created > 0 else ""
+        ),
+        "changed": (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(latest))
+            if latest > 0 else ""
+        ),
     }
 
 
@@ -3129,9 +3151,8 @@ def artist_to_subsonic(
     return {
         "id": artist["id"],
         "name": artist["name"],
-        "albumCount": len(
-            artist["albumIds"]
-        ),
+        "albumCount": len(artist["albumIds"]),
+        "songCount": len(artist.get("songIds", [])),
         "coverArt": artist["id"],
     }
 
@@ -3550,6 +3571,16 @@ async def rest_artists(
             "artists": {
                 "ignoredArticles": "",
                 "index": indexes,
+                "lastModified": int(
+                    max(
+                        (
+                            safe_float(song.get("modified", 0), 0)
+                            for song in (await build_library())["songs"]
+                        ),
+                        default=time.time(),
+                    )
+                    * 1000
+                ),
             },
         },
         request,
@@ -3660,22 +3691,6 @@ async def rest_indexes(
     last_modified = int(
         latest_modified * 1000
     )
-
-    if (
-        ifModifiedSince is not None
-        and last_modified <= ifModifiedSince
-    ):
-
-        return make_subsonic_response(
-            {
-                "status": "ok",
-                "version": SUBSONIC_VERSION,
-                "serverVersion": SERVER_VERSION,
-                "openSubsonic": True,
-                "type": "Xrob Music",
-            },
-            request,
-        )
 
     return make_subsonic_response(
         {
