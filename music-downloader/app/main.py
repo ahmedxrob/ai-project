@@ -1,4 +1,5 @@
 import asyncio
+import binascii
 import hashlib
 import json
 import os
@@ -127,6 +128,9 @@ DEFAULT_SETTINGS = {
     "subsonic_password": "",
 }
 
+AUDIO_FORMATS = {"mp3", "flac", "m4a", "opus", "ogg", "wav", "aac", "alac"}
+AUDIO_QUALITY_VALUES = {"0", "5", "64K", "96K", "128K", "160K", "192K", "256K", "320K"}
+
 
 # ============================================================
 # RUNTIME
@@ -200,6 +204,22 @@ def load_settings():
         "navidrome_salt",
     ):
         settings.pop(key, None)
+
+    fmt = str(settings.get("audio_format") or "mp3").lower().lstrip(".")
+    if fmt not in AUDIO_FORMATS:
+        fmt = "mp3"
+    settings["audio_format"] = fmt
+
+    quality = str(settings.get("audio_quality") or "320K").upper()
+    if quality not in AUDIO_QUALITY_VALUES:
+        quality = "320K"
+    settings["audio_quality"] = quality
+
+    settings["embed_thumbnail"] = bool(settings.get("embed_thumbnail", True))
+    settings["embed_metadata"] = bool(settings.get("embed_metadata", True))
+    settings["organize_by_artist"] = bool(settings.get("organize_by_artist", False))
+    settings["max_results"] = max(5, min(safe_int(settings.get("max_results"), 20), 50))
+    settings["poll_interval"] = max(250, safe_int(settings.get("poll_interval"), 1500))
 
     return settings
 
@@ -478,6 +498,21 @@ def format_size(size):
         return "0 MB"
 
 
+def parse_tag_int(value, default=0):
+    text = str(value or "").strip()
+    if not text:
+        return default
+    match = re.match(r"^\s*(\d+)", text)
+    return int(match.group(1)) if match else default
+
+
+def iso_utc(timestamp):
+    timestamp = safe_float(timestamp, 0)
+    if timestamp <= 0:
+        return ""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
+
+
 def clean_metadata_text(
     value,
     fallback="",
@@ -618,10 +653,11 @@ def read_metadata_sync(path):
     try:
         stat = path.stat()
         cache_key = str(path)
+        cache_stamp = (stat.st_mtime_ns, stat.st_size)
 
         cached = METADATA_CACHE.get(cache_key)
 
-        if cached and cached[0] == stat.st_mtime:
+        if cached and cached[0] == cache_stamp:
             return cached[1]
 
         # Read the complete container + stream metadata. In particular,
@@ -712,15 +748,22 @@ def read_metadata_sync(path):
                     or normalized_tags.get("year"),
                     "",
                 ),
-                "track": clean_metadata_text(
+                "track": parse_tag_int(
                     normalized_tags.get("tracknumber")
                     or normalized_tags.get("track"),
-                    "",
+                    0,
                 ),
-                "disc": clean_metadata_text(
+                "disc": parse_tag_int(
                     normalized_tags.get("discnumber")
                     or normalized_tags.get("disc"),
-                    "",
+                    0,
+                ),
+                "album_artist": clean_metadata_text(
+                    normalized_tags.get("album_artist")
+                    or normalized_tags.get("albumartist")
+                    or normalized_tags.get("album artist")
+                    or normalized_tags.get("artist"),
+                    normalized_tags.get("artist") or "Unknown Artist",
                 ),
                 "duration": safe_float(
                     fmt.get("duration"),
@@ -769,10 +812,11 @@ def read_metadata_sync(path):
                 "sample_rate": 0,
                 "channels": 0,
                 "bit_depth": 0,
+                "album_artist": "Unknown Artist",
             }
 
         METADATA_CACHE[cache_key] = (
-            stat.st_mtime,
+            cache_stamp,
             metadata,
         )
 
@@ -796,6 +840,7 @@ def read_metadata_sync(path):
             "sample_rate": 0,
             "channels": 0,
             "bit_depth": 0,
+            "album_artist": "Unknown Artist",
         }
 
 
@@ -878,11 +923,14 @@ async def build_library():
         metadata = await read_metadata(path)
 
         song_id = make_song_id(path)
-        artist_id = make_artist_id(
-            metadata["artist"]
-        )
-        album_id = make_album_id(
+        album_artist = clean_metadata_text(
+            metadata.get("album_artist"),
             metadata["artist"],
+        )
+        artist_id = make_artist_id(metadata["artist"])
+        album_artist_id = make_artist_id(album_artist)
+        album_id = make_album_id(
+            album_artist,
             metadata["album"],
         )
 
@@ -891,6 +939,8 @@ async def build_library():
             "title": metadata["title"],
             "artist": metadata["artist"],
             "artistId": artist_id,
+            "albumArtist": album_artist,
+            "albumArtistId": album_artist_id,
             "album": metadata["album"],
             "albumId": album_id,
             "genre": metadata["genre"],
@@ -934,8 +984,9 @@ async def build_library():
             albums[album_id] = {
                 "id": album_id,
                 "name": metadata["album"],
-                "artist": metadata["artist"],
-                "artistId": artist_id,
+                "artist": album_artist,
+                "artistId": album_artist_id,
+                "albumArtist": album_artist,
                 "year": metadata["year"],
                 "genre": metadata["genre"],
                 "songIds": [],
@@ -999,8 +1050,14 @@ async def find_album(album_id):
 # ============================================================
 
 def cover_cache_path(path):
+    try:
+        stat = path.stat()
+        cache_key = f"{path}|{stat.st_mtime_ns}|{stat.st_size}"
+    except OSError:
+        cache_key = str(path)
+
     digest = hashlib.md5(
-        str(path).encode("utf-8")
+        cache_key.encode("utf-8")
     ).hexdigest()
 
     return (
@@ -1079,18 +1136,21 @@ async def resolve_cover_id(item_id):
 # DUPLICATES
 # ============================================================
 
-async def is_duplicate(title):
+async def is_duplicate(title, directory=None):
 
-    files = await get_all_audio_files()
-
-    wanted = normalize_duplicate_key(
-        title
+    root = Path(directory) if directory else DOWNLOAD_DIR
+    files = await asyncio.to_thread(
+        lambda: [
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
+        ]
     )
 
+    wanted = normalize_duplicate_key(title)
+
     return any(
-        normalize_duplicate_key(
-            file.name
-        ) == wanted
+        normalize_duplicate_key(file.name) == wanted
         for file in files
     )
 
@@ -1205,11 +1265,12 @@ async def download_worker():
                 await asyncio.create_subprocess_exec(
                     *command,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
                 )
             )
 
             ACTIVE_PROCESSES[task_id] = process
+            process_output = []
 
             progress_regex = re.compile(
                 r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%"
@@ -1232,6 +1293,11 @@ async def download_worker():
                     "utf-8",
                     errors="ignore",
                 ).strip()
+
+                if text:
+                    process_output.append(text)
+                    if len(process_output) > 100:
+                        process_output.pop(0)
 
                 pct_match = progress_regex.search(
                     text
@@ -1314,14 +1380,7 @@ async def download_worker():
 
             if process.returncode != 0:
 
-                stderr = (
-                    await process.stderr.read()
-                )
-
-                error_text = stderr.decode(
-                    "utf-8",
-                    errors="ignore",
-                )
+                error_text = "\n".join(process_output)
 
                 await asyncio.to_thread(
                     cleanup_task_files,
@@ -1429,7 +1488,10 @@ async def download_worker():
                     f"{task.get('artist', 'Unknown Artist')}"
                 ),
                 "-metadata",
-                f"album={clean_title}",
+                (
+                    "album="
+                    f"{task.get('album') or clean_title}"
+                ),
                 str(clean_file),
             ]
 
@@ -1440,10 +1502,21 @@ async def download_worker():
                     stderr=asyncio.subprocess.PIPE,
                 )
             )
+            ACTIVE_PROCESSES[task_id] = clean_process
 
             _, clean_stderr = (
                 await clean_process.communicate()
             )
+            ACTIVE_PROCESSES.pop(task_id, None)
+
+            if task.get("cancel_requested"):
+                await asyncio.to_thread(cleanup_task_files, task_id)
+                task["status"] = "cancelled"
+                task["step"] = "Cancelled"
+                task["percent"] = 0
+                task["last_updated"] = time.time() * 1000
+                await notify_task_update(task, force_save=True)
+                continue
 
             if (
                 clean_process.returncode == 0
@@ -1514,7 +1587,8 @@ async def download_worker():
             if (
                 final_path.exists()
                 or await is_duplicate(
-                    clean_title
+                    clean_title,
+                    final_dir,
                 )
             ):
 
@@ -2042,8 +2116,8 @@ async def api_download(
         ),
         "album": str(
             payload.get(
-                "title",
-                "Unknown Track",
+                "album",
+                payload.get("title", "Unknown Track"),
             )
         ),
         "url": url,
@@ -2344,22 +2418,6 @@ async def api_home():
         reverse=True,
     )
 
-    settings = load_settings()
-
-    username = urllib.parse.quote(
-        settings.get(
-            "subsonic_user",
-            "admin",
-        )
-    )
-
-    password = urllib.parse.quote(
-        settings.get(
-            "subsonic_password",
-            "",
-        )
-    )
-
     recent = []
 
     for song in songs[:12]:
@@ -2372,16 +2430,11 @@ async def api_home():
                 "album": song["album"],
                 "duration": song["duration"],
                 "cover": (
-                    "/rest/getCoverArt.view"
-                    "?id="
-                    + urllib.parse.quote(song["id"])
-                    + "&u="
-                    + username
-                    + "&p="
-                    + password
-                    + "&v=1.16.1"
-                    + "&c=XrobMusic"
-                    + "&f=json"
+                    "/api/library/cover/"
+                    + urllib.parse.quote(
+                        str(song["path"].relative_to(DOWNLOAD_DIR)),
+                        safe="/",
+                    )
                 ),
             }
         )
@@ -2560,6 +2613,14 @@ def validate_subsonic_auth(
 
     if supplied_password == password:
         return True
+
+    if supplied_password.lower().startswith("enc:"):
+        try:
+            decoded = binascii.unhexlify(supplied_password[4:]).decode("utf-8")
+            if decoded == password:
+                return True
+        except (binascii.Error, UnicodeDecodeError):
+            pass
 
     # md5(password) compatibility
     if (
@@ -2763,6 +2824,12 @@ def make_subsonic_response(
             root_attributes[key] = scalar(
                 payload[key]
             )
+
+    if fmt == "xml":
+        root_attributes.setdefault(
+            "xmlns",
+            "http://subsonic.org/restapi",
+        )
 
     root = ET.Element(
         "subsonic-response",
@@ -3376,26 +3443,7 @@ async def rest_get_scan_status(
 
         library = await build_library()
 
-        count = (
-            len(
-                library.get(
-                    "songs",
-                    [],
-                )
-            )
-            + len(
-                library.get(
-                    "albums",
-                    {},
-                )
-            )
-            + len(
-                library.get(
-                    "artists",
-                    {},
-                )
-            )
-        )
+        count = len(library.get("songs", []))
 
     except Exception:
 
@@ -3441,26 +3489,7 @@ async def rest_start_scan(
 
         library = await build_library()
 
-        count = (
-            len(
-                library.get(
-                    "songs",
-                    [],
-                )
-            )
-            + len(
-                library.get(
-                    "albums",
-                    {},
-                )
-            )
-            + len(
-                library.get(
-                    "artists",
-                    {},
-                )
-            )
-        )
+        count = len(library.get("songs", []))
 
     except Exception:
 
@@ -3558,12 +3587,16 @@ async def build_artist_indexes():
 @app.get("/rest/getArtists")
 async def rest_artists(
     request: Request,
+    musicFolderId: Optional[str] = Query(None),
 ):
 
     error = require_auth(request)
 
     if error:
         return error
+
+    if musicFolderId not in (None, "", "1", 1):
+        return subsonic_error(request, 70, "Music folder not found.")
 
     indexes = await build_artist_indexes()
 
@@ -3613,6 +3646,9 @@ async def rest_indexes(
 
     if error:
         return error
+
+    if musicFolderId not in (None, "", "1", 1):
+        return subsonic_error(request, 70, "Music folder not found.")
 
     library = await build_library()
 
@@ -3993,6 +4029,15 @@ async def rest_album_list2(
     album_type = (
         type or "alphabeticalByName"
     )
+    if album_type not in {
+        "random", "newest", "frequent", "recent",
+        "starred", "alphabeticalByName",
+        "alphabeticalByArtist", "byYear", "byGenre",
+    }:
+        album_type = "alphabeticalByName"
+
+    if musicFolderId not in (None, "", "1", 1):
+        return subsonic_error(request, 70, "Music folder not found.")
 
     # Arpeggi asks for these.
     if album_type == "frequent":
@@ -4093,7 +4138,7 @@ async def rest_album_list2(
         start
         + max(
             1,
-            size,
+            min(500, max(1, size)),
         )
     )
 
@@ -4274,6 +4319,17 @@ async def rest_music_directory(
                 for song in songs
             )
 
+    if not (
+        id == "1"
+        or id.startswith("artist-")
+        or id.startswith("album-")
+    ):
+        return subsonic_error(
+            request,
+            70,
+            "Music directory not found.",
+        )
+
     return make_subsonic_response(
         {
             "status": "ok",
@@ -4346,6 +4402,7 @@ async def search_impl(
     song_count,
     song_offset,
     response_key,
+    music_folder_id=None,
 ):
 
     error = require_auth(request)
@@ -4354,6 +4411,9 @@ async def search_impl(
         return error
 
     library = await build_library()
+
+    if music_folder_id not in (None, "", "1", 1):
+        return subsonic_error(request, 70, "Music folder not found.")
 
     q = query.lower().strip()
 
@@ -4478,6 +4538,7 @@ async def rest_search2(
     albumOffset: int = Query(0),
     songCount: int = Query(20),
     songOffset: int = Query(0),
+    musicFolderId: Optional[str] = Query(None),
 ):
 
     return await search_impl(
@@ -4490,6 +4551,7 @@ async def rest_search2(
         songCount,
         songOffset,
         "searchResult2",
+        musicFolderId,
     )
 
 
@@ -4504,6 +4566,7 @@ async def rest_search3(
     albumOffset: int = Query(0),
     songCount: int = Query(20),
     songOffset: int = Query(0),
+    musicFolderId: Optional[str] = Query(None),
 ):
 
     return await search_impl(
@@ -4516,6 +4579,7 @@ async def rest_search3(
         songCount,
         songOffset,
         "searchResult3",
+        musicFolderId,
     )
 
 
@@ -4532,6 +4596,10 @@ async def rest_search3(
 async def rest_random_songs(
     request: Request,
     size: int = Query(10),
+    genre: Optional[str] = Query(None),
+    fromYear: Optional[int] = Query(None),
+    toYear: Optional[int] = Query(None),
+    musicFolderId: Optional[str] = Query(None),
 ):
 
     error = require_auth(request)
@@ -4541,9 +4609,17 @@ async def rest_random_songs(
 
     library = await build_library()
 
-    songs = list(
-        library["songs"]
-    )
+    if musicFolderId not in (None, "", "1", 1):
+        return subsonic_error(request, 70, "Music folder not found.")
+
+    songs = list(library["songs"])
+
+    if genre:
+        songs = [song for song in songs if song.get("genre", "").lower() == genre.lower()]
+    if fromYear is not None:
+        songs = [song for song in songs if safe_int(song.get("year"), 0) >= fromYear]
+    if toYear is not None:
+        songs = [song for song in songs if safe_int(song.get("year"), 0) <= toYear]
 
     random.shuffle(songs)
 
@@ -4591,18 +4667,18 @@ async def rest_genres(
     library = await build_library()
 
     genres = []
+    album_genres = {}
+    for album in library["albums"].values():
+        genre_name = str(album.get("genre") or "").strip()
+        if genre_name:
+            album_genres[genre_name] = album_genres.get(genre_name, 0) + 1
 
-    for name, count in sorted(
-        library[
-            "genres"
-        ].items()
-    ):
-
+    for name, count in sorted(library["genres"].items()):
         genres.append(
             {
                 "value": name,
                 "songCount": count,
-                "albumCount": 0,
+                "albumCount": album_genres.get(name, 0),
             }
         )
 
@@ -4632,6 +4708,7 @@ async def rest_songs_by_genre(
     genre: str = Query(""),
     count: int = Query(50),
     offset: int = Query(0),
+    musicFolderId: Optional[str] = Query(None),
 ):
 
     error = require_auth(request)
@@ -4640,6 +4717,9 @@ async def rest_songs_by_genre(
         return error
 
     library = await build_library()
+
+    if musicFolderId not in (None, "", "1", 1):
+        return subsonic_error(request, 70, "Music folder not found.")
 
     songs = [
         song
@@ -4806,6 +4886,9 @@ async def rest_star(
     if error:
         return error
 
+    if not id:
+        return subsonic_error(request, 70, "Missing media ID.")
+
     await asyncio.to_thread(
         set_star_sync,
         id,
@@ -4835,6 +4918,9 @@ async def rest_unstar(
 
     if error:
         return error
+
+    if not id:
+        return subsonic_error(request, 70, "Missing media ID.")
 
     await asyncio.to_thread(
         set_star_sync,
@@ -4912,6 +4998,16 @@ async def rest_starred2(
 # PLAYLISTS
 # ============================================================
 
+def safe_song_ids(raw):
+    try:
+        value = json.loads(raw or "[]") if isinstance(raw, str) else raw
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
 def playlists_sync():
 
     with sqlite3.connect(
@@ -4979,7 +5075,7 @@ async def rest_playlists(
 
     for playlist in playlists:
 
-        ids = json.loads(
+        ids = safe_song_ids(
             playlist.get(
                 "song_ids",
                 "[]",
@@ -5043,7 +5139,7 @@ async def rest_playlist(
             "Playlist not found.",
         )
 
-    ids = json.loads(
+    ids = safe_song_ids(
         playlist.get(
             "song_ids",
             "[]",
