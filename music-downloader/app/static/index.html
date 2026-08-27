@@ -1177,162 +1177,56 @@
             >
 
                 <div class="page-heading">
-
-                    <h2>
-                        Settings
-                    </h2>
-
-                    <p>
-                        Configure Xrob Music and Arpeggi.
-                    </p>
-
+                    <h2>Settings</h2>
+                    <p>Only the essential Xrob Music settings.</p>
                 </div>
-
 
                 <div class="settings-card">
 
-
+                    <!-- ARPEGGI / SERVER -->
                     <div class="settings-divider">
-                        OpenSubsonic / Arpeggi
+                        Arpeggi / Server
                     </div>
 
-
-                    <!-- SERVER -->
-
                     <div class="setting-row">
-
                         <div>
-
-                            <div class="setting-label">
-                                Xrob Music Server
-                            </div>
-
-                            <div class="setting-desc">
-                                Use this address in Arpeggi.
-                            </div>
-
+                            <div class="setting-label">Xrob Music Server</div>
+                            <div class="setting-desc">Use this address in Arpeggi.</div>
                         </div>
 
-
                         <div class="inline-control">
-
                             <input
                                 id="amperfy-server-url"
                                 type="text"
                                 readonly
                                 aria-label="Xrob Music server URL"
                             >
-
-
                             <button
                                 type="button"
                                 id="amperfy-copy-url"
                                 class="btn-refresh"
                             >
-
-                                <i
-                                    data-lucide="copy"
-                                    aria-hidden="true"
-                                ></i>
-
+                                <i data-lucide="copy" aria-hidden="true"></i>
                                 Copy
-
                             </button>
-
                         </div>
-
                     </div>
 
-
-                    <!-- USERNAME -->
-
                     <div class="setting-row">
-
                         <div>
-
-                            <div class="setting-label">
-                                OpenSubsonic Username
-                            </div>
-
-                            <div class="setting-desc">
-                                Configured in the Home Assistant add-on settings.
-                            </div>
-
+                            <div class="setting-label">Server Status</div>
+                            <div class="setting-desc">Check the OpenSubsonic connection.</div>
                         </div>
-
-
-                        <input
-                            id="set_subsonic_user"
-                            type="text"
-                            readonly
-                            autocomplete="username"
-                        >
-
-                    </div>
-
-
-                    <!-- PASSWORD -->
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                OpenSubsonic Password
-                            </div>
-
-                            <div class="setting-desc">
-                                Change this privately in the add-on configuration.
-                            </div>
-
-                        </div>
-
-
-                        <input
-                            id="set_subsonic_password"
-                            type="password"
-                            value="********"
-                            readonly
-                            autocomplete="off"
-                        >
-
-                    </div>
-
-
-                    <!-- STATUS -->
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Server Status
-                            </div>
-
-                            <div class="setting-desc">
-                                Test the Xrob Music OpenSubsonic server.
-                            </div>
-
-                        </div>
-
 
                         <button
                             type="button"
                             id="amperfy-test-button"
                             class="btn-refresh"
                         >
-
-                            <i
-                                data-lucide="plug-zap"
-                                aria-hidden="true"
-                            ></i>
-
+                            <i data-lucide="plug-zap" aria-hidden="true"></i>
                             Test Connection
-
                         </button>
-
                     </div>
-
 
                     <div
                         id="amperfy-status"
@@ -1342,228 +1236,44 @@
                         Checking...
                     </div>
 
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                OpenSubsonic
-                            </div>
-
-                            <div class="setting-desc">
-                                Server compatibility.
-                            </div>
-
-                        </div>
-
-
-                        <strong
-                            id="amperfy-open-subsonic"
-                            class="integration-ok"
-                        >
-                            Checking...
-                        </strong>
-
-                    </div>
-
-
-                    <!-- DOWNLOADER -->
-
+                    <!-- DOWNLOAD -->
                     <div class="settings-divider">
-                        Downloader
+                        Downloads
                     </div>
 
-
-                    <!-- FORMAT -->
-
                     <div class="setting-row">
-
                         <div>
-
-                            <div class="setting-label">
-                                Audio Format
-                            </div>
-
-                            <div class="setting-desc">
-                                Preferred download format.
-                            </div>
-
+                            <div class="setting-label">Audio Format</div>
+                            <div class="setting-desc">Choose the format used for downloads.</div>
                         </div>
-
 
                         <select id="set_format">
-
-                            <option value="mp3">
-                                MP3
-                            </option>
-
-                            <option value="flac">
-                                FLAC (Lossless)
-                            </option>
-
-                            <option value="m4a">
-                                M4A (AAC)
-                            </option>
-
-                            <option value="opus">
-                                OPUS
-                            </option>
-
+                            <option value="mp3">MP3</option>
+                            <option value="flac">FLAC (Lossless)</option>
+                            <option value="m4a">M4A (AAC)</option>
+                            <option value="opus">OPUS</option>
                         </select>
-
                     </div>
 
-
-                    <!-- QUALITY -->
-
                     <div class="setting-row">
-
                         <div>
-
-                            <div class="setting-label">
-                                Audio Quality
-                            </div>
-
-                            <div class="setting-desc">
-                                Bitrate for lossy formats.
-                            </div>
-
+                            <div class="setting-label">Audio Quality</div>
+                            <div class="setting-desc">Bitrate for MP3 and other lossy formats.</div>
                         </div>
-
 
                         <select id="set_quality">
-
-                            <option value="320K">
-                                320 Kbps
-                            </option>
-
-                            <option value="256K">
-                                256 Kbps
-                            </option>
-
-                            <option value="192K">
-                                192 Kbps
-                            </option>
-
-                            <option value="128K">
-                                128 Kbps
-                            </option>
-
+                            <option value="320K">320 Kbps</option>
+                            <option value="256K">256 Kbps</option>
+                            <option value="192K">192 Kbps</option>
+                            <option value="128K">128 Kbps</option>
                         </select>
-
                     </div>
 
-
-                    <!-- ART -->
-
                     <div class="setting-row">
-
                         <div>
-
-                            <div class="setting-label">
-                                Embed Album Art
-                            </div>
-
-                            <div class="setting-desc">
-                                Embed cover artwork into downloads.
-                            </div>
-
+                            <div class="setting-label">Max Search Results</div>
+                            <div class="setting-desc">Number of results shown after a search.</div>
                         </div>
-
-
-                        <label class="switch">
-
-                            <input
-                                type="checkbox"
-                                id="set_thumb"
-                            >
-
-                            <span class="slider"></span>
-
-                        </label>
-
-                    </div>
-
-
-                    <!-- METADATA -->
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Embed Metadata
-                            </div>
-
-                            <div class="setting-desc">
-                                Add tags to downloaded files.
-                            </div>
-
-                        </div>
-
-
-                        <label class="switch">
-
-                            <input
-                                type="checkbox"
-                                id="set_meta"
-                            >
-
-                            <span class="slider"></span>
-
-                        </label>
-
-                    </div>
-
-
-                    <!-- ORGANIZE -->
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Organize by Artist
-                            </div>
-
-                            <div class="setting-desc">
-                                Store downloads in artist folders.
-                            </div>
-
-                        </div>
-
-
-                        <label class="switch">
-
-                            <input
-                                type="checkbox"
-                                id="set_organize"
-                            >
-
-                            <span class="slider"></span>
-
-                        </label>
-
-                    </div>
-
-
-                    <!-- MAX RESULTS -->
-
-                    <div class="setting-row">
-
-                        <div>
-
-                            <div class="setting-label">
-                                Max Search Results
-                            </div>
-
-                            <div class="setting-desc">
-                                Number of results per search page.
-                            </div>
-
-                        </div>
-
 
                         <input
                             id="set_max_results"
@@ -1573,25 +1283,16 @@
                             step="1"
                             value="20"
                         >
-
                     </div>
-
 
                     <button
                         type="button"
                         class="save-btn"
                         onclick="saveSettings()"
                     >
-
-                        <i
-                            data-lucide="save"
-                            aria-hidden="true"
-                        ></i>
-
+                        <i data-lucide="save" aria-hidden="true"></i>
                         Save Settings
-
                     </button>
-
 
                     <div
                         id="settingsMsg"
@@ -1600,7 +1301,6 @@
                     ></div>
 
                 </div>
-
             </section>
 
 
