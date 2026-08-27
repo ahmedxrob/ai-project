@@ -2045,65 +2045,6 @@ a {
 }
 
 
-.gp-main-controls {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-
-    gap: 18px;
-
-    width: 100%;
-}
-
-
-.gp-skip-btn {
-    width: 30px;
-    height: 30px;
-
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-
-    padding: 0;
-
-    border: 0;
-
-    background: transparent;
-
-    color: var(--text-secondary);
-
-    font-size: 17px;
-    line-height: 1;
-
-    border-radius: 50%;
-
-    transition:
-        color .15s ease,
-        background .15s ease,
-        transform .15s ease;
-}
-
-
-.gp-skip-btn:hover {
-    color: var(--text-primary);
-
-    background: var(--bg-hover);
-
-    transform: scale(1.08);
-}
-
-
-.gp-skip-btn:active {
-    transform: scale(.94);
-}
-
-
-.gp-skip-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-}
-
-
 /* PLAY BUTTON */
 
 .gp-play-btn {
@@ -2483,11 +2424,6 @@ input[type="range"]:focus-visible {
     }
 
 
-    .gp-main-controls {
-        gap: 12px;
-    }
-
-
     .gp-extra {
         gap: 5px;
     }
@@ -2673,21 +2609,6 @@ input[type="range"]:focus-visible {
         width: auto;
 
         gap: 2px;
-    }
-
-
-    .gp-main-controls {
-        width: auto;
-
-        gap: 7px;
-    }
-
-
-    .gp-skip-btn {
-        width: 28px;
-        height: 28px;
-
-        font-size: 15px;
     }
 
 
@@ -3017,19 +2938,6 @@ input[type="range"]:focus-visible {
     }
 
 
-    .gp-main-controls {
-        gap: 4px;
-    }
-
-
-    .gp-skip-btn {
-        width: 25px;
-        height: 25px;
-
-        font-size: 13px;
-    }
-
-
     .gp-play-btn {
         width: 31px;
         height: 31px;
@@ -3087,11 +2995,6 @@ input[type="range"]:focus-visible {
     }
 
 
-    .bottom-nav .nav-link span:first-child {
-        font-size: 15px;
-    }
-
-
     .home-title {
         font-size: 27px;
     }
@@ -3115,19 +3018,6 @@ input[type="range"]:focus-visible {
 
     .btn-preview {
         min-width: 54px;
-    }
-
-
-    .gp-main-controls {
-        gap: 2px;
-    }
-
-
-    .gp-skip-btn {
-        width: 23px;
-        height: 23px;
-
-        font-size: 12px;
     }
 
 
@@ -3170,6 +3060,8 @@ input[type="range"]:focus-visible {
             1 !important;
     }
 }
+
+
 /* ============================================================
    LUCIDE ICONS
    ============================================================ */
@@ -3179,6 +3071,8 @@ input[type="range"]:focus-visible {
     height: 19px;
 
     flex: 0 0 19px;
+
+    display: inline-flex;
 
     stroke-width: 2;
 
@@ -3191,6 +3085,86 @@ input[type="range"]:focus-visible {
 }
 
 
+/* Buttons containing icons */
+
+.home-search-button,
+.btn-refresh,
+.save-btn,
+.search-card button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    gap: 7px;
+}
+
+
+.home-search-button svg,
+.btn-refresh svg,
+.save-btn svg,
+.search-card button svg {
+    width: 15px;
+    height: 15px;
+
+    flex: 0 0 15px;
+
+    stroke-width: 2;
+}
+
+
+/* Home stat icons */
+
+.home-stat-icon svg {
+    width: 20px;
+    height: 20px;
+
+    stroke-width: 2;
+}
+
+
+/* Library stat icons */
+
+.library-stats-bar > span {
+    display: inline-flex;
+    align-items: center;
+
+    gap: 4px;
+}
+
+
+.library-stats-bar svg {
+    width: 13px;
+    height: 13px;
+
+    stroke-width: 2;
+}
+
+
+/* Arpeggi icon */
+
+.home-connect-icon svg {
+    width: 21px;
+    height: 21px;
+
+    stroke-width: 2;
+}
+
+
+/* ============================================================
+   GLOBAL PLAYER
+   ============================================================ */
+
+.gp-main-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    gap: 12px;
+
+    width: 100%;
+}
+
+
 .gp-skip-btn {
     width: 34px;
     height: 34px;
@@ -3198,6 +3172,8 @@ input[type="range"]:focus-visible {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+
+    flex: 0 0 34px;
 
     padding: 0;
 
@@ -3217,6 +3193,7 @@ input[type="range"]:focus-visible {
 
 .gp-skip-btn:hover {
     background: var(--bg-hover);
+
     color: var(--text-primary);
 
     transform: scale(1.08);
@@ -3242,6 +3219,8 @@ input[type="range"]:focus-visible {
 }
 
 
+/* Volume icon */
+
 .gp-volume-icon {
     width: 18px;
     height: 18px;
@@ -3249,6 +3228,8 @@ input[type="range"]:focus-visible {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+
+    flex: 0 0 18px;
 
     color: var(--text-secondary);
 }
@@ -3262,19 +3243,30 @@ input[type="range"]:focus-visible {
 }
 
 
+/* ============================================================
+   MOBILE ICONS
+   ============================================================ */
+
 @media (max-width: 768px) {
 
     .bottom-nav .nav-link > svg {
         width: 18px;
         height: 18px;
 
-        flex-basis: 18px;
+        flex: 0 0 18px;
+    }
+
+
+    .gp-main-controls {
+        gap: 7px;
     }
 
 
     .gp-skip-btn {
         width: 30px;
         height: 30px;
+
+        flex-basis: 30px;
     }
 
 
@@ -3286,6 +3278,10 @@ input[type="range"]:focus-visible {
 }
 
 
+/* ============================================================
+   SMALL MOBILE
+   ============================================================ */
+
 @media (max-width: 480px) {
 
     .bottom-nav .nav-link > svg {
@@ -3296,15 +3292,49 @@ input[type="range"]:focus-visible {
     }
 
 
+    .gp-main-controls {
+        gap: 4px;
+    }
+
+
     .gp-skip-btn {
         width: 27px;
         height: 27px;
+
+        flex-basis: 27px;
     }
 
 
     .gp-skip-btn svg {
         width: 15px;
         height: 15px;
+    }
+
+}
+
+
+/* ============================================================
+   VERY SMALL MOBILE
+   ============================================================ */
+
+@media (max-width: 360px) {
+
+    .gp-main-controls {
+        gap: 2px;
+    }
+
+
+    .gp-skip-btn {
+        width: 23px;
+        height: 23px;
+
+        flex-basis: 23px;
+    }
+
+
+    .gp-skip-btn svg {
+        width: 13px;
+        height: 13px;
     }
 
 }
