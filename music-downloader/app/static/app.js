@@ -825,16 +825,51 @@ function bindAudioEvents() {
         "ended",
         () => {
 
-            updatePlayingState(false);
+            updatePlayingState(
+                false
+            );
 
             if (seek) {
                 seek.value = 0;
             }
 
             if (curTime) {
-                curTime.textContent = "0:00";
+                curTime.textContent =
+                    "0:00";
             }
 
+            /*
+             * HOME RECENTLY ADDED AUTO-QUEUE
+             */
+            const queue =
+                window.xrobHomeQueue || [];
+
+            const currentIndex =
+                Number.isInteger(
+                    window.xrobHomeQueueIndex
+                )
+                    ? window.xrobHomeQueueIndex
+                    : -1;
+
+            if (
+                queue.length &&
+                currentIndex >= 0 &&
+                currentIndex < queue.length - 1
+            ) {
+
+                window.xrobHomeQueueIndex =
+                    currentIndex + 1;
+
+                playHomeTrack(
+                    window.xrobHomeQueueIndex
+                );
+
+                return;
+            }
+
+            /*
+             * No more Home tracks.
+             */
             if (activePreviewBtn) {
 
                 resetPreviewButton(
@@ -843,6 +878,8 @@ function bindAudioEvents() {
 
                 activePreviewBtn = null;
             }
+
+            window.xrobHomeQueueIndex = -1;
         }
     );
 
@@ -1649,7 +1686,8 @@ function filterLibrary() {
                 );
             }
 
-            /* PLAY LIBRARY TRACK BY CLICKING THE CARD */card.addEventListener(
+            /* PLAY LIBRARY TRACK BY CLICKING THE CARD */
+            card.addEventListener(
                 "click",
                 (event) => {
 
@@ -3258,22 +3296,17 @@ async function loadHome() {
                 }
             );
 
-
         if (!response.ok) {
-
             throw new Error(
                 `HTTP ${response.status}`
             );
         }
 
-
         const data =
             await response.json();
 
-
         const stats =
             data.stats || {};
-
 
         const setText = (
             id,
@@ -3289,44 +3322,36 @@ async function loadHome() {
             }
         };
 
-
         setText(
             "homeTracks",
             stats.tracks || 0
         );
-
 
         setText(
             "homeArtists",
             stats.artists || 0
         );
 
-
         setText(
             "homeAlbums",
             stats.albums || 0
         );
-
 
         setText(
             "homeDownloads",
             data.active_downloads || 0
         );
 
-
         const container =
             document.getElementById(
                 "recentTracks"
             );
 
-
         if (!container) {
             return;
         }
 
-
         container.innerHTML = "";
-
 
         const recent =
             Array.isArray(
@@ -3334,7 +3359,6 @@ async function loadHome() {
             )
                 ? data.recently_added
                 : [];
-
 
         if (!recent.length) {
 
@@ -3347,41 +3371,38 @@ async function loadHome() {
             return;
         }
 
+        /*
+         * Store the Home queue globally so the audio
+         * ended event can continue to the next track.
+         */
+        window.xrobHomeQueue = recent;
+        window.xrobHomeQueueIndex = -1;
 
         recent.forEach(
-            track => {
+            (track, index) => {
 
                 const card =
                     document.createElement(
                         "button"
                     );
 
-
-                card.type =
-                    "button";
-
+                card.type = "button";
 
                 card.className =
                     "recent-card";
-
 
                 const img =
                     document.createElement(
                         "img"
                     );
 
-
                 img.src =
                     track.cover ||
                     "https://via.placeholder.com/100?text=Music";
 
-
                 img.alt = "";
 
-
-                img.loading =
-                    "lazy";
-
+                img.loading = "lazy";
 
                 img.addEventListener(
                     "error",
@@ -3396,74 +3417,56 @@ async function loadHome() {
                     }
                 );
 
-
                 const title =
                     document.createElement(
                         "div"
                     );
 
-
                 title.className =
                     "recent-card-title";
-
 
                 title.textContent =
                     track.title ||
                     "Unknown Track";
-
 
                 const artist =
                     document.createElement(
                         "div"
                     );
 
-
                 artist.className =
                     "recent-card-artist";
-
 
                 artist.textContent =
                     track.artist ||
                     "Unknown Artist";
 
-
                 card.appendChild(img);
                 card.appendChild(title);
                 card.appendChild(artist);
 
-
                 card.dataset.type =
                     "home";
-
 
                 card.addEventListener(
                     "click",
                     () => {
 
-                        const streamUrl =
-                            track.stream ||
-                            "";
+                        window.xrobHomeQueueIndex =
+                            index;
 
-                        if (!streamUrl) {
-
-                            showToast(
-                                "❌ Track stream URL unavailable"
-                            );
-
-                            return;
-                        }
-
-                        toggleAudioStream(
-                            card,
-                            streamUrl,
-                            "home",
-                            track.title,
-                            track.artist,
-                            track.cover
+                        playHomeTrack(
+                            index
                         );
+
                     }
                 );
 
+                /*
+                 * Keep reference to the card so the currently
+                 * playing Home track can be highlighted.
+                 */
+                track._card = card;
 
                 container.appendChild(
                     card
@@ -3734,6 +3737,68 @@ function bindArpeggiCopy() {
 /* ============================================================
    STARTUP
    ============================================================ */
+
+function playHomeTrack(index) {
+
+    const queue =
+        window.xrobHomeQueue || [];
+
+    if (
+        index < 0 ||
+        index >= queue.length
+    ) {
+        return;
+    }
+
+    const track =
+        queue[index];
+
+    const streamUrl =
+        track.stream ||
+        "";
+
+    if (!streamUrl) {
+
+        showToast(
+            "❌ Track stream URL unavailable"
+        );
+
+        return;
+    }
+
+    window.xrobHomeQueueIndex =
+        index;
+
+    const card =
+        track._card || null;
+
+    if (activePreviewBtn) {
+
+        resetPreviewButton(
+            activePreviewBtn
+        );
+    }
+
+    activePreviewBtn =
+        card;
+
+    if (card) {
+
+        card.classList.add(
+            "playing"
+        );
+    }
+
+    toggleAudioStream(
+        card ||
+            document.createElement("button"),
+        streamUrl,
+        "home",
+        track.title,
+        track.artist,
+        track.cover
+    );
+}
 
 async function initializeApp() {
 
