@@ -1507,18 +1507,30 @@ async function refreshLibraryCache() {
 
 async function loadStats() {
 
+    const controller =
+        new AbortController();
+
+    const timeout =
+        setTimeout(
+            () =>
+                controller.abort(),
+            5000
+        );
+
     try {
 
         const response =
             await fetch(
                 "api/stats",
                 {
-                    cache: "no-store"
+                    cache: "no-store",
+                    signal: controller.signal
                 }
             );
 
 
         if (!response.ok) {
+
             throw new Error(
                 `HTTP ${response.status}`
             );
@@ -1557,27 +1569,49 @@ async function loadStats() {
         };
 
 
-        Object.entries(values)
-            .forEach(
-                ([id, value]) => {
+        Object.entries(
+            values
+        ).forEach(
+            ([id, value]) => {
 
-                    const element =
-                        document.getElementById(
-                            id
-                        );
+                const element =
+                    document.getElementById(
+                        id
+                    );
 
-                    if (element) {
-                        element.textContent =
-                            value;
-                    }
+                if (element) {
+
+                    element.textContent =
+                        value;
                 }
-            );
+            }
+        );
+
 
     } catch (error) {
 
-        console.warn(
-            "Stats:",
-            error
+        if (
+            error.name ===
+            "AbortError"
+        ) {
+
+            console.warn(
+                "Stats request timed out"
+            );
+
+        } else {
+
+            console.warn(
+                "Stats:",
+                error
+            );
+        }
+
+
+    } finally {
+
+        clearTimeout(
+            timeout
         );
     }
 }
@@ -1594,6 +1628,9 @@ async function loadLibrary() {
         return;
     }
 
+    /*
+     * Show loader immediately.
+     */
     updateLoadingCircle(
         "library",
         5,
@@ -1602,30 +1639,58 @@ async function loadLibrary() {
 
     list.innerHTML = "";
 
-    updateLoadingCircle(
-        "library",
-        20,
-        "Loading music files..."
-    );
 
     try {
-        await refreshLibraryCache();
 
         updateLoadingCircle(
             "library",
-            65,
-            "Reading library information..."
+            20,
+            "Loading music files..."
         );
 
-        await loadStats();
+        /*
+         * This is the important part:
+         * wait for the actual library, because the
+         * library cannot render without it.
+         */
+        await refreshLibraryCache();
+
 
         updateLoadingCircle(
             "library",
-            85,
+            70,
             "Preparing tracks..."
         );
 
+
+        /*
+         * Render the library NOW.
+         *
+         * Statistics must not block the library.
+         */
         filterLibrary();
+
+
+        updateLoadingCircle(
+            "library",
+            90,
+            "Updating statistics..."
+        );
+
+
+        /*
+         * Run stats separately.
+         * We do NOT await it.
+         */
+        loadStats()
+            .catch(
+                error =>
+                    console.warn(
+                        "Library stats:",
+                        error
+                    )
+            );
+
 
         updateLoadingCircle(
             "library",
@@ -1633,22 +1698,57 @@ async function loadLibrary() {
             "Library ready"
         );
 
+
         setTimeout(
             () =>
                 hideLoadingCircle(
                     "library"
                 ),
-            250
+            300
         );
+
+
     } catch (error) {
+
+        console.error(
+            "Library loading failed:",
+            error
+        );
+
+
         hideLoadingCircle(
             "library"
         );
 
-        console.warn(
-            "Library:",
-            error
-        );
+
+        list.innerHTML = `
+            <div class="downloads-empty">
+
+                <div class="empty-icon">
+                    ⚠️
+                </div>
+
+                <div class="empty-title">
+                    Could not load library
+                </div>
+
+                <div class="empty-text">
+                    ${escapeHtml(
+                        error.message ||
+                        "Unknown error"
+                    )}
+                </div>
+
+                <button
+                    type="button"
+                    class="save-btn"
+                    onclick="loadLibrary()"
+                >
+                    🔄 Try Again
+                </button>
+
+            </div>
+        `;
     }
 }
 
