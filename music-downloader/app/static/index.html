@@ -40,7 +40,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=199"
+        href="/static/style.css?v=200"
     >
 
 </head>
@@ -874,8 +874,6 @@
                     </div>
 
 
-                    <!-- SERVER URL -->
-
                     <div class="setting-row">
 
                         <div>
@@ -916,8 +914,6 @@
                     </div>
 
 
-                    <!-- USERNAME -->
-
                     <div class="setting-row">
 
                         <div>
@@ -942,8 +938,6 @@
 
                     </div>
 
-
-                    <!-- PASSWORD -->
 
                     <div class="setting-row">
 
@@ -970,8 +964,6 @@
 
                     </div>
 
-
-                    <!-- SERVER STATUS -->
 
                     <div class="setting-row">
 
@@ -1039,14 +1031,10 @@
                     </div>
 
 
-                    <!-- DOWNLOADER -->
-
                     <div class="settings-divider">
                         Downloader
                     </div>
 
-
-                    <!-- FORMAT -->
 
                     <div class="setting-row">
 
@@ -1086,8 +1074,6 @@
                     </div>
 
 
-                    <!-- QUALITY -->
-
                     <div class="setting-row">
 
                         <div>
@@ -1126,8 +1112,6 @@
                     </div>
 
 
-                    <!-- THUMBNAIL -->
-
                     <div class="setting-row">
 
                         <div>
@@ -1156,8 +1140,6 @@
 
                     </div>
 
-
-                    <!-- METADATA -->
 
                     <div class="setting-row">
 
@@ -1188,8 +1170,6 @@
                     </div>
 
 
-                    <!-- ORGANIZE -->
-
                     <div class="setting-row">
 
                         <div>
@@ -1218,8 +1198,6 @@
 
                     </div>
 
-
-                    <!-- MAX RESULTS -->
 
                     <div class="setting-row">
 
@@ -1315,16 +1293,41 @@
 
     <div class="gp-controls">
 
-        <button
-            type="button"
-            id="gp-play-btn"
-            class="gp-play-btn"
-            aria-label="Play or pause"
-        >
+        <div class="gp-main-controls">
 
-            ▶
+            <button
+                type="button"
+                id="gp-prev-btn"
+                class="gp-skip-btn"
+                aria-label="Previous track"
+                title="Previous track"
+            >
+                ⏮
+            </button>
 
-        </button>
+
+            <button
+                type="button"
+                id="gp-play-btn"
+                class="gp-play-btn"
+                aria-label="Play or pause"
+                title="Play / Pause"
+            >
+                ▶
+            </button>
+
+
+            <button
+                type="button"
+                id="gp-next-btn"
+                class="gp-skip-btn"
+                aria-label="Next track"
+                title="Next track"
+            >
+                ⏭
+            </button>
+
+        </div>
 
 
         <div class="gp-progress-container">
@@ -1471,8 +1474,8 @@
      SCRIPTS
      ============================================================ -->
 
-<script src="/static/app.js?v=199"></script>
-<script src="/static/amperfy.js?v=199"></script>
+<script src="/static/app.js?v=200"></script>
+<script src="/static/amperfy.js?v=200"></script>
 
 </body>
 </html>
