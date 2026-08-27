@@ -2,6 +2,7 @@
 <html lang="en">
 
 <head>
+
     <meta charset="UTF-8">
 
     <meta
@@ -14,9 +15,18 @@
         content="#121212"
     >
 
+    <meta
+        name="description"
+        content="Xrob Music self-hosted music downloader, library and OpenSubsonic server"
+    >
+
     <title>Xrob Music</title>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        rel="preconnect"
+        href="https://fonts.googleapis.com"
+    >
+
     <link
         rel="preconnect"
         href="https://fonts.gstatic.com"
@@ -30,16 +40,20 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=198"
+        href="/static/style.css?v=199"
     >
+
 </head>
+
 
 <body>
 
 <div
     id="toast-container"
     aria-live="polite"
+    aria-atomic="true"
 ></div>
+
 
 <audio
     id="global-audio-element"
@@ -47,9 +61,13 @@
     preload="metadata"
 ></audio>
 
+
 <div class="app-shell">
 
-    <nav class="side-nav">
+    <nav
+        class="side-nav"
+        aria-label="Main navigation"
+    >
 
         <div class="side-brand">
 
@@ -59,7 +77,9 @@
                 viewBox="0 0 512 512"
                 aria-hidden="true"
             >
+
                 <defs>
+
                     <linearGradient
                         id="waveGrad"
                         x1="0%"
@@ -67,16 +87,21 @@
                         x2="100%"
                         y2="100%"
                     >
+
                         <stop
                             offset="0%"
                             stop-color="#00F2FE"
                         />
+
                         <stop
                             offset="100%"
                             stop-color="#4FACFE"
                         />
+
                     </linearGradient>
+
                 </defs>
+
 
                 <rect
                     width="512"
@@ -84,6 +109,7 @@
                     rx="112"
                     fill="#0F172A"
                 />
+
 
                 <rect
                     x="112"
@@ -95,6 +121,7 @@
                     opacity=".4"
                 />
 
+
                 <rect
                     x="160"
                     y="176"
@@ -104,6 +131,7 @@
                     fill="url(#waveGrad)"
                     opacity=".75"
                 />
+
 
                 <rect
                     x="328"
@@ -115,6 +143,7 @@
                     opacity=".75"
                 />
 
+
                 <rect
                     x="376"
                     y="216"
@@ -125,6 +154,7 @@
                     opacity=".4"
                 />
 
+
                 <path
                     d="M256 128V300M196 248L256 312L316 248"
                     stroke="url(#waveGrad)"
@@ -134,80 +164,124 @@
                     fill="none"
                 />
 
+
                 <path
                     d="M196 376H316"
                     stroke="url(#waveGrad)"
                     stroke-width="24"
                     stroke-linecap="round"
                 />
+
             </svg>
 
+
             <h1>Xrob Music</h1>
+
         </div>
+
 
         <ul class="nav-list">
 
             <li>
+
                 <button
+                    type="button"
                     class="nav-link active"
                     id="btn-home"
                     onclick="navigate('home')"
                 >
+
                     <span>⌂</span>
+
                     Home
+
                 </button>
+
             </li>
 
+
             <li>
+
                 <button
+                    type="button"
                     class="nav-link"
                     id="btn-search"
                     onclick="navigate('search')"
                 >
+
                     <span>🔍</span>
+
                     Search &amp; Download
+
                 </button>
+
             </li>
 
+
             <li>
+
                 <button
+                    type="button"
                     class="nav-link"
                     id="btn-downloads"
                     onclick="navigate('downloads')"
                 >
+
                     <span>⬇️</span>
+
                     Downloads
                     (<span id="queueCount">0</span>)
+
                 </button>
+
             </li>
 
+
             <li>
+
                 <button
+                    type="button"
                     class="nav-link"
                     id="btn-library"
                     onclick="navigate('library')"
                 >
+
                     <span>📂</span>
+
                     Library
                     (<span id="sideLibCount">0</span>)
+
                 </button>
+
             </li>
 
+
             <li>
+
                 <button
+                    type="button"
                     class="nav-link"
                     id="btn-settings"
                     onclick="navigate('settings')"
                 >
+
                     <span>⚙️</span>
+
                     Settings
+
                 </button>
+
             </li>
 
         </ul>
+
     </nav>
 
+
     <div class="app-column">
+
+
+        <!-- MOBILE HEADER -->
 
         <header class="mobile-header">
 
@@ -219,12 +293,14 @@
                     viewBox="0 0 512 512"
                     aria-hidden="true"
                 >
+
                     <rect
                         width="512"
                         height="512"
                         rx="112"
                         fill="#0F172A"
                     />
+
 
                     <path
                         d="M256 128V300M196 248L256 312L316 248"
@@ -235,20 +311,30 @@
                         fill="none"
                     />
 
+
                     <path
                         d="M196 376H316"
                         stroke="#4FACFE"
                         stroke-width="22"
                         stroke-linecap="round"
                     />
+
                 </svg>
 
+
                 <h1>Xrob Music</h1>
+
             </div>
 
         </header>
 
+
         <main class="main-content">
+
+
+            <!-- ==================================================
+                 HOME
+                 ================================================== -->
 
             <section
                 id="tab-home"
@@ -263,9 +349,11 @@
                             YOUR MUSIC
                         </div>
 
+
                         <h2 class="home-title">
                             Welcome to Xrob Music
                         </h2>
+
 
                         <p class="home-subtitle">
                             Your self-hosted downloader,
@@ -274,71 +362,143 @@
 
                     </div>
 
+
                     <button
+                        type="button"
                         class="home-search-button"
                         onclick="navigate('search')"
                     >
+
                         🔍 Find Music
+
                     </button>
 
                 </div>
 
+
                 <div class="home-stats-grid">
 
-                    <div class="home-stat-card">
-                        <div class="home-stat-icon">🎵</div>
-                        <div>
-                            <strong id="homeTracks">0</strong>
-                            <span>Tracks</span>
-                        </div>
-                    </div>
 
                     <div class="home-stat-card">
-                        <div class="home-stat-icon">👤</div>
-                        <div>
-                            <strong id="homeArtists">0</strong>
-                            <span>Artists</span>
+
+                        <div class="home-stat-icon">
+                            🎵
                         </div>
+
+                        <div>
+
+                            <strong id="homeTracks">
+                                0
+                            </strong>
+
+                            <span>
+                                Tracks
+                            </span>
+
+                        </div>
+
                     </div>
 
-                    <div class="home-stat-card">
-                        <div class="home-stat-icon">💿</div>
-                        <div>
-                            <strong id="homeAlbums">0</strong>
-                            <span>Albums</span>
-                        </div>
-                    </div>
 
                     <div class="home-stat-card">
-                        <div class="home-stat-icon">⬇️</div>
-                        <div>
-                            <strong id="homeDownloads">0</strong>
-                            <span>Active Downloads</span>
+
+                        <div class="home-stat-icon">
+                            👤
                         </div>
+
+                        <div>
+
+                            <strong id="homeArtists">
+                                0
+                            </strong>
+
+                            <span>
+                                Artists
+                            </span>
+
+                        </div>
+
                     </div>
+
+
+                    <div class="home-stat-card">
+
+                        <div class="home-stat-icon">
+                            💿
+                        </div>
+
+                        <div>
+
+                            <strong id="homeAlbums">
+                                0
+                            </strong>
+
+                            <span>
+                                Albums
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="home-stat-card">
+
+                        <div class="home-stat-icon">
+                            ⬇️
+                        </div>
+
+                        <div>
+
+                            <strong id="homeDownloads">
+                                0
+                            </strong>
+
+                            <span>
+                                Active Downloads
+                            </span>
+
+                        </div>
+
+                    </div>
+
 
                 </div>
+
 
                 <div class="home-section-header">
 
                     <div>
-                        <h3>Recently Added</h3>
-                        <p>Your latest music</p>
+
+                        <h3>
+                            Recently Added
+                        </h3>
+
+                        <p>
+                            Your latest music
+                        </p>
+
                     </div>
 
+
                     <button
+                        type="button"
                         class="btn-refresh"
                         onclick="navigate('library')"
                     >
+
                         View Library
+
                     </button>
 
                 </div>
+
 
                 <div
                     id="recentTracks"
                     class="recent-grid"
                 ></div>
+
 
                 <div class="home-connect-card">
 
@@ -346,11 +506,13 @@
                         📱
                     </div>
 
+
                     <div class="home-connect-content">
 
                         <h3>
                             Connect Arpeggi directly
                         </h3>
+
 
                         <p>
                             Xrob Music includes its own
@@ -360,16 +522,25 @@
 
                     </div>
 
+
                     <button
+                        type="button"
                         class="btn-refresh"
                         onclick="navigate('settings')"
                     >
+
                         Arpeggi Setup
+
                     </button>
 
                 </div>
 
             </section>
+
+
+            <!-- ==================================================
+                 SEARCH
+                 ================================================== -->
 
             <section
                 id="tab-search"
@@ -378,13 +549,16 @@
 
                 <div class="page-heading">
 
-                    <h2>Search Music</h2>
+                    <h2>
+                        Search Music
+                    </h2>
 
                     <p>
                         Search and download music to your library.
                     </p>
 
                 </div>
+
 
                 <div class="search-card">
 
@@ -393,33 +567,50 @@
                         type="search"
                         placeholder="Search track, artist, or album..."
                         autocomplete="off"
+                        spellcheck="false"
                     >
 
-                    <button id="searchBtn">
+
+                    <button
+                        type="button"
+                        id="searchBtn"
+                    >
                         Search
                     </button>
 
                 </div>
 
+
                 <div
                     id="statusMsg"
                     class="status-msg"
+                    aria-live="polite"
                 ></div>
+
 
                 <div
                     id="results"
                     class="results-grid"
                 ></div>
 
+
                 <div
                     id="infiniteLoader"
                     class="status-msg"
                     style="display:none;"
+                    aria-live="polite"
                 >
+
                     Loading more...
+
                 </div>
 
             </section>
+
+
+            <!-- ==================================================
+                 DOWNLOADS
+                 ================================================== -->
 
             <section
                 id="tab-downloads"
@@ -440,27 +631,37 @@
 
                     </div>
 
+
                     <div class="downloads-header-actions">
 
                         <button
+                            type="button"
                             class="btn-refresh"
                             onclick="clearDoneTasks()"
                         >
+
                             🧹 Clear Completed
+
                         </button>
 
+
                         <button
+                            type="button"
                             class="btn-refresh"
                             onclick="loadDownloads()"
                         >
+
                             🔄 Refresh
+
                         </button>
 
                     </div>
 
                 </div>
 
+
                 <div class="downloads-overview">
+
 
                     <div class="overview-card">
 
@@ -469,6 +670,7 @@
                         </div>
 
                         <div>
+
                             <strong
                                 id="downloadQueueCount"
                                 class="overview-value"
@@ -479,9 +681,11 @@
                             <span class="overview-label">
                                 Active in Queue
                             </span>
+
                         </div>
 
                     </div>
+
 
                     <div class="overview-card">
 
@@ -490,6 +694,7 @@
                         </div>
 
                         <div>
+
                             <strong
                                 id="downloadStatTracks"
                                 class="overview-value"
@@ -500,9 +705,11 @@
                             <span class="overview-label">
                                 Library Tracks
                             </span>
+
                         </div>
 
                     </div>
+
 
                     <div class="overview-card">
 
@@ -511,6 +718,7 @@
                         </div>
 
                         <div>
+
                             <strong
                                 id="downloadStatAlbums"
                                 class="overview-value"
@@ -521,11 +729,13 @@
                             <span class="overview-label">
                                 Albums
                             </span>
+
                         </div>
 
                     </div>
 
                 </div>
+
 
                 <div
                     id="downloadsList"
@@ -534,6 +744,11 @@
 
             </section>
 
+
+            <!-- ==================================================
+                 LIBRARY
+                 ================================================== -->
+
             <section
                 id="tab-library"
                 class="tab-content"
@@ -541,7 +756,9 @@
 
                 <div class="page-heading">
 
-                    <h2>Library</h2>
+                    <h2>
+                        Library
+                    </h2>
 
                     <p>
                         Your local Xrob Music collection.
@@ -549,47 +766,75 @@
 
                 </div>
 
+
                 <div class="search-card">
 
                     <input
                         id="libSearchQuery"
                         type="search"
                         placeholder="🔍 Filter local library tracks..."
+                        autocomplete="off"
+                        spellcheck="false"
                         oninput="filterLibrary()"
                     >
 
                 </div>
 
+
                 <div class="library-stats-bar">
 
                     <span>
+
                         🎵 Tracks:
-                        <strong id="statTracks">0</strong>
+                        <strong id="statTracks">
+                            0
+                        </strong>
+
                     </span>
 
+
                     <span>
+
                         👤 Artists:
-                        <strong id="statArtists">0</strong>
+                        <strong id="statArtists">
+                            0
+                        </strong>
+
                     </span>
 
+
                     <span>
+
                         💿 Albums:
-                        <strong id="statAlbums">0</strong>
+                        <strong id="statAlbums">
+                            0
+                        </strong>
+
                     </span>
 
+
                     <span>
+
                         💾 Size:
-                        <strong id="libFolderSize">0 MB</strong>
+                        <strong id="libFolderSize">
+                            0 MB
+                        </strong>
+
                     </span>
+
 
                     <button
+                        type="button"
                         class="btn-refresh"
                         onclick="loadLibrary()"
                     >
+
                         🔄 Refresh
+
                     </button>
 
                 </div>
+
 
                 <div
                     id="libraryList"
@@ -598,6 +843,11 @@
 
             </section>
 
+
+            <!-- ==================================================
+                 SETTINGS
+                 ================================================== -->
+
             <section
                 id="tab-settings"
                 class="tab-content"
@@ -605,7 +855,9 @@
 
                 <div class="page-heading">
 
-                    <h2>Settings</h2>
+                    <h2>
+                        Settings
+                    </h2>
 
                     <p>
                         Configure Xrob Music and Arpeggi.
@@ -613,11 +865,16 @@
 
                 </div>
 
+
                 <div class="settings-card">
+
 
                     <div class="settings-divider">
                         OpenSubsonic / Arpeggi
                     </div>
+
+
+                    <!-- SERVER URL -->
 
                     <div class="setting-row">
 
@@ -633,24 +890,33 @@
 
                         </div>
 
+
                         <div class="inline-control">
 
                             <input
                                 id="amperfy-server-url"
                                 type="text"
                                 readonly
+                                aria-label="Xrob Music server URL"
                             >
 
+
                             <button
+                                type="button"
                                 id="amperfy-copy-url"
                                 class="btn-refresh"
                             >
+
                                 📋 Copy
+
                             </button>
 
                         </div>
 
                     </div>
+
+
+                    <!-- USERNAME -->
 
                     <div class="setting-row">
 
@@ -666,13 +932,18 @@
 
                         </div>
 
+
                         <input
                             id="set_subsonic_user"
                             type="text"
                             readonly
+                            autocomplete="username"
                         >
 
                     </div>
+
+
+                    <!-- PASSWORD -->
 
                     <div class="setting-row">
 
@@ -688,13 +959,19 @@
 
                         </div>
 
+
                         <input
+                            id="set_subsonic_password"
                             type="password"
                             value="********"
                             readonly
+                            autocomplete="off"
                         >
 
                     </div>
+
+
+                    <!-- SERVER STATUS -->
 
                     <div class="setting-row">
 
@@ -710,21 +987,30 @@
 
                         </div>
 
+
                         <button
+                            type="button"
                             id="amperfy-test-button"
                             class="btn-refresh"
                         >
+
                             🔌 Test Connection
+
                         </button>
 
                     </div>
 
+
                     <div
                         id="amperfy-status"
                         class="integration-status"
+                        aria-live="polite"
                     >
+
                         Checking...
+
                     </div>
+
 
                     <div class="setting-row">
 
@@ -740,18 +1026,27 @@
 
                         </div>
 
+
                         <strong
                             id="amperfy-open-subsonic"
                             class="integration-ok"
                         >
+
                             Checking...
+
                         </strong>
 
                     </div>
 
+
+                    <!-- DOWNLOADER -->
+
                     <div class="settings-divider">
                         Downloader
                     </div>
+
+
+                    <!-- FORMAT -->
 
                     <div class="setting-row">
 
@@ -766,6 +1061,7 @@
                             </div>
 
                         </div>
+
 
                         <select id="set_format">
 
@@ -789,6 +1085,9 @@
 
                     </div>
 
+
+                    <!-- QUALITY -->
+
                     <div class="setting-row">
 
                         <div>
@@ -802,6 +1101,7 @@
                             </div>
 
                         </div>
+
 
                         <select id="set_quality">
 
@@ -825,6 +1125,9 @@
 
                     </div>
 
+
+                    <!-- THUMBNAIL -->
+
                     <div class="setting-row">
 
                         <div>
@@ -839,6 +1142,7 @@
 
                         </div>
 
+
                         <label class="switch">
 
                             <input
@@ -851,6 +1155,9 @@
                         </label>
 
                     </div>
+
+
+                    <!-- METADATA -->
 
                     <div class="setting-row">
 
@@ -866,6 +1173,7 @@
 
                         </div>
 
+
                         <label class="switch">
 
                             <input
@@ -878,6 +1186,9 @@
                         </label>
 
                     </div>
+
+
+                    <!-- ORGANIZE -->
 
                     <div class="setting-row">
 
@@ -893,6 +1204,7 @@
 
                         </div>
 
+
                         <label class="switch">
 
                             <input
@@ -905,6 +1217,9 @@
                         </label>
 
                     </div>
+
+
+                    <!-- MAX RESULTS -->
 
                     <div class="setting-row">
 
@@ -920,38 +1235,52 @@
 
                         </div>
 
+
                         <input
                             id="set_max_results"
                             type="number"
                             min="5"
                             max="50"
+                            step="1"
                             value="20"
                         >
 
                     </div>
 
+
                     <button
+                        type="button"
                         class="save-btn"
                         onclick="saveSettings()"
                     >
+
                         Save Settings
+
                     </button>
+
 
                     <div
                         id="settingsMsg"
                         class="status-msg"
+                        aria-live="polite"
                     ></div>
+
 
                 </div>
 
             </section>
 
+
         </main>
 
     </div>
+
 </div>
 
-<!-- GLOBAL PLAYER -->
+
+<!-- ============================================================
+     GLOBAL PLAYER
+     ============================================================ -->
 
 <div
     id="global-player-bar"
@@ -967,11 +1296,13 @@
             alt=""
         >
 
+
         <div class="gp-text">
 
             <span id="gp-title">
                 Select a track
             </span>
+
 
             <span id="gp-artist">
                 Ready
@@ -981,21 +1312,27 @@
 
     </div>
 
+
     <div class="gp-controls">
 
         <button
+            type="button"
             id="gp-play-btn"
             class="gp-play-btn"
-            type="button"
+            aria-label="Play or pause"
         >
+
             ▶
+
         </button>
+
 
         <div class="gp-progress-container">
 
             <span id="gp-cur-time">
                 0:00
             </span>
+
 
             <input
                 id="gp-seek"
@@ -1004,7 +1341,9 @@
                 max="100"
                 value="0"
                 step=".1"
+                aria-label="Track progress"
             >
+
 
             <span id="gp-dur-time">
                 0:00
@@ -1014,15 +1353,21 @@
 
     </div>
 
+
     <div class="gp-extra">
 
         <canvas
             id="visualizer-canvas"
             width="90"
             height="30"
+            aria-hidden="true"
         ></canvas>
 
-        <span>🔊</span>
+
+        <span aria-hidden="true">
+            🔊
+        </span>
+
 
         <input
             id="gp-volume"
@@ -1031,65 +1376,103 @@
             max="1"
             step=".01"
             value=".8"
+            aria-label="Volume"
         >
 
     </div>
 
 </div>
 
-<nav class="bottom-nav">
+
+<!-- ============================================================
+     MOBILE NAVIGATION
+     ============================================================ -->
+
+<nav
+    class="bottom-nav"
+    aria-label="Mobile navigation"
+>
 
     <button
+        type="button"
         class="nav-link active"
         id="mob-btn-home"
         onclick="navigate('home')"
     >
+
         <span>⌂</span>
+
         Home
+
     </button>
 
+
     <button
+        type="button"
         class="nav-link"
         id="mob-btn-search"
         onclick="navigate('search')"
     >
+
         <span>🔍</span>
+
         Search
+
     </button>
 
+
     <button
+        type="button"
         class="nav-link"
         id="mob-btn-downloads"
         onclick="navigate('downloads')"
     >
+
         <span>⬇️</span>
+
         Downloads
         (<span id="mobQueueCount">0</span>)
+
     </button>
 
+
     <button
+        type="button"
         class="nav-link"
         id="mob-btn-library"
         onclick="navigate('library')"
     >
+
         <span>📂</span>
+
         Library
         (<span id="mobLibCount">0</span>)
+
     </button>
 
+
     <button
+        type="button"
         class="nav-link"
         id="mob-btn-settings"
         onclick="navigate('settings')"
     >
+
         <span>⚙️</span>
+
         Settings
+
     </button>
 
 </nav>
 
-<script src="/static/app.js?v=198"></script>
-<script src="/static/amperfy.js?v=198"></script>
+
+<!-- ============================================================
+     SCRIPTS
+     ============================================================ -->
+
+<script src="/static/app.js?v=199"></script>
+<script src="/static/amperfy.js?v=199"></script>
 
 </body>
 </html>
