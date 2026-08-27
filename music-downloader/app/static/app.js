@@ -1921,23 +1921,22 @@ async function loadStats() {
             await fetch(
                 "api/stats",
                 {
-                    cache: "no-store",
-                    signal: controller.signal
+                    cache:
+                        "no-store",
+
+                    signal:
+                        controller.signal
                 }
             );
 
-
         if (!response.ok) {
-
             throw new Error(
                 `HTTP ${response.status}`
             );
         }
 
-
         const stats =
             await response.json();
-
 
         const values = {
 
@@ -1966,7 +1965,6 @@ async function loadStats() {
                 stats.albums || 0
         };
 
-
         Object.entries(
             values
         ).forEach(
@@ -1978,13 +1976,11 @@ async function loadStats() {
                     );
 
                 if (element) {
-
                     element.textContent =
                         value;
                 }
             }
         );
-
 
     } catch (error) {
 
@@ -2004,7 +2000,6 @@ async function loadStats() {
                 error
             );
         }
-
 
     } finally {
 
@@ -2119,52 +2114,49 @@ async function loadLibrary() {
         filterLibrary();
 
 
-        smoothLoading(
-            "library",
-            45,
-            65,
-            "Calculating artists and albums...",
-            500
-        );
-
-
-        /* ----------------------------------------
-           STEP 3 — GET METADATA STATS
-           ---------------------------------------- */
-
-        await loadStats();
-
-
-        smoothLoading(
+        updateLoadingCircle(
             "library",
             65,
-            90,
-            "Finishing library...",
-            400
-        );
-
-
-        /*
-         * Re-render once statistics are ready.
-         */
-        filterLibrary();
-
-
-        smoothLoading(
+            "Library tracks loaded..."
+        );/*
+         * The actual library is already ready.
+         * Do NOT wait for stats.
+         */smoothLoading(
             "library",
-            90,
+            65,
             100,
-            "Library ready",
-            300
-        );
+            "Finalizing library...",
+            500
+        );/*
+         * Load Artists / Albums in the background.
+         * This must NOT block the loader.
+         */loadStats().catch(
+            error =>
+                console.warn(
+                    "Stats update:",
+                    error
+                )
+        );/*
+         * Library is ready immediately.
+         */setTimeout(
+            () => {
 
+                updateLoadingCircle(
+                    "library",
+                    100,
+                    "Library ready"
+                );
 
-        setTimeout(
-            () =>
-                hideLoadingCircle(
-                    "library"
-                ),
-            300
+                setTimeout(
+                    () =>
+                        hideLoadingCircle(
+                            "library"
+                        ),
+                    300
+                );
+
+            },
+            500
         );
 
 
