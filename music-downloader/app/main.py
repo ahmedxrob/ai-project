@@ -2407,44 +2407,79 @@ async def api_stats():
 @app.get("/api/home")
 async def api_home():
 
-    stats = await api_stats()
+    # Home must stay fast. Do not rebuild the entire metadata library
+    # here because the frontend also requests /api/stats separately.
+    files = await get_all_audio_files()
 
-    library = await build_library()
-
-    songs = sorted(
-        library["songs"],
-        key=lambda song:
-            song["modified"],
+    files.sort(
+        key=lambda path: path.stat().st_mtime
+        if path.exists()
+        else 0,
         reverse=True,
     )
 
-    recent = []
+    recent_files = files[:12]
 
-    for song in songs[:12]:
+    async def make_recent(path):
+        try:
+            metadata = await read_metadata(path)
+            relative_path = str(
+                path.relative_to(DOWNLOAD_DIR)
+            )
 
-        recent.append(
-            {
-                "id": song["id"],
-                "title": song["title"],
-                "artist": song["artist"],
-                "album": song["album"],
-                "duration": song["duration"],
+            encoded = urllib.parse.quote(
+                relative_path,
+                safe="/",
+            )
+
+            return {
+                "id": make_song_id(path),
+                "title": metadata.get(
+                    "title",
+                    path.stem,
+                ),
+                "artist": metadata.get(
+                    "artist",
+                    "Unknown Artist",
+                ),
+                "album": metadata.get(
+                    "album",
+                    path.stem,
+                ),
+                "duration": safe_int(
+                    metadata.get(
+                        "duration",
+                        0,
+                    ),
+                    0,
+                ),
                 "cover": (
                     "/api/library/cover/"
-                    + urllib.parse.quote(
-                        str(song["path"].relative_to(DOWNLOAD_DIR)),
-                        safe="/",
-                    )
+                    + encoded
                 ),
                 "stream": (
                     "/api/library/stream/"
-                    + urllib.parse.quote(
-                        str(song["path"].relative_to(DOWNLOAD_DIR)),
-                        safe="/",
-                    )
+                    + encoded
                 ),
             }
-        )
+
+        except Exception as exc:
+            print(
+                "Home track metadata error:",
+                exc,
+            )
+            return None
+
+    recent_results = await asyncio.gather(
+        *(make_recent(path) for path in recent_files),
+        return_exceptions=False,
+    )
+
+    recent = [
+        item
+        for item in recent_results
+        if item is not None
+    ]
 
     active = sum(
         1
@@ -2456,8 +2491,17 @@ async def api_home():
         }
     )
 
+    # /api/stats is requested independently by the frontend.
+    # Returning the lightweight track count here prevents Home from
+    # performing another full metadata scan.
     return {
-        "stats": stats,
+        "stats": {
+            "tracks": len(files),
+            "artists": 0,
+            "albums": 0,
+            "total_bytes": 0,
+            "folder_size": "0 MB",
+        },
         "active_downloads": active,
         "recently_added": recent,
     }
