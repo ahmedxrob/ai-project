@@ -1649,13 +1649,20 @@ function filterLibrary() {
                 );
             }
 
-            /* DOUBLE CLICK CARD TO PLAY */
-            card.addEventListener(
-                "dblclick",
+            /* PLAY LIBRARY TRACK BY CLICKING THE CARD */card.addEventListener(
+                "click",
                 (event) => {
 
+                    // Don't play when clicking the Delete button
                     if (
                         event.target.closest(".btn-danger")
+                    ) {
+                        return;
+                    }
+
+                    // Don't trigger twice when clicking the Play button
+                    if (
+                        event.target.closest(".btn-preview")
                     ) {
                         return;
                     }
