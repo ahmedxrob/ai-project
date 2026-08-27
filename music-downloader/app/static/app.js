@@ -126,7 +126,8 @@ function cacheDom() {
 
 /* ============================================================
    LOADING CIRCLE
-   ============================================================ */function updateLoadingCircle(
+   ============================================================ */
+function updateLoadingCircle(
     type,
     percent,
     text = ""
@@ -208,7 +209,9 @@ function cacheDom() {
             ) *
             circumference;
     }
-}function hideLoadingCircle(
+}
+
+function hideLoadingCircle(
     type
 ) {
 
@@ -3643,14 +3646,72 @@ function playPreviousHomeTrack() {
 
 async function loadHome() {
 
+    const container =
+        document.getElementById(
+            "recentTracks"
+        );
+
+    if (!container) {
+        return;
+    }
+
+    /*
+     * Start Recently Added loader.
+     */
     updateLoadingCircle(
         "recent",
         5,
         "Loading Recently Added..."
     );
 
+    container.innerHTML = "";
+
+
+    /*
+     * Let the percentage move while the backend
+     * is preparing / scanning the library.
+     *
+     * It slowly moves from 5% to 85% without
+     * pretending the request is already finished.
+     */
+    let loadingPercent = 5;
+
+    const loadingTimer =
+        setInterval(
+            () => {
+
+                if (loadingPercent < 85) {
+
+                    loadingPercent +=
+                        loadingPercent < 30
+                            ? 3
+                            : 2;
+
+                    if (loadingPercent > 85) {
+                        loadingPercent = 85;
+                    }
+
+                    updateLoadingCircle(
+                        "recent",
+                        loadingPercent,
+                        loadingPercent < 40
+                            ? "Loading Recently Added..."
+                            : loadingPercent < 65
+                                ? "Reading your music library..."
+                                : "Preparing your recent tracks..."
+                    );
+                }
+
+            },
+            350
+        );
+
+
     try {
 
+        /*
+         * Fetch Home data.
+         */
         const response =
             await fetch(
                 "api/home",
@@ -3659,23 +3720,32 @@ async function loadHome() {
                 }
             );
 
+
         if (!response.ok) {
+
             throw new Error(
                 `HTTP ${response.status}`
             );
         }
 
+
         const data =
             await response.json();
 
+
+        /*
+         * Backend finished.
+         */
         updateLoadingCircle(
             "recent",
-            60,
-            "Preparing your music..."
+            90,
+            "Building Recently Added..."
         );
+
 
         const stats =
             data.stats || {};
+
 
         const setText = (
             id,
@@ -3686,10 +3756,12 @@ async function loadHome() {
                 document.getElementById(id);
 
             if (element) {
+
                 element.textContent =
                     value ?? 0;
             }
         };
+
 
         setText(
             "homeTracks",
@@ -3711,16 +3783,6 @@ async function loadHome() {
             data.active_downloads || 0
         );
 
-        const container =
-            document.getElementById(
-                "recentTracks"
-            );
-
-        if (!container) {
-            return;
-        }
-
-        container.innerHTML = "";
 
         const recent =
             Array.isArray(
@@ -3729,11 +3791,11 @@ async function loadHome() {
                 ? data.recently_added
                 : [];
 
-        if (!recent.length) {
 
-            hideLoadingCircle(
-                "recent"
-            );
+        /*
+         * No tracks.
+         */
+        if (!recent.length) {
 
             container.innerHTML = `
                 <div class="home-empty">
@@ -3741,34 +3803,57 @@ async function loadHome() {
                 </div>
             `;
 
+            updateLoadingCircle(
+                "recent",
+                100,
+                "Recently Added ready"
+            );
+
+            setTimeout(
+                () =>
+                    hideLoadingCircle(
+                        "recent"
+                    ),
+                250
+            );
+
             return;
         }
 
+
         /*
-         * Store the Home queue globally so the audio
-         * ended event can continue to the next track.
+         * Save the Home queue.
          */
-        window.xrobHomeQueue = recent;
-        window.xrobHomeQueueIndex = -1;
+        window.xrobHomeQueue =
+            recent;
 
-        updateLoadingCircle(
-            "recent",
-            80,
-            "Building Recently Added..."
-        );
+        window.xrobHomeQueueIndex =
+            -1;
 
+
+        /*
+         * Build all Recently Added cards.
+         */
         recent.forEach(
-            (track, index) => {
+            (
+                track,
+                index
+            ) => {
 
                 const card =
                     document.createElement(
                         "button"
                     );
 
-                card.type = "button";
+                card.type =
+                    "button";
 
                 card.className =
                     "recent-card";
+
+                card.dataset.type =
+                    "home";
+
 
                 const img =
                     document.createElement(
@@ -3781,7 +3866,9 @@ async function loadHome() {
 
                 img.alt = "";
 
-                img.loading = "lazy";
+                img.loading =
+                    "lazy";
+
 
                 img.addEventListener(
                     "error",
@@ -3796,6 +3883,7 @@ async function loadHome() {
                     }
                 );
 
+
                 const title =
                     document.createElement(
                         "div"
@@ -3807,6 +3895,7 @@ async function loadHome() {
                 title.textContent =
                     track.title ||
                     "Unknown Track";
+
 
                 const artist =
                     document.createElement(
@@ -3820,12 +3909,19 @@ async function loadHome() {
                     track.artist ||
                     "Unknown Artist";
 
+
                 card.appendChild(img);
                 card.appendChild(title);
                 card.appendChild(artist);
 
-                card.dataset.type =
-                    "home";
+
+                /*
+                 * Save card reference for playback
+                 * highlighting.
+                 */
+                track._card =
+                    card;
+
 
                 card.addEventListener(
                     "click",
@@ -3837,15 +3933,9 @@ async function loadHome() {
                         playHomeTrack(
                             index
                         );
-
                     }
                 );
 
-                /*
-                 * Keep reference to the card so the currently
-                 * playing Home track can be highlighted.
-                 */
-                track._card = card;
 
                 container.appendChild(
                     card
@@ -3853,28 +3943,71 @@ async function loadHome() {
             }
         );
 
+
+        /*
+         * Everything rendered.
+         */
         updateLoadingCircle(
             "recent",
             100,
             "Recently Added ready"
         );
+
+
         setTimeout(
             () =>
                 hideLoadingCircle(
                     "recent"
                 ),
-            250
+            300
         );
 
+
     } catch (error) {
+
+        console.error(
+            "Home loading failed:",
+            error
+        );
+
+
+        container.innerHTML = `
+            <div class="home-empty">
+
+                <div class="empty-icon">
+                    ⚠️
+                </div>
+
+                <div class="empty-title">
+                    Could not load Recently Added
+                </div>
+
+                <div class="empty-text">
+                    ${escapeHtml(
+                        error.message ||
+                        "Unknown error"
+                    )}
+                </div>
+
+                <button
+                    type="button"
+                    class="save-btn"
+                    onclick="loadHome()"
+                >
+                    🔄 Try Again
+                </button>
+
+            </div>
+        `;
 
         hideLoadingCircle(
             "recent"
         );
 
-        console.warn(
-            "Home:",
-            error
+    } finally {
+
+        clearInterval(
+            loadingTimer
         );
     }
 }
