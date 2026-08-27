@@ -281,18 +281,26 @@ a {
 }
 
 
-.nav-link span:first-child {
-    width: 23px;
+.nav-link > svg {
+    width: 20px;
+    height: 20px;
+
+    flex: 0 0 20px;
 
     display: inline-flex;
-    justify-content: center;
 
-    font-size: 18px;
+    color: currentColor;
+
+    stroke-width: 2;
 }
 
-
-.nav-link.active span:first-child {
+.nav-link.active > svg {
     color: var(--accent);
+}
+
+.nav-link .nav-label {
+    flex: 1;
+    min-width: 0;
 }
 
 
@@ -3067,37 +3075,41 @@ input[type="range"]:focus-visible {
    ============================================================ */
 
 .nav-link > svg {
-    width: 19px;
-    height: 19px;
+    width: 20px;
+    height: 20px;
 
-    flex: 0 0 19px;
+    flex: 0 0 20px;
 
     display: inline-flex;
 
-    stroke-width: 2;
-
     color: currentColor;
-}
 
+    stroke-width: 2;
+}
 
 .nav-link.active > svg {
     color: var(--accent);
 }
 
+.nav-link .nav-label {
+    flex: 1;
+    min-width: 0;
+}
 
-/* Buttons containing icons */
+
+/* Buttons with icons */
 
 .home-search-button,
 .btn-refresh,
 .save-btn,
 .search-card button {
     display: inline-flex;
+
     align-items: center;
     justify-content: center;
 
     gap: 7px;
 }
-
 
 .home-search-button svg,
 .btn-refresh svg,
@@ -3114,6 +3126,11 @@ input[type="range"]:focus-visible {
 
 /* Home stat icons */
 
+.home-stat-icon {
+    display: grid;
+    place-items: center;
+}
+
 .home-stat-icon svg {
     width: 20px;
     height: 20px;
@@ -3122,25 +3139,12 @@ input[type="range"]:focus-visible {
 }
 
 
-/* Library stat icons */
-
-.library-stats-bar > span {
-    display: inline-flex;
-    align-items: center;
-
-    gap: 4px;
-}
-
-
-.library-stats-bar svg {
-    width: 13px;
-    height: 13px;
-
-    stroke-width: 2;
-}
-
-
 /* Arpeggi icon */
+
+.home-connect-icon {
+    display: grid;
+    place-items: center;
+}
 
 .home-connect-icon svg {
     width: 21px;
@@ -3150,12 +3154,57 @@ input[type="range"]:focus-visible {
 }
 
 
+/* Library statistics */
+
+.library-stats-bar > span {
+    display: inline-flex;
+
+    align-items: center;
+
+    gap: 4px;
+}
+
+.library-stats-bar svg {
+    width: 13px;
+    height: 13px;
+
+    flex: 0 0 13px;
+
+    stroke-width: 2;
+}
+
+
+/* Volume */
+
+.gp-volume-icon {
+    width: 18px;
+    height: 18px;
+
+    display: inline-flex;
+
+    align-items: center;
+    justify-content: center;
+
+    flex: 0 0 18px;
+
+    color: var(--text-secondary);
+}
+
+.gp-volume-icon svg {
+    width: 17px;
+    height: 17px;
+
+    stroke-width: 2;
+}
+
+
 /* ============================================================
-   GLOBAL PLAYER
+   PLAYER SKIP BUTTONS
    ============================================================ */
 
 .gp-main-controls {
     display: flex;
+
     align-items: center;
     justify-content: center;
 
@@ -3169,20 +3218,24 @@ input[type="range"]:focus-visible {
     width: 34px;
     height: 34px;
 
+    flex: 0 0 34px;
+
     display: inline-flex;
+
     align-items: center;
     justify-content: center;
-
-    flex: 0 0 34px;
 
     padding: 0;
 
     border: 0;
+
     border-radius: 50%;
 
     background: transparent;
 
     color: var(--text-secondary);
+
+    cursor: pointer;
 
     transition:
         background .15s ease,
@@ -3215,45 +3268,161 @@ input[type="range"]:focus-visible {
     width: 18px;
     height: 18px;
 
-    stroke-width: 2;
-}
-
-
-/* Volume icon */
-
-.gp-volume-icon {
-    width: 18px;
-    height: 18px;
-
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-
     flex: 0 0 18px;
-
-    color: var(--text-secondary);
-}
-
-
-.gp-volume-icon svg {
-    width: 17px;
-    height: 17px;
 
     stroke-width: 2;
 }
 
 
 /* ============================================================
-   MOBILE ICONS
+   LOADING CIRCLES
+   ============================================================ */
+
+.xrob-loading {
+    min-height: 210px;
+
+    width: 100%;
+
+    display: none;
+
+    flex-direction: column;
+
+    align-items: center;
+    justify-content: center;
+
+    gap: 12px;
+
+    padding: 25px;
+}
+
+
+.xrob-loader-circle {
+    position: relative;
+
+    width: 92px;
+    height: 92px;
+
+    flex: 0 0 92px;
+}
+
+
+.xrob-loader-svg {
+    width: 100%;
+    height: 100%;
+
+    display: block;
+
+    transform: rotate(-90deg);
+}
+
+
+.xrob-loader-track,
+.xrob-loader-progress {
+    fill: none;
+
+    stroke-width: 7;
+}
+
+
+.xrob-loader-track {
+    stroke: var(--bg-elevated);
+}
+
+
+.xrob-loader-progress {
+    stroke: var(--accent);
+
+    stroke-linecap: round;
+
+    stroke-dasharray: 263.9;
+    stroke-dashoffset: 263.9;
+
+    transition:
+        stroke-dashoffset .25s ease;
+}
+
+
+.xrob-loader-percent {
+    position: absolute;
+
+    inset: 0;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    color: var(--text-primary);
+
+    font-size: 18px;
+
+    font-weight: 800;
+}
+
+
+.xrob-loader-text {
+    color: var(--text-secondary);
+
+    font-size: 10px;
+
+    font-weight: 700;
+
+    text-align: center;
+}
+
+
+/* ============================================================
+   SEARCH LOADING
+   ============================================================ */
+
+#searchLoading {
+    margin:
+        5px 0
+        12px;
+}
+
+
+#searchLoading .xrob-loader-circle {
+    width: 84px;
+    height: 84px;
+
+    flex-basis: 84px;
+}
+
+
+/* ============================================================
+   LIBRARY LOADING
+   ============================================================ */
+
+#libraryLoading {
+    margin:
+        5px 0
+        15px;
+}
+
+
+/* ============================================================
+   RECENTLY ADDED LOADING
+   ============================================================ */
+
+#recentTracksLoading {
+    margin:
+        5px 0
+        15px;
+}
+
+
+/* ============================================================
+   MOBILE
    ============================================================ */
 
 @media (max-width: 768px) {
 
     .bottom-nav .nav-link > svg {
-        width: 18px;
-        height: 18px;
+        width: 19px;
+        height: 19px;
 
-        flex: 0 0 18px;
+        flex: 0 0 19px;
     }
 
 
@@ -3273,6 +3442,26 @@ input[type="range"]:focus-visible {
     .gp-skip-btn svg {
         width: 16px;
         height: 16px;
+
+        flex-basis: 16px;
+    }
+
+
+    .xrob-loading {
+        min-height: 180px;
+    }
+
+
+    .xrob-loader-circle {
+        width: 82px;
+        height: 82px;
+
+        flex-basis: 82px;
+    }
+
+
+    .xrob-loader-percent {
+        font-size: 16px;
     }
 
 }
@@ -3285,10 +3474,10 @@ input[type="range"]:focus-visible {
 @media (max-width: 480px) {
 
     .bottom-nav .nav-link > svg {
-        width: 17px;
-        height: 17px;
+        width: 18px;
+        height: 18px;
 
-        flex-basis: 17px;
+        flex-basis: 18px;
     }
 
 
@@ -3308,6 +3497,34 @@ input[type="range"]:focus-visible {
     .gp-skip-btn svg {
         width: 15px;
         height: 15px;
+
+        flex-basis: 15px;
+    }
+
+
+    .xrob-loading {
+        min-height: 160px;
+
+        padding:
+            15px 8px;
+    }
+
+
+    .xrob-loader-circle {
+        width: 76px;
+        height: 76px;
+
+        flex-basis: 76px;
+    }
+
+
+    .xrob-loader-percent {
+        font-size: 15px;
+    }
+
+
+    .xrob-loader-text {
+        font-size: 9px;
     }
 
 }
@@ -3335,6 +3552,16 @@ input[type="range"]:focus-visible {
     .gp-skip-btn svg {
         width: 13px;
         height: 13px;
+
+        flex-basis: 13px;
+    }
+
+
+    .xrob-loader-circle {
+        width: 70px;
+        height: 70px;
+
+        flex-basis: 70px;
     }
 
 }
