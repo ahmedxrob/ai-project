@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 
@@ -745,22 +746,19 @@
 
                 <div
                     id="searchLoading"
-                    class="xrob-loading"
+                    class="loading-container"
                     style="display:none;"
-                    aria-live="polite"
-                    aria-label="Searching for music"
                 >
 
-                    <div class="xrob-loader-circle">
+                    <div class="loading-circle-wrapper">
 
                         <svg
-                            class="xrob-loader-svg"
+                            class="loading-circle-svg"
                             viewBox="0 0 100 100"
-                            aria-hidden="true"
                         >
 
                             <circle
-                                class="xrob-loader-track"
+                                class="loading-circle-bg"
                                 cx="50"
                                 cy="50"
                                 r="42"
@@ -769,7 +767,7 @@
 
                             <circle
                                 id="searchLoadingCircle"
-                                class="xrob-loader-progress"
+                                class="loading-circle-progress"
                                 cx="50"
                                 cy="50"
                                 r="42"
@@ -780,7 +778,7 @@
 
                         <div
                             id="searchLoadingPercent"
-                            class="xrob-loader-percent"
+                            class="loading-circle-percent"
                         >
                             0%
                         </div>
@@ -790,9 +788,9 @@
 
                     <div
                         id="searchLoadingText"
-                        class="xrob-loader-text"
+                        class="loading-text"
                     >
-                        Searching...
+                        Synchronizing...
                     </div>
 
                 </div>
