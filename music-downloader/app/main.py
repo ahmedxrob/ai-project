@@ -2197,6 +2197,18 @@ async def api_cancel_task(
             detail="Task not found",
         )
 
+    active_statuses = {
+        "queued",
+        "downloading",
+        "processing",
+    }
+
+    if task.get("status") not in active_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail="Task is already finished.",
+        )
+
     task["cancel_requested"] = True
 
     process = ACTIVE_PROCESSES.get(
@@ -2407,9 +2419,31 @@ async def api_stats():
 @app.get("/api/home")
 async def api_home():
 
-    stats = await api_stats()
-
     library = await build_library()
+    songs = library["songs"]
+
+    artists = {
+        song["artist"]
+        for song in songs
+    }
+
+    albums = {
+        (
+            song["artist"],
+            song["album"],
+        )
+        for song in songs
+    }
+
+    stats = {
+        "tracks": len(songs),
+        "artists": len(artists),
+        "albums": len(albums),
+        "total_bytes": sum(
+            song["size"]
+            for song in songs
+        ),
+    }
 
     songs = sorted(
         library["songs"],
