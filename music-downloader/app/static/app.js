@@ -3655,9 +3655,15 @@ async function loadHome() {
         return;
     }
 
-    /*
-     * Start Recently Added loader.
-     */
+    const controller =
+        new AbortController();
+
+    const timeout =
+        setTimeout(
+            () => controller.abort(),
+            15000
+        );
+
     updateLoadingCircle(
         "recent",
         5,
@@ -3666,86 +3672,41 @@ async function loadHome() {
 
     container.innerHTML = "";
 
-
-    /*
-     * Let the percentage move while the backend
-     * is preparing / scanning the library.
-     *
-     * It slowly moves from 5% to 85% without
-     * pretending the request is already finished.
-     */
-    let loadingPercent = 5;
-
-    const loadingTimer =
-        setInterval(
-            () => {
-
-                if (loadingPercent < 85) {
-
-                    loadingPercent +=
-                        loadingPercent < 30
-                            ? 3
-                            : 2;
-
-                    if (loadingPercent > 85) {
-                        loadingPercent = 85;
-                    }
-
-                    updateLoadingCircle(
-                        "recent",
-                        loadingPercent,
-                        loadingPercent < 40
-                            ? "Loading Recently Added..."
-                            : loadingPercent < 65
-                                ? "Reading your music library..."
-                                : "Preparing your recent tracks..."
-                    );
-                }
-
-            },
-            350
-        );
-
-
     try {
 
-        /*
-         * Fetch Home data.
-         */
+        updateLoadingCircle(
+            "recent",
+            15,
+            "Connecting to Xrob Music..."
+        );
+
         const response =
             await fetch(
                 "api/home",
                 {
-                    cache: "no-store"
+                    cache: "no-store",
+                    signal: controller.signal
                 }
             );
-
 
         if (!response.ok) {
 
             throw new Error(
-                `HTTP ${response.status}`
+                `Home API returned HTTP ${response.status}`
             );
         }
 
+        updateLoadingCircle(
+            "recent",
+            65,
+            "Preparing your music..."
+        );
 
         const data =
             await response.json();
 
-
-        /*
-         * Backend finished.
-         */
-        updateLoadingCircle(
-            "recent",
-            90,
-            "Building Recently Added..."
-        );
-
-
         const stats =
             data.stats || {};
-
 
         const setText = (
             id,
@@ -3756,12 +3717,10 @@ async function loadHome() {
                 document.getElementById(id);
 
             if (element) {
-
                 element.textContent =
                     value ?? 0;
             }
         };
-
 
         setText(
             "homeTracks",
@@ -3792,9 +3751,13 @@ async function loadHome() {
                 : [];
 
 
-        /*
-         * No tracks.
-         */
+        updateLoadingCircle(
+            "recent",
+            85,
+            "Building Recently Added..."
+        );
+
+
         if (!recent.length) {
 
             container.innerHTML = `
@@ -3821,9 +3784,10 @@ async function loadHome() {
         }
 
 
-        /*
-         * Save the Home queue.
-         */
+        /* ---------------------------------------------
+           Save queue for Previous / Next / Auto-next
+           --------------------------------------------- */
+
         window.xrobHomeQueue =
             recent;
 
@@ -3831,9 +3795,10 @@ async function loadHome() {
             -1;
 
 
-        /*
-         * Build all Recently Added cards.
-         */
+        /* ---------------------------------------------
+           Render cards
+           --------------------------------------------- */
+
         recent.forEach(
             (
                 track,
@@ -3910,19 +3875,25 @@ async function loadHome() {
                     "Unknown Artist";
 
 
-                card.appendChild(img);
-                card.appendChild(title);
-                card.appendChild(artist);
+                card.appendChild(
+                    img
+                );
+
+                card.appendChild(
+                    title
+                );
+
+                card.appendChild(
+                    artist
+                );
 
 
-                /*
-                 * Save card reference for playback
-                 * highlighting.
-                 */
+                /* Save card reference */
                 track._card =
                     card;
 
 
+                /* Click = play */
                 card.addEventListener(
                     "click",
                     () => {
@@ -3944,9 +3915,6 @@ async function loadHome() {
         );
 
 
-        /*
-         * Everything rendered.
-         */
         updateLoadingCircle(
             "recent",
             100,
@@ -3971,34 +3939,69 @@ async function loadHome() {
         );
 
 
-        container.innerHTML = `
-            <div class="home-empty">
+        if (
+            error.name ===
+            "AbortError"
+        ) {
 
-                <div class="empty-icon">
-                    ⚠️
+            container.innerHTML = `
+                <div class="home-empty">
+
+                    <div class="empty-icon">
+                        ⚠️
+                    </div>
+
+                    <div class="empty-title">
+                        Home loading timed out
+                    </div>
+
+                    <div class="empty-text">
+                        Xrob Music did not respond within 15 seconds.
+                    </div>
+
+                    <button
+                        type="button"
+                        class="save-btn"
+                        onclick="loadHome()"
+                    >
+                        🔄 Try Again
+                    </button>
+
                 </div>
+            `;
 
-                <div class="empty-title">
-                    Could not load Recently Added
+        } else {
+
+            container.innerHTML = `
+                <div class="home-empty">
+
+                    <div class="empty-icon">
+                        ⚠️
+                    </div>
+
+                    <div class="empty-title">
+                        Could not load Recently Added
+                    </div>
+
+                    <div class="empty-text">
+                        ${escapeHtml(
+                            error.message ||
+                            "Unknown error"
+                        )}
+                    </div>
+
+                    <button
+                        type="button"
+                        class="save-btn"
+                        onclick="loadHome()"
+                    >
+                        🔄 Try Again
+                    </button>
+
                 </div>
+            `;
+        }
 
-                <div class="empty-text">
-                    ${escapeHtml(
-                        error.message ||
-                        "Unknown error"
-                    )}
-                </div>
-
-                <button
-                    type="button"
-                    class="save-btn"
-                    onclick="loadHome()"
-                >
-                    🔄 Try Again
-                </button>
-
-            </div>
-        `;
 
         hideLoadingCircle(
             "recent"
@@ -4006,8 +4009,8 @@ async function loadHome() {
 
     } finally {
 
-        clearInterval(
-            loadingTimer
+        clearTimeout(
+            timeout
         );
     }
 }
