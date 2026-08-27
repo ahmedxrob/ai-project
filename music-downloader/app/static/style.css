@@ -3404,3 +3404,43 @@ input[type="range"]:focus-visible {
     }
 
 }
+
+/* ============================================================
+   SIMPLIFIED SETTINGS
+   ============================================================ */
+.settings-card {
+    max-width: 900px;
+}
+
+.settings-card .settings-divider {
+    margin-top: 4px;
+}
+
+.settings-card .setting-row {
+    min-height: 64px;
+}
+
+.settings-card .save-btn {
+    margin-top: 14px;
+}
+
+@media (max-width: 700px) {
+    .settings-card .setting-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .settings-card .setting-row > select,
+    .settings-card .setting-row > input[type="number"] {
+        width: 100%;
+    }
+
+    .settings-card .inline-control {
+        width: 100%;
+    }
+
+    #amperfy-server-url {
+        width: 100%;
+    }
+}
