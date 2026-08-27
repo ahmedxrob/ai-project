@@ -569,6 +569,8 @@ a {
     color: var(--text-primary);
 
     text-align: left;
+
+    border-radius: 10px;
 }
 
 
@@ -580,12 +582,27 @@ a {
 
     border-radius: 10px;
 
-    transition: transform .16s ease;
+    transition:
+        transform .16s ease,
+        box-shadow .16s ease;
 }
 
 
 .recent-card:hover img {
     transform: translateY(-3px);
+}
+
+
+.recent-card.playing img {
+    box-shadow:
+        0 0 0 2px var(--accent),
+        0 8px 22px rgba(0, 0, 0, .3);
+}
+
+
+.recent-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
 }
 
 
@@ -667,6 +684,101 @@ a {
     color: var(--text-secondary);
 
     font-size: 9px;
+}
+
+
+/* ============================================================
+   LOADING CIRCLE
+   ============================================================ */
+
+.xrob-loading {
+    min-height: 210px;
+
+    display: none;
+
+    flex-direction: column;
+
+    align-items: center;
+    justify-content: center;
+
+    gap: 12px;
+
+    width: 100%;
+
+    padding: 25px;
+}
+
+
+.xrob-loader-circle {
+    position: relative;
+
+    width: 92px;
+    height: 92px;
+
+    flex: 0 0 92px;
+}
+
+
+.xrob-loader-svg {
+    width: 100%;
+    height: 100%;
+
+    display: block;
+
+    transform: rotate(-90deg);
+}
+
+
+.xrob-loader-track,
+.xrob-loader-progress {
+    fill: none;
+
+    stroke-width: 7;
+}
+
+
+.xrob-loader-track {
+    stroke: var(--bg-elevated);
+}
+
+
+.xrob-loader-progress {
+    stroke: var(--accent);
+
+    stroke-linecap: round;
+
+    stroke-dasharray: 263.9;
+    stroke-dashoffset: 263.9;
+
+    transition:
+        stroke-dashoffset .25s ease;
+}
+
+
+.xrob-loader-percent {
+    position: absolute;
+
+    inset: 0;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    color: var(--text-primary);
+
+    font-size: 18px;
+    font-weight: 800;
+}
+
+
+.xrob-loader-text {
+    color: var(--text-secondary);
+
+    font-size: 10px;
+    font-weight: 700;
+
+    text-align: center;
 }
 
 
@@ -978,12 +1090,21 @@ a {
     font-weight: 800;
 
     white-space: nowrap;
+
+    transition:
+        background .15s ease,
+        color .15s ease,
+        border-color .15s ease;
 }
 
 
 .btn-refresh:hover {
     background: var(--bg-hover);
+
     color: var(--text-primary);
+
+    border-color:
+        var(--border-strong);
 }
 
 
@@ -1599,18 +1720,6 @@ a {
 }
 
 
-.library-loading {
-    min-height: 200px;
-
-    display: grid;
-    place-items: center;
-
-    color: var(--text-secondary);
-
-    font-size: 10px;
-}
-
-
 /* ============================================================
    SETTINGS
    ============================================================ */
@@ -1823,7 +1932,7 @@ a {
 
 
 /* ============================================================
-   PLAYER
+   GLOBAL PLAYER
    ============================================================ */
 
 .global-player-bar {
@@ -1884,7 +1993,7 @@ a {
 
     object-fit: cover;
 
-    border-radius: 6px;
+    border-radius: 7px;
 
     background: var(--bg-elevated);
 }
@@ -1920,6 +2029,10 @@ a {
 }
 
 
+/* ============================================================
+   PLAYER CONTROLS
+   ============================================================ */
+
 .gp-controls {
     display: flex;
     flex-direction: column;
@@ -1932,26 +2045,116 @@ a {
 }
 
 
-.gp-play-btn {
-    width: 34px;
-    height: 34px;
+.gp-main-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 
-    flex: 0 0 34px;
+    gap: 18px;
+
+    width: 100%;
+}
+
+
+.gp-skip-btn {
+    width: 30px;
+    height: 30px;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 0;
 
     border: 0;
+
+    background: transparent;
+
+    color: var(--text-secondary);
+
+    font-size: 17px;
+    line-height: 1;
+
+    border-radius: 50%;
+
+    transition:
+        color .15s ease,
+        background .15s ease,
+        transform .15s ease;
+}
+
+
+.gp-skip-btn:hover {
+    color: var(--text-primary);
+
+    background: var(--bg-hover);
+
+    transform: scale(1.08);
+}
+
+
+.gp-skip-btn:active {
+    transform: scale(.94);
+}
+
+
+.gp-skip-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+
+/* PLAY BUTTON */
+
+.gp-play-btn {
+    width: 38px;
+    height: 38px;
+
+    flex: 0 0 38px;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 0;
+
+    border: 0;
+
     border-radius: 50%;
 
     background: var(--text-primary);
     color: var(--bg-main);
 
-    transition: transform .12s ease;
+    font-size: 13px;
+    line-height: 1;
+
+    transition:
+        transform .12s ease,
+        background .12s ease;
 }
 
 
 .gp-play-btn:hover {
-    transform: scale(1.05);
+    transform: scale(1.08);
+
+    background: #fff;
 }
 
+
+.gp-play-btn:active {
+    transform: scale(.95);
+}
+
+
+.gp-play-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
+
+/* ============================================================
+   PLAYER PROGRESS
+   ============================================================ */
 
 .gp-progress-container {
     width: 100%;
@@ -1970,8 +2173,85 @@ a {
 .gp-progress-container input {
     flex: 1;
     min-width: 0;
+
+    height: 4px;
+
+    appearance: none;
+    -webkit-appearance: none;
+
+    background: transparent;
+
+    cursor: pointer;
 }
 
+
+/* WebKit slider */
+
+.gp-progress-container input::-webkit-slider-runnable-track {
+    height: 4px;
+
+    background: var(--bg-elevated);
+
+    border-radius: 99px;
+}
+
+
+.gp-progress-container input::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+
+    width: 11px;
+    height: 11px;
+
+    margin-top: -3.5px;
+
+    border: 0;
+
+    border-radius: 50%;
+
+    background: var(--text-primary);
+
+    box-shadow:
+        0 1px 5px
+        rgba(0, 0, 0, .25);
+}
+
+
+/* Firefox */
+
+.gp-progress-container input::-moz-range-track {
+    height: 4px;
+
+    background: var(--bg-elevated);
+
+    border-radius: 99px;
+}
+
+
+.gp-progress-container input::-moz-range-progress {
+    height: 4px;
+
+    background: var(--accent);
+
+    border-radius: 99px;
+}
+
+
+.gp-progress-container input::-moz-range-thumb {
+    width: 11px;
+    height: 11px;
+
+    border: 0;
+
+    border-radius: 50%;
+
+    background: var(--text-primary);
+}
+
+
+/* ============================================================
+   PLAYER EXTRA / VOLUME
+   ============================================================ */
 
 .gp-extra {
     display: flex;
@@ -1987,6 +2267,62 @@ a {
 .gp-extra input {
     width: 90px;
     max-width: 100%;
+
+    height: 4px;
+
+    appearance: none;
+    -webkit-appearance: none;
+
+    background: transparent;
+
+    cursor: pointer;
+}
+
+
+.gp-extra input::-webkit-slider-runnable-track {
+    height: 4px;
+
+    background: var(--bg-elevated);
+
+    border-radius: 99px;
+}
+
+
+.gp-extra input::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+
+    width: 10px;
+    height: 10px;
+
+    margin-top: -3px;
+
+    border: 0;
+
+    border-radius: 50%;
+
+    background: var(--text-primary);
+}
+
+
+.gp-extra input::-moz-range-track {
+    height: 4px;
+
+    background: var(--bg-elevated);
+
+    border-radius: 99px;
+}
+
+
+.gp-extra input::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+
+    border: 0;
+
+    border-radius: 50%;
+
+    background: var(--text-primary);
 }
 
 
@@ -1995,11 +2331,13 @@ a {
     height: 30px;
 
     flex: 0 0 90px;
+
+    border-radius: 6px;
 }
 
 
 /* ============================================================
-   RANGE INPUTS
+   GENERAL RANGE INPUT
    ============================================================ */
 
 input[type="range"] {
@@ -2142,6 +2480,11 @@ input[type="range"]:focus-visible {
             minmax(150px, 1fr)
             minmax(240px, 1.5fr)
             minmax(140px, 1fr);
+    }
+
+
+    .gp-main-controls {
+        gap: 12px;
     }
 
 
@@ -2299,70 +2642,7 @@ input[type="range"]:focus-visible {
     }
 
 
-    .downloads-page-header {
-        align-items: flex-start;
-
-        flex-direction: column;
-    }
-
-
-    .downloads-header-actions {
-        width: 100%;
-    }
-
-
-    .downloads-header-actions .btn-refresh {
-        flex: 1;
-    }
-
-
-    .downloads-page-title {
-        font-size: 32px;
-    }
-
-
-    .downloads-overview {
-        grid-template-columns:
-            repeat(2, minmax(0, 1fr));
-    }
-
-
-    .overview-card:last-child {
-        grid-column: 1 / -1;
-    }
-
-
-    .download-card {
-        grid-template-columns:
-            48px
-            minmax(0, 1fr);
-    }
-
-
-    .download-art {
-        width: 48px;
-        height: 48px;
-    }
-
-
-    .download-status-wrap {
-        display: none;
-    }
-
-
-    .download-actions {
-        grid-column: 2;
-
-        justify-content: flex-start;
-    }
-
-
-    .download-bottom {
-        flex-direction: column;
-
-        align-items: flex-start;
-    }
-
+    /* PLAYER */
 
     .global-player-bar {
         left: 0;
@@ -2388,9 +2668,36 @@ input[type="range"]:focus-visible {
 
 
     .gp-controls {
-        flex-direction: row;
+        flex-direction: column;
 
         width: auto;
+
+        gap: 2px;
+    }
+
+
+    .gp-main-controls {
+        width: auto;
+
+        gap: 7px;
+    }
+
+
+    .gp-skip-btn {
+        width: 28px;
+        height: 28px;
+
+        font-size: 15px;
+    }
+
+
+    .gp-play-btn {
+        width: 33px;
+        height: 33px;
+
+        flex-basis: 33px;
+
+        font-size: 12px;
     }
 
 
@@ -2410,6 +2717,8 @@ input[type="range"]:focus-visible {
         display: none;
     }
 
+
+    /* BOTTOM NAV */
 
     .bottom-nav {
         position: fixed;
@@ -2467,6 +2776,7 @@ input[type="range"]:focus-visible {
 
     .bottom-nav .nav-link span:first-child {
         width: auto;
+
         font-size: 17px;
     }
 
@@ -2475,6 +2785,8 @@ input[type="range"]:focus-visible {
         display: inline;
     }
 
+
+    /* SETTINGS */
 
     .setting-row {
         align-items: flex-start;
@@ -2494,7 +2806,9 @@ input[type="range"]:focus-visible {
 
     #amperfy-server-url {
         flex: 1;
+
         width: auto;
+
         min-width: 0;
     }
 
@@ -2519,6 +2833,25 @@ input[type="range"]:focus-visible {
     .search-card input {
         min-width: 0;
     }
+
+
+    .xrob-loading {
+        min-height: 180px;
+    }
+
+
+    .xrob-loader-circle {
+        width: 82px;
+        height: 82px;
+
+        flex-basis: 82px;
+    }
+
+
+    .xrob-loader-percent {
+        font-size: 16px;
+    }
+
 }
 
 
@@ -2684,9 +3017,26 @@ input[type="range"]:focus-visible {
     }
 
 
+    .gp-main-controls {
+        gap: 4px;
+    }
+
+
+    .gp-skip-btn {
+        width: 25px;
+        height: 25px;
+
+        font-size: 13px;
+    }
+
+
     .gp-play-btn {
-        width: 32px;
-        height: 32px;
+        width: 31px;
+        height: 31px;
+
+        flex-basis: 31px;
+
+        font-size: 11px;
     }
 
 
@@ -2696,6 +3046,33 @@ input[type="range"]:focus-visible {
 
         width: calc(100vw - 20px);
     }
+
+
+    .xrob-loading {
+        min-height: 160px;
+
+        padding:
+            15px 8px;
+    }
+
+
+    .xrob-loader-circle {
+        width: 76px;
+        height: 76px;
+
+        flex-basis: 76px;
+    }
+
+
+    .xrob-loader-percent {
+        font-size: 15px;
+    }
+
+
+    .xrob-loader-text {
+        font-size: 9px;
+    }
+
 }
 
 
@@ -2739,6 +3116,36 @@ input[type="range"]:focus-visible {
     .btn-preview {
         min-width: 54px;
     }
+
+
+    .gp-main-controls {
+        gap: 2px;
+    }
+
+
+    .gp-skip-btn {
+        width: 23px;
+        height: 23px;
+
+        font-size: 12px;
+    }
+
+
+    .gp-play-btn {
+        width: 29px;
+        height: 29px;
+
+        flex-basis: 29px;
+    }
+
+
+    .xrob-loader-circle {
+        width: 70px;
+        height: 70px;
+
+        flex-basis: 70px;
+    }
+
 }
 
 
@@ -2752,8 +3159,14 @@ input[type="range"]:focus-visible {
     *::before,
     *::after {
         scroll-behavior: auto !important;
-        transition-duration: .01ms !important;
-        animation-duration: .01ms !important;
-        animation-iteration-count: 1 !important;
+
+        transition-duration:
+            .01ms !important;
+
+        animation-duration:
+            .01ms !important;
+
+        animation-iteration-count:
+            1 !important;
     }
 }
