@@ -1649,14 +1649,42 @@ function filterLibrary() {
                 );
             }
 
+            /* DOUBLE CLICK CARD TO PLAY */
+            card.addEventListener(
+                "dblclick",
+                (event) => {
 
-            remove?.addEventListener(
-                "click",
-                () =>
-                    deleteFile(
-                        file.name
-                    )
+                    if (
+                        event.target.closest(".btn-danger")
+                    ) {
+                        return;
+                    }
+
+                    if (play) {
+
+                        toggleAudioStream(
+                            play,
+                            stream,
+                            "library",
+                            file.name,
+                            "Local Library",
+                            cover
+                        );
+                    }
+                }
             );
+
+
+            if (remove) {
+
+                remove.addEventListener(
+                    "click",
+                    () =>
+                        deleteFile(
+                            file.name
+                        )
+                );
+            }
 
 
             list.appendChild(card);
