@@ -624,14 +624,18 @@ def read_metadata_sync(path):
         if cached and cached[0] == stat.st_mtime:
             return cached[1]
 
+        # Read the complete container + stream metadata. In particular,
+        # -show_format / -show_streams includes format-level and stream-level
+        # tags written by yt-dlp/FFmpeg. Without the tags, artists/albums
+        # incorrectly fall back to "Unknown Artist" / filename.
         command = [
             "ffprobe",
             "-v",
             "quiet",
             "-print_format",
             "json",
-            "-show_entries",
-            "format=duration,size,bit_rate,format_name:stream=index,codec_type,codec_name,bit_rate,sample_rate,channels,bits_per_raw_sample,bits_per_sample",
+            "-show_format",
+            "-show_streams",
             str(path),
         ]
 
@@ -654,6 +658,8 @@ def read_metadata_sync(path):
                 "format",
                 {},
             )
+            # Container-level music tags live here.
+            fmt_tags = dict(fmt.get("tags") or {})
 
             streams = raw.get("streams") or []
             audio_stream = next(
@@ -665,7 +671,7 @@ def read_metadata_sync(path):
                 {},
             )
 
-            tags = dict(fmt.get("tags") or {})
+            tags = dict(fmt_tags)
             stream_tags = dict(audio_stream.get("tags") or {})
 
             # Merge container-level and audio-stream-level tags. Stream tags
