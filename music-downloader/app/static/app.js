@@ -25,6 +25,8 @@ let lastTaskSignature = "";
 let audio = null;
 let player = null;
 let playBtn = null;
+let prevBtn = null;
+let nextBtn = null;
 let seek = null;
 let volume = null;
 let curTime = null;
@@ -59,6 +61,16 @@ function cacheDom() {
     playBtn =
         document.getElementById(
             "gp-play-btn"
+        );
+
+    prevBtn =
+        document.getElementById(
+            "gp-prev-btn"
+        );
+
+    nextBtn =
+        document.getElementById(
+            "gp-next-btn"
         );
 
     seek =
@@ -857,11 +869,8 @@ function bindAudioEvents() {
                 currentIndex < queue.length - 1
             ) {
 
-                window.xrobHomeQueueIndex =
-                    currentIndex + 1;
-
                 playHomeTrack(
-                    window.xrobHomeQueueIndex
+                    currentIndex + 1
                 );
 
                 return;
@@ -930,6 +939,16 @@ function bindPlayerControls() {
                 audio.pause();
             }
         }
+    );
+
+    prevBtn?.addEventListener(
+        "click",
+        playPreviousHomeTrack
+    );
+
+    nextBtn?.addEventListener(
+        "click",
+        playNextHomeTrack
     );
 
 
@@ -3283,6 +3302,96 @@ async function clearDoneTasks() {
 /* ============================================================
    HOME
    ============================================================ */
+
+function playNextHomeTrack() {
+
+    const queue =
+        window.xrobHomeQueue || [];
+
+    if (!queue.length) {
+        return;
+    }
+
+    const currentIndex =
+        Number.isInteger(
+            window.xrobHomeQueueIndex
+        )
+            ? window.xrobHomeQueueIndex
+            : -1;
+
+    const nextIndex =
+        currentIndex + 1;
+
+    if (
+        nextIndex >= queue.length
+    ) {
+
+        showToast(
+            "🎵 End of Recently Added"
+        );
+
+        return;
+    }
+
+    window.xrobHomeQueueIndex =
+        nextIndex;
+
+    playHomeTrack(
+        nextIndex
+    );
+}
+
+function playPreviousHomeTrack() {
+
+    const queue =
+        window.xrobHomeQueue || [];
+
+    if (!queue.length) {
+        return;
+    }
+
+    const currentIndex =
+        Number.isInteger(
+            window.xrobHomeQueueIndex
+        )
+            ? window.xrobHomeQueueIndex
+            : 0;
+
+    /*
+     * If the song has played more than 3 seconds,
+     * Previous restarts the current track.
+     */
+    if (
+        audio &&
+        audio.currentTime > 3
+    ) {
+
+        audio.currentTime = 0;
+
+        return;
+    }
+
+    const previousIndex =
+        currentIndex - 1;
+
+    if (
+        previousIndex < 0
+    ) {
+
+        showToast(
+            "🎵 This is the first Recently Added track"
+        );
+
+        return;
+    }
+
+    window.xrobHomeQueueIndex =
+        previousIndex;
+
+    playHomeTrack(
+        previousIndex
+    );
+}
 
 async function loadHome() {
 
