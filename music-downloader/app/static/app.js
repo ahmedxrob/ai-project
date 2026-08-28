@@ -1,1788 +1,1479 @@
-:root {
-    --bg-main: #121212;
-    --bg-sidebar: #080808;
-    --bg-surface: #181818;
-    --bg-elevated: #242424;
-    --bg-input: #242424;
-    --bg-hover: #292929;
+"use strict";
 
-    --border: rgba(255, 255, 255, .08);
-    --border-strong: rgba(255, 255, 255, .14);
+/* ============================================================
+   GLOBAL STATE
+   ============================================================ */
 
-    --accent: #1ed760;
-    --accent-hover: #20e363;
+let socket = null;
+let socketReconnectTimer = null;
 
-    --text-primary: #fff;
-    --text-secondary: #b3b3b3;
-    --text-muted: #737373;
+let completedSet = new Set();
 
-    --danger: #e91429;
-    --purple: #a855f7;
+let rawLibraryFiles = [];
+let libraryFilesSet = new Set();
 
-    --sidebar-width: 250px;
-    --player-height: 90px;
-    --bottom-nav-height: 58px;
+let libraryLoadedFromCache = false;
 
-    --radius-small: 8px;
-    --radius-medium: 12px;
-    --radius-large: 16px;
-}
+const LIBRARY_CACHE_KEY =
+    "xrob_music_library_cache";
+
+const RECENT_CACHE_KEY =
+    "xrob_music_recently_added_cache";
+let recentTracksCache = [];
+
+let activePreviewBtn = null;
+let currentPlayerSource = null;
+// "home" or "library"
+let currentLibraryIndex = -1;
+
+let currentPage = 1;
+let currentQuery = "";
+let isLoadingMore = false;
+let hasMoreResults = true;
+
+let latestTasks = [];
+let lastTaskSignature = "";
+
+let audio = null;
+let player = null;
+let playBtn = null;
+let prevBtn = null;
+let nextBtn = null;
+let seek = null;
+let volume = null;
+let curTime = null;
+let durTime = null;
+let playerTitle = null;
+let playerArtist = null;
+let playerArt = null;
+let canvas = null;
+let canvasCtx = null;
+
+let audioContext = null;
+let analyser = null;
+let sourceNode = null;
+
+let savedPlayerState = {
+    track: null,
+    currentTime: 0,
+    volume: 0.8,
+    queueIndex: -1
+};
 
 
 /* ============================================================
-   LIGHT THEME
+   DOM INITIALIZATION
    ============================================================ */
 
-[data-theme="light"] {
-    --bg-main: #f5f5f5;
-    --bg-sidebar: #ffffff;
-    --bg-surface: #ffffff;
-    --bg-elevated: #e8e8e8;
-    --bg-input: #e8e8e8;
-    --bg-hover: #eeeeee;
+function cacheDom() {
 
-    --border: rgba(0, 0, 0, .08);
-    --border-strong: rgba(0, 0, 0, .14);
-
-    --accent: #1db954;
-    --accent-hover: #1ed760;
-
-    --text-primary: #111111;
-    --text-secondary: #555555;
-    --text-muted: #888888;
-}
-
-
-/* ============================================================
-   RESET
-   ============================================================ */
-
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}
-
-
-html {
-    min-height: 100%;
-    background: var(--bg-main);
-    color-scheme: dark;
-}
-
-
-html[data-theme="light"] {
-    color-scheme: light;
-}
-
-
-body {
-    min-height: 100vh;
-
-    background:
-        radial-gradient(
-            circle at 20% 0,
-            rgba(30, 215, 96, .035),
-            transparent 30%
-        ),
-        var(--bg-main);
-
-    color: var(--text-primary);
-
-    font-family:
-        "Plus Jakarta Sans",
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        sans-serif;
-
-    overflow-x: hidden;
-}
-
-
-button,
-input,
-select {
-    font: inherit;
-}
-
-
-button {
-    cursor: pointer;
-}
-
-
-button:disabled {
-    cursor: not-allowed;
-    opacity: .55;
-}
-
-
-input,
-select {
-    color: var(--text-primary);
-}
-
-
-img {
-    display: block;
-    max-width: 100%;
-}
-
-
-a {
-    color: inherit;
-}
-
-
-/* ============================================================
-   APP
-   ============================================================ */
-
-.app-shell {
-    min-height: 100vh;
-    display: flex;
-}
-
-
-.app-column {
-    width: calc(100% - var(--sidebar-width));
-    margin-left: var(--sidebar-width);
-    min-width: 0;
-}
-
-
-/* ============================================================
-   SIDEBAR
-   ============================================================ */
-
-.side-nav {
-    position: fixed;
-
-    inset: 0 auto 0 0;
-
-    width: var(--sidebar-width);
-
-    z-index: 1000;
-
-    padding: 22px 12px;
-
-    background:
-        linear-gradient(
-            180deg,
-            var(--bg-sidebar),
-            color-mix(
-                in srgb,
-                var(--bg-sidebar) 88%,
-                #000
-            )
+    audio =
+        document.getElementById(
+            "global-audio-element"
         );
 
-    border-right: 1px solid var(--border);
-
-    overflow-y: auto;
-}
-
-
-.side-brand {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-
-    padding: 4px 12px 22px;
-}
-
-
-.side-brand svg {
-    flex: 0 0 38px;
-    width: 38px;
-    height: 38px;
-}
-
-
-.side-brand h1 {
-    font-size: 20px;
-    font-weight: 800;
-    letter-spacing: -.7px;
-}
-
-
-.nav-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    list-style: none;
-}
-
-
-.nav-list::before {
-    content: "MENU";
-
-    padding: 0 14px 10px;
-
-    color: var(--text-muted);
-
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 1.6px;
-}
-
-
-.nav-link {
-    width: 100%;
-    min-height: 46px;
-
-    display: flex;
-    align-items: center;
-
-    gap: 13px;
-
-    padding: 10px 14px;
-
-    border: 0;
-    border-radius: 9px;
-
-    background: transparent;
-
-    color: var(--text-secondary);
-
-    font-size: 13px;
-    font-weight: 700;
-
-    text-align: left;
-
-    transition:
-        background .15s ease,
-        color .15s ease,
-        transform .15s ease;
-}
-
-
-.nav-link:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-}
-
-
-.nav-link:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-}
-
-
-.nav-link.active {
-    background: rgba(255, 255, 255, .07);
-    color: var(--text-primary);
-}
-
-
-[data-theme="light"] .nav-link.active {
-    background: rgba(0, 0, 0, .06);
-}
-
-
-.nav-link span:first-child {
-    width: 23px;
-
-    display: inline-flex;
-    justify-content: center;
-
-    font-size: 18px;
-}
-
-
-.nav-link.active span:first-child {
-    color: var(--accent);
-}
-
-
-/* ============================================================
-   MOBILE HEADER
-   ============================================================ */
-
-.mobile-header {
-    display: none;
-}
-
-
-/* ============================================================
-   MAIN
-   ============================================================ */
-
-.main-content {
-    min-height: 100vh;
-
-    padding:
-        34px 40px
-        calc(var(--player-height) + 40px);
-}
-
-
-.tab-content {
-    display: none;
-}
-
-
-.tab-content.active {
-    display: block;
-}
-
-
-.page-heading {
-    margin-bottom: 24px;
-}
-
-
-.page-heading h2 {
-    font-size: 30px;
-    font-weight: 800;
-    letter-spacing: -1px;
-}
-
-
-.page-heading p {
-    margin-top: 5px;
-    color: var(--text-secondary);
-    font-size: 11px;
-}
-
-
-/* ============================================================
-   HOME
-   ============================================================ */
-
-.home-hero {
-    min-height: 250px;
-
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-
-    gap: 25px;
-
-    padding: 30px;
-    margin-bottom: 24px;
-
-    border: 1px solid var(--border);
-    border-radius: 22px;
-
-    background:
-        radial-gradient(
-            circle at 80% 20%,
-            rgba(30, 215, 96, .16),
-            transparent 34%
-        ),
-        linear-gradient(
-            135deg,
-            #1d1d1d,
-            #131313
+    player =
+        document.getElementById(
+            "global-player-bar"
         );
-}
 
-
-[data-theme="light"] .home-hero {
-    background:
-        radial-gradient(
-            circle at 80% 20%,
-            rgba(30, 185, 84, .12),
-            transparent 34%
-        ),
-        linear-gradient(
-            135deg,
-            #ffffff,
-            #f4f4f4
+    playBtn =
+        document.getElementById(
+            "gp-play-btn"
         );
+
+    prevBtn =
+        document.getElementById(
+            "gp-prev-btn"
+        );
+
+    nextBtn =
+        document.getElementById(
+            "gp-next-btn"
+        );
+
+    seek =
+        document.getElementById(
+            "gp-seek"
+        );
+
+    volume =
+        document.getElementById(
+            "gp-volume"
+        );
+
+    curTime =
+        document.getElementById(
+            "gp-cur-time"
+        );
+
+    durTime =
+        document.getElementById(
+            "gp-dur-time"
+        );
+
+    playerTitle =
+        document.getElementById(
+            "gp-title"
+        );
+
+    playerArtist =
+        document.getElementById(
+            "gp-artist"
+        );
+
+    playerArt =
+        document.getElementById(
+            "gp-art"
+        );
+
+    canvas =
+        document.getElementById(
+            "visualizer-canvas"
+        );
+
+    canvasCtx =
+        canvas
+            ? canvas.getContext("2d")
+            : null;
 }
 
 
-.home-eyebrow {
-    color: var(--accent);
+/* ============================================================
+   HELPERS
+   ============================================================ */
 
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 1.8px;
+function getLibraryQueue() {
+
+    return Array.isArray(
+        rawLibraryFiles
+    )
+        ? rawLibraryFiles
+        : [];
 }
-
-
-.home-title {
-    margin-top: 8px;
-
-    max-width: 800px;
-
-    font-size: clamp(32px, 5vw, 54px);
-    line-height: 1;
-    font-weight: 800;
-    letter-spacing: -2px;
-}
-
-
-.home-subtitle {
-    max-width: 600px;
-
-    margin-top: 14px;
-
-    color: var(--text-secondary);
-
-    font-size: 12px;
-}
-
-
-.home-search-button,
-.save-btn {
-    min-height: 42px;
-
-    padding: 0 20px;
-
-    border: 0;
-    border-radius: 22px;
-
-    background: var(--accent);
-    color: #000;
-
-    font-size: 10px;
-    font-weight: 800;
-
-    transition:
-        background .15s ease,
-        transform .15s ease;
-}
-
-
-.home-search-button:hover,
-.save-btn:hover {
-    background: var(--accent-hover);
-    transform: translateY(-1px);
-}
-
-
-.home-search-button:focus-visible,
-.save-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 3px;
-}
-
-
-.home-stats-grid {
-    display: grid;
-
-    grid-template-columns:
-        repeat(4, minmax(0, 1fr));
-
-    gap: 12px;
-
-    margin-bottom: 30px;
-}
-
-
-.home-stat-card {
-    min-height: 92px;
-
-    display: flex;
-    align-items: center;
-
-    gap: 12px;
-
-    padding: 18px;
-
-    background: var(--bg-surface);
-
-    border: 1px solid var(--border);
-    border-radius: 14px;
-}
-
-
-.home-stat-icon {
-    width: 42px;
-    height: 42px;
-
-    flex: 0 0 42px;
-
-    display: grid;
-    place-items: center;
-
-    background: rgba(30, 215, 96, .08);
-
-    border-radius: 11px;
-}
-
-
-.home-stat-card strong {
-    display: block;
-
-    font-size: 22px;
-    font-weight: 800;
-}
-
-
-.home-stat-card span {
-    color: var(--text-secondary);
-    font-size: 9px;
-}
-
-
-.home-section-header {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-
-    gap: 15px;
-
-    margin-bottom: 14px;
-}
-
-
-.home-section-header h3 {
-    font-size: 17px;
-    font-weight: 800;
-}
-
-
-.home-section-header p {
-    margin-top: 3px;
-
-    color: var(--text-muted);
-    font-size: 9px;
-}
-
-
-.recent-grid {
-    display: grid;
-
-    grid-template-columns:
-        repeat(6, minmax(0, 1fr));
-
-    gap: 14px;
-
-    margin-bottom: 30px;
-}
-
-
-.recent-card {
-    width: 100%;
-
-    padding: 0;
-
-    border: 0;
-
-    background: transparent;
-
-    color: var(--text-primary);
-
-    text-align: left;
-
-    border-radius: 10px;
-}
-
-
-.recent-card img {
-    width: 100%;
-    aspect-ratio: 1;
-
-    object-fit: cover;
-
-    border-radius: 10px;
-
-    transition:
-        transform .16s ease,
-        box-shadow .16s ease;
-}
-
-
-.recent-card:hover img {
-    transform: translateY(-3px);
-}
-
-
-.recent-card.playing img {
-    box-shadow:
-        0 0 0 2px var(--accent),
-        0 8px 22px rgba(0, 0, 0, .3);
-}
-
-
-.recent-card:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 3px;
-}
-
-
-.recent-card-title {
-    margin-top: 8px;
-
-    overflow: hidden;
-
-    font-size: 10px;
-    font-weight: 750;
-
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-
-.recent-card-artist {
-    margin-top: 2px;
-
-    overflow: hidden;
-
-    color: var(--text-secondary);
-
-    font-size: 8px;
-
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-
-.home-connect-card {
-    display: flex;
-    align-items: center;
-
-    gap: 14px;
-
-    padding: 18px;
-
-    background: rgba(30, 215, 96, .04);
-
-    border:
-        1px solid
-        rgba(30, 215, 96, .14);
-
-    border-radius: 15px;
-}
-
-
-.home-connect-icon {
-    width: 45px;
-    height: 45px;
-
-    flex: 0 0 45px;
-
-    display: grid;
-    place-items: center;
-
-    background: rgba(30, 215, 96, .08);
-
-    border-radius: 12px;
-}
-
-
-.home-connect-content {
-    flex: 1;
-    min-width: 0;
-}
-
-
-.home-connect-content h3 {
-    font-size: 12px;
-    font-weight: 800;
-}
-
-
-.home-connect-content p {
-    margin-top: 3px;
-
-    color: var(--text-secondary);
-
-    font-size: 9px;
-}
-
 
 /* ============================================================
    LOADING CIRCLE
    ============================================================ */
-
-.xrob-loading {
-    min-height: 210px;
-
-    display: none;
-
-    flex-direction: column;
-
-    align-items: center;
-    justify-content: center;
-
-    gap: 12px;
-
-    width: 100%;
-
-    padding: 25px;
-}
-
-
-.xrob-loader-circle {
-    position: relative;
-
-    width: 92px;
-    height: 92px;
-
-    flex: 0 0 92px;
-}
-
-
-.xrob-loader-svg {
-    width: 100%;
-    height: 100%;
-
-    display: block;
-
-    transform: rotate(-90deg);
-}
-
-
-.xrob-loader-track,
-.xrob-loader-progress {
-    fill: none;
-
-    stroke-width: 7;
-}
-
-
-.xrob-loader-track {
-    stroke: var(--bg-elevated);
-}
-
-
-.xrob-loader-progress {
-    stroke: var(--accent);
-
-    stroke-linecap: round;
-
-    stroke-dasharray: 263.9;
-    stroke-dashoffset: 263.9;
-
-    transition:
-        stroke-dashoffset .25s ease;
-}
-
-
-.xrob-loader-percent {
-    position: absolute;
-
-    inset: 0;
-
-    display: flex;
-
-    align-items: center;
-    justify-content: center;
-
-    color: var(--text-primary);
-
-    font-size: 18px;
-    font-weight: 800;
-}
-
-
-.xrob-loader-text {
-    color: var(--text-secondary);
-
-    font-size: 10px;
-    font-weight: 700;
-
-    text-align: center;
-}
-
-
-/* ============================================================
-   SEARCH LOADING — SAME LOADER AS LIBRARY
-   ============================================================ */
-
-/* Search uses the exact same loader geometry/classes as Library. */
-#searchLoading.xrob-loading {
-    min-height: 210px;
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    width: 100%;
-    padding: 25px;
-}
-
-#searchLoading .xrob-loader-circle {
-    position: relative;
-    width: 92px;
-    height: 92px;
-    flex: 0 0 92px;
-}
-
-#searchLoading .xrob-loader-svg {
-    width: 100%;
-    height: 100%;
-    display: block;
-    transform: rotate(-90deg);
-}
-
-#searchLoading .xrob-loader-track,
-#searchLoading .xrob-loader-progress {
-    fill: none;
-    stroke-width: 7;
-}
-
-#searchLoading .xrob-loader-track {
-    stroke: var(--bg-elevated);
-}
-
-#searchLoading .xrob-loader-progress {
-    stroke: var(--accent);
-    stroke-linecap: round;
-    stroke-dasharray: 263.9;
-    stroke-dashoffset: 263.9;
-    transition: stroke-dashoffset .25s ease;
-}
-
-#searchLoading .xrob-loader-percent {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-primary);
-    font-size: 18px;
-    font-weight: 800;
-}
-
-#searchLoading .xrob-loader-text {
-    color: var(--text-secondary);
-    font-size: 10px;
-    font-weight: 700;
-    text-align: center;
-}
-
-/* ============================================================
-   SEARCH
-   ============================================================ */
-
-.search-card {
-    display: flex;
-
-    gap: 10px;
-
-    margin-bottom: 24px;
-}
-
-
-.search-card input {
-    flex: 1;
-
-    min-width: 0;
-
-    height: 52px;
-
-    padding: 0 19px;
-
-    border: 1px solid transparent;
-    border-radius: 27px;
-
-    background: var(--bg-input);
-    color: var(--text-primary);
-
-    font-size: 12px;
-}
-
-
-.search-card input::placeholder {
-    color: var(--text-muted);
-}
-
-
-.search-card input:focus {
-    outline: none;
-    border-color: var(--accent);
-}
-
-
-.search-card button {
-    height: 52px;
-
-    flex: 0 0 auto;
-
-    padding: 0 23px;
-
-    border: 0;
-    border-radius: 27px;
-
-    background: var(--accent);
-    color: #000;
-
-    font-size: 11px;
-    font-weight: 800;
-}
-
-
-.search-card button:hover {
-    background: var(--accent-hover);
-}
-
-
-.status-msg {
-    margin: 14px 0;
-
-    color: var(--text-secondary);
-
-    font-size: 10px;
-
-    text-align: center;
-}
-
-
-/* ============================================================
-   RESULTS
-   ============================================================ */
-
-.results-grid {
-    display: flex;
-    flex-direction: column;
-
-    gap: 4px;
-
-    min-width: 0;
-}
-
-
-.result-card {
-    min-height: 74px;
-
-    display: flex;
-    align-items: center;
-
-    gap: 14px;
-
-    padding: 8px 12px;
-
-    border: 1px solid transparent;
-    border-radius: 10px;
-
-    min-width: 0;
-}
-
-
-.result-card:hover {
-    background: var(--bg-hover);
-    border-color: var(--border);
-}
-
-
-.thumb-wrapper {
-    position: relative;
-
-    flex: 0 0 58px;
-
-    width: 58px;
-    height: 58px;
-
-    overflow: hidden;
-
-    border-radius: 8px;
-
-    background: var(--bg-elevated);
-}
-
-
-.thumb-wrapper img {
-    width: 100%;
-    height: 100%;
-
-    object-fit: cover;
-}
-
-
-.badge-duration {
-    position: absolute;
-
-    right: 3px;
-    bottom: 3px;
-
-    padding: 2px 4px;
-
-    border-radius: 3px;
-
-    background: rgba(0, 0, 0, .8);
-    color: #fff;
-
-    font-size: 8px;
-}
-
-
-.track-info {
-    flex: 1;
-    min-width: 0;
-}
-
-
-.track-title {
-    overflow: hidden;
-
-    font-size: 12px;
-    font-weight: 750;
-
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-
-.track-artist {
-    margin-top: 2px;
-
-    overflow: hidden;
-
-    color: var(--text-secondary);
-
-    font-size: 9px;
-
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-
-.btn-group {
-    display: flex;
-    align-items: center;
-
-    gap: 7px;
-
-    flex: 0 0 auto;
-}
-
-
-.btn-preview,
-.btn-download {
-    height: 34px;
-
-    padding: 0 11px;
-
-    border:
-        1px solid
-        var(--border-strong);
-
-    border-radius: 17px;
-
-    background: transparent;
-    color: var(--text-primary);
-
-    font-size: 9px;
-    font-weight: 800;
-}
-
-
-.btn-preview:hover,
-.btn-download:hover {
-    border-color: var(--accent);
-
-    background: var(--accent);
-    color: #000;
-}
-
-
-.btn-preview.playing {
-    border-color: var(--accent);
-
-    background: var(--accent);
-    color: #000;
-}
-
-
-.btn-danger {
-    height: 32px;
-
-    padding: 0 11px;
-
-    border:
-        1px solid
-        rgba(233, 20, 41, .4);
-
-    border-radius: 17px;
-
-    background: transparent;
-
-    color: #ff6475;
-
-    font-size: 9px;
-    font-weight: 800;
-}
-
-
-.btn-danger:hover {
-    background: var(--danger);
-    border-color: var(--danger);
-
-    color: #fff;
-}
-
-
-.badge-library {
-    padding: 7px 10px;
-
-    border-radius: 17px;
-
-    color: var(--accent);
-
-    background: rgba(30, 215, 96, .08);
-
-    border:
-        1px solid
-        rgba(30, 215, 96, .16);
-
-    font-size: 9px;
-    font-weight: 800;
-
-    white-space: nowrap;
-}
-
-
-/* ============================================================
-   BUTTONS
-   ============================================================ */
-
-.btn-refresh {
-    min-height: 34px;
-
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-
-    padding: 0 12px;
-
-    border:
-        1px solid
-        var(--border-strong);
-
-    border-radius: 18px;
-
-    background: transparent;
-
-    color: var(--text-secondary);
-
-    font-size: 9px;
-    font-weight: 800;
-
-    white-space: nowrap;
-
-    transition:
-        background .15s ease,
-        color .15s ease,
-        border-color .15s ease;
-}
-
-
-.btn-refresh:hover {
-    background: var(--bg-hover);
-
-    color: var(--text-primary);
-
-    border-color:
-        var(--border-strong);
-}
-
-
-.btn-refresh:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-}
-
-
-/* ============================================================
-   DOWNLOAD PAGE
-   ============================================================ */
-
-.downloads-page-header {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-
-    gap: 20px;
-
-    margin-bottom: 25px;
-}
-
-
-.downloads-page-title {
-    font-size: 40px;
-
-    font-weight: 800;
-    letter-spacing: -1.4px;
-}
-
-
-.downloads-page-subtitle {
-    margin-top: 5px;
-
-    color: var(--text-secondary);
-
-    font-size: 10px;
-}
-
-
-.downloads-header-actions {
-    display: flex;
-    gap: 8px;
-}
-
-
-.downloads-overview {
-    display: grid;
-
-    grid-template-columns:
-        repeat(3, minmax(0, 1fr));
-
-    gap: 12px;
-
-    margin-bottom: 28px;
-}
-
-
-.overview-card {
-    min-height: 90px;
-
-    display: flex;
-    align-items: center;
-
-    gap: 12px;
-
-    padding: 17px;
-
-    background: var(--bg-surface);
-
-    border:
-        1px solid
-        var(--border);
-
-    border-radius: 14px;
-}
-
-
-.overview-icon {
-    width: 42px;
-    height: 42px;
-
-    flex: 0 0 42px;
-
-    display: grid;
-    place-items: center;
-
-    border-radius: 11px;
-
-    background: rgba(30, 215, 96, .08);
-}
-
-
-.overview-value {
-    display: block;
-
-    font-size: 22px;
-    font-weight: 800;
-}
-
-
-.overview-label {
-    color: var(--text-secondary);
-    font-size: 9px;
-}
-
-
-.downloads-list {
-    display: flex;
-    flex-direction: column;
-
-    gap: 27px;
-}
-
-
-.downloads-section {
-    display: flex;
-    flex-direction: column;
-
-    gap: 10px;
-}
-
-
-.downloads-section-header {
-    display: flex;
-
-    justify-content: space-between;
-    align-items: center;
-
-    gap: 12px;
-
-    padding-bottom: 10px;
-
-    border-bottom:
-        1px solid
-        var(--border);
-}
-
-
-.downloads-section-title {
-    font-size: 15px;
-    font-weight: 800;
-}
-
-
-.downloads-section-subtitle {
-    margin-top: 3px;
-
-    color: var(--text-muted);
-
-    font-size: 9px;
-}
-
-
-.section-count {
-    min-width: 30px;
-    height: 30px;
-
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-
-    flex: 0 0 auto;
-
-    border-radius: 50%;
-
-    background: var(--bg-elevated);
-
-    border:
-        1px solid
-        var(--border);
-
-    font-size: 9px;
-    font-weight: 800;
-}
-
-
-.download-stack {
-    display: flex;
-    flex-direction: column;
-
-    gap: 8px;
-}
-
-
-.download-card {
-    display: grid;
-
-    grid-template-columns:
-        58px
-        minmax(0, 1fr)
-        auto;
-
-    align-items: center;
-
-    gap: 15px;
-
-    min-height: 103px;
-
-    padding: 13px 15px;
-
-    background: var(--bg-surface);
-
-    border:
-        1px solid
-        var(--border);
-
-    border-radius: 14px;
-
-    min-width: 0;
-}
-
-
-.download-art {
-    width: 58px;
-    height: 58px;
-
-    display: grid;
-    place-items: center;
-
-    position: relative;
-
-    background:
-        linear-gradient(
-            145deg,
-            #262626,
-            #111
+function updateLoadingCircle(
+    type,
+    percent,
+    text = ""
+) {
+
+    const safePercent =
+        Math.max(
+            0,
+            Math.min(
+                100,
+                Math.round(
+                    Number(percent) || 0
+                )
+            )
         );
 
-    border-radius: 9px;
+    const isLibrary =
+        type === "library";
 
-    overflow: hidden;
+    const loading =
+        document.getElementById(
+            isLibrary
+                ? "libraryLoading"
+                : "recentTracksLoading"
+        );
+
+    const percentElement =
+        document.getElementById(
+            isLibrary
+                ? "libraryLoadingPercent"
+                : "recentLoadingPercent"
+        );
+
+    const circle =
+        document.getElementById(
+            isLibrary
+                ? "libraryLoadingCircle"
+                : "recentLoadingCircle"
+        );
+
+    const textElement =
+        document.getElementById(
+            isLibrary
+                ? "libraryLoadingText"
+                : "recentLoadingText"
+        );
+
+    if (!loading) {
+        return;
+    }
+
+    loading.style.display =
+        "flex";
+
+    if (percentElement) {
+
+        percentElement.textContent =
+            `${safePercent}%`;
+    }
+
+    if (textElement && text) {
+
+        textElement.textContent =
+            text;
+    }
+
+    if (circle) {
+
+        const circumference =
+            263.9;
+
+        circle.style.strokeDasharray =
+            circumference;
+
+        circle.style.strokeDashoffset =
+            circumference -
+            (
+                safePercent / 100
+            ) *
+            circumference;
+    }
+}
+
+/* ============================================================
+   SEARCH LOADING CIRCLE
+   ============================================================ */
+function updateSearchLoading(
+    percent,
+    text = ""
+) {
+
+    const safePercent =
+        Math.max(
+            0,
+            Math.min(
+                100,
+                Math.round(
+                    Number(percent) || 0
+                )
+            )
+        );
+
+    const loading =
+        document.getElementById(
+            "searchLoading"
+        );
+
+    const percentElement =
+        document.getElementById(
+            "searchLoadingPercent"
+        );
+
+    const circle =
+        document.getElementById(
+            "searchLoadingCircle"
+        );
+
+    const textElement =
+        document.getElementById(
+            "searchLoadingText"
+        );
+
+    if (!loading) {
+        return;
+    }
+
+    loading.style.display = "flex";
+
+    if (percentElement) {
+        percentElement.textContent =
+            `${safePercent}%`;
+    }
+
+    if (textElement && text) {
+        textElement.textContent =
+            text;
+    }
+
+    if (circle) {
+
+        const circumference =
+            263.9;
+
+        circle.style.strokeDasharray =
+            circumference;
+
+        circle.style.strokeDashoffset =
+            circumference -
+            (
+                safePercent / 100
+            ) *
+            circumference;
+    }
+}
+
+function smoothSearchLoading(
+    from,
+    to,
+    text,
+    duration = 400
+) {
+
+    const start =
+        performance.now();
+
+    function animate(now) {
+
+        const progress =
+            Math.min(
+                (now - start) /
+                duration,
+                1
+            );
+
+        const percent =
+            Math.round(
+                from +
+                (
+                    to - from
+                ) *
+                progress
+            );
+
+        updateSearchLoading(
+            percent,
+            text
+        );
+
+        if (progress < 1) {
+
+            requestAnimationFrame(
+                animate
+            );
+        }
+    }
+
+    requestAnimationFrame(
+        animate
+    );
+}
+
+function hideSearchLoading() {
+
+    const loading =
+        document.getElementById(
+            "searchLoading"
+        );
+
+    if (loading) {
+        loading.style.display =
+            "none";
+    }
+}
+
+function smoothLoading(
+    type,
+    from,
+    to,
+    text,
+    duration = 400
+) {
+
+    const start =
+        performance.now();
+
+    function animate(now) {
+
+        const progress =
+            Math.min(
+                (now - start) /
+                duration,
+                1
+            );
+
+        const percent =
+            Math.round(
+                from +
+                (to - from) *
+                progress
+            );
+
+        updateLoadingCircle(
+            type,
+            percent,
+            text
+        );
+
+        if (progress < 1) {
+
+            requestAnimationFrame(
+                animate
+            );
+        }
+    }
+
+    requestAnimationFrame(
+        animate
+    );
+}
+
+function hideLoadingCircle(
+    type
+) {
+
+    const element =
+        document.getElementById(
+            type === "library"
+                ? "libraryLoading"
+                : "recentTracksLoading"
+        );
+
+    if (element) {
+
+        element.style.display =
+            "none";
+    }
+}
+
+function escapeHtml(value) {
+
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }
 
 
-[data-theme="light"] .download-art {
-    background:
-        linear-gradient(
-            145deg,
-            #eeeeee,
-            #d9d9d9
+function normalizeKey(value) {
+
+    return String(value || "")
+        .toLowerCase()
+        .replace(
+            /\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(ed)?|audio)\b/gi,
+            " "
+        )
+        .replace(
+            /[^a-z0-9]+/g,
+            ""
         );
 }
 
 
-.download-art img {
-    width: 100%;
-    height: 100%;
-
-    object-fit: cover;
-}
-
-
-.download-art-overlay {
-    position: absolute;
-
-    right: 4px;
-    bottom: 4px;
-
-    width: 21px;
-    height: 21px;
-
-    display: grid;
-    place-items: center;
-
-    background: rgba(0, 0, 0, .75);
-
-    border-radius: 50%;
-
-    font-size: 9px;
-}
-
-
-.download-main {
-    min-width: 0;
-}
-
-
-.download-top {
-    display: flex;
-
-    justify-content: space-between;
-
-    gap: 10px;
-
-    min-width: 0;
-}
-
-
-.download-title {
-    overflow: hidden;
-
-    font-size: 12px;
-    font-weight: 750;
-
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-
-.download-artist {
-    margin-top: 3px;
-
-    color: var(--text-secondary);
-
-    font-size: 9px;
-}
-
-
-.download-status-wrap {
-    display: flex;
-    align-items: center;
-
-    gap: 7px;
-
-    flex: 0 0 auto;
-}
-
-
-.download-status {
-    display: inline-flex;
-    align-items: center;
-
-    gap: 4px;
-
-    padding: 4px 8px;
-
-    border-radius: 999px;
-
-    background: var(--bg-elevated);
-
-    border:
-        1px solid
-        var(--border);
-
-    font-size: 8px;
-    font-weight: 800;
-
-    white-space: nowrap;
-}
-
-
-.status-dot {
-    width: 5px;
-    height: 5px;
-
-    flex: 0 0 5px;
-
-    border-radius: 50%;
-
-    background: currentColor;
-}
-
-
-.status-queued {
-    color: #aaa;
-}
-
-
-.status-downloading {
-    color: var(--accent);
-}
-
-
-.status-processing {
-    color: var(--purple);
-}
-
-
-.status-completed {
-    color: var(--accent);
-}
-
-
-.status-error {
-    color: #ff6475;
-}
-
-
-.status-cancelled {
-    color: #999;
-}
-
-
-.queue-position {
-    color: var(--text-muted);
-
-    font-size: 8px;
-    font-weight: 800;
-}
-
-
-.download-progress-row {
-    display: flex;
-    align-items: center;
-
-    gap: 8px;
-
-    margin-top: 11px;
-}
-
-
-.download-progress-track {
-    flex: 1;
-
-    min-width: 0;
-
-    height: 5px;
-
-    overflow: hidden;
-
-    background: var(--bg-elevated);
-
-    border-radius: 99px;
-}
-
-
-.download-progress-fill {
-    height: 100%;
-
-    background:
-        linear-gradient(
-            90deg,
-            var(--accent),
-            #69ff9b
+function showToast(message) {
+
+    const container =
+        document.getElementById(
+            "toast-container"
         );
 
-    border-radius: 99px;
+    if (!container) {
+        return;
+    }
 
-    transition: width .3s ease;
+    const toast =
+        document.createElement(
+            "div"
+        );
+
+    toast.className = "toast";
+    toast.textContent = String(message ?? "");
+
+    container.appendChild(toast);
+
+    setTimeout(
+        () => toast.remove(),
+        3500
+    );
 }
 
-
-.download-percent {
-    width: 35px;
-
-    flex: 0 0 35px;
-
-    color: var(--text-secondary);
-
-    font-size: 8px;
-
-    text-align: right;
-}
+window.showToast = showToast;
 
 
-.download-bottom {
-    display: flex;
+/* ============================================================
+   THEME
+   ============================================================ */
 
-    justify-content: space-between;
+function toggleTheme(theme) {
 
-    gap: 10px;
+    const validThemes = [
+        "dark",
+        "light"
+    ];
 
-    margin-top: 7px;
+    if (!validThemes.includes(theme)) {
+        theme = "dark";
+    }
 
-    min-width: 0;
-}
+    document.documentElement.setAttribute(
+        "data-theme",
+        theme
+    );
 
-
-.download-message {
-    overflow: hidden;
-
-    color: var(--text-secondary);
-
-    font-size: 8px;
-
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-
-.download-meta {
-    color: var(--text-muted);
-
-    font-size: 8px;
-
-    white-space: nowrap;
-}
-
-
-.download-actions {
-    min-width: 80px;
-
-    display: flex;
-
-    justify-content: flex-end;
-
-    flex: 0 0 auto;
-}
-
-
-.download-remove-btn {
-    height: 30px;
-
-    padding: 0 10px;
-
-    border:
-        1px solid
-        var(--border);
-
-    border-radius: 16px;
-
-    background: transparent;
-
-    color: var(--text-secondary);
-
-    font-size: 8px;
-    font-weight: 800;
-}
-
-
-.download-remove-btn:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-}
-
-
-.downloads-empty {
-    min-height: 225px;
-
-    display: flex;
-    flex-direction: column;
-
-    align-items: center;
-    justify-content: center;
-
-    gap: 7px;
-
-    border:
-        1px dashed
-        var(--border);
-
-    border-radius: 15px;
-
-    text-align: center;
-}
-
-
-.empty-icon {
-    width: 52px;
-    height: 52px;
-
-    display: grid;
-    place-items: center;
-
-    margin-bottom: 6px;
-
-    border-radius: 50%;
-
-    background: var(--bg-elevated);
-
-    font-size: 22px;
-}
-
-
-.empty-title {
-    font-size: 14px;
-    font-weight: 800;
-}
-
-
-.empty-text {
-    color: var(--text-muted);
-    font-size: 9px;
-}
-
-
-.downloads-history-empty {
-    padding: 26px;
-
-    border:
-        1px dashed
-        var(--border);
-
-    border-radius: 14px;
-
-    color: var(--text-muted);
-
-    font-size: 9px;
-
-    text-align: center;
+    localStorage.setItem(
+        "xrob_music_theme",
+        theme
+    );
 }
 
 
 /* ============================================================
-   LIBRARY
+   NAVIGATION
    ============================================================ */
 
-.library-stats-bar {
-    display: flex;
-    align-items: center;
+function navigate(
+    tab,
+    updateHash = true
+) {
 
-    flex-wrap: wrap;
+    if (updateHash) {
 
-    gap: 14px;
+        if (location.hash !== `#${tab}`) {
+            location.hash = tab;
+        } else {
+            switchTab(tab);
+        }
 
-    margin-bottom: 14px;
-    padding: 10px 12px;
+    } else {
 
-    border-bottom:
-        1px solid
-        var(--border);
-
-    color: var(--text-secondary);
-
-    font-size: 9px;
+        switchTab(tab);
+    }
 }
 
 
-.library-stats-bar strong {
-    color: var(--text-primary);
+function switchTab(tab) {
+
+    const tabs = [
+        "home",
+        "search",
+        "downloads",
+        "library",
+        "settings"
+    ];
+
+    if (!tabs.includes(tab)) {
+        tab = "home";
+    }
+
+    document
+        .querySelectorAll(".tab-content")
+        .forEach(section => {
+
+            section.classList.remove("active");
+
+        });
+
+
+    document
+        .querySelectorAll(".nav-link")
+        .forEach(button => {
+
+            button.classList.remove("active");
+
+        });
+
+
+    const content =
+        document.getElementById(
+            `tab-${tab}`
+        );
+
+    if (content) {
+        content.classList.add("active");
+    }
+
+
+    document
+        .getElementById(`btn-${tab}`)
+        ?.classList.add("active");
+
+
+    document
+        .getElementById(`mob-btn-${tab}`)
+        ?.classList.add("active");
+
+
+    if (tab === "home") {
+        loadHome();
+    }
+
+    if (tab === "downloads") {
+        loadDownloads();
+    }
+
+    if (tab === "library") {
+        loadLibrary();
+    }
+
+    if (tab === "settings") {
+        loadSettings();
+    }
+}
+
+
+function handleHash() {
+
+    const hash =
+        location.hash
+            .replace(/^#/, "")
+            .trim();
+
+    const tabs = [
+        "home",
+        "search",
+        "downloads",
+        "library",
+        "settings"
+    ];
+
+    switchTab(
+        tabs.includes(hash)
+            ? hash
+            : "home"
+    );
+}
+
+
+window.addEventListener(
+    "hashchange",
+    handleHash
+);
+
+
+/* ============================================================
+   PLAYER
+   ============================================================ */
+
+function savePlayerState() {
+
+    if (!audio) {
+        return;
+    }
+
+    const state = {
+        src: audio.src || "",
+        currentTime:
+            Number(audio.currentTime || 0),
+
+        volume:
+            Number(audio.volume || 0.8),
+
+        title:
+            playerTitle?.textContent || "",
+
+        artist:
+            playerArtist?.textContent || "",
+
+        art:
+            playerArt?.src || "",
+
+        queueIndex:
+            Number.isInteger(
+                window.xrobHomeQueueIndex
+            )
+                ? window.xrobHomeQueueIndex
+                : -1
+    };
+
+    localStorage.setItem(
+        "xrob_music_player_state",
+        JSON.stringify(state)
+    );
+}
+
+
+function restorePlayerState() {
+
+    if (!audio) {
+        return;
+    }
+
+    try {
+
+        const raw =
+            localStorage.getItem(
+                "xrob_music_player_state"
+            );
+
+        if (!raw) {
+            return;
+        }
+
+        const state =
+            JSON.parse(raw);
+
+        if (
+            state.volume !== undefined &&
+            Number.isFinite(
+                Number(state.volume)
+            )
+        ) {
+
+            audio.volume =
+                Number(state.volume);
+
+            if (volume) {
+                volume.value =
+                    Number(state.volume);
+            }
+        }
+
+        if (!state.src) {
+            return;
+        }
+
+        audio.src =
+            state.src;
+
+        audio.load();
+
+        updatePlayerInfo(
+            state.title,
+            state.artist,
+            state.art
+        );
+
+        if (player) {
+            player.style.display =
+                "grid";
+        }
+
+        /*
+         * Restore position after metadata loads.
+         */
+        audio.addEventListener(
+            "loadedmetadata",
+            function restorePosition() {
+
+                if (
+                    Number.isFinite(
+                        Number(state.currentTime)
+                    )
+                ) {
+
+                    audio.currentTime =
+                        Math.min(
+                            Number(
+                                state.currentTime
+                            ),
+                            audio.duration || 0
+                        );
+                }
+
+                audio.removeEventListener(
+                    "loadedmetadata",
+                    restorePosition
+                );
+
+                updateProgress();
+            }
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "Could not restore player:",
+            error
+        );
+    }
+}
+
+
+function formatSeconds(seconds) {
+
+    seconds =
+        Math.floor(
+            Number(seconds) || 0
+        );
+
+    if (seconds < 0) {
+        seconds = 0;
+    }
+
+    return (
+        Math.floor(seconds / 60)
+        +
+        ":"
+        +
+        String(seconds % 60).padStart(2, "0")
+    );
+}
+
+
+function updateProgress() {
+
+    if (!audio || !seek) {
+        return;
+    }
+
+    if (
+        !audio.duration ||
+        !Number.isFinite(audio.duration)
+    ) {
+
+        seek.value = 0;
+
+        if (curTime) {
+            curTime.textContent = "0:00";
+        }
+
+        if (durTime) {
+            durTime.textContent = "0:00";
+        }
+
+        return;
+    }
+
+
+    seek.value =
+        (
+            audio.currentTime /
+            audio.duration
+        ) * 100;
+
+
+    if (curTime) {
+        curTime.textContent =
+            formatSeconds(
+                audio.currentTime
+            );
+    }
+
+
+    if (durTime) {
+        durTime.textContent =
+            formatSeconds(
+                audio.duration
+            );
+    }
+}
+
+
+function updatePlayingState(playing) {
+
+    if (playBtn) {
+
+        playBtn.textContent =
+            playing
+                ? "❚❚"
+                : "▶";
+    }
+
+    if (activePreviewBtn) {
+
+        activePreviewBtn.classList.toggle(
+            "playing",
+            Boolean(playing)
+        );
+    }
+}
+
+
+function resetPreviewButton(button) {
+
+    if (!button) {
+        return;
+    }
+
+    button.classList.remove("playing");
+
+    const type =
+        button.dataset?.type || "search";
+
+    if (
+        button.classList.contains("btn-preview")
+    ) {
+
+        button.textContent =
+            type === "library"
+                ? "▶ Play"
+                : "▶ Preview";
+    }
+}
+
+
+function initAudioContext() {
+
+    if (
+        audioContext ||
+        !audio
+    ) {
+        return;
+    }
+
+    try {
+
+        const AudioContextClass =
+            window.AudioContext ||
+            window.webkitAudioContext;
+
+        if (!AudioContextClass) {
+            return;
+        }
+
+        audioContext =
+            new AudioContextClass();
+
+        analyser =
+            audioContext.createAnalyser();
+
+        analyser.fftSize = 64;
+        analyser.smoothingTimeConstant = 0.8;
+
+        sourceNode =
+            audioContext.createMediaElementSource(
+                audio
+            );
+
+        sourceNode.connect(analyser);
+        analyser.connect(
+            audioContext.destination
+        );
+
+        drawVisualizer();
+
+    } catch (error) {
+
+        console.warn(
+            "Audio visualizer unavailable:",
+            error
+        );
+    }
+}
+
+
+function drawVisualizer() {
+
+    if (
+        !canvasCtx ||
+        !analyser
+    ) {
+        return;
+    }
+
+    requestAnimationFrame(
+        drawVisualizer
+    );
+
+    const length =
+        analyser.frequencyBinCount;
+
+    const data =
+        new Uint8Array(length);
+
+    analyser.getByteFrequencyData(data);
+
+    canvasCtx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    const barWidth =
+        canvas.width / length;
+
+    for (
+        let i = 0;
+        i < length;
+        i++
+    ) {
+
+        const height =
+            Math.max(
+                2,
+                (
+                    data[i] / 255
+                ) * canvas.height
+            );
+
+        canvasCtx.fillStyle =
+            "#1ed760";
+
+        canvasCtx.fillRect(
+            i * barWidth,
+            canvas.height - height,
+            Math.max(
+                1,
+                barWidth - 1
+            ),
+            height
+        );
+    }
+}
+
+
+function updatePlayerInfo(
+    title,
+    artist,
+    art
+) {
+
+    if (playerTitle) {
+
+        playerTitle.textContent =
+            title ||
+            "Unknown Track";
+    }
+
+    if (playerArtist) {
+
+        playerArtist.textContent =
+            artist ||
+            "Unknown Artist";
+    }
+
+    if (playerArt) {
+
+        playerArt.src =
+            art ||
+            "https://via.placeholder.com/60?text=Music";
+    }
+}
+
+
+function toggleAudioStream(
+    button,
+    url,
+    type,
+    title,
+    artist,
+    art
+) {
+
+    if (
+        !audio ||
+        !button ||
+        !url
+    ) {
+        return;
+    }
+
+    initAudioContext();
+
+    if (
+        audioContext &&
+        audioContext.state === "suspended"
+    ) {
+
+        audioContext.resume()
+            .catch(() => {});
+    }
+
+
+    let absoluteUrl;
+
+    try {
+
+        absoluteUrl =
+            new URL(
+                url,
+                location.href
+            ).href;
+
+    } catch (error) {
+
+        console.error(
+            "Invalid audio URL:",
+            error
+        );
+
+        showToast(
+            "❌ Invalid audio URL"
+        );
+
+        return;
+    }
+
+
+    if (
+        activePreviewBtn === button &&
+        audio.src === absoluteUrl
+    ) {
+
+        if (audio.paused) {
+
+            audio.play()
+                .catch(error => {
+
+                    console.error(
+                        "Playback failed:",
+                        error
+                    );
+
+                });
+
+        } else {
+
+            audio.pause();
+        }
+
+        return;
+    }
+
+
+    if (activePreviewBtn) {
+
+        resetPreviewButton(
+            activePreviewBtn
+        );
+    }
+
+
+    activePreviewBtn = button;
+
+    button.dataset.type =
+        type || "search";
+
+
+    if (
+        button.classList.contains("btn-preview")
+    ) {
+
+        button.textContent =
+            "⏳ Loading...";
+    }
+
+
+    updatePlayerInfo(
+        title,
+        artist,
+        art
+    );
+
+
+    if (player) {
+        player.style.display = "grid";
+    }
+
+
+    audio.pause();
+
+    audio.removeAttribute("src");
+
+    audio.src = absoluteUrl;
+
+    audio.load();
+
+
+    audio.play()
+        .then(() => {
+
+            if (
+                button.classList.contains(
+                    "btn-preview"
+                )
+            ) {
+
+                button.textContent =
+                    "❚❚ Pause";
+            }
+
+        })
+        .catch(error => {
+
+            console.error(
+                "Playback failed:",
+                error
+            );
+
+            if (
+                button.classList.contains(
+                    "btn-preview"
+                )
+            ) {
+
+                button.textContent =
+                    "❌ Error";
+
+                setTimeout(
+                    () =>
+                        resetPreviewButton(
+                            button
+                        ),
+                    1800
+                );
+
+            } else {
+
+                button.classList.remove(
+                    "playing"
+                );
+            }
+        });
+}
+
+
+/* ============================================================
+   AUDIO EVENTS
+   ============================================================ */
+
+function bindAudioEvents() {
+
+    if (!audio) {
+        return;
+    }
+
+
+    audio.addEventListener(
+        "timeupdate",
+        () => {
+
+            updateProgress();
+            savePlayerState();
+
+        }
+    );
+
+
+    audio.addEventListener(
+        "loadedmetadata",
+        updateProgress
+    );
+
+
+    audio.addEventListener(
+        "durationchange",
+        updateProgress
+    );
+
+
+    audio.addEventListener(
+        "play",
+        () => {
+
+            updatePlayingState(true);
+
+        }
+    );
+
+
+    audio.addEventListener(
+        "pause",
+        () => {
+
+            updatePlayingState(false);
+
+        }
+    );
+
+
+    audio.addEventListener(
+        "ended",
+        () => {
+
+            updatePlayingState(
+                false
+            );
+
+            if (seek) {
+                seek.value = 0;
+            }
+
+            if (curTime) {
+                curTime.textContent =
+                    "0:00";
+            }
+
+            if (
+                currentPlayerSource ===
+                "home"
+            ) {
+
+                const queue =
+                    window.xrobHomeQueue || [];
+
+                const currentIndex =
+                    Number.isInteger(
+                        window.xrobHomeQueueIndex
+                    )
+                        ? window.xrobHomeQueueIndex
+                        : -1;
+
+                if (
+                    queue.length &&
+                    currentIndex >= 0 &&
+                    currentIndex <
+                        queue.length - 1
+                ) {
+
+                    playHomeTrack(
+                        currentIndex + 1
+                    );
+
+                    return;
+                }
+            }
+
+
+            if (
+                currentPlayerSource ===
+                "library"
+            ) {
+
+                const queue =
+                    getLibraryQueue();
+
+                const nextIndex =
+                    currentLibraryIndex + 1;
+
+                if (
+                    queue.length &&
+                    nextIndex < queue.length
+                ) {
+
+                    playLibraryTrack(
+                        nextIndex
+                    );
+
+                    return;
+                }
+            }
+
+            if (activePreviewBtn) {
+
+                resetPreviewButton(
+                    activePreviewBtn
+                );
+
+                activePreviewBtn = null;
+            }
+
+            window.xrobHomeQueueIndex = -1;
+        }
+    );
+
+
+    audio.addEventListener(
+        "error",
+        () => {
+
+            console.warn(
+                "Audio element error:",
+                audio.error
+            );
+
+            if (activePreviewBtn) {
+
+                resetPreviewButton(
+                    activePreviewBtn
+                );
+            }
+        }
+    );
+}
+
+
+function bindPlayerControls() {
+
+    playBtn?.addEventListener(
+        "click",
+        () => {
+
+            if (!audio) {
+                return;
+            }
+
+            if (!audio.src) {
+                return;
+            }
+
+            if (audio.paused) {
+
+                audio.play()
+                    .catch(
+                        console.error
+                    );
+
+            } else {
+
+                audio.pause();
+            }
+        }
+    );
+
+    prevBtn?.addEventListener(
+        "click",
+        playPreviousTrack
+    );
+
+    nextBtn?.addEventListener(
+        "click",
+        playNextTrack
+    );
+
+
+    seek?.addEventListener(
+        "input",
+        () => {
+
+            if (
+                audio &&
+                Number.isFinite(
+                    audio.duration
+                )
+            ) {
+
+                audio.currentTime =
+                    (
+                        Number(
+                            seek.value
+                        ) / 100
+                    ) *
+                    audio.duration;
+            }
+        }
+    );
+
+
+    const savedVolume =
+        localStorage.getItem(
+            "xrob_music_volume"
+        );
+
+
+    if (volume && audio) {
+
+        const initialVolume =
+            savedVolume !== null
+                ? Number(savedVolume)
+                : Number(volume.value || 0.8);
+
+
+        const safeVolume =
+            Number.isFinite(initialVolume)
+                ? Math.max(
+                    0,
+                    Math.min(
+                        1,
+                        initialVolume
+                    )
+                )
+                : 0.8;
+
+
+        volume.value = safeVolume;
+        audio.volume = safeVolume;
+    }
+
+
+    volume?.addEventListener(
+        "input",
+        () => {
+
+            audio.volume =
+                Number(
+                    volume.value
+                );
+
+            localStorage.setItem(
+                "xrob_music_volume",
+                volume.value
+            );
+
+            savePlayerState();
+        }
+    );
 }
 
 
@@ -1790,1617 +1481,3802 @@ a {
    SETTINGS
    ============================================================ */
 
-.settings-card {
-    width: 100%;
-    max-width: 1000px;
-
-    padding: 8px 24px 24px;
-
-    background: var(--bg-surface);
-
-    border:
-        1px solid
-        var(--border);
-
-    border-radius: 16px;
-}
-
-
-.settings-divider {
-    padding: 20px 0 10px;
-
-    color: var(--accent);
-
-    font-size: 9px;
-    font-weight: 800;
-
-    letter-spacing: 1.3px;
-
-    text-transform: uppercase;
-}
-
-
-.setting-row {
-    min-height: 75px;
-
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-
-    gap: 24px;
-
-    border-bottom:
-        1px solid
-        var(--border);
-}
-
-
-.setting-label {
-    font-size: 11px;
-    font-weight: 800;
-}
-
-
-.setting-desc {
-    margin-top: 4px;
-
-    color: var(--text-secondary);
-
-    font-size: 9px;
-}
-
-
-.inline-control {
-    display: flex;
-
-    gap: 7px;
-
-    min-width: 0;
-}
-
-
-.settings-card input,
-.settings-card select {
-    height: 37px;
-
-    padding: 0 10px;
-
-    background: var(--bg-input);
-    color: var(--text-primary);
-
-    border:
-        1px solid
-        var(--border);
-
-    border-radius: 8px;
-
-    font-size: 9px;
-}
-
-
-.settings-card input:focus,
-.settings-card select:focus {
-    outline: none;
-    border-color: var(--accent);
-}
-
-
-.settings-card input::placeholder {
-    color: var(--text-muted);
-}
-
-
-#amperfy-server-url {
-    width: 230px;
-}
-
-
-.integration-status {
-    margin: 12px 0;
-
-    padding: 10px 12px;
-
-    border-radius: 8px;
-
-    background: rgba(30, 215, 96, .06);
-
-    color: var(--text-secondary);
-
-    font-size: 9px;
-}
-
-
-.integration-status[data-state="success"] {
-    color: var(--accent);
-}
-
-
-.integration-status[data-state="error"] {
-    color: #ff6677;
-}
-
-
-.integration-ok {
-    color: var(--accent);
-
-    font-size: 10px;
-}
-
-
-.switch {
-    position: relative;
-
-    width: 43px;
-    height: 24px;
-
-    flex: 0 0 43px;
-}
-
-
-.switch input {
-    position: absolute;
-
-    opacity: 0;
-
-    width: 1px;
-    height: 1px;
-}
-
-
-.slider {
-    position: absolute;
-
-    inset: 0;
-
-    background: #555;
-
-    border-radius: 99px;
-
-    cursor: pointer;
-
-    transition: background .18s ease;
-}
-
-
-.slider::before {
-    content: "";
-
-    position: absolute;
-
-    width: 18px;
-    height: 18px;
-
-    left: 3px;
-    top: 3px;
-
-    background: #fff;
-
-    border-radius: 50%;
-
-    transition: transform .18s ease;
-}
-
-
-.switch input:checked + .slider {
-    background: var(--accent);
-}
-
-
-.switch input:checked + .slider::before {
-    transform: translateX(19px);
-}
-
-
-.switch input:focus-visible + .slider {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-}
-
-
-/* ============================================================
-   GLOBAL PLAYER
-   ============================================================ */
-
-.global-player-bar {
-    position: fixed;
-
-    left: 0;
-    right: 0;
-    bottom: 0;
-
-    height: var(--player-height);
-
-    z-index: 1200;
-
-    display: grid;
-
-    grid-template-columns:
-        minmax(180px, 1fr)
-        minmax(300px, 2fr)
-        minmax(180px, 1fr);
-
-    align-items: center;
-
-    gap: 18px;
-
-    padding: 0 18px;
-
-    background: rgba(24, 24, 24, .97);
-
-    border-top:
-        1px solid
-        var(--border);
-
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-}
-
-
-[data-theme="light"] .global-player-bar {
-    background: rgba(255, 255, 255, .97);
-}
-
-
-.gp-track-details {
-    display: flex;
-    align-items: center;
-
-    gap: 10px;
-
-    min-width: 0;
-}
-
-
-.gp-track-details img {
-    width: 55px;
-    height: 55px;
-
-    flex: 0 0 55px;
-
-    object-fit: cover;
-
-    border-radius: 7px;
-
-    background: var(--bg-elevated);
-}
-
-
-.gp-text {
-    min-width: 0;
-
-    display: flex;
-    flex-direction: column;
-
-    gap: 2px;
-}
-
-
-.gp-text span {
-    overflow: hidden;
-
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-
-#gp-title {
-    font-size: 10px;
-    font-weight: 800;
-}
-
-
-#gp-artist {
-    color: var(--text-secondary);
-    font-size: 8px;
-}
-
-
-/* ============================================================
-   PLAYER CONTROLS
-   ============================================================ */
-
-.gp-controls {
-    display: flex;
-    flex-direction: column;
-
-    align-items: center;
-
-    gap: 5px;
-
-    min-width: 0;
-}
-
-
-/* PLAY BUTTON */
-
-.gp-play-btn {
-    width: 38px;
-    height: 38px;
-
-    flex: 0 0 38px;
-
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-
-    padding: 0;
-
-    border: 0;
-
-    border-radius: 50%;
-
-    background: var(--text-primary);
-    color: var(--bg-main);
-
-    font-size: 13px;
-    line-height: 1;
-
-    transition:
-        transform .12s ease,
-        background .12s ease;
-}
-
-
-.gp-play-btn:hover {
-    transform: scale(1.08);
-
-    background: #fff;
-}
-
-
-.gp-play-btn:active {
-    transform: scale(.95);
-}
-
-
-.gp-play-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 3px;
-}
-
-
-/* ============================================================
-   PLAYER PROGRESS
-   ============================================================ */
-
-.gp-progress-container {
-    width: 100%;
-
-    display: flex;
-    align-items: center;
-
-    gap: 7px;
-
-    color: var(--text-secondary);
-
-    font-size: 8px;
-}
-
-
-.gp-progress-container input {
-    flex: 1;
-    min-width: 0;
-
-    height: 4px;
-
-    appearance: none;
-    -webkit-appearance: none;
-
-    background: transparent;
-
-    cursor: pointer;
-}
-
-
-/* WebKit slider */
-
-.gp-progress-container input::-webkit-slider-runnable-track {
-    height: 4px;
-
-    background: var(--bg-elevated);
-
-    border-radius: 99px;
-}
-
-
-.gp-progress-container input::-webkit-slider-thumb {
-    appearance: none;
-    -webkit-appearance: none;
-
-    width: 11px;
-    height: 11px;
-
-    margin-top: -3.5px;
-
-    border: 0;
-
-    border-radius: 50%;
-
-    background: var(--text-primary);
-
-    box-shadow:
-        0 1px 5px
-        rgba(0, 0, 0, .25);
-}
-
-
-/* Firefox */
-
-.gp-progress-container input::-moz-range-track {
-    height: 4px;
-
-    background: var(--bg-elevated);
-
-    border-radius: 99px;
-}
-
-
-.gp-progress-container input::-moz-range-progress {
-    height: 4px;
-
-    background: var(--accent);
-
-    border-radius: 99px;
-}
-
-
-.gp-progress-container input::-moz-range-thumb {
-    width: 11px;
-    height: 11px;
-
-    border: 0;
-
-    border-radius: 50%;
-
-    background: var(--text-primary);
-}
-
-
-/* ============================================================
-   PLAYER EXTRA / VOLUME
-   ============================================================ */
-
-.gp-extra {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-
-    gap: 9px;
-
-    min-width: 0;
-}
-
-
-.gp-extra input {
-    width: 90px;
-    max-width: 100%;
-
-    height: 4px;
-
-    appearance: none;
-    -webkit-appearance: none;
-
-    background: transparent;
-
-    cursor: pointer;
-}
-
-
-.gp-extra input::-webkit-slider-runnable-track {
-    height: 4px;
-
-    background: var(--bg-elevated);
-
-    border-radius: 99px;
-}
-
-
-.gp-extra input::-webkit-slider-thumb {
-    appearance: none;
-    -webkit-appearance: none;
-
-    width: 10px;
-    height: 10px;
-
-    margin-top: -3px;
-
-    border: 0;
-
-    border-radius: 50%;
-
-    background: var(--text-primary);
-}
-
-
-.gp-extra input::-moz-range-track {
-    height: 4px;
-
-    background: var(--bg-elevated);
-
-    border-radius: 99px;
-}
-
-
-.gp-extra input::-moz-range-thumb {
-    width: 10px;
-    height: 10px;
-
-    border: 0;
-
-    border-radius: 50%;
-
-    background: var(--text-primary);
-}
-
-
-#visualizer-canvas {
-    width: 90px;
-    height: 30px;
-
-    flex: 0 0 90px;
-
-    border-radius: 6px;
-}
-
-
-/* ============================================================
-   GENERAL RANGE INPUT
-   ============================================================ */
-
-input[type="range"] {
-    accent-color: var(--accent);
-}
-
-
-input[type="range"]:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-}
-
-
-/* ============================================================
-   TOAST
-   ============================================================ */
-
-#toast-container {
-    position: fixed;
-
-    top: 18px;
-    right: 18px;
-
-    z-index: 3000;
-
-    display: flex;
-    flex-direction: column;
-
-    gap: 8px;
-
-    width: min(340px, calc(100vw - 36px));
-}
-
-
-.toast {
-    padding: 11px 15px;
-
-    background: #282828;
-    color: #fff;
-
-    border:
-        1px solid
-        rgba(255, 255, 255, .1);
-
-    border-radius: 9px;
-
-    box-shadow:
-        0 12px 35px
-        rgba(0, 0, 0, .35);
-
-    font-size: 10px;
-
-    animation:
-        toast-in .18s ease-out;
-}
-
-
-@keyframes toast-in {
-    from {
-        opacity: 0;
-        transform: translateY(-5px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-
-/* ============================================================
-   MOBILE NAV
-   ============================================================ */
-
-.bottom-nav {
-    display: none;
-}
-
-
-/* ============================================================
-   MEDIUM DESKTOP
-   ============================================================ */
-
-@media (max-width: 1200px) {
-
-    :root {
-        --sidebar-width: 220px;
-    }
-
-
-    .main-content {
-        padding-left: 28px;
-        padding-right: 28px;
-    }
-
-
-    .recent-grid {
-        grid-template-columns:
-            repeat(4, minmax(0, 1fr));
-    }
-
-
-    .global-player-bar {
-        grid-template-columns:
-            minmax(160px, 1fr)
-            minmax(260px, 2fr)
-            minmax(160px, 1fr);
-
-        gap: 12px;
-    }
-}
-
-
-/* ============================================================
-   TABLET
-   ============================================================ */
-
-@media (max-width: 900px) {
-
-    .home-stats-grid {
-        grid-template-columns:
-            repeat(2, minmax(0, 1fr));
-    }
-
-
-    .recent-grid {
-        grid-template-columns:
-            repeat(3, minmax(0, 1fr));
-    }
-
-
-    .downloads-overview {
-        grid-template-columns:
-            repeat(3, minmax(0, 1fr));
-    }
-
-
-    .global-player-bar {
-        grid-template-columns:
-            minmax(150px, 1fr)
-            minmax(240px, 1.5fr)
-            minmax(140px, 1fr);
-    }
-
-
-    .gp-extra {
-        gap: 5px;
-    }
-
-
-    #visualizer-canvas {
-        width: 65px;
-        flex-basis: 65px;
-    }
-
-
-    .gp-extra input {
-        width: 65px;
-    }
-}
-
-
-/* ============================================================
-   MOBILE
-   ============================================================ */
-
-@media (max-width: 768px) {
-
-    :root {
-        --player-height: 70px;
-        --bottom-nav-height: 58px;
-    }
-
-
-    body {
-        padding-bottom: var(--bottom-nav-height);
-    }
-
-
-    .side-nav {
-        display: none;
-    }
-
-
-    .app-column {
-        width: 100%;
-        margin-left: 0;
-    }
-
-
-    .mobile-header {
-        position: sticky;
-
-        top: 0;
-
-        z-index: 900;
-
-        display: flex;
-
-        min-height: 58px;
-
-        padding: 8px 14px;
-
-        background:
-            rgba(18, 18, 18, .96);
-
-        border-bottom:
-            1px solid
-            var(--border);
-
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-    }
-
-
-    [data-theme="light"] .mobile-header {
-        background:
-            rgba(255, 255, 255, .96);
-    }
-
-
-    .mobile-header .side-brand {
-        padding: 0;
-    }
-
-
-    .mobile-header .side-brand svg {
-        width: 30px;
-        height: 30px;
-
-        flex-basis: 30px;
-    }
-
-
-    .mobile-header .side-brand h1 {
-        font-size: 16px;
-    }
-
-
-    .main-content {
-        padding:
-            19px 11px
-            calc(
-                var(--player-height)
-                + var(--bottom-nav-height)
-                + 25px
+async function loadSettings() {
+
+    try {
+
+        const response =
+            await fetch(
+                "api/settings",
+                {
+                    cache: "no-store"
+                }
             );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+        }
+
+
+        const settings =
+            await response.json();
+
+
+        const setValue = (
+            id,
+            value
+        ) => {
+
+            const element =
+                document.getElementById(id);
+
+            if (element) {
+                element.value =
+                    value ?? "";
+            }
+        };
+
+
+        const setChecked = (
+            id,
+            value
+        ) => {
+
+            const element =
+                document.getElementById(id);
+
+            if (element) {
+
+                element.checked =
+                    Boolean(value);
+            }
+        };
+
+
+        setValue(
+            "set_format",
+            settings.audio_format || "mp3"
+        );
+
+
+        setValue(
+            "set_quality",
+            settings.audio_quality || "320K"
+        );
+
+
+        setValue(
+            "set_max_results",
+            settings.max_results || 20
+        );
+
+
+        setChecked(
+            "set_thumb",
+            settings.embed_thumbnail
+        );
+
+
+        setChecked(
+            "set_meta",
+            settings.embed_metadata
+        );
+
+
+        setChecked(
+            "set_organize",
+            settings.organize_by_artist
+        );
+
+
+        setValue(
+            "set_subsonic_user",
+            settings.subsonic_user || "admin"
+        );
+
+
+        const serverUrl =
+            window.XrobArpeggi?.getServerUrl?.();
+
+
+        setValue(
+            "amperfy-server-url",
+            serverUrl ||
+            (
+                location.protocol +
+                "//" +
+                location.hostname +
+                ":8100"
+            )
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "Settings load:",
+            error
+        );
     }
-
-
-    .home-hero {
-        flex-direction: column;
-
-        align-items: flex-start;
-
-        min-height: 225px;
-
-        padding: 23px;
-    }
-
-
-    .home-title {
-        font-size: 31px;
-        letter-spacing: -1.1px;
-    }
-
-
-    .home-search-button {
-        width: 100%;
-    }
-
-
-    .home-stats-grid {
-        grid-template-columns:
-            repeat(2, minmax(0, 1fr));
-    }
-
-
-    .recent-grid {
-        grid-template-columns:
-            repeat(3, minmax(0, 1fr));
-    }
-
-
-    .home-connect-card {
-        flex-wrap: wrap;
-    }
-
-
-    .home-connect-content {
-        min-width: calc(100% - 60px);
-    }
-
-
-    .home-connect-card .btn-refresh {
-        width: 100%;
-    }
-
-
-    /* PLAYER */
-
-    .global-player-bar {
-        left: 0;
-        right: 0;
-
-        bottom: var(--bottom-nav-height);
-
-        height: var(--player-height);
-
-        grid-template-columns:
-            minmax(0, 1fr)
-            auto;
-
-        padding: 7px 10px;
-
-        gap: 8px;
-    }
-
-
-    .gp-extra {
-        display: none;
-    }
-
-
-    .gp-controls {
-        flex-direction: column;
-
-        width: auto;
-
-        gap: 2px;
-    }
-
-
-    .gp-play-btn {
-        width: 33px;
-        height: 33px;
-
-        flex-basis: 33px;
-
-        font-size: 12px;
-    }
-
-
-    .gp-progress-container {
-        position: absolute;
-
-        left: 10px;
-        right: 10px;
-
-        bottom: 2px;
-
-        width: auto;
-    }
-
-
-    .gp-progress-container span {
-        display: none;
-    }
-
-
-    /* BOTTOM NAV */
-
-    .bottom-nav {
-        position: fixed;
-
-        left: 0;
-        right: 0;
-        bottom: 0;
-
-        height: var(--bottom-nav-height);
-
-        z-index: 1300;
-
-        display: flex;
-
-        background: #050505;
-
-        border-top:
-            1px solid
-            var(--border);
-
-        padding-bottom:
-            env(safe-area-inset-bottom);
-    }
-
-
-    [data-theme="light"] .bottom-nav {
-        background: #fff;
-    }
-
-
-    .bottom-nav .nav-link {
-        flex: 1;
-
-        min-width: 0;
-        min-height: 0;
-
-        display: flex;
-
-        flex-direction: column;
-
-        align-items: center;
-        justify-content: center;
-
-        gap: 2px;
-
-        padding: 3px;
-
-        font-size: 7px;
-
-        text-align: center;
-
-        overflow: hidden;
-    }
-
-
-    .bottom-nav .nav-link span:first-child {
-        width: auto;
-
-        font-size: 17px;
-    }
-
-
-    .bottom-nav .nav-link span:not(:first-child) {
-        display: inline;
-    }
-
-
-    /* SETTINGS */
-
-    .setting-row {
-        align-items: flex-start;
-
-        flex-direction: column;
-
-        gap: 8px;
-
-        padding: 15px 0;
-    }
-
-
-    .inline-control {
-        width: 100%;
-    }
-
-
-    #amperfy-server-url {
-        flex: 1;
-
-        width: auto;
-
-        min-width: 0;
-    }
-
-
-    .settings-card {
-        padding-left: 17px;
-        padding-right: 17px;
-    }
-
-
-    .settings-card input,
-    .settings-card select {
-        width: 100%;
-    }
-
-
-    .search-card {
-        width: 100%;
-    }
-
-
-    .search-card input {
-        min-width: 0;
-    }
-
-
-    .xrob-loading {
-        min-height: 180px;
-    }
-
-
-    .xrob-loader-circle {
-        width: 82px;
-        height: 82px;
-
-        flex-basis: 82px;
-    }
-
-
-    .xrob-loader-percent {
-        font-size: 16px;
-    }
-
 }
 
 
-/* ============================================================
-   SMALL MOBILE
-   ============================================================ */
+async function saveSettings() {
 
-@media (max-width: 480px) {
+    const getValue = id =>
+        document.getElementById(id)?.value || "";
 
-    .main-content {
-        padding-left: 8px;
-        padding-right: 8px;
-    }
 
+    const getChecked = id =>
+        document.getElementById(id)?.checked ?? false;
 
-    .page-heading h2 {
-        font-size: 25px;
-    }
 
+    const maxResultsRaw =
+        Number(
+            getValue("set_max_results") || 20
+        );
 
-    .recent-grid {
-        grid-template-columns:
-            repeat(2, minmax(0, 1fr));
-    }
 
+    const maxResults =
+        Math.max(
+            5,
+            Math.min(
+                50,
+                Number.isFinite(maxResultsRaw)
+                    ? maxResultsRaw
+                    : 20
+            )
+        );
 
-    .home-stats-grid {
-        gap: 8px;
-    }
 
+    const data = {
 
-    .home-stat-card {
-        padding: 13px;
-    }
+        audio_format:
+            getValue("set_format") || "mp3",
 
+        audio_quality:
+            getValue("set_quality") || "320K",
 
-    .home-stat-icon {
-        width: 36px;
-        height: 36px;
+        embed_thumbnail:
+            getChecked("set_thumb"),
 
-        flex-basis: 36px;
-    }
+        embed_metadata:
+            getChecked("set_meta"),
 
+        organize_by_artist:
+            getChecked("set_organize"),
 
-    .home-stat-card strong {
-        font-size: 19px;
-    }
+        max_results:
+            maxResults
+    };
 
 
-    .result-card {
-        gap: 7px;
-        padding: 7px 4px;
-    }
+    try {
 
+        const response =
+            await fetch(
+                "api/settings",
+                {
+                    method: "POST",
 
-    .thumb-wrapper {
-        width: 47px;
-        height: 47px;
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-        flex-basis: 47px;
-    }
+                    body:
+                        JSON.stringify(data)
+                }
+            );
 
 
-    .track-title {
-        font-size: 10px;
-    }
+        const result =
+            await response.json()
+                .catch(
+                    () => ({})
+                );
 
 
-    .track-artist {
-        font-size: 8px;
-    }
+        if (!response.ok) {
 
+            throw new Error(
+                result.detail ||
+                "Failed to save settings."
+            );
+        }
 
-    .btn-group {
-        gap: 4px;
-    }
 
+        const msg =
+            document.getElementById(
+                "settingsMsg"
+            );
 
-    .btn-preview {
-        min-width: 62px;
 
-        padding: 0 7px;
+        if (msg) {
 
-        height: 30px;
+            msg.textContent =
+                "✅ Settings saved.";
+        }
 
-        font-size: 8px;
-    }
 
+        showToast(
+            "✅ Settings saved"
+        );
 
-    .btn-download {
-        min-width: 30px;
-        width: 30px;
+    } catch (error) {
 
-        height: 30px;
+        const msg =
+            document.getElementById(
+                "settingsMsg"
+            );
 
-        font-size: 0;
 
-        padding: 0;
-    }
+        if (msg) {
 
+            msg.textContent =
+                "❌ " +
+                error.message;
+        }
 
-    .btn-download::after {
-        content: "↓";
 
-        font-size: 16px;
-    }
-
-
-    .downloads-overview {
-        gap: 8px;
-    }
-
-
-    .overview-card {
-        padding: 12px;
-    }
-
-
-    .overview-value {
-        font-size: 19px;
-    }
-
-
-    .download-card {
-        gap: 10px;
-
-        padding:
-            11px 10px;
-    }
-
-
-    .download-actions {
-        min-width: 0;
-    }
-
-
-    .download-remove-btn {
-        padding: 0 8px;
-    }
-
-
-    .global-player-bar {
-        padding-left: 7px;
-        padding-right: 7px;
-    }
-
-
-    .gp-track-details img {
-        width: 48px;
-        height: 48px;
-
-        flex-basis: 48px;
-    }
-
-
-    #gp-title {
-        font-size: 9px;
-    }
-
-
-    #gp-artist {
-        font-size: 7px;
-    }
-
-
-    .gp-play-btn {
-        width: 31px;
-        height: 31px;
-
-        flex-basis: 31px;
-
-        font-size: 11px;
-    }
-
-
-    #toast-container {
-        top: 10px;
-        right: 10px;
-
-        width: calc(100vw - 20px);
-    }
-
-
-    .xrob-loading {
-        min-height: 160px;
-
-        padding:
-            15px 8px;
-    }
-
-
-    .xrob-loader-circle {
-        width: 76px;
-        height: 76px;
-
-        flex-basis: 76px;
-    }
-
-
-    .xrob-loader-percent {
-        font-size: 15px;
-    }
-
-
-    .xrob-loader-text {
-        font-size: 9px;
-    }
-
-}
-
-
-/* ============================================================
-   VERY SMALL SCREENS
-   ============================================================ */
-
-@media (max-width: 360px) {
-
-    .bottom-nav .nav-link {
-        font-size: 6px;
-    }
-
-
-    .home-title {
-        font-size: 27px;
-    }
-
-
-    .downloads-page-title {
-        font-size: 28px;
-    }
-
-
-    .search-card {
-        gap: 6px;
-    }
-
-
-    .search-card button {
-        padding-left: 15px;
-        padding-right: 15px;
-    }
-
-
-    .btn-preview {
-        min-width: 54px;
-    }
-
-
-    .gp-play-btn {
-        width: 29px;
-        height: 29px;
-
-        flex-basis: 29px;
-    }
-
-
-    .xrob-loader-circle {
-        width: 70px;
-        height: 70px;
-
-        flex-basis: 70px;
-    }
-
-}
-
-
-/* ============================================================
-   REDUCED MOTION
-   ============================================================ */
-
-@media (prefers-reduced-motion: reduce) {
-
-    *,
-    *::before,
-    *::after {
-        scroll-behavior: auto !important;
-
-        transition-duration:
-            .01ms !important;
-
-        animation-duration:
-            .01ms !important;
-
-        animation-iteration-count:
-            1 !important;
+        showToast(
+            "❌ " +
+            error.message
+        );
     }
 }
 
 
 /* ============================================================
-   LUCIDE ICONS
+   CACHE HELPERS
    ============================================================ */
 
-.nav-link > svg {
-    width: 19px;
-    height: 19px;
+function saveLibraryCache() {
 
-    flex: 0 0 19px;
+    try {
 
-    display: inline-flex;
+        localStorage.setItem(
+            LIBRARY_CACHE_KEY,
+            JSON.stringify({
+                files: rawLibraryFiles,
+                savedAt: Date.now()
+            })
+        );
 
-    stroke-width: 2;
+    } catch (error) {
 
-    color: currentColor;
+        console.warn(
+            "Library cache save failed:",
+            error
+        );
+    }
 }
 
 
-.nav-link.active > svg {
-    color: var(--accent);
+function loadLibraryCache() {
+
+    try {
+
+        const raw =
+            localStorage.getItem(
+                LIBRARY_CACHE_KEY
+            );
+
+        if (!raw) {
+            return false;
+        }
+
+        const cache =
+            JSON.parse(raw);
+
+        if (
+            !cache ||
+            !Array.isArray(
+                cache.files
+            )
+        ) {
+            return false;
+        }
+
+        rawLibraryFiles =
+            cache.files;
+
+        libraryLoadedFromCache =
+            true;
+
+        libraryFilesSet.clear();
+
+        rawLibraryFiles.forEach(
+            file => {
+
+                const name =
+                    String(
+                        file.name || ""
+                    );
+
+                const slash =
+                    name.lastIndexOf(
+                        "/"
+                    );
+
+                const dot =
+                    name.lastIndexOf(
+                        "."
+                    );
+
+                const base =
+                    name.substring(
+                        slash + 1,
+                        dot > slash
+                            ? dot
+                            : name.length
+                    );
+
+                libraryFilesSet.add(
+                    normalizeKey(
+                        base
+                    )
+                );
+            }
+        );
+
+        return true;
+
+    } catch (error) {
+
+        console.warn(
+            "Library cache load failed:",
+            error
+        );
+
+        return false;
+    }
 }
 
 
-/* Buttons containing icons */
+function saveRecentlyAddedCache(
+    tracks
+) {
 
-.home-search-button,
-.btn-refresh,
-.save-btn,
-.search-card button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    try {
 
-    gap: 7px;
+        localStorage.setItem(
+            RECENT_CACHE_KEY,
+            JSON.stringify({
+                tracks:
+                    Array.isArray(tracks)
+                        ? tracks
+                        : [],
+                savedAt:
+                    Date.now()
+            })
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "Recently Added cache save failed:",
+            error
+        );
+    }
 }
 
 
-.home-search-button svg,
-.btn-refresh svg,
-.save-btn svg,
-.search-card button svg {
-    width: 15px;
-    height: 15px;
+function loadRecentlyAddedCache() {
 
-    flex: 0 0 15px;
+    try {
 
-    stroke-width: 2;
-}
+        const raw =
+            localStorage.getItem(
+                RECENT_CACHE_KEY
+            );
 
+        if (!raw) {
+            return [];
+        }
 
-/* Home stat icons */
+        const cache =
+            JSON.parse(raw);
 
-.home-stat-icon svg {
-    width: 20px;
-    height: 20px;
+        if (
+            !cache ||
+            !Array.isArray(
+                cache.tracks
+            )
+        ) {
+            return [];
+        }
 
-    stroke-width: 2;
-}
+        return cache.tracks;
 
+    } catch (error) {
 
-/* Library stat icons */
+        console.warn(
+            "Recently Added cache load failed:",
+            error
+        );
 
-.library-stats-bar > span {
-    display: inline-flex;
-    align-items: center;
-
-    gap: 4px;
-}
-
-
-.library-stats-bar svg {
-    width: 13px;
-    height: 13px;
-
-    stroke-width: 2;
-}
-
-
-/* Arpeggi icon */
-
-.home-connect-icon svg {
-    width: 21px;
-    height: 21px;
-
-    stroke-width: 2;
+        return [];
+    }
 }
 
 
 /* ============================================================
-   GLOBAL PLAYER
+   LIBRARY
    ============================================================ */
 
-.gp-main-controls {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+async function refreshLibraryCache() {
 
-    gap: 12px;
+    try {
 
-    width: 100%;
+        const response =
+            await fetch(
+                "api/library",
+                {
+                    cache: "no-store"
+                }
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+        }
+
+
+        const data =
+            await response.json();
+
+
+        rawLibraryFiles =
+            data.files || [];
+
+        saveLibraryCache();
+
+        libraryLoadedFromCache =
+            false;
+
+        libraryFilesSet.clear();
+
+
+        rawLibraryFiles.forEach(
+            file => {
+
+                const name =
+                    String(
+                        file.name || ""
+                    );
+
+
+                const slash =
+                    name.lastIndexOf("/");
+
+
+                const dot =
+                    name.lastIndexOf(".");
+
+
+                const base =
+                    name.substring(
+                        slash + 1,
+                        dot > slash
+                            ? dot
+                            : name.length
+                    );
+
+
+                libraryFilesSet.add(
+                    normalizeKey(base)
+                );
+            }
+        );
+
+
+        const side =
+            document.getElementById(
+                "sideLibCount"
+            );
+
+
+        if (side) {
+            side.textContent =
+                rawLibraryFiles.length;
+        }
+
+
+        const statTracks =
+            document.getElementById(
+                "statTracks"
+            );
+
+
+        if (statTracks) {
+            statTracks.textContent =
+                rawLibraryFiles.length;
+        }
+
+
+        const mobile =
+            document.getElementById(
+                "mobLibCount"
+            );
+
+
+        if (mobile) {
+            mobile.textContent =
+                rawLibraryFiles.length;
+        }
+
+
+        const size =
+            document.getElementById(
+                "libFolderSize"
+            );
+
+
+        if (size) {
+            size.textContent =
+                data.total_size || "0 MB";
+        }
+
+    } catch (error) {
+
+        console.warn(
+            "Library:",
+            error
+        );
+    }
 }
 
 
-.gp-skip-btn {
-    width: 34px;
-    height: 34px;
+async function loadStats() {
 
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    const controller =
+        new AbortController();
 
-    flex: 0 0 34px;
+    const timeout =
+        setTimeout(
+            () =>
+                controller.abort(),
+            5000
+        );
 
-    padding: 0;
+    try {
 
-    border: 0;
-    border-radius: 50%;
+        const response =
+            await fetch(
+                "api/stats",
+                {
+                    cache:
+                        "no-store",
 
-    background: transparent;
+                    signal:
+                        controller.signal
+                }
+            );
 
-    color: var(--text-secondary);
+        if (!response.ok) {
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+        }
 
-    transition:
-        background .15s ease,
-        color .15s ease,
-        transform .15s ease;
+        const stats =
+            await response.json();
+
+        const values = {
+
+            statTracks:
+                stats.tracks || 0,
+
+            statArtists:
+                stats.artists || 0,
+
+            statAlbums:
+                stats.albums || 0,
+
+            downloadStatTracks:
+                stats.tracks || 0,
+
+            downloadStatAlbums:
+                stats.albums || 0,
+
+            homeTracks:
+                stats.tracks || 0,
+
+            homeArtists:
+                stats.artists || 0,
+
+            homeAlbums:
+                stats.albums || 0
+        };
+
+        Object.entries(
+            values
+        ).forEach(
+            ([id, value]) => {
+
+                const element =
+                    document.getElementById(
+                        id
+                    );
+
+                if (element) {
+                    element.textContent =
+                        value;
+                }
+            }
+        );
+
+    } catch (error) {
+
+        if (
+            error.name ===
+            "AbortError"
+        ) {
+
+            console.warn(
+                "Stats request timed out"
+            );
+
+        } else {
+
+            console.warn(
+                "Stats:",
+                error
+            );
+        }
+
+    } finally {
+
+        clearTimeout(
+            timeout
+        );
+    }
 }
 
 
-.gp-skip-btn:hover {
-    background: var(--bg-hover);
+async function loadLibrary() {
 
-    color: var(--text-primary);
+    const list =
+        document.getElementById(
+            "libraryList"
+        );
 
-    transform: scale(1.08);
+    if (!list) {
+        return;
+    }
+
+
+    const hasCache =
+        loadLibraryCache();
+
+
+    if (!hasCache) {
+
+        list.innerHTML = "";
+
+        updateLoadingCircle(
+            "library",
+            5,
+            "Preparing library..."
+        );
+
+    } else {
+
+        filterLibrary();
+
+        updateLoadingCircle(
+            "library",
+            10,
+            "Refreshing library..."
+        );
+    }
+
+
+    try {
+
+        /* ----------------------------------------
+           STEP 1 — GET ACTUAL FILE LIST
+           ---------------------------------------- */
+
+        smoothLoading(
+            "library",
+            10,
+            20,
+            "Checking music files...",
+            300
+        );
+
+        await refreshLibraryCache();
+
+
+        /*
+         * Tracks and size are already known now.
+         * Update them immediately instead of waiting
+         * for /api/stats.
+         */
+
+        const trackCount =
+            rawLibraryFiles.length;
+
+        const trackElement =
+            document.getElementById(
+                "statTracks"
+            );
+
+        if (trackElement) {
+
+            trackElement.textContent =
+                trackCount;
+        }
+
+
+        const sizeElement =
+            document.getElementById(
+                "libFolderSize"
+            );
+
+
+        /*
+         * refreshLibraryCache() already updates
+         * libFolderSize from /api/library.
+         */
+
+
+        smoothLoading(
+            "library",
+            20,
+            45,
+            "Preparing tracks...",
+            500
+        );
+
+
+        /* ----------------------------------------
+           STEP 2 — RENDER FILES
+           ---------------------------------------- */
+
+        filterLibrary();
+
+
+        updateLoadingCircle(
+            "library",
+            65,
+            "Library tracks loaded..."
+        );/*
+         * The actual library is already ready.
+         * Do NOT wait for stats.
+         */smoothLoading(
+            "library",
+            65,
+            100,
+            "Finalizing library...",
+            500
+        );/*
+         * Load Artists / Albums in the background.
+         * This must NOT block the loader.
+         */loadStats().catch(
+            error =>
+                console.warn(
+                    "Stats update:",
+                    error
+                )
+        );/*
+         * Library is ready immediately.
+         */setTimeout(
+            () => {
+
+                updateLoadingCircle(
+                    "library",
+                    100,
+                    "Library ready"
+                );
+
+                setTimeout(
+                    () =>
+                        hideLoadingCircle(
+                            "library"
+                        ),
+                    300
+                );
+
+            },
+            500
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Library loading failed:",
+            error
+        );
+
+
+        hideLoadingCircle(
+            "library"
+        );
+
+
+        /*
+         * Keep cached library visible if the
+         * server temporarily fails.
+         */
+        if (
+            rawLibraryFiles.length
+        ) {
+
+            filterLibrary();
+
+            showToast(
+                "⚠️ Showing saved library"
+            );
+
+            return;
+        }
+
+
+        list.innerHTML = `
+            <div class="downloads-empty">
+
+                <div class="empty-icon">
+                    ⚠️
+                </div>
+
+                <div class="empty-title">
+                    Could not load library
+                </div>
+
+                <div class="empty-text">
+                    ${escapeHtml(
+                        error.message ||
+                        "Unknown error"
+                    )}
+                </div>
+
+                <button
+                    type="button"
+                    class="save-btn"
+                    onclick="loadLibrary()"
+                >
+                    🔄 Try Again
+                </button>
+
+            </div>
+        `;
+    }
 }
 
 
-.gp-skip-btn:active {
-    transform: scale(.94);
+function filterLibrary() {
+
+    const list =
+        document.getElementById(
+            "libraryList"
+        );
+
+
+    if (!list) {
+        return;
+    }
+
+
+    const input =
+        document.getElementById(
+            "libSearchQuery"
+        );
+
+
+    const query =
+        String(
+            input?.value || ""
+        )
+        .toLowerCase()
+        .trim();
+
+
+    const files =
+        rawLibraryFiles.filter(
+            file =>
+                String(
+                    file.name || ""
+                )
+                .toLowerCase()
+                .includes(query)
+        );
+
+
+    list.innerHTML = "";
+
+
+    if (!files.length) {
+
+        list.innerHTML = `
+            <div class="downloads-empty">
+
+                <div class="empty-icon">
+                    🎵
+                </div>
+
+                <div class="empty-title">
+                    ${
+                        rawLibraryFiles.length
+                            ? "No matching tracks"
+                            : "Your library is empty"
+                    }
+                </div>
+
+                <div class="empty-text">
+                    ${
+                        rawLibraryFiles.length
+                            ? "Try another search."
+                            : "Downloaded tracks will appear here."
+                    }
+                </div>
+
+            </div>
+        `;
+
+        return;
+    }
+
+
+    files.forEach(
+        file => {
+
+            const encoded =
+                encodeURIComponent(
+                    file.name || ""
+                );
+
+
+            const cover =
+                `api/library/cover/${encoded}`;
+
+
+            const stream =
+                `api/library/stream/${encoded}`;
+
+
+            const card =
+                document.createElement(
+                    "article"
+                );
+
+
+            card.className =
+                "result-card";
+
+            card.dataset.libraryName =
+                file.name;
+
+
+            card.innerHTML = `
+
+                <div class="thumb-wrapper">
+
+                    <img
+                        src="${escapeHtml(cover)}"
+                        alt=""
+                        loading="lazy"
+                    >
+
+                </div>
+
+
+                <div class="track-info">
+
+                    <div class="track-title">
+                        ${escapeHtml(
+                            file.name
+                        )}
+                    </div>
+
+                    <div class="track-artist">
+                        📦 ${escapeHtml(
+                            file.size || ""
+                        )}
+                    </div>
+
+                </div>
+
+
+                <div class="btn-group">
+
+                    <button
+                        type="button"
+                        class="btn-preview"
+                    >
+                        ▶ Play
+                    </button>
+
+                    <button
+                        type="button"
+                        class="btn-danger"
+                    >
+                        🗑 Delete
+                    </button>
+
+                </div>
+            `;
+
+
+            const image =
+                card.querySelector("img");
+
+
+            image?.addEventListener(
+                "error",
+                () => {
+
+                    image.src =
+                        "https://via.placeholder.com/100?text=Music";
+
+                },
+                {
+                    once: true
+                }
+            );
+
+
+            const play =
+                card.querySelector(
+                    ".btn-preview"
+                );
+
+
+            const remove =
+                card.querySelector(
+                    ".btn-danger"
+                );
+
+
+            if (play) {
+
+                play.dataset.type =
+                    "library";
+
+
+                play.addEventListener(
+                    "click",
+                    () =>
+                        toggleAudioStream(
+                            play,
+                            stream,
+                            "library",
+                            file.name,
+                            "Local Library",
+                            cover
+                        )
+                );
+            }
+
+            card.addEventListener(
+                "click",
+                (event) => {
+
+                    if (
+                        event.target.closest(".btn-danger")
+                    ) {
+                        return;
+                    }
+
+                    if (
+                        event.target.closest(".btn-preview")
+                    ) {
+                        return;
+                    }
+
+                    currentPlayerSource =
+                        "library";
+
+                    currentLibraryIndex =
+                        rawLibraryFiles.findIndex(
+                            libraryFile =>
+                                libraryFile.name ===
+                                file.name
+                        );
+
+                    if (play) {
+
+                        toggleAudioStream(
+                            play,
+                            stream,
+                            "library",
+                            file.name,
+                            "Local Library",
+                            cover
+                        );
+                    }
+                }
+            );
+
+
+            if (remove) {
+
+                remove.addEventListener(
+                    "click",
+                    () =>
+                        deleteFile(
+                            file.name
+                        )
+                );
+            }
+
+
+            list.appendChild(card);
+        }
+    );
 }
 
 
-.gp-skip-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+function playLibraryTrack(
+    index
+) {
+
+    const queue =
+        getLibraryQueue();
+
+    if (
+        index < 0 ||
+        index >= queue.length
+    ) {
+        return;
+    }
+
+    const file =
+        queue[index];
+
+    currentPlayerSource =
+        "library";
+
+    currentLibraryIndex =
+        index;
+
+    const encoded =
+        encodeURIComponent(
+            file.name
+        );
+
+    const cover =
+        `api/library/cover/${encoded}`;
+
+    const stream =
+        `api/library/stream/${encoded}`;
+
+    let button =
+        document.querySelector(
+            `.result-card[data-library-name="${CSS.escape(file.name)}"] .btn-preview`
+        );
+
+    if (!button) {
+
+        button =
+            document.createElement(
+                "button"
+            );
+
+        button.className =
+            "btn-preview";
+
+        button.dataset.type =
+            "library";
+    }
+
+    toggleAudioStream(
+        button,
+        stream,
+        "library",
+        file.name,
+        "Local Library",
+        cover
+    );
 }
 
 
-.gp-skip-btn svg {
-    width: 18px;
-    height: 18px;
+async function deleteFile(filename) {
 
-    stroke-width: 2;
-}
-
-
-/* Volume icon */
-
-.gp-volume-icon {
-    width: 18px;
-    height: 18px;
-
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-
-    flex: 0 0 18px;
-
-    color: var(--text-secondary);
-}
+    if (
+        !confirm(
+            `Delete "${filename}"?`
+        )
+    ) {
+        return;
+    }
 
 
-.gp-volume-icon svg {
-    width: 17px;
-    height: 17px;
+    try {
 
-    stroke-width: 2;
+        const response =
+            await fetch(
+                "api/library/" +
+                encodeURIComponent(
+                    filename
+                ),
+                {
+                    method: "DELETE"
+                }
+            );
+
+
+        if (!response.ok) {
+
+            const error =
+                await response.json()
+                    .catch(
+                        () => ({})
+                    );
+
+
+            throw new Error(
+                error.detail ||
+                "Delete failed."
+            );
+        }
+
+
+        showToast(
+            "🗑 Track deleted"
+        );
+
+
+        if (
+            activePreviewBtn &&
+            activePreviewBtn.dataset.type === "library"
+        ) {
+
+            audio?.pause();
+        }
+
+
+        await loadLibrary();
+
+    } catch (error) {
+
+        showToast(
+            "❌ " +
+            error.message
+        );
+    }
 }
 
 
 /* ============================================================
-   MOBILE ICONS
+   SEARCH
    ============================================================ */
 
-@media (max-width: 768px) {
+async function searchMusic() {
 
-    .bottom-nav .nav-link > svg {
-        width: 18px;
-        height: 18px;
+    const input =
+        document.getElementById(
+            "query"
+        );
 
-        flex: 0 0 18px;
+    const results =
+        document.getElementById(
+            "results"
+        );
+
+    const status =
+        document.getElementById(
+            "statusMsg"
+        );
+
+    if (!input || !results || !status) {
+        return;
+    }
+
+    const query =
+        input.value.trim();
+
+    if (!query) {
+
+        status.textContent =
+            "Enter a search term.";
+
+        hideSearchLoading();
+
+        return;
+    }
+
+    currentQuery = query;
+    currentPage = 1;
+    hasMoreResults = true;
+    isLoadingMore = false;
+
+    /*
+     * Hide the normal text status.
+     */
+    status.textContent = "";
+
+    /*
+     * Start circular search loader.
+     */
+    updateSearchLoading(
+        5,
+        "Synchronizing..."
+    );
+
+    results.innerHTML = "";
+
+    const button =
+        document.getElementById(
+            "searchBtn"
+        );
+
+    if (button) {
+        button.disabled = true;
+    }
+
+    try {
+
+        /*
+         * STEP 1
+         * Synchronize library
+         */
+        smoothSearchLoading(
+            5,
+            20,
+            "Synchronizing library...",
+            300
+        );
+
+        await refreshLibraryCache();
+
+
+        /*
+         * STEP 2
+         * Search server
+         */
+        smoothSearchLoading(
+            20,
+            45,
+            "Searching for music...",
+            400
+        );
+
+        const response =
+            await fetch(
+                `api/search?q=${
+                    encodeURIComponent(query)
+                }&page=1`,
+                {
+                    cache: "no-store"
+                }
+            );
+
+
+        /*
+         * Search request finished.
+         */
+        updateSearchLoading(
+            65,
+            "Processing results..."
+        );
+
+
+        const data =
+            await response.json()
+                .catch(
+                    () => []
+                );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Search failed."
+            );
+        }
+
+
+        /*
+         * No results
+         */
+        if (
+            !Array.isArray(data) ||
+            !data.length
+        ) {
+
+            updateSearchLoading(
+                100,
+                "No results found"
+            );
+
+            setTimeout(
+                hideSearchLoading,
+                500
+            );
+
+            hasMoreResults = false;
+
+            return;
+        }
+
+
+        /*
+         * STEP 3
+         * Render results
+         */
+        updateSearchLoading(
+            80,
+            "Loading results..."
+        );
+
+        renderItems(data);
+
+
+        /*
+         * Search ready.
+         */
+        updateSearchLoading(
+            100,
+            "Search ready"
+        );
+
+        setTimeout(
+            hideSearchLoading,
+            400
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Search failed:",
+            error
+        );
+
+        updateSearchLoading(
+            100,
+            "Search failed"
+        );
+
+        setTimeout(
+            hideSearchLoading,
+            1000
+        );
+
+        status.textContent =
+            "❌ " +
+            error.message;
+
+    } finally {
+
+        if (button) {
+            button.disabled = false;
+        }
+    }
+}
+
+
+function renderItems(items) {
+
+    const results =
+        document.getElementById(
+            "results"
+        );
+
+
+    if (!results || !Array.isArray(items)) {
+        return;
     }
 
 
-    .gp-main-controls {
-        gap: 7px;
+    items.forEach(
+        item => {
+
+            if (!item) {
+                return;
+            }
+
+
+            const card =
+                document.createElement(
+                    "article"
+                );
+
+
+            card.className =
+                "result-card";
+
+
+            const thumbnail =
+                String(
+                    item.thumbnail || ""
+                );
+
+
+            card.innerHTML = `
+
+                <div class="thumb-wrapper">
+
+                    <img
+                        src="${escapeHtml(thumbnail)}"
+                        alt=""
+                        loading="lazy"
+                    >
+
+                    <span class="badge-duration">
+                        ${escapeHtml(
+                            item.duration_text || ""
+                        )}
+                    </span>
+
+                </div>
+
+
+                <div class="track-info">
+
+                    <div class="track-title">
+                        ${escapeHtml(
+                            item.title || "Unknown Track"
+                        )}
+                    </div>
+
+                    <div class="track-artist">
+                        👤 ${escapeHtml(
+                            item.channel || "Unknown Artist"
+                        )}
+                    </div>
+
+                </div>
+
+
+                <div class="btn-group"></div>
+            `;
+
+
+            const image =
+                card.querySelector("img");
+
+
+            image?.addEventListener(
+                "error",
+                () => {
+
+                    image.src =
+                        "https://via.placeholder.com/100?text=Music";
+
+                },
+                {
+                    once: true
+                }
+            );
+
+
+            const group =
+                card.querySelector(
+                    ".btn-group"
+                );
+
+
+            if (!group) {
+                return;
+            }
+
+
+            const titleKey =
+                normalizeKey(
+                    item.title || ""
+                );
+
+
+            if (
+                libraryFilesSet.has(
+                    titleKey
+                )
+            ) {
+
+                group.innerHTML = `
+                    <div class="badge-library">
+                        ✅ In Library
+                    </div>
+                `;
+
+            } else {
+
+                const preview =
+                    document.createElement(
+                        "button"
+                    );
+
+
+                preview.type =
+                    "button";
+
+
+                preview.className =
+                    "btn-preview";
+
+
+                preview.dataset.type =
+                    "search";
+
+
+                preview.textContent =
+                    "▶ Preview";
+
+
+                preview.addEventListener(
+                    "click",
+                    () =>
+                        toggleAudioStream(
+                            preview,
+                            "api/preview?url=" +
+                            encodeURIComponent(
+                                item.url || ""
+                            ),
+                            "search",
+                            item.title,
+                            item.channel,
+                            item.thumbnail
+                        )
+                );
+
+
+                const download =
+                    document.createElement(
+                        "button"
+                    );
+
+
+                download.type =
+                    "button";
+
+
+                download.className =
+                    "btn-download";
+
+
+                download.dataset.id =
+                    item.id || "";
+
+
+                download.textContent =
+                    "⬇️ Save";
+
+
+                download.addEventListener(
+                    "click",
+                    () =>
+                        startDownload(
+                            item.url,
+                            item.title,
+                            item.id,
+                            item.channel,
+                            download
+                        )
+                );
+
+
+                group.appendChild(
+                    preview
+                );
+
+
+                group.appendChild(
+                    download
+                );
+            }
+
+
+            results.appendChild(
+                card
+            );
+        }
+    );
+}
+
+
+async function loadMoreResults() {
+
+    if (
+        isLoadingMore ||
+        !hasMoreResults ||
+        !currentQuery
+    ) {
+        return;
     }
 
 
-    .gp-skip-btn {
-        width: 30px;
-        height: 30px;
+    isLoadingMore = true;
 
-        flex-basis: 30px;
+
+    const nextPage =
+        currentPage + 1;
+
+
+    const loader =
+        document.getElementById(
+            "infiniteLoader"
+        );
+
+
+    if (loader) {
+        loader.style.display = "block";
     }
 
 
-    .gp-skip-btn svg {
-        width: 16px;
-        height: 16px;
-    }
+    try {
 
+        const response =
+            await fetch(
+                `api/search?q=${
+                    encodeURIComponent(
+                        currentQuery
+                    )
+                }&page=${
+                    nextPage
+                }`,
+                {
+                    cache: "no-store"
+                }
+            );
+
+
+        const data =
+            await response.json()
+                .catch(
+                    () => []
+                );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Failed to load more results."
+            );
+        }
+
+
+        if (
+            !Array.isArray(data) ||
+            !data.length
+        ) {
+
+            hasMoreResults = false;
+
+        } else {
+
+            currentPage = nextPage;
+
+            renderItems(data);
+        }
+
+    } catch (error) {
+
+        console.warn(
+            "Load more:",
+            error
+        );
+
+        showToast(
+            "⚠️ Could not load more results"
+        );
+
+    } finally {
+
+        if (loader) {
+            loader.style.display = "none";
+        }
+
+        isLoadingMore = false;
+    }
+}
+
+
+function bindSearch() {
+
+    document
+        .getElementById("searchBtn")
+        ?.addEventListener(
+            "click",
+            searchMusic
+        );
+
+
+    document
+        .getElementById("query")
+        ?.addEventListener(
+            "keydown",
+            event => {
+
+                if (
+                    event.key === "Enter" &&
+                    !event.isComposing
+                ) {
+
+                    event.preventDefault();
+
+                    searchMusic();
+                }
+            }
+        );
 }
 
 
 /* ============================================================
-   SMALL MOBILE
+   DOWNLOADS
    ============================================================ */
 
-@media (max-width: 480px) {
+function isActiveTask(task) {
 
-    .bottom-nav .nav-link > svg {
-        width: 17px;
-        height: 17px;
+    return [
+        "queued",
+        "downloading",
+        "processing"
+    ].includes(
+        String(
+            task?.status || ""
+        ).toLowerCase()
+    );
+}
 
-        flex-basis: 17px;
+
+function isFinishedTask(task) {
+
+    return [
+        "completed",
+        "error",
+        "failed",
+        "cancelled",
+        "canceled"
+    ].includes(
+        String(
+            task?.status || ""
+        ).toLowerCase()
+    );
+}
+
+
+function getTaskStatus(status) {
+
+    const normalized =
+        String(
+            status || "queued"
+        ).toLowerCase();
+
+
+    const map = {
+
+        queued: [
+            "Queued",
+            "⏳",
+            "status-queued"
+        ],
+
+        downloading: [
+            "Downloading",
+            "⬇️",
+            "status-downloading"
+        ],
+
+        processing: [
+            "Processing",
+            "⚙️",
+            "status-processing"
+        ],
+
+        completed: [
+            "Completed",
+            "✓",
+            "status-completed"
+        ],
+
+        error: [
+            "Failed",
+            "⚠️",
+            "status-error"
+        ],
+
+        failed: [
+            "Failed",
+            "⚠️",
+            "status-error"
+        ],
+
+        cancelled: [
+            "Cancelled",
+            "✕",
+            "status-cancelled"
+        ],
+
+        canceled: [
+            "Cancelled",
+            "✕",
+            "status-cancelled"
+        ]
+    };
+
+
+    return (
+        map[normalized] ||
+        map.queued
+    );
+}
+
+
+function updateQueueCounters(tasks) {
+
+    const safeTasks =
+        Array.isArray(tasks)
+            ? tasks
+            : [];
+
+
+    const count =
+        safeTasks.filter(
+            isActiveTask
+        ).length;
+
+
+    [
+        "queueCount",
+        "mobQueueCount",
+        "downloadQueueCount",
+        "homeDownloads"
+    ].forEach(
+        id => {
+
+            const element =
+                document.getElementById(id);
+
+            if (element) {
+                element.textContent =
+                    count;
+            }
+        }
+    );
+}
+
+
+function createDownloadCard(
+    task,
+    position = null
+) {
+
+    const [
+        label,
+        icon,
+        statusClass
+    ] =
+        getTaskStatus(
+            task.status
+        );
+
+
+    const percent =
+        Math.max(
+            0,
+            Math.min(
+                100,
+                Math.round(
+                    Number(
+                        task.percent || 0
+                    )
+                )
+            )
+        );
+
+
+    const card =
+        document.createElement(
+            "article"
+        );
+
+
+    card.className =
+        "download-card";
+
+
+    card.dataset.taskId =
+        String(
+            task.id || ""
+        );
+
+
+    card.innerHTML = `
+
+        <div class="download-art">
+
+            <div class="download-art-icon">
+                🎵
+            </div>
+
+            <div class="download-art-overlay">
+                ${icon}
+            </div>
+
+        </div>
+
+
+        <div class="download-main">
+
+            <div class="download-top">
+
+                <div>
+
+                    <div class="download-title">
+                        ${escapeHtml(
+                            task.title ||
+                            "Unknown Track"
+                        )}
+                    </div>
+
+                    <div class="download-artist">
+                        ${escapeHtml(
+                            task.artist ||
+                            "Unknown Artist"
+                        )}
+                    </div>
+
+                </div>
+
+
+                <div class="download-status-wrap">
+
+                    ${
+                        position !== null
+                            ? `
+                                <span class="queue-position">
+                                    #${position}
+                                </span>
+                            `
+                            : ""
+                    }
+
+                    <span
+                        class="download-status ${statusClass}"
+                    >
+
+                        <span class="status-dot"></span>
+
+                        ${label}
+
+                    </span>
+
+                </div>
+
+            </div>
+
+
+            <div class="download-progress-row">
+
+                <div class="download-progress-track">
+
+                    <div
+                        class="download-progress-fill"
+                        style="width:${percent}%"
+                    ></div>
+
+                </div>
+
+                <span class="download-percent">
+                    ${percent}%
+                </span>
+
+            </div>
+
+
+            <div class="download-bottom">
+
+                <div class="download-message">
+                    ${escapeHtml(
+                        task.error ||
+                        task.step ||
+                        ""
+                    )}
+                </div>
+
+                <div class="download-meta">
+                    ${escapeHtml(
+                        task.speed ||
+                        ""
+                    )}
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="download-actions"></div>
+    `;
+
+
+    const actions =
+        card.querySelector(
+            ".download-actions"
+        );
+
+
+    if (!actions) {
+        return card;
     }
 
 
-    .gp-main-controls {
-        gap: 4px;
+    const actionButton =
+        document.createElement(
+            "button"
+        );
+
+
+    actionButton.type =
+        "button";
+
+
+    if (isActiveTask(task)) {
+
+        actionButton.className =
+            "btn-danger";
+
+
+        actionButton.textContent =
+            "✕ Cancel";
+
+
+        actionButton.addEventListener(
+            "click",
+            () =>
+                cancelTask(
+                    task.id
+                )
+        );
+
+    } else {
+
+        actionButton.className =
+            "download-remove-btn";
+
+
+        actionButton.textContent =
+            "Remove";
+
+
+        actionButton.addEventListener(
+            "click",
+            () =>
+                removeDownloadTask(
+                    task.id
+                )
+        );
     }
 
 
-    .gp-skip-btn {
-        width: 27px;
-        height: 27px;
+    actions.appendChild(
+        actionButton
+    );
 
-        flex-basis: 27px;
+
+    return card;
+}
+
+
+function renderDownloads(tasks) {
+
+    const list =
+        document.getElementById(
+            "downloadsList"
+        );
+
+
+    if (!list) {
+        return;
     }
 
 
-    .gp-skip-btn svg {
-        width: 15px;
-        height: 15px;
+    const safeTasks =
+        Array.isArray(tasks)
+            ? tasks
+            : [];
+
+
+    const active =
+        safeTasks.filter(
+            isActiveTask
+        );
+
+
+    const finished =
+        safeTasks.filter(
+            isFinishedTask
+        );
+
+
+    list.innerHTML = "";
+
+
+    /* ACTIVE */
+
+    const activeSection =
+        document.createElement(
+            "section"
+        );
+
+
+    activeSection.className =
+        "downloads-section";
+
+
+    activeSection.innerHTML = `
+
+        <div class="downloads-section-header">
+
+            <div>
+
+                <div class="downloads-section-title">
+                    Active Queue
+                </div>
+
+                <div class="downloads-section-subtitle">
+                    ${
+                        active.length
+                            ? "Tracks waiting or downloading"
+                            : "Nothing is currently downloading"
+                    }
+                </div>
+
+            </div>
+
+            <span class="section-count">
+                ${active.length}
+            </span>
+
+        </div>
+    `;
+
+
+    if (active.length) {
+
+        const stack =
+            document.createElement(
+                "div"
+            );
+
+
+        stack.className =
+            "download-stack";
+
+
+        active.forEach(
+            (
+                task,
+                index
+            ) => {
+
+                stack.appendChild(
+                    createDownloadCard(
+                        task,
+                        index + 1
+                    )
+                );
+            }
+        );
+
+
+        activeSection.appendChild(
+            stack
+        );
+
+    } else {
+
+        const empty =
+            document.createElement(
+                "div"
+            );
+
+
+        empty.className =
+            "downloads-empty";
+
+
+        empty.innerHTML = `
+
+            <div class="empty-icon">
+                🎧
+            </div>
+
+            <div class="empty-title">
+                Queue is empty
+            </div>
+
+            <div class="empty-text">
+                Search for music and press Download.
+            </div>
+
+            <button
+                type="button"
+                class="save-btn"
+            >
+                🔍 Search Music
+            </button>
+        `;
+
+
+        empty
+            .querySelector("button")
+            ?.addEventListener(
+                "click",
+                () =>
+                    navigate("search")
+            );
+
+
+        activeSection.appendChild(
+            empty
+        );
     }
 
+
+    list.appendChild(
+        activeSection
+    );
+
+
+    /* HISTORY */
+
+    const history =
+        document.createElement(
+            "section"
+        );
+
+
+    history.className =
+        "downloads-section";
+
+
+    history.innerHTML = `
+
+        <div class="downloads-section-header">
+
+            <div>
+
+                <div class="downloads-section-title">
+                    Recent Downloads
+                </div>
+
+                <div class="downloads-section-subtitle">
+                    Completed and previous jobs
+                </div>
+
+            </div>
+
+            <span class="section-count">
+                ${finished.length}
+            </span>
+
+        </div>
+    `;
+
+
+    if (finished.length) {
+
+        const stack =
+            document.createElement(
+                "div"
+            );
+
+
+        stack.className =
+            "download-stack";
+
+
+        finished.forEach(
+            task =>
+                stack.appendChild(
+                    createDownloadCard(
+                        task
+                    )
+                )
+        );
+
+
+        history.appendChild(
+            stack
+        );
+
+    } else {
+
+        const empty =
+            document.createElement(
+                "div"
+            );
+
+
+        empty.className =
+            "downloads-history-empty";
+
+
+        empty.textContent =
+            "No completed downloads yet.";
+
+
+        history.appendChild(
+            empty
+        );
+    }
+
+
+    list.appendChild(
+        history
+    );
+}
+
+
+function taskSignature(tasks) {
+
+    return tasks
+        .map(
+            task =>
+                [
+                    task.id,
+                    task.status,
+                    task.percent,
+                    task.speed,
+                    task.step,
+                    task.error,
+                    task.last_updated
+                ].join("|")
+        )
+        .sort()
+        .join(";");
+}
+
+
+async function pollTasks(force = false) {
+
+    try {
+
+        const response =
+            await fetch(
+                "api/tasks",
+                {
+                    cache: "no-store"
+                }
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+        }
+
+
+        const tasks =
+            await response.json();
+
+
+        latestTasks =
+            Array.isArray(tasks)
+                ? tasks
+                : [];
+
+
+        latestTasks.forEach(
+            task => {
+
+                if (
+                    task.status === "completed" &&
+                    !completedSet.has(task.id)
+                ) {
+
+                    completedSet.add(
+                        task.id
+                    );
+
+
+                    showToast(
+                        `🎉 ${
+                            task.title ||
+                            "Track"
+                        } is ready`
+                    );
+                }
+            }
+        );
+
+
+        updateQueueCounters(
+            latestTasks
+        );
+
+
+        const signature =
+            taskSignature(
+                latestTasks
+            );
+
+
+        if (
+            force ||
+            signature !== lastTaskSignature
+        ) {
+
+            renderDownloads(
+                latestTasks
+            );
+        }
+
+
+        lastTaskSignature =
+            signature;
+
+    } catch (error) {
+
+        console.warn(
+            "Tasks:",
+            error
+        );
+    }
+}
+
+
+async function loadDownloads() {
+
+    await pollTasks(true);
+    await loadStats();
+}
+
+
+async function startDownload(
+    url,
+    title,
+    elementId,
+    artist,
+    button
+) {
+
+    if (!url) {
+
+        showToast(
+            "❌ Invalid download URL"
+        );
+
+        return;
+    }
+
+
+    if (button) {
+
+        button.disabled = true;
+
+        button.textContent =
+            "⏳ Queuing...";
+    }
+
+
+    try {
+
+        const response =
+            await fetch(
+                "api/download",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            url,
+                            title,
+                            elementId,
+                            artist
+                        })
+                }
+            );
+
+
+        const data =
+            await response.json()
+                .catch(
+                    () => ({})
+                );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Failed to queue download."
+            );
+        }
+
+
+        showToast(
+            data.status === "already_queued"
+                ? "⏳ Already in queue"
+                : "⬇️ Added to Downloads"
+        );
+
+
+        navigate("downloads");
+
+
+        await pollTasks(true);
+
+    } catch (error) {
+
+        showToast(
+            "❌ " +
+            error.message
+        );
+
+
+        if (button) {
+
+            button.disabled = false;
+
+            button.textContent =
+                "⬇️ Save";
+        }
+    }
+}
+
+
+async function cancelTask(taskId) {
+
+    try {
+
+        const response =
+            await fetch(
+                `api/tasks/${
+                    encodeURIComponent(taskId)
+                }/cancel`,
+                {
+                    method: "POST"
+                }
+            );
+
+
+        const data =
+            await response.json()
+                .catch(
+                    () => ({})
+                );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Failed to cancel."
+            );
+        }
+
+
+        showToast(
+            "✕ Download cancelled"
+        );
+
+
+        await pollTasks(true);
+
+    } catch (error) {
+
+        showToast(
+            "❌ " +
+            error.message
+        );
+    }
+}
+
+
+async function removeDownloadTask(taskId) {
+
+    try {
+
+        const response =
+            await fetch(
+                `api/tasks/${
+                    encodeURIComponent(taskId)
+                }`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+
+        const data =
+            await response.json()
+                .catch(
+                    () => ({})
+                );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Failed to remove."
+            );
+        }
+
+
+        completedSet.delete(
+            taskId
+        );
+
+
+        await pollTasks(true);
+
+
+        showToast(
+            "🗑 Removed from history"
+        );
+
+    } catch (error) {
+
+        showToast(
+            "❌ " +
+            error.message
+        );
+    }
+}
+
+
+async function clearDoneTasks() {
+
+    try {
+
+        const response =
+            await fetch(
+                "api/tasks/clear-completed",
+                {
+                    method: "DELETE",
+                    cache: "no-store"
+                }
+            );
+
+
+        const data =
+            await response.json()
+                .catch(
+                    () => ({})
+                );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Failed to clear."
+            );
+        }
+
+
+        completedSet.clear();
+
+
+        latestTasks =
+            latestTasks.filter(
+                task =>
+                    !isFinishedTask(task)
+            );
+
+
+        lastTaskSignature = "";
+
+
+        renderDownloads(
+            latestTasks
+        );
+
+
+        updateQueueCounters(
+            latestTasks
+        );
+
+
+        showToast(
+            `🧹 Cleared ${
+                data.count || 0
+            } downloads`
+        );
+
+    } catch (error) {
+
+        showToast(
+            "❌ " +
+            error.message
+        );
+    }
 }
 
 
 /* ============================================================
-   VERY SMALL MOBILE
+   HOME
    ============================================================ */
 
-@media (max-width: 360px) {
+function playNextTrack() {
 
-    .gp-main-controls {
-        gap: 2px;
+    if (
+        currentPlayerSource ===
+        "home"
+    ) {
+
+        const queue =
+            window.xrobHomeQueue || [];
+
+        if (!queue.length) {
+            return;
+        }
+
+        const currentIndex =
+            Number.isInteger(
+                window.xrobHomeQueueIndex
+            )
+                ? window.xrobHomeQueueIndex
+                : -1;
+
+        const nextIndex =
+            currentIndex + 1;
+
+        if (
+            nextIndex >= queue.length
+        ) {
+
+            showToast(
+                "🎵 End of Recently Added"
+            );
+
+            return;
+        }
+
+        playHomeTrack(
+            nextIndex
+        );
+
+        return;
     }
 
 
-    .gp-skip-btn {
-        width: 23px;
-        height: 23px;
+    if (
+        currentPlayerSource ===
+        "library"
+    ) {
 
-        flex-basis: 23px;
+        const queue =
+            getLibraryQueue();
+
+        if (!queue.length) {
+            return;
+        }
+
+        const nextIndex =
+            currentLibraryIndex + 1;
+
+        if (
+            nextIndex >= queue.length
+        ) {
+
+            showToast(
+                "🎵 End of Library"
+            );
+
+            return;
+        }
+
+        playLibraryTrack(
+            nextIndex
+        );
+
+        return;
     }
-
-
-    .gp-skip-btn svg {
-        width: 13px;
-        height: 13px;
-    }
-
 }
+
+function playPreviousTrack() {
+
+    if (
+        currentPlayerSource ===
+        "home"
+    ) {
+
+        const queue =
+            window.xrobHomeQueue || [];
+
+        if (!queue.length) {
+            return;
+        }
+
+        const currentIndex =
+            Number.isInteger(
+                window.xrobHomeQueueIndex
+            )
+                ? window.xrobHomeQueueIndex
+                : 0;
+
+        if (
+            audio &&
+            audio.currentTime > 3
+        ) {
+
+            audio.currentTime = 0;
+
+            return;
+        }
+
+        const previousIndex =
+            currentIndex - 1;
+
+        if (
+            previousIndex < 0
+        ) {
+
+            showToast(
+                "🎵 This is the first track"
+            );
+
+            return;
+        }
+
+        playHomeTrack(
+            previousIndex
+        );
+
+        return;
+    }
+
+
+    if (
+        currentPlayerSource ===
+        "library"
+    ) {
+
+        const queue =
+            getLibraryQueue();
+
+        if (!queue.length) {
+            return;
+        }
+
+        if (
+            audio &&
+            audio.currentTime > 3
+        ) {
+
+            audio.currentTime = 0;
+
+            return;
+        }
+
+        const previousIndex =
+            currentLibraryIndex - 1;
+
+        if (
+            previousIndex < 0
+        ) {
+
+            showToast(
+                "🎵 This is the first library track"
+            );
+
+            return;
+        }
+
+        playLibraryTrack(
+            previousIndex
+        );
+    }
+}
+
+
+function renderRecentlyAdded(
+    recent
+) {
+
+    const container =
+        document.getElementById(
+            "recentTracks"
+        );
+
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = "";
+
+    if (
+        !Array.isArray(recent) ||
+        !recent.length
+    ) {
+
+        container.innerHTML = `
+            <div class="home-empty">
+                No music in your library yet.
+            </div>
+        `;
+
+        return;
+    }
+
+
+    window.xrobHomeQueue =
+        recent;
+
+    if (
+        !Number.isInteger(
+            window.xrobHomeQueueIndex
+        )
+    ) {
+
+        window.xrobHomeQueueIndex =
+            -1;
+    }
+
+
+    recent.forEach(
+        (
+            track,
+            index
+        ) => {
+
+            const card =
+                document.createElement(
+                    "button"
+                );
+
+            card.type =
+                "button";
+
+            card.className =
+                "recent-card";
+
+            card.dataset.type =
+                "home";
+
+
+            const img =
+                document.createElement(
+                    "img"
+                );
+
+            img.src =
+                track.cover ||
+                "https://via.placeholder.com/100?text=Music";
+
+            img.alt = "";
+
+            img.loading =
+                "lazy";
+
+
+            img.addEventListener(
+                "error",
+                () => {
+
+                    img.src =
+                        "https://via.placeholder.com/100?text=Music";
+
+                },
+                {
+                    once: true
+                }
+            );
+
+
+            const title =
+                document.createElement(
+                    "div"
+                );
+
+            title.className =
+                "recent-card-title";
+
+            title.textContent =
+                track.title ||
+                "Unknown Track";
+
+
+            const artist =
+                document.createElement(
+                    "div"
+                );
+
+            artist.className =
+                "recent-card-artist";
+
+            artist.textContent =
+                track.artist ||
+                "Unknown Artist";
+
+
+            card.appendChild(
+                img
+            );
+
+            card.appendChild(
+                title
+            );
+
+            card.appendChild(
+                artist
+            );
+
+
+            track._card =
+                card;
+
+
+            card.addEventListener(
+                "click",
+                () => {
+
+                    window.xrobHomeQueueIndex =
+                        index;
+
+                    playHomeTrack(
+                        index
+                    );
+                }
+            );
+
+
+            container.appendChild(
+                card
+            );
+
+        }
+    );
+}
+
+
+async function loadHome() {
+
+    const container =
+        document.getElementById(
+            "recentTracks"
+        );
+
+    if (!container) {
+        return;
+    }
+
+
+    const cachedRecent =
+        loadRecentlyAddedCache();
+
+
+    if (
+        cachedRecent.length
+    ) {
+
+        recentTracksCache =
+            cachedRecent;
+
+        renderRecentlyAdded(
+            cachedRecent
+        );
+
+        hideLoadingCircle(
+            "recent"
+        );
+
+    } else {
+
+        updateLoadingCircle(
+            "recent",
+            5,
+            "Loading Recently Added..."
+        );
+
+        container.innerHTML =
+            "";
+    }
+
+
+    const controller =
+        new AbortController();
+
+    const timeout =
+        setTimeout(
+            () =>
+                controller.abort(),
+            15000
+        );
+
+
+    try {
+
+        if (
+            !cachedRecent.length
+        ) {
+
+            updateLoadingCircle(
+                "recent",
+                15,
+                "Connecting to Xrob Music..."
+            );
+        }
+
+
+        const response =
+            await fetch(
+                "api/home",
+                {
+                    cache:
+                        "no-store",
+
+                    signal:
+                        controller.signal
+                }
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                `Home API returned HTTP ${response.status}`
+            );
+        }
+
+
+        const data =
+            await response.json();
+
+
+        const stats =
+            data.stats || {};
+
+
+        const setText = (
+            id,
+            value
+        ) => {
+
+            const element =
+                document.getElementById(
+                    id
+                );
+
+            if (element) {
+
+                element.textContent =
+                    value ?? 0;
+            }
+        };
+
+
+        setText(
+            "homeTracks",
+            stats.tracks || 0
+        );
+
+        setText(
+            "homeArtists",
+            stats.artists || 0
+        );
+
+        setText(
+            "homeAlbums",
+            stats.albums || 0
+        );
+
+        setText(
+            "homeDownloads",
+            data.active_downloads || 0
+        );
+
+
+        const recent =
+            Array.isArray(
+                data.recently_added
+            )
+                ? data.recently_added
+                : [];
+
+
+        recentTracksCache =
+            recent;
+
+        saveRecentlyAddedCache(
+            recent
+        );
+
+
+        renderRecentlyAdded(
+            recent
+        );
+
+
+        updateLoadingCircle(
+            "recent",
+            100,
+            "Recently Added ready"
+        );
+
+
+        setTimeout(
+            () =>
+                hideLoadingCircle(
+                    "recent"
+                ),
+            250
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Home loading failed:",
+            error
+        );
+
+
+        if (
+            cachedRecent.length
+        ) {
+
+            renderRecentlyAdded(
+                cachedRecent
+            );
+
+            hideLoadingCircle(
+                "recent"
+            );
+
+            showToast(
+                "⚠️ Showing cached Recently Added"
+            );
+
+        } else {
+
+            hideLoadingCircle(
+                "recent"
+            );
+
+            container.innerHTML = `
+                <div class="home-empty">
+
+                    <div class="empty-icon">
+                        ⚠️
+                    </div>
+
+                    <div class="empty-title">
+                        Could not load Recently Added
+                    </div>
+
+                    <div class="empty-text">
+                        ${escapeHtml(
+                            error.message ||
+                            "Unknown error"
+                        )}
+                    </div>
+
+                    <button
+                        type="button"
+                        class="save-btn"
+                        onclick="loadHome()"
+                    >
+                        🔄 Try Again
+                    </button>
+
+                </div>
+            `;
+        }
+
+    } finally {
+
+        clearTimeout(
+            timeout
+        );
+    }
+}
+
+
+/* ============================================================
+   WEBSOCKET
+   ============================================================ */
+
+function initWebSocket() {
+
+    if (
+        socket &&
+        (
+            socket.readyState === WebSocket.OPEN ||
+            socket.readyState === WebSocket.CONNECTING
+        )
+    ) {
+        return;
+    }
+
+
+    const protocol =
+        location.protocol === "https:"
+            ? "wss:"
+            : "ws:";
+
+
+    try {
+
+        socket =
+            new WebSocket(
+                `${protocol}//${location.host}/ws`
+            );
+
+    } catch (error) {
+
+        console.warn(
+            "WebSocket:",
+            error
+        );
+
+        scheduleWebSocketReconnect();
+
+        return;
+    }
+
+
+    socket.onopen =
+        () => {
+
+            console.log(
+                "Xrob Music WebSocket connected"
+            );
+
+        };
+
+
+    socket.onmessage =
+        event => {
+
+            try {
+
+                const data =
+                    JSON.parse(
+                        event.data
+                    );
+
+
+                if (
+                    data.type === "task_update"
+                ) {
+
+                    pollTasks();
+
+                }
+
+            } catch (error) {
+
+                console.warn(
+                    "WebSocket message:",
+                    error
+                );
+            }
+        };
+
+
+    socket.onerror =
+        error => {
+
+            console.warn(
+                "WebSocket error:",
+                error
+            );
+        };
+
+
+    socket.onclose =
+        () => {
+
+            socket = null;
+
+            scheduleWebSocketReconnect();
+        };
+}
+
+
+function scheduleWebSocketReconnect() {
+
+    if (socketReconnectTimer) {
+        return;
+    }
+
+
+    socketReconnectTimer =
+        setTimeout(
+            () => {
+
+                socketReconnectTimer =
+                    null;
+
+                initWebSocket();
+
+            },
+            3000
+        );
+}
+
+
+/* ============================================================
+   INFINITE SCROLL
+   ============================================================ */
+
+function bindInfiniteScroll() {
+
+    window.addEventListener(
+        "scroll",
+        () => {
+
+            const searchTab =
+                document.getElementById(
+                    "tab-search"
+                );
+
+
+            if (
+                !searchTab ||
+                !searchTab.classList.contains(
+                    "active"
+                )
+            ) {
+                return;
+            }
+
+
+            const nearBottom =
+                window.innerHeight +
+                window.scrollY >=
+                document.documentElement.scrollHeight -
+                500;
+
+
+            if (nearBottom) {
+                loadMoreResults();
+            }
+        },
+        {
+            passive: true
+        }
+    );
+}
+
+
+/* ============================================================
+   COPY ARPEGGI SERVER URL
+   ============================================================ */
+
+function bindArpeggiCopy() {
+
+    const button =
+        document.getElementById(
+            "amperfy-copy-url"
+        );
+
+
+    if (!button) {
+        return;
+    }
+
+
+    button.addEventListener(
+        "click",
+        async () => {
+
+            const input =
+                document.getElementById(
+                    "amperfy-server-url"
+                );
+
+
+            const value =
+                input?.value || "";
+
+
+            if (!value) {
+
+                showToast(
+                    "❌ Server URL unavailable"
+                );
+
+                return;
+            }
+
+
+            try {
+
+                await navigator.clipboard.writeText(
+                    value
+                );
+
+
+                showToast(
+                    "📋 Server URL copied"
+                );
+
+            } catch {
+
+                try {
+
+                    input.focus();
+                    input.select();
+
+                    document.execCommand(
+                        "copy"
+                    );
+
+                    showToast(
+                        "📋 Server URL copied"
+                    );
+
+                } catch {
+
+                    showToast(
+                        "❌ Could not copy URL"
+                    );
+                }
+            }
+        }
+    );
+}
+
+
+/* ============================================================
+   STARTUP
+   ============================================================ */
+
+function playHomeTrack(index) {
+
+    currentPlayerSource = "home";
+
+    const queue =
+        window.xrobHomeQueue || [];
+
+    if (
+        index < 0 ||
+        index >= queue.length
+    ) {
+        return;
+    }
+
+    const track =
+        queue[index];
+
+    const streamUrl =
+        track.stream ||
+        "";
+
+    if (!streamUrl) {
+
+        showToast(
+            "❌ Track stream URL unavailable"
+        );
+
+        return;
+    }
+
+    window.xrobHomeQueueIndex =
+        index;
+
+    const card =
+        track._card || null;
+
+    if (activePreviewBtn) {
+
+        resetPreviewButton(
+            activePreviewBtn
+        );
+    }
+
+    activePreviewBtn =
+        card;
+
+    if (card) {
+
+        card.classList.add(
+            "playing"
+        );
+    }
+
+    toggleAudioStream(
+        card ||
+            document.createElement("button"),
+        streamUrl,
+        "home",
+        track.title,
+        track.artist,
+        track.cover
+    );
+}
+
+async function initializeApp() {
+
+    cacheDom();
+
+    toggleTheme(
+        localStorage.getItem(
+            "xrob_music_theme"
+        ) || "dark"
+    );
+
+
+    bindAudioEvents();
+    bindPlayerControls();
+    bindSearch();
+    bindInfiniteScroll();
+    bindArpeggiCopy();
+
+
+    await refreshLibraryCache();
+
+    await pollTasks(true);
+
+    await loadStats();
+
+
+    handleHash();
+
+
+    initWebSocket();
+
+
+    restorePlayerState();
+
+
+    setInterval(
+        () => pollTasks(),
+        2000
+    );
+}
+
+
+if (
+    document.readyState === "loading"
+) {
+
+    document.addEventListener(
+        "DOMContentLoaded",
+        initializeApp,
+        {
+            once: true
+        }
+    );
+
+} else {
+
+    initializeApp();
+}
+
+
+/* ============================================================
+   GLOBAL FUNCTIONS
+   ============================================================ */
+
+window.navigate = navigate;
+window.switchTab = switchTab;
+
+window.toggleTheme = toggleTheme;
+
+window.searchMusic = searchMusic;
+window.loadMoreResults = loadMoreResults;
+
+window.loadLibrary = loadLibrary;
+window.filterLibrary = filterLibrary;
+window.deleteFile = deleteFile;
+
+window.loadDownloads = loadDownloads;
+window.startDownload = startDownload;
+window.cancelTask = cancelTask;
+window.removeDownloadTask =
+    removeDownloadTask;
+window.clearDoneTasks =
+    clearDoneTasks;
+
+window.loadSettings = loadSettings;
+window.saveSettings = saveSettings;
+
+window.toggleAudioStream =
+    toggleAudioStream;
