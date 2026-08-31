@@ -1,8 +1,8 @@
-name: Xrob ConvertX
+name: Xrob File Converter
 version: "1.0.0"
-slug: xrob_convertx
-description: Self-hosted file converter supporting documents, images, audio and video
-url: https://github.com/C4illin/ConvertX
+slug: xrob_file_converter
+description: Lightweight self-hosted file converter for documents, images, audio and video
+url: https://github.com/ahmedxrob/ai-project
 
 arch:
   - amd64
@@ -11,29 +11,19 @@ startup: application
 boot: auto
 init: false
 
-image: ghcr.io/ahmedxrob/xrob-convertx
+image: ghcr.io/ahmedxrob/xrob-file-converter
 
 ports:
   3000/tcp: 3001
 
 ports_description:
-  3000/tcp: ConvertX Web Interface
+  3000/tcp: Xrob File Converter Web Interface
 
 webui: http://[HOST]:[PORT:3001]
 
 panel_icon: mdi:file-swap
-panel_title: Xrob ConvertX
+panel_title: Xrob File Converter
 
 map:
   - type: data
     read_only: false
-
-environment:
-  JWT_SECRET: "XrobConvertX-2026-8f4c91a72e6b3d5c0a9f"
-  ACCOUNT_REGISTRATION: "true"
-  HTTP_ALLOWED: "true"
-  ALLOW_UNAUTHENTICATED: "false"
-  AUTO_DELETE_EVERY_N_HOURS: "24"
-  MAX_CONVERT_PROCESS: "2"
-  LANGUAGE: "en"
-  TZ: "Africa/Casablanca"
