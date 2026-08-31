@@ -1,7 +1,7 @@
 name: Xrob ConvertX
 version: "1.0.0"
 slug: xrob_convertx
-description: General purpose file converter with support for documents, images, audio and video
+description: Self-hosted file converter supporting documents, images, audio and video
 url: https://github.com/C4illin/ConvertX
 
 arch:
