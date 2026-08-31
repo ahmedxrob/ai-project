@@ -1,0 +1,48 @@
+name: "Xrob File Converter"
+version: "1.0.0"
+slug: "xrob_file_converter"
+
+description: >-
+  Self-hosted file converter supporting documents, images,
+  audio, video, ebooks and many other formats.
+
+url: "https://github.com/ahmedxrob/homeassistant-apps"
+
+arch:
+  - amd64
+  - aarch64
+
+init: false
+
+ingress: true
+ingress_port: 3000
+ingress_entry: /
+
+panel_icon: mdi:file-swap
+panel_title: File Converter
+panel_admin: false
+
+startup: application
+boot: auto
+
+map:
+  - type: data
+    read_only: false
+
+options:
+  jwt_secret: ""
+  account_registration: false
+  auto_delete_hours: 24
+  max_convert_process: 2
+  language: en
+
+schema:
+  jwt_secret: password
+  account_registration: bool
+  auto_delete_hours: int
+  max_convert_process: int
+  language: str
+
+backup: hot
+
+stage: stable
