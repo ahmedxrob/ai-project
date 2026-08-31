@@ -1,5 +1,5 @@
 name: "Xrob File Converter"
-version: "1.0.0"
+version: "1.0.1"
 slug: "xrob_file_converter"
 
 description: "Self-hosted file converter supporting 1000+ formats"
