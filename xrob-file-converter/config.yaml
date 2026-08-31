@@ -1,7 +1,10 @@
 name: "Xrob File Converter"
-version: "1.1.0"
+version: "1.3.0"
 slug: "xrob_file_converter"
-description: "Lightweight self-hosted file converter for Home Assistant"
+
+description: >-
+  Lightweight self-hosted file converter designed for older AMD CPUs.
+
 url: "https://github.com/ahmedxrob/ai-project"
 
 arch:
@@ -11,17 +14,21 @@ startup: application
 boot: auto
 init: false
 
-ports:
-  8000/tcp: 8000
+ingress: true
+ingress_port: 3000
+ingress_stream: true
 
-ports_description:
-  8000/tcp: "Web interface"
-
-webui: "http://[HOST]:[PORT:8000]"
-
-panel_icon: mdi:file-swap-horizontal
+panel_icon: "mdi:file-swap"
 panel_title: "Xrob File Converter"
 
 map:
   - type: data
     read_only: false
+
+ports:
+  3000/tcp: null
+
+options: {}
+schema: {}
+
+stage: stable
