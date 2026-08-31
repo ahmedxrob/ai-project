@@ -1,8 +1,8 @@
-name: "Xrob ConvertX"
+name: Xrob ConvertX
 version: "1.0.0"
-slug: "xrob_convertx"
-description: "General-purpose self-hosted file converter"
-url: "https://github.com/C4illin/ConvertX"
+slug: xrob_convertx
+description: General-purpose self-hosted file converter
+url: https://github.com/C4illin/ConvertX
 
 arch:
   - amd64
@@ -18,12 +18,12 @@ ports:
   3000/tcp: 3001
 
 ports_description:
-  3000/tcp: "ConvertX Web Interface"
+  3000/tcp: ConvertX Web Interface
 
-webui: "http://[HOST]:[PORT:3001]"
+webui: http://[HOST]:[PORT:3001]
 
 panel_icon: mdi:file-swap
-panel_title: "Xrob ConvertX"
+panel_title: Xrob ConvertX
 
 map:
   - type: data
@@ -37,4 +37,4 @@ environment:
   AUTO_DELETE_EVERY_N_HOURS: "24"
   MAX_CONVERT_PROCESS: "2"
   LANGUAGE: "en"
-  TZ: "Africa/Casablanca"
+  TZ: Africa/Casablanca
