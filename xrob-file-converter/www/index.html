@@ -14,110 +14,250 @@
 body {
     margin: 0;
     min-height: 100vh;
-    font-family: Arial, sans-serif;
-    background: #121212;
+    font-family:
+        Inter,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+
+    background: #101010;
     color: #fff;
+
     display: flex;
-    justify-content: center;
     align-items: center;
+    justify-content: center;
+
+    padding: 24px;
 }
 
 .container {
-    width: min(700px, 94%);
+    width: min(720px, 100%);
 }
 
-.card {
-    background: #1e1e1e;
-    border-radius: 18px;
-    padding: 35px;
-    box-shadow: 0 20px 60px rgba(0,0,0,.4);
+.header {
+    text-align: center;
+    margin-bottom: 28px;
+}
+
+.logo {
+    width: 58px;
+    height: 58px;
+
+    margin: 0 auto 14px;
+
+    border-radius: 16px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: #1ed760;
+    color: #000;
+
+    font-size: 28px;
+    font-weight: 800;
 }
 
 h1 {
-    margin-top: 0;
+    margin: 0;
     font-size: 30px;
 }
 
 .subtitle {
-    color: #aaa;
-    margin-bottom: 30px;
+    margin-top: 8px;
+    color: #999;
+}
+
+.card {
+    background: #181818;
+
+    border: 1px solid #292929;
+
+    border-radius: 18px;
+
+    padding: 28px;
+
+    box-shadow:
+        0 20px 60px rgba(0,0,0,.35);
 }
 
 .drop {
-    border: 2px dashed #555;
+    border: 2px dashed #3a3a3a;
+
     border-radius: 14px;
-    padding: 45px 20px;
+
+    padding: 42px 20px;
+
     text-align: center;
+
     cursor: pointer;
+
     transition: .2s;
 }
 
 .drop:hover {
     border-color: #1ed760;
-    background: #191919;
+    background: #1b1b1b;
 }
 
-.drop input {
+.drop.dragging {
+    border-color: #1ed760;
+    background: #202020;
+}
+
+.drop-icon {
+    font-size: 42px;
+    margin-bottom: 12px;
+}
+
+.drop-title {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.drop-subtitle {
+    color: #888;
+    margin-top: 7px;
+}
+
+#fileInput {
     display: none;
 }
 
 .filename {
-    margin-top: 15px;
-    color: #1ed760;
-    word-break: break-all;
+    margin-top: 16px;
+
+    padding: 12px;
+
+    border-radius: 10px;
+
+    background: #222;
+
+    color: #bbb;
+
+    display: none;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.controls {
+    display: grid;
+
+    grid-template-columns:
+        1fr 1fr;
+
+    gap: 14px;
+
+    margin-top: 20px;
 }
 
 label {
     display: block;
-    margin-top: 25px;
-    margin-bottom: 8px;
-    color: #bbb;
+
+    margin-bottom: 7px;
+
+    color: #aaa;
+
+    font-size: 13px;
 }
 
 select,
 button {
     width: 100%;
-    padding: 14px;
-    border-radius: 10px;
+
     border: 0;
-    font-size: 16px;
+
+    border-radius: 10px;
+
+    padding: 13px;
+
+    font-size: 15px;
 }
 
 select {
-    background: #292929;
+    background: #252525;
     color: white;
 }
 
 button {
-    margin-top: 25px;
     background: #1ed760;
     color: #000;
-    font-weight: bold;
+
+    font-weight: 800;
+
     cursor: pointer;
+
+    transition: .2s;
+}
+
+button:hover {
+    filter: brightness(1.08);
 }
 
 button:disabled {
-    opacity: .5;
+    opacity: .45;
     cursor: not-allowed;
 }
 
 .status {
-    margin-top: 20px;
-    padding: 15px;
-    border-radius: 10px;
-    background: #292929;
     display: none;
+
+    margin-top: 20px;
+
+    padding: 14px;
+
+    border-radius: 10px;
+
+    background: #222;
+
+    color: #ddd;
+
+    text-align: center;
 }
 
 .download {
-    display: block;
-    margin-top: 20px;
+    display: none;
+
+    margin-top: 14px;
+
     padding: 14px;
-    text-align: center;
+
     border-radius: 10px;
-    background: #333;
-    color: white;
+
+    background: #303030;
+
+    color: #1ed760;
+
+    text-align: center;
+
+    font-weight: 700;
+
     text-decoration: none;
+}
+
+.footer {
+    text-align: center;
+
+    margin-top: 18px;
+
+    color: #666;
+
+    font-size: 12px;
+}
+
+@media (max-width: 600px) {
+
+    .controls {
+        grid-template-columns: 1fr;
+    }
+
+    .card {
+        padding: 18px;
+    }
 }
 </style>
 </head>
@@ -126,147 +266,329 @@ button:disabled {
 
 <div class="container">
 
-<div class="card">
+    <div class="header">
 
-<h1>⚡ Xrob File Converter</h1>
+        <div class="logo">
+            X
+        </div>
 
-<div class="subtitle">
-Convert documents, images, audio and video locally.
-</div>
+        <h1>Xrob File Converter</h1>
 
-<label class="drop">
+        <div class="subtitle">
+            Fast, lightweight local file conversion
+        </div>
 
-<input type="file" id="file">
+    </div>
 
-<div>
-📁 Click to select a file
-</div>
+    <div class="card">
 
-<div class="filename" id="filename"></div>
+        <div
+            class="drop"
+            id="drop"
+        >
 
-</label>
+            <div class="drop-icon">
+                📁
+            </div>
 
-<label for="target">
-Convert to
-</label>
+            <div class="drop-title">
+                Drop a file here
+            </div>
 
-<select id="target">
+            <div class="drop-subtitle">
+                or click to browse
+            </div>
 
-<option value="pdf">PDF</option>
+        </div>
 
-<option value="png">PNG</option>
-<option value="jpg">JPG</option>
-<option value="webp">WebP</option>
+        <input
+            id="fileInput"
+            type="file"
+        >
 
-<option value="mp3">MP3</option>
-<option value="wav">WAV</option>
-<option value="flac">FLAC</option>
+        <div
+            id="filename"
+            class="filename"
+        ></div>
 
-<option value="mp4">MP4</option>
-<option value="mkv">MKV</option>
-<option value="webm">WebM</option>
+        <div class="controls">
 
-</select>
+            <div>
 
-<button id="convert">
-Convert File
-</button>
+                <label for="target">
+                    Convert to
+                </label>
 
-<div class="status" id="status"></div>
+                <select id="target">
 
-<a
-    class="download"
-    id="download"
-    style="display:none"
->
-Download Converted File
-</a>
+                    <option value="pdf">
+                        PDF
+                    </option>
 
-</div>
+                    <option value="png">
+                        PNG
+                    </option>
+
+                    <option value="jpg">
+                        JPG
+                    </option>
+
+                    <option value="webp">
+                        WebP
+                    </option>
+
+                    <option value="mp3">
+                        MP3
+                    </option>
+
+                    <option value="wav">
+                        WAV
+                    </option>
+
+                    <option value="flac">
+                        FLAC
+                    </option>
+
+                    <option value="mp4">
+                        MP4
+                    </option>
+
+                    <option value="mkv">
+                        MKV
+                    </option>
+
+                    <option value="webm">
+                        WebM
+                    </option>
+
+                    <option value="docx">
+                        DOCX
+                    </option>
+
+                    <option value="xlsx">
+                        XLSX
+                    </option>
+
+                    <option value="pptx">
+                        PPTX
+                    </option>
+
+                </select>
+
+            </div>
+
+            <div>
+
+                <label>
+                    Action
+                </label>
+
+                <button
+                    id="convert"
+                    disabled
+                >
+                    Convert
+                </button>
+
+            </div>
+
+        </div>
+
+        <div
+            id="status"
+            class="status"
+        ></div>
+
+        <a
+            id="download"
+            class="download"
+        ></a>
+
+    </div>
+
+    <div class="footer">
+        Xrob • Runs locally on your Home Assistant
+    </div>
 
 </div>
 
 <script>
 
-const fileInput = document.getElementById("file");
-const filename = document.getElementById("filename");
-const target = document.getElementById("target");
-const convert = document.getElementById("convert");
-const status = document.getElementById("status");
-const download = document.getElementById("download");
+const fileInput =
+    document.getElementById("fileInput");
 
-fileInput.addEventListener("change", () => {
+const drop =
+    document.getElementById("drop");
+
+const filename =
+    document.getElementById("filename");
+
+const target =
+    document.getElementById("target");
+
+const convert =
+    document.getElementById("convert");
+
+const status =
+    document.getElementById("status");
+
+const download =
+    document.getElementById("download");
+
+
+drop.addEventListener(
+    "click",
+    () => fileInput.click()
+);
+
+
+fileInput.addEventListener(
+    "change",
+    updateFile
+);
+
+
+function updateFile() {
 
     if (!fileInput.files.length) {
-        filename.textContent = "";
+
+        filename.style.display = "none";
+
+        convert.disabled = true;
+
         return;
     }
 
     filename.textContent =
         fileInput.files[0].name;
 
-});
+    filename.style.display =
+        "block";
 
-convert.addEventListener("click", async () => {
+    convert.disabled = false;
+}
 
-    if (!fileInput.files.length) {
 
-        alert("Please select a file.");
+drop.addEventListener(
+    "dragover",
+    event => {
 
-        return;
+        event.preventDefault();
+
+        drop.classList.add("dragging");
     }
+);
 
-    const form = new FormData();
 
-    form.append(
-        "file",
-        fileInput.files[0]
-    );
+drop.addEventListener(
+    "dragleave",
+    () => {
 
-    status.style.display = "block";
-    status.textContent = "Converting...";
-    download.style.display = "none";
-    convert.disabled = true;
+        drop.classList.remove("dragging");
+    }
+);
 
-    try {
 
-        const response = await fetch(
-            `/convert?target=${encodeURIComponent(target.value)}`,
-            {
-                method: "POST",
-                body: form
-            }
-        );
+drop.addEventListener(
+    "drop",
+    event => {
 
-        const data = await response.json();
+        event.preventDefault();
 
-        if (!response.ok) {
-            throw new Error(
-                data.detail || "Conversion failed."
-            );
+        drop.classList.remove("dragging");
+
+        if (!event.dataTransfer.files.length) {
+            return;
         }
 
-        status.textContent =
-            "✅ Conversion completed!";
+        fileInput.files =
+            event.dataTransfer.files;
 
-        download.href = data.download;
-        download.textContent =
-            "⬇️ Download " + data.filename;
-
-        download.style.display = "block";
-
-    } catch (error) {
-
-        status.textContent =
-            "❌ " + error.message;
-
-    } finally {
-
-        convert.disabled = false;
-
+        updateFile();
     }
+);
 
-});
+
+convert.addEventListener(
+    "click",
+    async () => {
+
+        if (!fileInput.files.length) {
+            return;
+        }
+
+        const form =
+            new FormData();
+
+        form.append(
+            "file",
+            fileInput.files[0]
+        );
+
+        status.style.display =
+            "block";
+
+        status.textContent =
+            "Converting...";
+
+        download.style.display =
+            "none";
+
+        convert.disabled =
+            true;
+
+        try {
+
+            const response =
+                await fetch(
+                    `convert?target=${
+                        encodeURIComponent(
+                            target.value
+                        )
+                    }`,
+                    {
+                        method: "POST",
+                        body: form
+                    }
+                );
+
+            const data =
+                await response.json();
+
+            if (!response.ok) {
+
+                throw new Error(
+                    data.detail ||
+                    "Conversion failed."
+                );
+            }
+
+            status.textContent =
+                "✅ Conversion completed!";
+
+            download.href =
+                data.download;
+
+            download.textContent =
+                "⬇️ Download " +
+                data.filename;
+
+            download.style.display =
+                "block";
+
+        } catch (error) {
+
+            status.textContent =
+                "❌ " +
+                error.message;
+
+        } finally {
+
+            convert.disabled =
+                false;
+        }
+    }
+);
 
 </script>
 
