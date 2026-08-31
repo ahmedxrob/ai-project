@@ -1,10 +1,11 @@
+import asyncio
 import os
 import shutil
 import subprocess
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -18,57 +19,230 @@ TMP_DIR = DATA_DIR / "tmp"
 for directory in (UPLOAD_DIR, OUTPUT_DIR, TMP_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Xrob File Converter")
+app = FastAPI(
+    title="Xrob File Converter",
+    docs_url=None,
+    redoc_url=None,
+)
 
-app.mount("/static", StaticFiles(directory=str(APP_DIR / "www")), name="static")
+app.mount(
+    "/static",
+    StaticFiles(directory=str(APP_DIR / "www")),
+    name="static",
+)
 
 
-@app.get("/")
-async def index():
-    return FileResponse(APP_DIR / "www" / "index.html")
+# ---------------------------------------------------------
+# Conversion definitions
+# ---------------------------------------------------------
+
+CONVERSIONS = {
+    # Images
+    "png": {
+        "extensions": ["jpg", "jpeg", "webp", "bmp", "gif", "tiff"],
+        "command": lambda src, dst: [
+            "magick",
+            str(src),
+            str(dst),
+        ],
+    },
+    "jpg": {
+        "extensions": ["png", "webp", "bmp", "gif", "tiff"],
+        "command": lambda src, dst: [
+            "magick",
+            str(src),
+            str(dst),
+        ],
+    },
+    "webp": {
+        "extensions": ["png", "jpg", "jpeg", "bmp", "gif"],
+        "command": lambda src, dst: [
+            "magick",
+            str(src),
+            str(dst),
+        ],
+    },
+
+    # Audio/video
+    "mp3": {
+        "extensions": [
+            "mp4", "mkv", "webm", "wav", "flac",
+            "m4a", "aac", "ogg", "opus"
+        ],
+        "command": lambda src, dst: [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(src),
+            "-vn",
+            "-codec:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            str(dst),
+        ],
+    },
+
+    "wav": {
+        "extensions": [
+            "mp3", "flac", "m4a", "aac", "ogg", "opus"
+        ],
+        "command": lambda src, dst: [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(src),
+            str(dst),
+        ],
+    },
+
+    "flac": {
+        "extensions": [
+            "mp3", "wav", "m4a", "aac", "ogg", "opus"
+        ],
+        "command": lambda src, dst: [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(src),
+            str(dst),
+        ],
+    },
+
+    "mp4": {
+        "extensions": [
+            "mkv", "webm", "avi", "mov"
+        ],
+        "command": lambda src, dst: [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(src),
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(dst),
+        ],
+    },
+
+    "mkv": {
+        "extensions": [
+            "mp4", "webm", "avi", "mov"
+        ],
+        "command": lambda src, dst: [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(src),
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(dst),
+        ],
+    },
+
+    "webm": {
+        "extensions": [
+            "mp4", "mkv", "avi", "mov"
+        ],
+        "command": lambda src, dst: [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(src),
+            str(dst),
+        ],
+    },
+}
 
 
-def safe_name(name: str) -> str:
-    name = Path(name).name
+DOCUMENT_EXTENSIONS = {
+    "pdf",
+    "doc",
+    "docx",
+    "odt",
+    "rtf",
+    "txt",
+    "xls",
+    "xlsx",
+    "ods",
+    "ppt",
+    "pptx",
+    "odp",
+}
+
+
+# ---------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------
+
+def extension(filename: str) -> str:
+    return Path(filename).suffix.lower().lstrip(".")
+
+
+def safe_name(filename: str) -> str:
+    name = Path(filename).name
     return "".join(
         c for c in name
         if c.isalnum() or c in "._- "
     ).strip() or "file"
 
 
-def run_command(command):
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+def run_command(command: list[str], cwd: Path | None = None):
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=504,
+            detail="Conversion timed out.",
+        )
 
     if result.returncode != 0:
-        raise RuntimeError(result.stderr[-3000:])
+        error = result.stderr.strip()
+
+        if not error:
+            error = "Conversion program failed."
+
+        raise HTTPException(
+            status_code=500,
+            detail=error[-2000:],
+        )
 
     return result
 
 
-def convert_with_libreoffice(input_file: Path, output_dir: Path):
-    command = [
-        "libreoffice",
-        "--headless",
-        "--convert-to",
-        "pdf",
-        "--outdir",
-        str(output_dir),
-        str(input_file),
-    ]
+def libreoffice_available() -> bool:
+    return shutil.which("libreoffice") is not None
 
-    run_command(command)
 
-    expected = output_dir / f"{input_file.stem}.pdf"
+# ---------------------------------------------------------
+# Routes
+# ---------------------------------------------------------
 
-    if not expected.exists():
-        raise RuntimeError("LibreOffice did not create the PDF.")
+@app.get("/")
+async def index():
+    return FileResponse(APP_DIR / "www" / "index.html")
 
-    return expected
+
+@app.get("/api/formats")
+async def formats():
+    result = {}
+
+    for target, info in CONVERSIONS.items():
+        result[target] = info["extensions"]
+
+    result["documents"] = sorted(DOCUMENT_EXTENSIONS)
+
+    return result
 
 
 @app.post("/convert")
@@ -76,230 +250,201 @@ async def convert(
     file: UploadFile = File(...),
     target: str = "pdf",
 ):
-    original_name = safe_name(file.filename or "file")
-    extension = Path(original_name).suffix.lower()
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="No filename supplied.",
+        )
+
+    target = target.lower().lstrip(".")
+
+    original_name = safe_name(file.filename)
+    source_ext = extension(original_name)
 
     job_id = uuid.uuid4().hex
 
-    work_dir = TMP_DIR / job_id
-    work_dir.mkdir(parents=True, exist_ok=True)
+    source = UPLOAD_DIR / f"{job_id}_{original_name}"
 
-    input_file = work_dir / original_name
+    await file.seek(0)
+
+    with source.open("wb") as output:
+        while True:
+            chunk = await file.read(1024 * 1024)
+
+            if not chunk:
+                break
+
+            output.write(chunk)
+
+    output_name = (
+        Path(original_name).stem
+        + "."
+        + target
+    )
+
+    output_file = OUTPUT_DIR / f"{job_id}_{output_name}"
 
     try:
-        with open(input_file, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
 
-        target = target.lower().strip(".")
+        # ---------------------------------------------
+        # LibreOffice documents → requested format
+        # ---------------------------------------------
 
-        document_extensions = {
-            ".doc",
-            ".docx",
-            ".odt",
-            ".rtf",
-            ".txt",
-            ".xls",
-            ".xlsx",
-            ".ods",
-            ".ppt",
-            ".pptx",
-            ".odp",
-        }
+        if (
+            source_ext in DOCUMENT_EXTENSIONS
+            and target in DOCUMENT_EXTENSIONS
+        ):
+            if not libreoffice_available():
+                raise HTTPException(
+                    status_code=500,
+                    detail="LibreOffice is not available.",
+                )
 
-        image_extensions = {
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp",
-            ".bmp",
-            ".tiff",
-            ".tif",
-            ".gif",
-            ".svg",
-        }
+            output_dir = TMP_DIR / job_id
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-        # -------------------------------------------------
-        # DOCUMENTS → PDF
-        # -------------------------------------------------
-
-        if target == "pdf" and extension in document_extensions:
-            result = convert_with_libreoffice(
-                input_file,
-                work_dir,
+            run_command(
+                [
+                    "libreoffice",
+                    "--headless",
+                    "--convert-to",
+                    target,
+                    "--outdir",
+                    str(output_dir),
+                    str(source),
+                ]
             )
 
-        # -------------------------------------------------
-        # IMAGE → IMAGE
-        # -------------------------------------------------
+            generated = list(output_dir.iterdir())
 
-        elif extension in image_extensions and target in {
-            "png",
-            "jpg",
-            "jpeg",
-            "webp",
-            "bmp",
-            "tiff",
-        }:
-            output_ext = "jpg" if target == "jpeg" else target
+            if not generated:
+                raise HTTPException(
+                    status_code=500,
+                    detail="LibreOffice did not produce an output file.",
+                )
 
-            result = work_dir / f"{input_file.stem}.{output_ext}"
+            generated_file = generated[0]
 
-            command = [
-                "convert",
-                str(input_file),
-                str(result),
-            ]
+            shutil.move(
+                str(generated_file),
+                str(output_file),
+            )
 
-            run_command(command)
+        # ---------------------------------------------
+        # Anything → PDF through LibreOffice
+        # ---------------------------------------------
 
-        # -------------------------------------------------
-        # SVG → PNG/JPG/WEBP
-        # -------------------------------------------------
+        elif target == "pdf":
+            if not libreoffice_available():
+                raise HTTPException(
+                    status_code=500,
+                    detail="LibreOffice is not available.",
+                )
 
-        elif extension == ".svg" and target in {
-            "png",
-            "jpg",
-            "jpeg",
-            "webp",
-        }:
-            output_ext = "jpg" if target == "jpeg" else target
+            output_dir = TMP_DIR / job_id
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-            result = work_dir / f"{input_file.stem}.{output_ext}"
+            run_command(
+                [
+                    "libreoffice",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(output_dir),
+                    str(source),
+                ]
+            )
 
-            command = [
-                "convert",
-                "-background",
-                "none",
-                str(input_file),
-                str(result),
-            ]
+            generated = list(output_dir.glob("*.pdf"))
 
-            run_command(command)
+            if not generated:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Unable to create PDF.",
+                )
 
-        # -------------------------------------------------
-        # PDF → PNG
-        # -------------------------------------------------
+            shutil.move(
+                str(generated[0]),
+                str(output_file),
+            )
 
-        elif extension == ".pdf" and target == "png":
-            prefix = work_dir / "page"
+        # ---------------------------------------------
+        # Image / audio / video conversion
+        # ---------------------------------------------
 
-            command = [
-                "pdftoppm",
-                "-png",
-                str(input_file),
-                str(prefix),
-            ]
+        elif target in CONVERSIONS:
 
-            run_command(command)
+            info = CONVERSIONS[target]
 
-            pages = sorted(work_dir.glob("page-*.png"))
+            if source_ext not in info["extensions"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Conversion from .{source_ext} "
+                        f"to .{target} is not supported."
+                    ),
+                )
 
-            if not pages:
-                raise RuntimeError("No PDF pages were generated.")
-
-            result = pages[0]
-
-        # -------------------------------------------------
-        # PDF → JPG
-        # -------------------------------------------------
-
-        elif extension == ".pdf" and target in {"jpg", "jpeg"}:
-            prefix = work_dir / "page"
-
-            command = [
-                "pdftoppm",
-                "-jpeg",
-                str(input_file),
-                str(prefix),
-            ]
-
-            run_command(command)
-
-            pages = sorted(work_dir.glob("page-*.jpg"))
-
-            if not pages:
-                raise RuntimeError("No PDF pages were generated.")
-
-            result = pages[0]
-
-        # -------------------------------------------------
-        # AUDIO / VIDEO
-        # -------------------------------------------------
-
-        elif target in {
-            "mp3",
-            "wav",
-            "aac",
-            "flac",
-            "ogg",
-            "mp4",
-            "mkv",
-            "webm",
-            "avi",
-            "mov",
-        }:
-            result = work_dir / f"{input_file.stem}.{target}"
-
-            command = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(input_file),
-                str(result),
-            ]
+            command = info["command"](
+                source,
+                output_file,
+            )
 
             run_command(command)
 
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Conversion from {extension} to {target} is not supported yet.",
+                detail=f"Unsupported target format: {target}",
             )
 
-        if not result.exists():
-            raise RuntimeError("Conversion finished but output was not created.")
-
-        final_name = result.name
-
-        destination = OUTPUT_DIR / f"{job_id}_{final_name}"
-
-        shutil.copy2(result, destination)
+        if not output_file.exists():
+            raise HTTPException(
+                status_code=500,
+                detail="Conversion completed but output was not created.",
+            )
 
         return {
             "success": True,
-            "filename": final_name,
-            "download": f"/download/{job_id}/{final_name}",
+            "filename": output_file.name,
+            "download": f"/download/{output_file.name}",
         }
-
-    except HTTPException:
-        raise
-
-    except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=str(error),
-        )
 
     finally:
         try:
-            shutil.rmtree(work_dir)
+            source.unlink(missing_ok=True)
         except Exception:
             pass
 
+        shutil.rmtree(
+            TMP_DIR / job_id,
+            ignore_errors=True,
+        )
 
-@app.get("/download/{job_id}/{filename}")
-async def download(job_id: str, filename: str):
-    filename = safe_name(filename)
 
-    matches = list(OUTPUT_DIR.glob(f"{job_id}_{filename}"))
+@app.get("/download/{filename}")
+async def download(filename: str):
+    filename = Path(filename).name
 
-    if not matches:
+    file_path = OUTPUT_DIR / filename
+
+    if not file_path.exists():
         raise HTTPException(
             status_code=404,
             detail="File not found.",
         )
 
     return FileResponse(
-        matches[0],
+        file_path,
         filename=filename,
+        media_type="application/octet-stream",
     )
+
+
+@app.get("/api/health")
+async def health():
+    return {
+        "status": "ok",
+        "cpu_safe": True,
+    }
