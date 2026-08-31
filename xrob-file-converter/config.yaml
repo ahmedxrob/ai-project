@@ -1,5 +1,5 @@
 name: "Xrob File Converter"
-version: "1.0.0"
+version: "1.2.0"
 slug: "xrob_file_converter"
 
 description: "Private file converter for documents, images, PDF, audio and video."
