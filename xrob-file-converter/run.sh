@@ -1,8 +1,11 @@
 #!/bin/sh
 
-mkdir -p /data/uploads
-mkdir -p /data/output
-mkdir -p /data/tmp
+set -e
+
+mkdir -p \
+    /data/uploads \
+    /data/output \
+    /data/tmp
 
 exec uvicorn app:app \
     --host 0.0.0.0 \
