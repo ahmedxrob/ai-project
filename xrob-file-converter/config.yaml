@@ -1,18 +1,17 @@
 name: Xrob ConvertX
 version: "1.0.0"
 slug: xrob_convertx
-description: General-purpose self-hosted file converter
+description: General purpose file converter with support for documents, images, audio and video
 url: https://github.com/C4illin/ConvertX
 
 arch:
   - amd64
-  - aarch64
 
 startup: application
 boot: auto
 init: false
 
-image: ghcr.io/c4illin/convertx
+image: ghcr.io/ahmedxrob/xrob-convertx
 
 ports:
   3000/tcp: 3001
@@ -37,4 +36,4 @@ environment:
   AUTO_DELETE_EVERY_N_HOURS: "24"
   MAX_CONVERT_PROCESS: "2"
   LANGUAGE: "en"
-  TZ: Africa/Casablanca
+  TZ: "Africa/Casablanca"
