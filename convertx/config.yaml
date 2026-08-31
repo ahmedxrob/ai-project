@@ -1,5 +1,5 @@
 name: ConvertX
-version: "1.0.0"
+version: "latest"
 slug: convertx
 description: Self-hosted file converter supporting 1000+ formats
 url: https://github.com/C4illin/ConvertX
@@ -11,6 +11,8 @@ arch:
 startup: application
 boot: auto
 init: false
+
+image: ghcr.io/c4illin/convertx
 
 ports:
   3000/tcp: 3001
@@ -27,16 +29,9 @@ map:
   - type: data
     read_only: false
 
-options:
-  jwt_secret: ""
-  account_registration: true
-  auto_delete_every_n_hours: 24
-  max_convert_process: 2
-  language: en
-
-schema:
-  jwt_secret: password
-  account_registration: bool
-  auto_delete_every_n_hours: int
-  max_convert_process: int
-  language: str
+environment:
+  JWT_SECRET: "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET"
+  ACCOUNT_REGISTRATION: "true"
+  AUTO_DELETE_EVERY_N_HOURS: "24"
+  MAX_CONVERT_PROCESS: "2"
+  LANGUAGE: "en"
