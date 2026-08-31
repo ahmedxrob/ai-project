@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "xrob-file-converter/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
