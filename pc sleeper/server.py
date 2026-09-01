@@ -22,14 +22,12 @@ SSH_COMMAND = [
     "StrictHostKeyChecking=no",
     "-o",
     "ConnectTimeout=10",
-    "-o",
-    "BatchMode=yes",
     f"{PC_USER}@{PC_IP}",
     'powershell.exe -Command "rundll32.exe powrprof.dll,SetSuspendState 0,1,0"',
 ]
 
 
-def json_response(handler, status, payload):
+def send_json(handler, status, payload):
     data = json.dumps(payload).encode("utf-8")
 
     handler.send_response(status)
@@ -47,7 +45,6 @@ def json_response(handler, status, payload):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "XrobPCSleep/1.0.1"
 
     def log_message(self, fmt, *args):
         print(
@@ -55,13 +52,14 @@ class Handler(BaseHTTPRequestHandler):
             flush=True,
         )
 
-    def _authorized(self):
-        provided_token = self.headers.get("X-API-Token", "")
-        return bool(API_TOKEN) and provided_token == API_TOKEN
+    def authorized(self):
+        token = self.headers.get("X-API-Token", "")
+        return bool(API_TOKEN) and token == API_TOKEN
 
     def do_GET(self):
+
         if self.path == "/health":
-            json_response(
+            send_json(
                 self,
                 200,
                 {
@@ -72,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path != "/sleep":
-            json_response(
+            send_json(
                 self,
                 404,
                 {
@@ -82,8 +80,8 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        if not self._authorized():
-            json_response(
+        if not self.authorized():
+            send_json(
                 self,
                 401,
                 {
@@ -103,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
             )
 
         except subprocess.TimeoutExpired:
-            json_response(
+            send_json(
                 self,
                 504,
                 {
@@ -114,7 +112,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         except Exception as exc:
-            json_response(
+            send_json(
                 self,
                 500,
                 {
@@ -125,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if result.returncode == 0:
-            json_response(
+            send_json(
                 self,
                 200,
                 {
@@ -135,39 +133,51 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        json_response(
+        send_json(
             self,
             502,
             {
                 "ok": False,
                 "error": "ssh_failed",
                 "returncode": result.returncode,
-                "stderr": result.stderr[-1000:],
-                "stdout": result.stdout[-1000:],
+                "stderr": result.stderr[-2000:],
+                "stdout": result.stdout[-2000:],
             },
         )
 
 
 if __name__ == "__main__":
-    if not all(
-        [
-            PC_IP,
-            PC_USER,
-            PC_PASS,
-            API_TOKEN,
-        ]
-    ):
-        raise SystemExit(
-            "Missing required configuration: "
-            "pc_ip, username, password, or api_token"
-        )
+
+    if not PC_IP:
+        raise SystemExit("Missing pc_ip")
+
+    if not PC_USER:
+        raise SystemExit("Missing username")
+
+    if not PC_PASS:
+        raise SystemExit("Missing password")
+
+    if not API_TOKEN:
+        raise SystemExit("Missing api_token")
+
+    print(
+        f"Xrob PC Sleep starting",
+        flush=True,
+    )
+
+    print(
+        f"Target PC: {PC_USER}@{PC_IP}",
+        flush=True,
+    )
 
     print(
         f"Listening on {HOST}:{PORT}",
         flush=True,
     )
 
-    HTTPServer(
+    server = HTTPServer(
         (HOST, PORT),
         Handler,
-    ).serve_forever()
+    )
+
+    server.serve_forever()
