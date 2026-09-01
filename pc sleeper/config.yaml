@@ -1,25 +1,31 @@
 name: "Xrob PC Sleep"
-version: "1.0.0"
+version: "1.0.1"
 slug: "xrob_pc_sleep"
 description: "Put a Windows PC to sleep from Home Assistant over SSH."
 startup: services
 boot: auto
 init: false
+
 arch:
   - amd64
   - aarch64
+
 ports:
   8099/tcp: 8099
+
 ports_description:
   8099/tcp: "PC Sleep API"
+
 options:
   pc_ip: "192.168.1.147"
   username: "hauser"
   password: "CHANGE_ME"
   api_token: "CHANGE_ME_TOO"
+
 schema:
   pc_ip: str
   username: str
   password: password
   api_token: password
+
 apparmor: false
