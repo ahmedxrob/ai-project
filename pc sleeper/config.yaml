@@ -1,5 +1,5 @@
 name: "Xrob PC Sleep"
-version: "1.0.1"
+version: "1.0.2"
 slug: "xrob_pc_sleep"
 description: "Put a Windows PC to sleep from Home Assistant over SSH."
 startup: services
