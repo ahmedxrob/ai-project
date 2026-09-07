@@ -1,306 +1,281 @@
 <!doctype html>
+
 <html lang="en">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+```
+<meta name="theme-color" content="#0b0d10">
+
 <title>Xrob Port Publisher</title>
-<style>
-:root{
-  color-scheme:dark;
-  --bg:#0d0f12;
-  --panel:#15181d;
-  --panel2:#1b1f26;
-  --border:#2b3038;
-  --text:#f2f4f7;
-  --muted:#9ba3af;
-  --accent:#6ea8fe;
-  --danger:#ef6b73;
-  --success:#65d391;
-}
-*{box-sizing:border-box}
-body{
-  margin:0;
-  background:var(--bg);
-  color:var(--text);
-  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-}
-header{
-  padding:28px 24px 18px;
-  border-bottom:1px solid var(--border);
-  position:sticky;
-  top:0;
-  background:rgba(13,15,18,.94);
-  backdrop-filter:blur(12px);
-  z-index:5;
-}
-.header-inner{max-width:1050px;margin:auto}
-h1{margin:0;font-size:24px}
-.subtitle{color:var(--muted);margin-top:6px;font-size:14px}
-main{max-width:1050px;margin:24px auto;padding:0 20px 60px}
-.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px}
-button{
-  border:1px solid var(--border);
-  background:var(--panel2);
-  color:var(--text);
-  border-radius:9px;
-  padding:9px 13px;
-  cursor:pointer;
-}
-button:hover{filter:brightness(1.15)}
-button.primary{background:var(--accent);color:#07111f;border-color:var(--accent);font-weight:700}
-button.danger{color:#ff9ca2}
-.grid{display:grid;gap:14px}
-.card{
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:18px;
-}
-.row{display:flex;align-items:center;justify-content:space-between;gap:15px}
-.name{font-weight:700;font-size:17px}
-.target{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);font-size:13px;margin-top:6px;word-break:break-all}
-.status{display:inline-flex;align-items:center;gap:7px;font-size:12px;margin-top:12px}
-.dot{width:9px;height:9px;border-radius:50%;background:#777}
-.dot.running{background:var(--success)}
-.dot.starting{background:#e6bf5c}
-.url{
-  margin-top:14px;
-  padding:12px;
-  border-radius:9px;
-  background:#0b0d10;
-  border:1px solid var(--border);
-  display:flex;
-  gap:10px;
-  align-items:center;
-}
-.url a{color:#9cc3ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}
-.empty{
-  border:1px dashed var(--border);
-  border-radius:14px;
-  padding:45px 20px;
-  text-align:center;
-  color:var(--muted);
-}
-dialog{
-  width:min(560px,calc(100% - 30px));
-  background:var(--panel);
-  color:var(--text);
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:0;
-}
-dialog::backdrop{background:rgba(0,0,0,.7)}
-.modal{padding:22px}
-label{display:block;margin:15px 0 7px;color:#cdd2da;font-size:13px}
-input{
-  width:100%;
-  background:#0c0e11;
-  color:var(--text);
-  border:1px solid var(--border);
-  border-radius:8px;
-  padding:11px;
-  outline:none;
-}
-input:focus{border-color:var(--accent)}
-.help{color:var(--muted);font-size:12px;margin-top:6px}
-.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
-.toast{
-  position:fixed;right:18px;bottom:18px;
-  background:#20242b;border:1px solid var(--border);
-  padding:12px 15px;border-radius:10px;display:none;
-}
-@media(max-width:600px){
-  .row{align-items:flex-start;flex-direction:column}
-}
-</style>
+
+<link rel="stylesheet" href="/style.css">
+```
+
 </head>
+
 <body>
-<header>
-  <div class="header-inner">
-    <h1>☁️ Xrob Port Publisher</h1>
-    <div class="subtitle">Publish local HTTP/HTTPS services through Cloudflare Quick Tunnels.</div>
-  </div>
+
+<header class="topbar">
+
+```
+<div class="header-inner">
+
+    <div class="brand">
+
+        <div class="brand-icon">
+            ☁
+        </div>
+
+        <div>
+            <h1>Xrob Port Publisher</h1>
+
+            <p>
+                Publish local services through Cloudflare Quick Tunnels
+            </p>
+        </div>
+
+    </div>
+
+    <div class="connection">
+        <span class="connection-dot"></span>
+        <span>Port Publisher</span>
+    </div>
+
+</div>
+```
+
 </header>
 
 <main>
-  <div class="toolbar">
-    <strong id="count">0 services</strong>
-    <button class="primary" onclick="openAdd()">＋ Add service</button>
-  </div>
-  <div id="list" class="grid"></div>
+
+```
+<section class="hero">
+
+    <div>
+        <div class="eyebrow">
+            CLOUDFLARE QUICK TUNNELS
+        </div>
+
+        <h2>
+            Your services,
+            <span>available anywhere.</span>
+        </h2>
+
+        <p>
+            Create a public URL for any local HTTP or HTTPS service.
+            Your services are automatically restored when the addon restarts.
+        </p>
+    </div>
+
+    <button
+        class="primary add-button"
+        onclick="openAdd()"
+    >
+        <span>＋</span>
+        Add service
+    </button>
+
+</section>
+
+
+<section class="stats">
+
+    <div class="stat-card">
+
+        <div class="stat-icon">
+            ☁
+        </div>
+
+        <div>
+            <div class="stat-value" id="count">
+                0
+            </div>
+
+            <div class="stat-label">
+                Services
+            </div>
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-icon online-icon">
+            ●
+        </div>
+
+        <div>
+            <div class="stat-value" id="onlineCount">
+                0
+            </div>
+
+            <div class="stat-label">
+                Online
+            </div>
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-icon">
+            ↻
+        </div>
+
+        <div>
+            <div class="stat-value" id="startingCount">
+                0
+            </div>
+
+            <div class="stat-label">
+                Starting
+            </div>
+        </div>
+
+    </div>
+
+</section>
+
+
+<section class="section-header">
+
+    <div>
+        <h3>Published services</h3>
+
+        <p>
+            Saved services automatically reconnect after restart.
+        </p>
+    </div>
+
+    <button
+        class="refresh-button"
+        onclick="load()"
+        title="Refresh"
+    >
+        ↻
+    </button>
+
+</section>
+
+
+<section id="list" class="service-grid"></section>
+```
+
 </main>
 
 <dialog id="dialog">
-  <form method="dialog" class="modal" onsubmit="return saveService(event)">
-    <h2 id="modalTitle">Add service</h2>
-    <input id="serviceId" type="hidden">
 
-    <label for="name">Name</label>
-    <input id="name" required maxlength="100" placeholder="Immich">
+```
+<form
+    id="serviceForm"
+    class="modal"
+    onsubmit="return saveService(event)"
+>
 
-    <label for="target">Local target</label>
-    <input id="target" required placeholder="http://192.168.1.162:2283">
-    <div class="help">Examples: http://192.168.1.162:2283 or http://192.168.1.73:8099/recommendations</div>
+    <div class="modal-header">
 
-    <div class="modal-actions">
-      <button type="button" onclick="dialog.close()">Cancel</button>
-      <button class="primary" type="submit">Save & publish</button>
-    </div>
-  </form>
-</dialog>
+        <div>
+            <div class="modal-icon">
+                ☁
+            </div>
 
-<div id="toast" class="toast"></div>
+            <div>
+                <h2 id="modalTitle">
+                    Add service
+                </h2>
 
-<script>
-let services=[];
-
-const $=id=>document.getElementById(id);
-
-function toast(msg){
-  const t=$("toast");
-  t.textContent=msg;
-  t.style.display="block";
-  clearTimeout(window.toastTimer);
-  window.toastTimer=setTimeout(()=>t.style.display="none",2800);
-}
-
-async function load(){
-  try{
-    const r=await fetch("api/services");
-    services=await r.json();
-    render();
-  }catch(e){
-    toast("Unable to contact Port Publisher");
-  }
-}
-
-function render(){
-  $("count").textContent=`${services.length} service${services.length===1?"":"s"}`;
-
-  if(!services.length){
-    $("list").innerHTML=`
-      <div class="empty">
-        <div style="font-size:28px">☁️</div>
-        <h3>No published services</h3>
-        <div>Add Immich, Xrob Music, Home Assistant, or any HTTP service.</div>
-      </div>`;
-    return;
-  }
-
-  $("list").innerHTML=services.map(s=>{
-    const running=s.status==="running";
-    const starting=s.status==="starting";
-    const dot=running?"running":starting?"starting":"";
-    const status=running?"Online":starting?"Starting…":"Stopped";
-
-    return `
-      <div class="card">
-        <div class="row">
-          <div>
-            <div class="name">${esc(s.name)}</div>
-            <div class="target">${esc(s.target)}</div>
-            <div class="status"><span class="dot ${dot}"></span>${status}</div>
-          </div>
-          <div class="actions">
-            <button onclick="editService('${s.id}')">Edit</button>
-            <button onclick="restartService('${s.id}')">↻ Restart</button>
-            <button class="danger" onclick="deleteService('${s.id}')">Delete</button>
-          </div>
+                <p>
+                    Create a Cloudflare public tunnel
+                </p>
+            </div>
         </div>
 
-        ${s.url ? `
-          <div class="url">
-            <a href="${escAttr(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a>
-            <button onclick="copyText('${escAttr(s.url)}')">Copy</button>
-          </div>` : ""}
+        <button
+            type="button"
+            class="close-button"
+            onclick="dialog.close()"
+        >
+            ×
+        </button>
 
-        ${s.error ? `<div style="color:#ff9ca2;margin-top:10px;font-size:12px">${esc(s.error)}</div>` : ""}
-      </div>`;
-  }).join("");
-}
+    </div>
 
-function esc(v){
-  return String(v??"").replace(/[&<>"']/g,c=>({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-  }[c]));
-}
-function escAttr(v){return esc(v).replace(/`/g,"&#96;")}
 
-function openAdd(){
-  $("modalTitle").textContent="Add service";
-  $("serviceId").value="";
-  $("name").value="";
-  $("target").value="";
-  $("dialog").showModal();
-}
+    <input
+        id="serviceId"
+        type="hidden"
+    >
 
-function editService(id){
-  const s=services.find(x=>x.id===id);
-  if(!s)return;
-  $("modalTitle").textContent="Edit service";
-  $("serviceId").value=s.id;
-  $("name").value=s.name;
-  $("target").value=s.target;
-  $("dialog").showModal();
-}
 
-async function saveService(e){
-  e.preventDefault();
+    <label for="name">
+        Service name
+    </label>
 
-  const id=$("serviceId").value;
-  const body={
-    name:$("name").value.trim(),
-    target:$("target").value.trim(),
-    enabled:true
-  };
+    <input
+        id="name"
+        type="text"
+        required
+        maxlength="100"
+        placeholder="Immich"
+        autocomplete="off"
+    >
 
-  const r=await fetch(id?`api/services/${id}`:"api/services",{
-    method:id?"PUT":"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(body)
-  });
 
-  const data=await r.json();
+    <label for="target">
+        Local target
+    </label>
 
-  if(!r.ok){
-    toast(data.error||"Failed to save");
-    return false;
-  }
+    <input
+        id="target"
+        type="url"
+        required
+        placeholder="http://192.168.1.162:2283"
+        autocomplete="off"
+    >
 
-  $("dialog").close();
-  toast("Service saved");
-  await load();
-  return false;
-}
+    <div class="input-help">
+        Examples:
+        <code>http://192.168.1.162:2283</code>
+        or
+        <code>http://192.168.1.73:8099</code>
+    </div>
 
-async function restartService(id){
-  toast("Restarting tunnel…");
-  const r=await fetch(`api/services/${id}/restart`,{method:"POST"});
-  if(!r.ok){toast("Restart failed");return}
-  await load();
-  setTimeout(load,2500);
-}
 
-async function deleteService(id){
-  if(!confirm("Delete this published service and stop its tunnel?"))return;
+    <div class="modal-actions">
 
-  await fetch(`api/services/${id}`,{method:"DELETE"});
-  toast("Service deleted");
-  load();
-}
+        <button
+            type="button"
+            onclick="dialog.close()"
+        >
+            Cancel
+        </button>
 
-async function copyText(text){
-  try{
-    await navigator.clipboard.writeText(text);
-    toast("URL copied");
-  }catch{
-    toast("Copy failed");
-  }
-}
+        <button
+            class="primary"
+            type="submit"
+            id="saveButton"
+        >
+            Save & publish
+        </button>
 
-load();
-setInterval(load,3000);
-</script>
+    </div>
+
+</form>
+```
+
+</dialog>
+
+<div
+    id="toast"
+    class="toast"
+></div>
+
+<script src="/app.js"></script>
+
 </body>
 </html>
