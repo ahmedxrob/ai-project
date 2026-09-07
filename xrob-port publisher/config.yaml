@@ -1,27 +1,35 @@
 name: "Xrob Port Publisher"
-version: "1.1.6"
+version: "1.1.7"
 slug: "xrob_port_publisher"
 description: "Publish local HTTP/HTTPS services through Cloudflare Quick Tunnels with a simple web UI."
-url: "https://github.com/ahmedxrob/xrob-port-publisher"
+url: "https://github.com/ahmedxrob/ai-project/tree/main/xrob-port%20publisher"
+
 arch:
   - amd64
   - aarch64
+
 startup: application
 boot: auto
 init: false
+
 ingress: true
 ingress_port: 8055
 ingress_stream: true
+
 panel_icon: mdi:cloud-upload
 panel_title: Port Publisher
+
 options:
   telegram_bot_token: ""
   telegram_chat_id: ""
+
 schema:
   telegram_bot_token: str?
   telegram_chat_id: str?
+
 map:
   - addon_config:rw
   - data:rw
+
 backup: hot
 stage: experimental
