@@ -1,15 +1,33 @@
 FROM ghcr.io/home-assistant/base:latest
 
-RUN apk add --no-cache     python3     py3-pip     curl     jq     ca-certificates     wget
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    curl \
+    jq \
+    ca-certificates \
+    wget
 
 COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --break-system-packages --no-cache-dir -r /tmp/requirements.txt
+
+RUN pip3 install \
+    --break-system-packages \
+    --no-cache-dir \
+    -r /tmp/requirements.txt
+
+RUN mkdir -p /app/static /data /config
 
 COPY app.py /app/app.py
+COPY static /app/static
 COPY run.sh /run.sh
 
-RUN chmod +x /run.sh && mkdir -p /data /config /app
+RUN chmod +x /run.sh
 
-LABEL   io.hass.version="1.0.0"   io.hass.type="app"   io.hass.arch="amd64|aarch64"
+LABEL \
+    io.hass.version="1.0.0" \
+    io.hass.type="app" \
+    io.hass.arch="amd64|aarch64"
+
+EXPOSE 8099
 
 CMD ["/run.sh"]
