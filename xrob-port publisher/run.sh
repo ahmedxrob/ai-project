@@ -56,7 +56,9 @@ fi
 
 echo "Web UI files found."
 
-echo "Starting Port Publisher UI on 8099..."
+echo "Starting Port Publisher UI on 8055..."
+
+export PORT=8055
 
 exec python3 /app/app.py
 
