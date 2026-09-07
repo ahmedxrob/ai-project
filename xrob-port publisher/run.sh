@@ -6,10 +6,11 @@ echo "========================================="
 echo " Xrob Port Publisher"
 echo "========================================="
 
-# Persistent storage
-mkdir -p /data /config /app/static
+mkdir -p /data
+mkdir -p /config
+mkdir -p /app/static
 
-# Detect architecture
+# Detect CPU architecture
 ARCH="$(uname -m)"
 
 case "$ARCH" in
@@ -25,19 +26,24 @@ case "$ARCH" in
         ;;
 esac
 
-# IMPORTANT:
-# Store cloudflared in /data so it survives container restarts.
+# Persistent cloudflared location
 CLOUDFLARED="/data/cloudflared"
 
-# Download cloudflared only once
+# Download only when it does not already exist
 if [ ! -x "$CLOUDFLARED" ]; then
-    echo "Downloading cloudflared for $CF_ARCH..."
+    echo "Downloading cloudflared for ${CF_ARCH}..."
+
+    TMP_CLOUDFLARED="/data/cloudflared.tmp"
+
+    rm -f "$TMP_CLOUDFLARED"
 
     wget -q --show-progress \
         "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" \
-        -O "$CLOUDFLARED"
+        -O "$TMP_CLOUDFLARED"
 
-    chmod +x "$CLOUDFLARED"
+    chmod +x "$TMP_CLOUDFLARED"
+
+    mv "$TMP_CLOUDFLARED" "$CLOUDFLARED"
 
     echo "cloudflared downloaded successfully."
 else
@@ -46,7 +52,7 @@ fi
 
 echo "cloudflared: $("$CLOUDFLARED" --version || true)"
 
-# Check web UI
+# Check UI files
 echo "Checking web UI..."
 
 if [ ! -f "/app/static/index.html" ]; then
@@ -66,10 +72,9 @@ fi
 
 echo "Web UI files found."
 
-# Flask port
+# Tell Flask which port to use
 export PORT=8055
 
 echo "Starting Port Publisher UI on ${PORT}..."
 
 exec python3 /app/app.py
-
