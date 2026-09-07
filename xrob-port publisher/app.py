@@ -12,14 +12,28 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
 
+# =========================================================
+# Paths / configuration
+# =========================================================
+
 APP_DIR = Path("/app")
 STATIC_DIR = APP_DIR / "static"
+
 DATA_DIR = Path("/data")
 CONFIG_FILE = DATA_DIR / "services.json"
-OPTIONS_FILE = Path("/data/options.json")
+OPTIONS_FILE = DATA_DIR / "options.json"
 
-CLOUDFLARED = APP_DIR / "cloudflared"
+# IMPORTANT:
+# cloudflared is stored in persistent /data
+# so it survives add-on container restarts.
+CLOUDFLARED = DATA_DIR / "cloudflared"
+
 PORT = int(os.environ.get("PORT", "8055"))
+
+
+# =========================================================
+# Flask
+# =========================================================
 
 app = Flask(
     __name__,
@@ -27,27 +41,46 @@ app = Flask(
     static_url_path="",
 )
 
+
+# =========================================================
+# Runtime state
+# =========================================================
+
 lock = threading.RLock()
 tunnels = {}
+services = []
 
+
+# Cloudflare Quick Tunnel URL
 URL_RE = re.compile(
     r"https://[a-z0-9-]+\.trycloudflare\.com",
     re.IGNORECASE,
 )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Persistence
-# ---------------------------------------------------------
+# =========================================================
 
 def load_services():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     if not CONFIG_FILE.exists():
+        print(
+            "[config] No services.json found",
+            flush=True,
+        )
         return []
 
     try:
-        data = json.loads(CONFIG_FILE.read_text())
+        data = json.loads(
+            CONFIG_FILE.read_text(
+                encoding="utf-8"
+            )
+        )
 
         if isinstance(data, list):
             print(
@@ -71,7 +104,10 @@ def load_services():
 
 
 def save_services(current_services):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     tmp = CONFIG_FILE.with_suffix(".tmp")
 
@@ -80,7 +116,8 @@ def save_services(current_services):
             current_services,
             indent=2,
             ensure_ascii=False,
-        )
+        ),
+        encoding="utf-8",
     )
 
     tmp.replace(CONFIG_FILE)
@@ -89,12 +126,17 @@ def save_services(current_services):
 services = load_services()
 
 
-# ---------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------
+# =========================================================
+# Validation
+# =========================================================
 
 def normalize_target(target):
-    target = (target or "").strip()
+    target = str(target or "").strip()
+
+    if not target:
+        raise ValueError(
+            "Target URL is required"
+        )
 
     parsed = urllib.parse.urlparse(target)
 
@@ -114,15 +156,25 @@ def normalize_target(target):
         )
 
     if any(c in target for c in "\r\n\t"):
-        raise ValueError("Invalid target URL")
+        raise ValueError(
+            "Invalid target URL"
+        )
 
     return target
 
 
+# =========================================================
+# Service helpers
+# =========================================================
+
 def get_service(sid):
     with lock:
         return next(
-            (service for service in services if service["id"] == sid),
+            (
+                service
+                for service in services
+                if service.get("id") == sid
+            ),
             None,
         )
 
@@ -141,14 +193,19 @@ def service_public(service):
                 "error": "",
             }
 
-        process = tunnel["process"]
+        process = tunnel.get("process")
         url = tunnel.get("url", "")
         error = tunnel.get("error", "")
 
-        if process.poll() is not None:
+        if process is None:
+            status = "error"
+
+        elif process.poll() is not None:
             status = "stopped"
+
         elif url:
             status = "running"
+
         else:
             status = "starting"
 
@@ -160,9 +217,17 @@ def service_public(service):
         }
 
 
-# ---------------------------------------------------------
+def all_services_public():
+    with lock:
+        return [
+            service_public(service)
+            for service in services
+        ]
+
+
+# =========================================================
 # Cloudflare Tunnel
-# ---------------------------------------------------------
+# =========================================================
 
 def start_tunnel(service):
     sid = service["id"]
@@ -177,6 +242,24 @@ def start_tunnel(service):
                 return
 
         target = service["target"]
+
+        if not CLOUDFLARED.exists():
+            print(
+                f"[tunnel:{sid}] cloudflared not found at {CLOUDFLARED}",
+                flush=True,
+            )
+
+            tunnels[sid] = {
+                "process": None,
+                "url": "",
+                "error": (
+                    "cloudflared is missing. "
+                    "Restart the add-on."
+                ),
+                "started": time.time(),
+            }
+
+            return
 
         cmd = [
             str(CLOUDFLARED),
@@ -260,7 +343,10 @@ def read_tunnel_output(sid, process):
                     flush=True,
                 )
 
-                notify_url(sid, url)
+                notify_url(
+                    sid,
+                    url,
+                )
 
     except Exception as exc:
         print(
@@ -304,16 +390,20 @@ def stop_tunnel(sid):
             try:
                 process.kill()
                 process.wait(timeout=2)
+
             except Exception:
                 pass
 
     with lock:
-        tunnels.pop(sid, None)
+        tunnels.pop(
+            sid,
+            None,
+        )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Telegram
-# ---------------------------------------------------------
+# =========================================================
 
 def notify_url(sid, url):
     service = get_service(sid)
@@ -326,24 +416,30 @@ def notify_url(sid, url):
             return
 
         options = json.loads(
-            OPTIONS_FILE.read_text()
+            OPTIONS_FILE.read_text(
+                encoding="utf-8"
+            )
         )
 
-        token = options.get(
-            "telegram_bot_token",
-            "",
-        )
+        token = str(
+            options.get(
+                "telegram_bot_token",
+                "",
+            )
+        ).strip()
 
-        chat_id = options.get(
-            "telegram_chat_id",
-            "",
-        )
+        chat_id = str(
+            options.get(
+                "telegram_chat_id",
+                "",
+            )
+        ).strip()
 
         if not token or not chat_id:
             return
 
         endpoint = (
-            f"https://api.telegram.org/"
+            "https://api.telegram.org/"
             f"bot{token}/sendMessage"
         )
 
@@ -352,10 +448,12 @@ def notify_url(sid, url):
             f"{url}"
         )
 
-        data = urllib.parse.urlencode({
-            "chat_id": chat_id,
-            "text": text,
-        }).encode()
+        data = urllib.parse.urlencode(
+            {
+                "chat_id": chat_id,
+                "text": text,
+            }
+        ).encode()
 
         req = urllib.request.Request(
             endpoint,
@@ -381,19 +479,21 @@ def notify_url(sid, url):
         )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Web UI
-# ---------------------------------------------------------
+# =========================================================
 
 @app.get("/")
 def index():
     index_file = STATIC_DIR / "index.html"
 
     if not index_file.exists():
-        return jsonify({
-            "error": "Port Publisher UI is missing",
-            "expected": str(index_file),
-        }), 500
+        return jsonify(
+            {
+                "error": "Port Publisher UI is missing",
+                "expected": str(index_file),
+            }
+        ), 500
 
     return send_from_directory(
         str(STATIC_DIR),
@@ -401,25 +501,30 @@ def index():
     )
 
 
+# =========================================================
+# API - services
+# =========================================================
+
 @app.get("/api/services")
 def api_services():
-    with lock:
-        result = [
-            service_public(service)
-            for service in services
-        ]
-
-    return jsonify(result)
+    return jsonify(
+        all_services_public()
+    )
 
 
 @app.post("/api/services")
 def api_add_service():
     global services
 
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(
+        silent=True
+    ) or {}
 
     name = str(
-        data.get("name", "")
+        data.get(
+            "name",
+            "",
+        )
     ).strip()
 
     target = data.get(
@@ -427,23 +532,38 @@ def api_add_service():
         "",
     )
 
+    enabled = bool(
+        data.get(
+            "enabled",
+            True,
+        )
+    )
+
     if not name:
-        return jsonify({
-            "error": "Service name is required",
-        }), 400
+        return jsonify(
+            {
+                "error": "Service name is required",
+            }
+        ), 400
 
     if len(name) > 100:
-        return jsonify({
-            "error": "Service name is too long",
-        }), 400
+        return jsonify(
+            {
+                "error": "Service name is too long",
+            }
+        ), 400
 
     try:
-        target = normalize_target(target)
+        target = normalize_target(
+            target
+        )
 
     except ValueError as exc:
-        return jsonify({
-            "error": str(exc),
-        }), 400
+        return jsonify(
+            {
+                "error": str(exc),
+            }
+        ), 400
 
     sid = os.urandom(6).hex()
 
@@ -451,12 +571,7 @@ def api_add_service():
         "id": sid,
         "name": name,
         "target": target,
-        "enabled": bool(
-            data.get(
-                "enabled",
-                True,
-            )
-        ),
+        "enabled": enabled,
     }
 
     with lock:
@@ -469,7 +584,7 @@ def api_add_service():
         flush=True,
     )
 
-    if service["enabled"]:
+    if enabled:
         start_tunnel(service)
 
     return jsonify(
@@ -481,15 +596,18 @@ def api_add_service():
 def api_update_service(sid):
     global services
 
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(
+        silent=True
+    ) or {}
 
-    with lock:
-        service = get_service(sid)
+    service = get_service(sid)
 
     if not service:
-        return jsonify({
-            "error": "Service not found",
-        }), 404
+        return jsonify(
+            {
+                "error": "Service not found",
+            }
+        ), 404
 
     name = str(
         data.get(
@@ -514,17 +632,30 @@ def api_update_service(sid):
     )
 
     if not name:
-        return jsonify({
-            "error": "Service name is required",
-        }), 400
+        return jsonify(
+            {
+                "error": "Service name is required",
+            }
+        ), 400
+
+    if len(name) > 100:
+        return jsonify(
+            {
+                "error": "Service name is too long",
+            }
+        ), 400
 
     try:
-        target = normalize_target(target)
+        target = normalize_target(
+            target
+        )
 
     except ValueError as exc:
-        return jsonify({
-            "error": str(exc),
-        }), 400
+        return jsonify(
+            {
+                "error": str(exc),
+            }
+        ), 400
 
     stop_tunnel(sid)
 
@@ -556,17 +687,19 @@ def api_delete_service(sid):
     service = get_service(sid)
 
     if not service:
-        return jsonify({
-            "error": "Service not found",
-        }), 404
+        return jsonify(
+            {
+                "error": "Service not found",
+            }
+        ), 404
 
     stop_tunnel(sid)
 
     with lock:
         services = [
-            service
-            for service in services
-            if service["id"] != sid
+            item
+            for item in services
+            if item["id"] != sid
         ]
 
         save_services(services)
@@ -577,9 +710,11 @@ def api_delete_service(sid):
         flush=True,
     )
 
-    return jsonify({
-        "ok": True,
-    })
+    return jsonify(
+        {
+            "ok": True,
+        }
+    )
 
 
 @app.post("/api/services/<sid>/restart")
@@ -587,13 +722,19 @@ def api_restart_service(sid):
     service = get_service(sid)
 
     if not service:
-        return jsonify({
-            "error": "Service not found",
-        }), 404
+        return jsonify(
+            {
+                "error": "Service not found",
+            }
+        ), 404
 
     stop_tunnel(sid)
 
     time.sleep(0.3)
+
+    with lock:
+        service["enabled"] = True
+        save_services(services)
 
     start_tunnel(service)
 
@@ -604,14 +745,14 @@ def api_restart_service(sid):
 
 @app.post("/api/services/<sid>/stop")
 def api_stop_service(sid):
-    global services
-
     service = get_service(sid)
 
     if not service:
-        return jsonify({
-            "error": "Service not found",
-        }), 404
+        return jsonify(
+            {
+                "error": "Service not found",
+            }
+        ), 404
 
     stop_tunnel(sid)
 
@@ -629,9 +770,11 @@ def api_start_service(sid):
     service = get_service(sid)
 
     if not service:
-        return jsonify({
-            "error": "Service not found",
-        }), 404
+        return jsonify(
+            {
+                "error": "Service not found",
+            }
+        ), 404
 
     with lock:
         service["enabled"] = True
@@ -644,27 +787,40 @@ def api_start_service(sid):
     )
 
 
+# =========================================================
+# Health
+# =========================================================
+
 @app.get("/api/health")
 def api_health():
     with lock:
         running = 0
 
         for tunnel in tunnels.values():
-            process = tunnel.get("process")
+            process = tunnel.get(
+                "process"
+            )
 
-            if process and process.poll() is None:
+            if (
+                process
+                and process.poll() is None
+            ):
                 running += 1
 
-        return jsonify({
-            "ok": True,
-            "services": len(services),
-            "tunnels": running,
-        })
+        return jsonify(
+            {
+                "ok": True,
+                "port": PORT,
+                "services": len(services),
+                "tunnels": running,
+                "cloudflared": CLOUDFLARED.exists(),
+            }
+        )
 
 
-# ---------------------------------------------------------
-# Startup / Shutdown
-# ---------------------------------------------------------
+# =========================================================
+# Startup / shutdown
+# =========================================================
 
 def startup():
     global services
@@ -690,12 +846,25 @@ def startup():
     )
 
     print(
+        f"[app] Port: {PORT}",
+        flush=True,
+    )
+
+    print(
+        f"[app] cloudflared: {CLOUDFLARED}",
+        flush=True,
+    )
+
+    print(
         f"[app] Loaded {len(services)} service(s)",
         flush=True,
     )
 
     for service in services:
-        if service.get("enabled", True):
+        if service.get(
+            "enabled",
+            True,
+        ):
             print(
                 f"[app] Restoring: "
                 f"{service['name']} → "
@@ -720,11 +889,17 @@ def shutdown(*_):
     )
 
     with lock:
-        ids = list(tunnels.keys())
+        ids = list(
+            tunnels.keys()
+        )
 
     for sid in ids:
         stop_tunnel(sid)
 
+
+# =========================================================
+# Main
+# =========================================================
 
 if __name__ == "__main__":
     signal.signal(
@@ -744,3 +919,4 @@ if __name__ == "__main__":
         port=PORT,
         threaded=True,
     )
+
