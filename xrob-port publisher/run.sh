@@ -6,8 +6,10 @@ echo "========================================="
 echo " Xrob Port Publisher"
 echo "========================================="
 
+# Persistent storage
 mkdir -p /data /config /app/static
 
+# Detect architecture
 ARCH="$(uname -m)"
 
 case "$ARCH" in
@@ -18,13 +20,16 @@ case "$ARCH" in
         CF_ARCH="arm64"
         ;;
     *)
-        echo "Unsupported architecture: $ARCH"
+        echo "ERROR: Unsupported architecture: $ARCH"
         exit 1
         ;;
 esac
 
-CLOUDFLARED="/app/cloudflared"
+# IMPORTANT:
+# Store cloudflared in /data so it survives container restarts.
+CLOUDFLARED="/data/cloudflared"
 
+# Download cloudflared only once
 if [ ! -x "$CLOUDFLARED" ]; then
     echo "Downloading cloudflared for $CF_ARCH..."
 
@@ -33,10 +38,15 @@ if [ ! -x "$CLOUDFLARED" ]; then
         -O "$CLOUDFLARED"
 
     chmod +x "$CLOUDFLARED"
+
+    echo "cloudflared downloaded successfully."
+else
+    echo "Using existing cloudflared from /data."
 fi
 
 echo "cloudflared: $("$CLOUDFLARED" --version || true)"
 
+# Check web UI
 echo "Checking web UI..."
 
 if [ ! -f "/app/static/index.html" ]; then
@@ -56,9 +66,10 @@ fi
 
 echo "Web UI files found."
 
-echo "Starting Port Publisher UI on 8055..."
-
+# Flask port
 export PORT=8055
+
+echo "Starting Port Publisher UI on ${PORT}..."
 
 exec python3 /app/app.py
 
