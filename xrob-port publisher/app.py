@@ -19,7 +19,7 @@ CONFIG_FILE = DATA_DIR / "services.json"
 OPTIONS_FILE = Path("/data/options.json")
 
 CLOUDFLARED = APP_DIR / "cloudflared"
-PORT = 8099
+PORT = 8055
 
 app = Flask(
     __name__,
