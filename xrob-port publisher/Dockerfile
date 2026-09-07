@@ -23,10 +23,9 @@ COPY run.sh /run.sh
 
 RUN chmod +x /run.sh
 
-LABEL 
-io.hass.version="1.1.0" 
-io.hass.type="app" 
-io.hass.arch="amd64|aarch64"
+LABEL io.hass.version="1.1.0"
+LABEL io.hass.type="app"
+LABEL io.hass.arch="amd64|aarch64"
 
 EXPOSE 8099
 
