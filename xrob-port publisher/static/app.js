@@ -1,200 +1,226 @@
-let services = [];
-
-const $ = (id) => document.getElementById(id);
-
-const dialog = $("dialog");
-
-let toastTimer = null;
+const state = {
+    services: [],
+    editingId: null,
+};
 
 
-function toast(message) {
-    const element = $("toast");
+const $ = (selector) =>
+    document.querySelector(selector);
 
-    element.textContent = message;
 
-    element.classList.add("show");
-
-    clearTimeout(toastTimer);
-
-    toastTimer = setTimeout(() => {
-        element.classList.remove("show");
-    }, 2800);
-}
+const modal = $("#modal");
+const form = $("#serviceForm");
+const formError = $("#formError");
+const saveBtn = $("#saveBtn");
 
 
 function escapeHtml(value) {
-    return String(value ?? "")
-        .replace(/[&<>"']/g, (character) => ({
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#039;"
-        })[character]);
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }
 
 
-function escapeAttribute(value) {
-    return escapeHtml(value)
-        .replace(/`/g, "&#096;");
+function showToast(message) {
+    const toast = $("#toast");
+
+    toast.textContent = message;
+    toast.classList.add("show");
+
+    clearTimeout(
+        showToast.timer
+    );
+
+    showToast.timer = setTimeout(
+        () => {
+            toast.classList.remove("show");
+        },
+        2800
+    );
 }
 
 
-async function load() {
+function statusClass(status) {
+    switch (status) {
+        case "running":
+            return "status-running";
 
-    try {
+        case "starting":
+            return "status-starting";
 
-        const response = await fetch(
-            "/api/services",
-            {
-                cache: "no-store"
-            }
-        );
+        case "error":
+            return "status-error";
 
-        if (!response.ok) {
-            throw new Error(
-                `HTTP ${response.status}`
-            );
-        }
-
-        services = await response.json();
-
-        render();
-
-    } catch (error) {
-
-        console.error(error);
-
-        toast(
-            "Unable to contact Port Publisher"
-        );
+        default:
+            return "status-stopped";
     }
 }
 
 
-function render() {
+function statusText(status) {
+    switch (status) {
+        case "running":
+            return "Online";
 
-    const total = services.length;
+        case "starting":
+            return "Starting";
 
-    const online = services.filter(
-        service => service.status === "running"
+        case "error":
+            return "Error";
+
+        default:
+            return "Stopped";
+    }
+}
+
+
+function renderStats() {
+    const total = state.services.length;
+
+    const online = state.services.filter(
+        (service) =>
+            service.status === "running"
     ).length;
 
-    const starting = services.filter(
-        service => service.status === "starting"
+    const starting = state.services.filter(
+        (service) =>
+            service.status === "starting"
     ).length;
 
-
-    $("count").textContent = total;
-
-    $("onlineCount").textContent = online;
-
-    $("startingCount").textContent = starting;
+    $("#serviceCount").textContent = total;
+    $("#onlineCount").textContent = online;
+    $("#startingCount").textContent = starting;
+}
 
 
-    if (!services.length) {
+function renderServices() {
+    const grid = $("#servicesGrid");
+    const empty = $("#emptyState");
 
-        $("list").innerHTML = `
-            <div class="empty">
+    grid.innerHTML = "";
 
-                <div class="empty-icon">
-                    ☁
-                </div>
+    renderStats();
 
-                <h3>
-                    No published services
-                </h3>
-
-                <p>
-                    Add a local HTTP or HTTPS service
-                    and Xrob Port Publisher will create
-                    a Cloudflare public URL for it.
-                    Your services are saved automatically.
-                </p>
-
-            </div>
-        `;
-
+    if (!state.services.length) {
+        empty.classList.remove("hidden");
         return;
     }
 
+    empty.classList.add("hidden");
 
-    $("list").innerHTML = services
-        .map(renderService)
-        .join("");
-}
+    state.services.forEach(
+        (service) => {
+            const card = document.createElement(
+                "article"
+            );
 
+            card.className = "service-card";
 
-function renderService(service) {
+            const status = service.status || "stopped";
+            const url = service.url || "";
 
-    const status = service.status || "stopped";
-
-    const running = status === "running";
-
-    const starting = status === "starting";
-
-
-    const statusText =
-        running
-            ? "Online"
-            : starting
-                ? "Starting tunnel…"
-                : "Stopped";
-
-
-    const statusClass =
-        running
-            ? "running"
-            : starting
-                ? "starting"
-                : "stopped";
-
-
-    const url = service.url || "";
-
-
-    return `
-        <article class="service-card">
-
-            <div class="service-top">
-
-                <div class="service-info">
-
-                    <div class="service-name">
-                        ${escapeHtml(service.name)}
+            const publicContent = url
+                ? `
+                    <div class="public-label">
+                        Public URL
                     </div>
 
-                    <div class="service-target">
-                        ${escapeHtml(service.target)}
+                    <div class="public-url">
+                        ${escapeHtml(url)}
+                    </div>
+                `
+                : `
+                    <div class="public-label">
+                        Public URL
                     </div>
 
-                    <div class="status">
+                    <div class="public-empty">
+                        ${
+                            service.error
+                                ? escapeHtml(
+                                    service.error
+                                )
+                                : "No public URL yet."
+                        }
+                    </div>
+                `;
 
-                        <span
-                            class="status-dot ${statusClass}"
-                        ></span>
+            card.innerHTML = `
+                <div class="service-head">
 
-                        ${statusText}
+                    <div>
+                        <div class="service-name">
+                            ${escapeHtml(
+                                service.name
+                            )}
+                        </div>
 
+                        <div class="service-target">
+                            ${escapeHtml(
+                                service.target
+                            )}
+                        </div>
+                    </div>
+
+                    <div
+                        class="status ${statusClass(
+                            status
+                        )}"
+                    >
+                        <span class="status-dot"></span>
+                        ${statusText(status)}
                     </div>
 
                 </div>
 
+                <div class="public-box">
+                    ${publicContent}
+                </div>
 
-                <div class="service-actions">
+                <div class="card-actions">
 
                     ${
-                        running
+                        url
                             ? `
                                 <button
-                                    onclick="stopService('${escapeAttribute(service.id)}')"
+                                    class="btn btn-primary small-btn"
+                                    data-action="open"
+                                    data-id="${service.id}"
+                                >
+                                    Open
+                                </button>
+
+                                <button
+                                    class="btn btn-secondary small-btn"
+                                    data-action="copy"
+                                    data-id="${service.id}"
+                                >
+                                    Copy URL
+                                </button>
+                            `
+                            : ""
+                    }
+
+                    ${
+                        status === "running" ||
+                        status === "starting"
+                            ? `
+                                <button
+                                    class="btn btn-secondary small-btn"
+                                    data-action="stop"
+                                    data-id="${service.id}"
                                 >
                                     Stop
                                 </button>
                             `
                             : `
                                 <button
-                                    onclick="startService('${escapeAttribute(service.id)}')"
+                                    class="btn btn-primary small-btn"
+                                    data-action="start"
+                                    data-id="${service.id}"
                                 >
                                     Start
                                 </button>
@@ -202,536 +228,438 @@ function renderService(service) {
                     }
 
                     <button
-                        onclick="restartService('${escapeAttribute(service.id)}')"
+                        class="btn btn-secondary small-btn"
+                        data-action="restart"
+                        data-id="${service.id}"
                     >
-                        ↻ Restart
+                        Restart
                     </button>
 
                     <button
-                        onclick="editService('${escapeAttribute(service.id)}')"
+                        class="btn btn-secondary small-btn"
+                        data-action="edit"
+                        data-id="${service.id}"
                     >
                         Edit
                     </button>
 
                     <button
-                        class="danger"
-                        onclick="deleteService('${escapeAttribute(service.id)}')"
+                        class="btn btn-danger small-btn"
+                        data-action="delete"
+                        data-id="${service.id}"
                     >
                         Delete
                     </button>
 
                 </div>
+            `;
 
-            </div>
-
-
-            ${
-                url
-                    ? `
-                        <div class="public-url">
-
-                            <div class="public-url-icon">
-                                ↗
-                            </div>
-
-                            <a
-                                href="${escapeAttribute(url)}"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title="${escapeAttribute(url)}"
-                            >
-                                ${escapeHtml(url)}
-                            </a>
-
-                            <button
-                                class="copy-button"
-                                onclick="copyText('${escapeAttribute(url)}')"
-                            >
-                                Copy
-                            </button>
-
-                        </div>
-                    `
-                    : ""
-            }
-
-
-            ${
-                service.error
-                    ? `
-                        <div class="service-error">
-                            ${escapeHtml(service.error)}
-                        </div>
-                    `
-                    : ""
-            }
-
-        </article>
-    `;
+            grid.appendChild(card);
+        }
+    );
 }
 
 
-function openAdd() {
+async function api(
+    url,
+    options = {}
+) {
+    const response = await fetch(
+        url,
+        {
+            headers: {
+                "Content-Type":
+                    "application/json",
+                ...(options.headers || {}),
+            },
+            ...options,
+        }
+    );
 
-    $("modalTitle").textContent =
-        "Add service";
+    let data = null;
 
-    $("serviceId").value = "";
+    try {
+        data = await response.json();
+    } catch {
+        data = null;
+    }
 
-    $("name").value = "";
+    if (!response.ok) {
+        throw new Error(
+            data?.error ||
+            `Request failed (${response.status})`
+        );
+    }
 
-    $("target").value = "";
+    return data;
+}
 
-    $("saveButton").textContent =
-        "Save & publish";
 
-    dialog.showModal();
+async function refresh() {
+    try {
+        const services = await api(
+            "/api/services"
+        );
+
+        state.services = Array.isArray(
+            services
+        )
+            ? services
+            : [];
+
+        renderServices();
+
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+
+function openModal(service = null) {
+    state.editingId = service
+        ? service.id
+        : null;
+
+    $("#modalTitle").textContent =
+        service
+            ? "Edit Service"
+            : "Add Service";
+
+    $("#serviceId").value =
+        service?.id || "";
+
+    $("#serviceName").value =
+        service?.name || "";
+
+    $("#serviceTarget").value =
+        service?.target || "";
+
+    $("#serviceEnabled").checked =
+        service?.enabled ?? true;
+
+    formError.classList.add(
+        "hidden"
+    );
+
+    formError.textContent = "";
+
+    saveBtn.disabled = false;
+
+    saveBtn.textContent =
+        service
+            ? "Save Changes"
+            : "Save Service";
+
+    modal.classList.remove(
+        "hidden"
+    );
 
     setTimeout(
-        () => $("name").focus(),
+        () =>
+            $("#serviceName").focus(),
         50
     );
 }
 
 
-function editService(id) {
-
-    const service = services.find(
-        item => item.id === id
+function closeModal() {
+    modal.classList.add(
+        "hidden"
     );
 
-    if (!service) {
+    state.editingId = null;
+
+    form.reset();
+
+    $("#serviceEnabled").checked =
+        true;
+}
+
+
+async function submitForm(event) {
+    event.preventDefault();
+
+    const name =
+        $("#serviceName").value.trim();
+
+    const target =
+        $("#serviceTarget").value.trim();
+
+    const enabled =
+        $("#serviceEnabled").checked;
+
+    formError.classList.add(
+        "hidden"
+    );
+
+    if (!name || !target) {
+        formError.textContent =
+            "Please fill in all fields.";
+
+        formError.classList.remove(
+            "hidden"
+        );
+
         return;
     }
 
+    saveBtn.disabled = true;
 
-    $("modalTitle").textContent =
-        "Edit service";
-
-    $("serviceId").value =
-        service.id;
-
-    $("name").value =
-        service.name;
-
-    $("target").value =
-        service.target;
-
-    $("saveButton").textContent =
-        "Save changes";
-
-
-    dialog.showModal();
-
-    setTimeout(
-        () => $("name").focus(),
-        50
-    );
-}
-
-
-async function saveService(event) {
-
-    event.preventDefault();
-
-
-    const id =
-        $("serviceId").value.trim();
-
-
-    const name =
-        $("name").value.trim();
-
-
-    const target =
-        $("target").value.trim();
-
-
-    if (!name || !target) {
-        toast(
-            "Please fill in all fields"
-        );
-
-        return false;
-    }
-
-
-    const button =
-        $("saveButton");
-
-    const originalText =
-        button.textContent;
-
-
-    button.disabled = true;
-
-    button.textContent =
-        id
-            ? "Saving…"
-            : "Publishing…";
-
+    saveBtn.textContent =
+        state.editingId
+            ? "Saving..."
+            : "Creating...";
 
     try {
+        const payload = {
+            name,
+            target,
+            enabled,
+        };
 
-        const response = await fetch(
-            id
-                ? `/api/services/${encodeURIComponent(id)}`
-                : "/api/services",
-            {
-                method: id
-                    ? "PUT"
-                    : "POST",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body: JSON.stringify({
-                    name,
-                    target,
-                    enabled: true
-                })
-            }
-        );
-
-
-        const data =
-            await response.json();
-
-
-        if (!response.ok) {
-
-            toast(
-                data.error ||
-                "Failed to save service"
+        if (state.editingId) {
+            await api(
+                `/api/services/${state.editingId}`,
+                {
+                    method: "PUT",
+                    body: JSON.stringify(
+                        payload
+                    ),
+                }
             );
 
-            return false;
+            showToast(
+                "Service updated."
+            );
+
+        } else {
+            await api(
+                "/api/services",
+                {
+                    method: "POST",
+                    body: JSON.stringify(
+                        payload
+                    ),
+                }
+            );
+
+            showToast(
+                "Service created."
+            );
         }
 
+        closeModal();
 
-        dialog.close();
-
-
-        toast(
-            id
-                ? "Service updated"
-                : "Service saved — starting tunnel"
-        );
-
-
-        await load();
-
-
-        setTimeout(
-            load,
-            1500
-        );
-
-        setTimeout(
-            load,
-            3500
-        );
-
+        await refresh();
 
     } catch (error) {
+        formError.textContent =
+            error.message;
 
-        console.error(error);
-
-        toast(
-            "Unable to save service"
+        formError.classList.remove(
+            "hidden"
         );
 
     } finally {
+        saveBtn.disabled = false;
 
-        button.disabled = false;
-
-        button.textContent =
-            originalText;
-    }
-
-
-    return false;
-}
-
-
-async function startService(id) {
-
-    toast(
-        "Starting tunnel…"
-    );
-
-
-    try {
-
-        const response = await fetch(
-            `/api/services/${encodeURIComponent(id)}/start`,
-            {
-                method: "POST"
-            }
-        );
-
-
-        const data =
-            await response.json();
-
-
-        if (!response.ok) {
-
-            toast(
-                data.error ||
-                "Unable to start tunnel"
-            );
-
-            return;
-        }
-
-
-        await load();
-
-
-        setTimeout(
-            load,
-            1500
-        );
-
-        setTimeout(
-            load,
-            3500
-        );
-
-
-    } catch (error) {
-
-        console.error(error);
-
-        toast(
-            "Start failed"
-        );
+        saveBtn.textContent =
+            state.editingId
+                ? "Save Changes"
+                : "Save Service";
     }
 }
 
 
-async function stopService(id) {
-
-    toast(
-        "Stopping tunnel…"
-    );
-
-
-    try {
-
-        const response = await fetch(
-            `/api/services/${encodeURIComponent(id)}/stop`,
-            {
-                method: "POST"
-            }
-        );
-
-
-        const data =
-            await response.json();
-
-
-        if (!response.ok) {
-
-            toast(
-                data.error ||
-                "Unable to stop tunnel"
-            );
-
-            return;
-        }
-
-
-        await load();
-
-        toast(
-            "Tunnel stopped"
-        );
-
-
-    } catch (error) {
-
-        console.error(error);
-
-        toast(
-            "Stop failed"
-        );
-    }
-}
-
-
-async function restartService(id) {
-
-    toast(
-        "Restarting tunnel…"
-    );
-
-
-    try {
-
-        const response = await fetch(
-            `/api/services/${encodeURIComponent(id)}/restart`,
-            {
-                method: "POST"
-            }
-        );
-
-
-        const data =
-            await response.json();
-
-
-        if (!response.ok) {
-
-            toast(
-                data.error ||
-                "Restart failed"
-            );
-
-            return;
-        }
-
-
-        await load();
-
-
-        setTimeout(
-            load,
-            1200
-        );
-
-        setTimeout(
-            load,
-            3000
-        );
-
-        setTimeout(
-            load,
-            5000
-        );
-
-
-    } catch (error) {
-
-        console.error(error);
-
-        toast(
-            "Restart failed"
-        );
-    }
-}
-
-
-async function deleteService(id) {
-
+async function serviceAction(
+    action,
+    id
+) {
     const service =
-        services.find(
-            item => item.id === id
+        state.services.find(
+            (item) =>
+                item.id === id
         );
-
 
     if (!service) {
         return;
     }
 
-
-    const confirmed =
-        confirm(
-            `Delete "${service.name}" and stop its Cloudflare tunnel?`
-        );
-
-
-    if (!confirmed) {
-        return;
-    }
-
-
     try {
-
-        const response = await fetch(
-            `/api/services/${encodeURIComponent(id)}`,
-            {
-                method: "DELETE"
+        if (action === "open") {
+            if (service.url) {
+                window.open(
+                    service.url,
+                    "_blank",
+                    "noopener,noreferrer"
+                );
             }
-        );
+
+            return;
+        }
 
 
-        const data =
-            await response.json();
+        if (action === "copy") {
+            if (!service.url) {
+                return;
+            }
 
+            await navigator.clipboard.writeText(
+                service.url
+            );
 
-        if (!response.ok) {
-
-            toast(
-                data.error ||
-                "Delete failed"
+            showToast(
+                "Public URL copied."
             );
 
             return;
         }
 
 
-        toast(
-            "Service deleted"
-        );
-
-
-        await load();
-
-
-    } catch (error) {
-
-        console.error(error);
-
-        toast(
-            "Delete failed"
-        );
-    }
-}
-
-
-async function copyText(text) {
-
-    try {
-
-        await navigator.clipboard.writeText(
-            text
-        );
-
-        toast(
-            "Public URL copied"
-        );
-
-    } catch (error) {
-
-        console.error(error);
-
-        toast(
-            "Copy failed"
-        );
-    }
-}
-
-
-dialog.addEventListener(
-    "click",
-    event => {
-
-        if (event.target === dialog) {
-            dialog.close();
+        if (action === "edit") {
+            openModal(service);
+            return;
         }
 
+
+        if (action === "delete") {
+            const confirmed =
+                window.confirm(
+                    `Delete "${service.name}"?`
+                );
+
+            if (!confirmed) {
+                return;
+            }
+
+            await api(
+                `/api/services/${id}`,
+                {
+                    method: "DELETE",
+                }
+            );
+
+            showToast(
+                "Service deleted."
+            );
+
+            await refresh();
+            return;
+        }
+
+
+        await api(
+            `/api/services/${id}/${action}`,
+            {
+                method: "POST",
+            }
+        );
+
+        const messages = {
+            start: "Service started.",
+            stop: "Service stopped.",
+            restart: "Service restarted.",
+        };
+
+        showToast(
+            messages[action] ||
+                "Done."
+        );
+
+        await refresh();
+
+    } catch (error) {
+        showToast(
+            error.message
+        );
+    }
+}
+
+
+document.addEventListener(
+    "click",
+    (event) => {
+        const button =
+            event.target.closest(
+                "[data-action]"
+            );
+
+        if (!button) {
+            return;
+        }
+
+        serviceAction(
+            button.dataset.action,
+            button.dataset.id
+        );
     }
 );
 
 
-load();
+$("#addServiceBtn").addEventListener(
+    "click",
+    () => openModal()
+);
 
 
+$("#emptyAddBtn").addEventListener(
+    "click",
+    () => openModal()
+);
+
+
+$("#closeModalBtn").addEventListener(
+    "click",
+    closeModal
+);
+
+
+$("#cancelBtn").addEventListener(
+    "click",
+    closeModal
+);
+
+
+modal.addEventListener(
+    "click",
+    (event) => {
+        if (
+            event.target === modal
+        ) {
+            closeModal();
+        }
+    }
+);
+
+
+form.addEventListener(
+    "submit",
+    submitForm
+);
+
+
+document.addEventListener(
+    "keydown",
+    (event) => {
+        if (
+            event.key === "Escape" &&
+            !modal.classList.contains(
+                "hidden"
+            )
+        ) {
+            closeModal();
+        }
+    }
+);
+
+
+// Initial load
+refresh();
+
+
+// Refresh statuses / URLs
 setInterval(
-    load,
+    refresh,
     3000
 );
+
