@@ -1,5 +1,5 @@
 name: "Xrob Port Publisher"
-version: "1.1.1"
+version: "1.1.2"
 slug: "xrob_port_publisher"
 description: "Publish local HTTP/HTTPS services through Cloudflare Quick Tunnels with a simple web UI."
 url: "https://github.com/ahmedxrob/xrob-port-publisher"
