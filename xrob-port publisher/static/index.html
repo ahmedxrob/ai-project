@@ -1,281 +1,312 @@
-<!doctype html>
-
+<!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
-```
-<meta name="theme-color" content="#0b0d10">
+    <meta
+        name="theme-color"
+        content="#0b0f14"
+    >
 
-<title>Xrob Port Publisher</title>
+    <title>Xrob Port Publisher</title>
 
-<link rel="stylesheet" href="/style.css">
-```
-
+    <link
+        rel="stylesheet"
+        href="/style.css"
+    >
 </head>
 
 <body>
 
-<header class="topbar">
+    <div class="app-shell">
 
-```
-<div class="header-inner">
+        <header class="topbar">
 
-    <div class="brand">
+            <div class="brand">
 
-        <div class="brand-icon">
-            ☁
-        </div>
+                <div class="brand-icon">
+                    ☁
+                </div>
 
-        <div>
-            <h1>Xrob Port Publisher</h1>
+                <div>
+                    <div class="brand-title">
+                        Xrob Port Publisher
+                    </div>
 
-            <p>
-                Publish local services through Cloudflare Quick Tunnels
-            </p>
-        </div>
+                    <div class="brand-subtitle">
+                        Cloudflare Quick Tunnels
+                    </div>
+                </div>
 
-    </div>
-
-    <div class="connection">
-        <span class="connection-dot"></span>
-        <span>Port Publisher</span>
-    </div>
-
-</div>
-```
-
-</header>
-
-<main>
-
-```
-<section class="hero">
-
-    <div>
-        <div class="eyebrow">
-            CLOUDFLARE QUICK TUNNELS
-        </div>
-
-        <h2>
-            Your services,
-            <span>available anywhere.</span>
-        </h2>
-
-        <p>
-            Create a public URL for any local HTTP or HTTPS service.
-            Your services are automatically restored when the addon restarts.
-        </p>
-    </div>
-
-    <button
-        class="primary add-button"
-        onclick="openAdd()"
-    >
-        <span>＋</span>
-        Add service
-    </button>
-
-</section>
-
-
-<section class="stats">
-
-    <div class="stat-card">
-
-        <div class="stat-icon">
-            ☁
-        </div>
-
-        <div>
-            <div class="stat-value" id="count">
-                0
             </div>
 
-            <div class="stat-label">
-                Services
-            </div>
-        </div>
+            <button
+                class="btn btn-primary"
+                id="addServiceBtn"
+            >
+                <span>＋</span>
+                Add Service
+            </button>
 
-    </div>
-
-
-    <div class="stat-card">
-
-        <div class="stat-icon online-icon">
-            ●
-        </div>
-
-        <div>
-            <div class="stat-value" id="onlineCount">
-                0
-            </div>
-
-            <div class="stat-label">
-                Online
-            </div>
-        </div>
-
-    </div>
+        </header>
 
 
-    <div class="stat-card">
+        <main class="container">
 
-        <div class="stat-icon">
-            ↻
-        </div>
+            <section class="hero">
 
-        <div>
-            <div class="stat-value" id="startingCount">
-                0
-            </div>
+                <div>
+                    <div class="eyebrow">
+                        PUBLIC ACCESS
+                    </div>
 
-            <div class="stat-label">
-                Starting
-            </div>
-        </div>
+                    <h1>
+                        Publish your local services
+                    </h1>
 
-    </div>
+                    <p>
+                        Expose HTTP and HTTPS services through
+                        temporary Cloudflare public URLs.
+                    </p>
+                </div>
 
-</section>
+                <div class="hero-cloud">
+                    ☁
+                </div>
 
-
-<section class="section-header">
-
-    <div>
-        <h3>Published services</h3>
-
-        <p>
-            Saved services automatically reconnect after restart.
-        </p>
-    </div>
-
-    <button
-        class="refresh-button"
-        onclick="load()"
-        title="Refresh"
-    >
-        ↻
-    </button>
-
-</section>
+            </section>
 
 
-<section id="list" class="service-grid"></section>
-```
+            <section class="stats">
 
-</main>
+                <div class="stat-card">
+                    <div class="stat-label">
+                        Services
+                    </div>
 
-<dialog id="dialog">
+                    <div
+                        class="stat-value"
+                        id="serviceCount"
+                    >
+                        0
+                    </div>
+                </div>
 
-```
-<form
-    id="serviceForm"
-    class="modal"
-    onsubmit="return saveService(event)"
->
+                <div class="stat-card">
+                    <div class="stat-label">
+                        Online
+                    </div>
 
-    <div class="modal-header">
+                    <div
+                        class="stat-value stat-online"
+                        id="onlineCount"
+                    >
+                        0
+                    </div>
+                </div>
 
-        <div>
-            <div class="modal-icon">
-                ☁
-            </div>
+                <div class="stat-card">
+                    <div class="stat-label">
+                        Starting
+                    </div>
 
-            <div>
-                <h2 id="modalTitle">
-                    Add service
-                </h2>
+                    <div
+                        class="stat-value"
+                        id="startingCount"
+                    >
+                        0
+                    </div>
+                </div>
+
+            </section>
+
+
+            <section class="section-head">
+
+                <div>
+                    <h2>
+                        Services
+                    </h2>
+
+                    <p>
+                        Your saved tunnels are restored automatically.
+                    </p>
+                </div>
+
+            </section>
+
+
+            <section
+                id="servicesGrid"
+                class="services-grid"
+            >
+            </section>
+
+
+            <div
+                id="emptyState"
+                class="empty-state hidden"
+            >
+                <div class="empty-icon">
+                    ☁
+                </div>
+
+                <h3>
+                    No services yet
+                </h3>
 
                 <p>
-                    Create a Cloudflare public tunnel
+                    Add a local HTTP or HTTPS service to create
+                    a Cloudflare Quick Tunnel.
                 </p>
+
+                <button
+                    class="btn btn-primary"
+                    id="emptyAddBtn"
+                >
+                    Add your first service
+                </button>
             </div>
+
+        </main>
+
+    </div>
+
+
+    <!-- Modal -->
+
+    <div
+        class="modal-overlay hidden"
+        id="modal"
+    >
+
+        <div class="modal">
+
+            <div class="modal-head">
+
+                <div>
+                    <div
+                        class="modal-title"
+                        id="modalTitle"
+                    >
+                        Add Service
+                    </div>
+
+                    <div class="modal-subtitle">
+                        Configure the local service to publish.
+                    </div>
+                </div>
+
+                <button
+                    class="icon-btn"
+                    id="closeModalBtn"
+                    aria-label="Close"
+                >
+                    ×
+                </button>
+
+            </div>
+
+
+            <form id="serviceForm">
+
+                <input
+                    type="hidden"
+                    id="serviceId"
+                >
+
+                <label>
+                    Service name
+                </label>
+
+                <input
+                    id="serviceName"
+                    type="text"
+                    maxlength="100"
+                    placeholder="Home Assistant"
+                    required
+                >
+
+
+                <label>
+                    Local URL
+                </label>
+
+                <input
+                    id="serviceTarget"
+                    type="url"
+                    placeholder="http://192.168.1.100:8123"
+                    required
+                >
+
+                <div class="input-help">
+                    Example:
+                    http://192.168.1.100:8123
+                </div>
+
+
+                <label class="switch-row">
+
+                    <span>
+                        Start automatically
+                    </span>
+
+                    <input
+                        id="serviceEnabled"
+                        type="checkbox"
+                        checked
+                    >
+
+                    <span class="switch"></span>
+
+                </label>
+
+
+                <div
+                    class="form-error hidden"
+                    id="formError"
+                ></div>
+
+
+                <div class="modal-actions">
+
+                    <button
+                        type="button"
+                        class="btn btn-secondary"
+                        id="cancelBtn"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        type="submit"
+                        class="btn btn-primary"
+                        id="saveBtn"
+                    >
+                        Save Service
+                    </button>
+
+                </div>
+
+            </form>
+
         </div>
 
-        <button
-            type="button"
-            class="close-button"
-            onclick="dialog.close()"
-        >
-            ×
-        </button>
-
     </div>
 
 
-    <input
-        id="serviceId"
-        type="hidden"
-    >
+    <div
+        id="toast"
+        class="toast"
+    ></div>
 
 
-    <label for="name">
-        Service name
-    </label>
-
-    <input
-        id="name"
-        type="text"
-        required
-        maxlength="100"
-        placeholder="Immich"
-        autocomplete="off"
-    >
-
-
-    <label for="target">
-        Local target
-    </label>
-
-    <input
-        id="target"
-        type="url"
-        required
-        placeholder="http://192.168.1.162:2283"
-        autocomplete="off"
-    >
-
-    <div class="input-help">
-        Examples:
-        <code>http://192.168.1.162:2283</code>
-        or
-        <code>http://192.168.1.73:8099</code>
-    </div>
-
-
-    <div class="modal-actions">
-
-        <button
-            type="button"
-            onclick="dialog.close()"
-        >
-            Cancel
-        </button>
-
-        <button
-            class="primary"
-            type="submit"
-            id="saveButton"
-        >
-            Save & publish
-        </button>
-
-    </div>
-
-</form>
-```
-
-</dialog>
-
-<div
-    id="toast"
-    class="toast"
-></div>
-
-<script src="/app.js"></script>
+    <script src="/app.js"></script>
 
 </body>
 </html>
+
