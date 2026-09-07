@@ -40,6 +40,8 @@ fi
 
 echo "cloudflared: $("$CLOUDFLARED" --version || true)"
 
+echo "Checking web UI..."
+
 if [ ! -f "/app/static/index.html" ]; then
 echo "ERROR: /app/static/index.html is missing!"
 exit 1
@@ -56,6 +58,7 @@ exit 1
 fi
 
 echo "Web UI files found."
+
 echo "Starting Port Publisher UI on 8099..."
 
 exec python3 /app/app.py
