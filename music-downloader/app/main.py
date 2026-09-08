@@ -41,6 +41,7 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 app = FastAPI(
     title="Xrob Music",
@@ -66,28 +67,50 @@ app.mount(
 # CONFIGURATION
 # ============================================================
 
-DOWNLOAD_DIR = Path(
-    os.getenv(
-        "DOWNLOAD_DIR",
-        "/share/mymusic/music",
-    )
-)
+def load_addon_options():
+    if not ADDON_OPTIONS_FILE.exists():
+        return {}
 
-DOWNLOAD_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
+    try:
+        with ADDON_OPTIONS_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Failed to read {ADDON_OPTIONS_FILE}: {exc}")
+        return {}
 
+
+def resolve_storage_dir():
+    # DOWNLOAD_DIR is intentionally the highest-priority override so the same
+    # image works in Docker Compose, Home Assistant and other environments.
+    configured = os.getenv("DOWNLOAD_DIR", "").strip()
+
+    if not configured:
+        configured = str(load_addon_options().get(
+            "music_path",
+            "/share/mymusic/music",
+        )).strip()
+
+    if not configured:
+        configured = "/share/mymusic/music"
+
+    path = Path(configured).expanduser()
+    if not path.is_absolute():
+        raise RuntimeError(
+            "Music storage path must be absolute. "
+            "Set DOWNLOAD_DIR or the Home Assistant music_path option."
+        )
+
+    path = path.resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+DOWNLOAD_DIR = resolve_storage_dir()
 COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
-COVER_CACHE_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
-
+COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 DB_FILE = DOWNLOAD_DIR / "tasks.db"
-
-ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
 SERVER_VERSION = "2.3.0"
@@ -141,29 +164,14 @@ TASK_QUEUE = asyncio.Queue()
 ACTIVE_PROCESSES = {}
 LAST_SAVED_TIME = {}
 METADATA_CACHE = {}
+LIBRARY_CACHE = None
+LIBRARY_CACHE_TIME = 0.0
+LIBRARY_CACHE_TTL = 2.0
 
 
 # ============================================================
-# ADD-ON OPTIONS
+# SETTINGS
 # ============================================================
-
-def load_addon_options():
-    if not ADDON_OPTIONS_FILE.exists():
-        return {}
-
-    try:
-        with open(
-            ADDON_OPTIONS_FILE,
-            "r",
-            encoding="utf-8",
-        ) as f:
-            data = json.load(f)
-
-        return data if isinstance(data, dict) else {}
-
-    except Exception as exc:
-        print("Failed to read /data/options.json:", exc)
-        return {}
 
 
 def load_settings():
@@ -196,15 +204,6 @@ def load_settings():
             addon.get("subsonic_password") or ""
         )
 
-    # Remove old Navidrome configuration.
-    for key in (
-        "navidrome_url",
-        "navidrome_user",
-        "navidrome_token",
-        "navidrome_salt",
-    ):
-        settings.pop(key, None)
-
     fmt = str(settings.get("audio_format") or "mp3").lower().lstrip(".")
     if fmt not in AUDIO_FORMATS:
         fmt = "mp3"
@@ -228,25 +227,15 @@ def save_settings(data: dict):
     settings = load_settings()
 
     protected = {
+        # These are controlled by the add-on configuration / environment.
         "subsonic_user",
         "subsonic_password",
-        "navidrome_url",
-        "navidrome_user",
-        "navidrome_token",
-        "navidrome_salt",
+        "music_path",
     }
 
     for key, value in data.items():
         if key not in protected:
             settings[key] = value
-
-    for key in (
-        "navidrome_url",
-        "navidrome_user",
-        "navidrome_token",
-        "navidrome_salt",
-    ):
-        settings.pop(key, None)
 
     with open(
         SETTINGS_FILE,
@@ -265,6 +254,11 @@ def save_settings(data: dict):
 def public_settings():
     settings = dict(load_settings())
     settings.pop("subsonic_password", None)
+    settings["music_path"] = str(DOWNLOAD_DIR)
+    settings["storage_type"] = "mounted" if (
+        os.getenv("DOWNLOAD_DIR", "").strip()
+        or load_addon_options().get("music_path")
+    ) else "local"
     return settings
 
 
@@ -904,7 +898,33 @@ def make_album_id(
 # BUILD LIBRARY
 # ============================================================
 
-async def build_library():
+def invalidate_library_cache():
+    global LIBRARY_CACHE, LIBRARY_CACHE_TIME
+    LIBRARY_CACHE = None
+    LIBRARY_CACHE_TIME = 0.0
+
+
+def _sort_library_songs(songs):
+    songs.sort(
+        key=lambda song: (
+            safe_int(song.get("disc"), 0) or 1,
+            safe_int(song.get("track"), 0) or 10**9,
+            str(song.get("title", "")).casefold(),
+            str(song.get("path", "")).casefold(),
+        )
+    )
+
+
+async def build_library(force=False):
+    global LIBRARY_CACHE, LIBRARY_CACHE_TIME
+
+    now = time.monotonic()
+    if (
+        not force
+        and LIBRARY_CACHE is not None
+        and now - LIBRARY_CACHE_TIME < LIBRARY_CACHE_TTL
+    ):
+        return LIBRARY_CACHE
 
     files = await get_all_audio_files()
 
@@ -927,7 +947,9 @@ async def build_library():
             metadata.get("album_artist"),
             metadata["artist"],
         )
-        artist_id = make_artist_id(metadata["artist"])
+        artist_name = re.sub(r"\s+", " ", str(metadata["artist"])).strip()
+        album_artist = re.sub(r"\s+", " ", album_artist).strip()
+        artist_id = make_artist_id(artist_name)
         album_artist_id = make_artist_id(album_artist)
         album_id = make_album_id(
             album_artist,
@@ -937,7 +959,7 @@ async def build_library():
         song = {
             "id": song_id,
             "title": metadata["title"],
-            "artist": metadata["artist"],
+            "artist": artist_name,
             "artistId": artist_id,
             "albumArtist": album_artist,
             "albumArtistId": album_artist_id,
@@ -967,7 +989,7 @@ async def build_library():
         if artist_id not in artists:
             artists[artist_id] = {
                 "id": artist_id,
-                "name": metadata["artist"],
+                "name": artist_name,
                 "albumIds": set(),
                 "songIds": [],
             }
@@ -979,6 +1001,20 @@ async def build_library():
         artists[artist_id]["songIds"].append(
             song_id
         )
+
+        # Album artists need their albums in the artist index too. This is
+        # especially important for files where track artist and album artist
+        # differ. Do not add a second song count for the album artist.
+        if album_artist_id != artist_id:
+            if album_artist_id not in artists:
+                artists[album_artist_id] = {
+                    "id": album_artist_id,
+                    "name": album_artist,
+                    "albumIds": set(),
+                    "songIds": [],
+                }
+            artists[album_artist_id]["albumIds"].add(album_id)
+            artists[album_artist_id]["songIds"].append(song_id)
 
         if album_id not in albums:
             albums[album_id] = {
@@ -1006,17 +1042,42 @@ async def build_library():
                 + 1
             )
 
+    _sort_library_songs(songs)
+
     for artist in artists.values():
-        artist["albumIds"] = list(
-            artist["albumIds"]
+        artist["albumIds"] = sorted(
+            artist["albumIds"],
+            key=lambda album_id: (
+                str(albums.get(album_id, {}).get("name", "")).casefold(),
+                album_id,
+            ),
         )
 
-    return {
+    for album in albums.values():
+        album["songIds"].sort(
+            key=lambda song_id: next(
+                (
+                    (
+                        safe_int(song.get("disc"), 0) or 1,
+                        safe_int(song.get("track"), 0) or 10**9,
+                        str(song.get("title", "")).casefold(),
+                    )
+                    for song in songs
+                    if song["id"] == song_id
+                ),
+                (1, 10**9, song_id),
+            )
+        )
+
+    library = {
         "songs": songs,
         "artists": artists,
         "albums": albums,
         "genres": genres,
     }
+    LIBRARY_CACHE = library
+    LIBRARY_CACHE_TIME = time.monotonic()
+    return library
 
 
 async def find_song(song_id):
@@ -1626,6 +1687,7 @@ async def download_worker():
                 str(final_path),
                 None,
             )
+            invalidate_library_cache()
 
             await notify_task_update(
                 task,
@@ -1778,11 +1840,23 @@ async def home():
 @app.get("/api/health")
 async def api_health():
 
+    try:
+        storage_ok = DOWNLOAD_DIR.exists() and DOWNLOAD_DIR.is_dir()
+        storage_writable = os.access(DOWNLOAD_DIR, os.W_OK)
+    except OSError:
+        storage_ok = False
+        storage_writable = False
+
     return {
-        "status": "ok",
+        "status": "ok" if storage_ok and storage_writable else "degraded",
         "server": "Xrob Music",
         "version": SERVER_VERSION,
         "openSubsonic": True,
+        "storage": {
+            "path": str(DOWNLOAD_DIR),
+            "available": storage_ok,
+            "writable": storage_writable,
+        },
     }
 
 
@@ -2377,18 +2451,8 @@ async def api_stats():
 
     songs = library["songs"]
 
-    artists = {
-        song["artist"]
-        for song in songs
-    }
-
-    albums = {
-        (
-            song["artist"],
-            song["album"],
-        )
-        for song in songs
-    }
+    artists = library["artists"]
+    albums = library["albums"]
 
     total = sum(
         song["size"]
@@ -2581,6 +2645,7 @@ async def api_delete_library(
             str(path),
             None,
         )
+        invalidate_library_cache()
 
         return {
             "status": "deleted",
@@ -3080,7 +3145,7 @@ def song_to_subsonic(song):
         "artist": song["artist"],
         "artistId": song["artistId"],
         "albumId": song["albumId"],
-        "albumArtist": song["artist"],
+        "albumArtist": song["albumArtist"],
         "year": safe_int(
             song.get("year"),
             0,
@@ -3170,13 +3235,13 @@ def song_to_subsonic(song):
 
     result["albumArtists"] = [
         {
-            "id": song["artistId"],
-            "name": song["artist"],
+            "id": song["albumArtistId"],
+            "name": song["albumArtist"],
         }
     ]
 
     result["displayArtist"] = song["artist"]
-    result["displayAlbumArtist"] = song["artist"]
+    result["displayAlbumArtist"] = song["albumArtist"]
 
     if track_value > 0:
         result["track"] = track_value
@@ -3492,7 +3557,7 @@ async def rest_get_scan_status(
     # scanning while providing a useful current count.
     try:
 
-        library = await build_library()
+        library = await build_library(force=True)
 
         count = len(library.get("songs", []))
 
@@ -3538,7 +3603,7 @@ async def rest_start_scan(
     # Trigger a lightweight filesystem rebuild.
     try:
 
-        library = await build_library()
+        library = await build_library(force=True)
 
         count = len(library.get("songs", []))
 
