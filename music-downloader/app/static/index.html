@@ -873,7 +873,6 @@
                             <i data-lucide="refresh-cw" aria-hidden="true"></i> Quick scan
                         </button>
                         <button type="button" class="btn-refresh" id="libraryFullScanButton" title="Full metadata rebuild">Full scan</button>
-                        <button type="button" class="btn-refresh" id="libraryHealthButton" title="Library health">Health</button>
                     </div>
                 </div>
 
@@ -927,7 +926,7 @@
                     <div id="storageStatus" class="integration-status" aria-live="polite">Checking storage…</div>
                     <div class="setting-row"><div><div class="setting-label">OpenSubsonic</div><div class="setting-desc">Available to Amperfy and other OpenSubsonic clients.</div></div><strong>Ready</strong></div>
                 </div>
-                <div class="settings-actions"><button type="button" class="btn-refresh" id="errorsButton">Error log</button><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
+                <div class="settings-card"><div class="settings-divider">Maintenance</div><div class="setting-row"><div><div class="setting-label">Library health</div><div class="setting-desc">Check unreadable files, missing artwork, bad tags and duplicates.</div></div><button type="button" class="btn-refresh" id="libraryHealthButton">Check library health</button></div><div class="setting-row"><div><div class="setting-label">Error log</div><div class="setting-desc">View failed downloads and media-processing errors.</div></div><button type="button" class="btn-refresh" id="errorsButton">Open error log</button></div></div><div class="settings-actions"><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
                 <div id="settingsMsg" class="status-msg" aria-live="polite"></div>
             </section>
 
@@ -946,7 +945,7 @@
   <div class="queue-drawer-foot"><button id="queueRepeat" class="btn-refresh">Repeat: Off</button></div>
 </aside>
 
-<div id="metadata-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><strong>Edit metadata</strong><button id="metadataClose" class="icon-btn">×</button></div><form id="metadataForm"><input type="hidden" id="metadataId"><label>Title<input id="metadataTitle"></label><label>Artist<input id="metadataArtist"></label><label>Album<input id="metadataAlbum"></label><label>Year<input id="metadataYear" type="number"></label><label>Genre<input id="metadataGenre"></label><label>Artwork<input id="metadataArtwork" type="file" accept="image/*"></label><div class="settings-actions"><button class="save-btn" type="submit">Save metadata</button></div></form></div></div>
+<div id="metadata-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><div><strong>Edit metadata</strong><div class="modal-subtitle">Update the track identity shown across Xrob Music.</div></div><button id="metadataClose" class="icon-btn">×</button></div><form id="metadataForm"><input type="hidden" id="metadataId"><label>Title<input id="metadataTitle" autocomplete="off"></label><label>Artist<input id="metadataArtist" autocomplete="off"></label><label>Album<input id="metadataAlbum" autocomplete="off"></label><div class="settings-actions"><button class="save-btn" type="submit">Save changes</button></div></form></div></div>
 
 <div id="errors-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><strong>Error log</strong><button id="errorsClose" class="icon-btn">×</button></div><div id="errorsContent">Loading…</div></div></div>
 
