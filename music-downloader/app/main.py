@@ -24,6 +24,8 @@ from fastapi import (
     Request,
     WebSocket,
     WebSocketDisconnect,
+    UploadFile,
+    File,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -116,6 +118,8 @@ DEFAULT_SETTINGS = {
     "embed_thumbnail": True,
     "embed_metadata": True,
     "organize_by_artist": False,
+    "scan_enabled": True,
+    "scan_interval_minutes": 60,
     "subsonic_user": "admin",
     "subsonic_password": "",
 }
@@ -128,6 +132,15 @@ AUDIO_QUALITY_VALUES = {"0", "5", "64K", "96K", "128K", "160K", "192K", "256K", 
 # This works reliably inside the add-on even when the console script is not on PATH.
 YT_DLP_COMMAND = [sys.executable, "-m", "yt_dlp"]
 FFMPEG_COMMAND = [shutil.which("ffmpeg") or "ffmpeg"]
+
+try:
+    from mutagen import File as MutagenFile
+    from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TCON, APIC
+    from mutagen.flac import Picture
+except Exception:
+    MutagenFile = None
+    ID3 = TIT2 = TPE1 = TALB = TDRC = TCON = APIC = None
+    Picture = None
 
 
 # ============================================================
@@ -428,6 +441,17 @@ def init_db():
             )
             """
         )
+
+        conn.execute("""CREATE TABLE IF NOT EXISTS playback_positions (song_id TEXT PRIMARY KEY, position REAL DEFAULT 0, duration REAL DEFAULT 0, updated_at REAL)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS play_history (id INTEGER PRIMARY KEY AUTOINCREMENT, song_id TEXT NOT NULL, played_at REAL NOT NULL, duration REAL DEFAULT 0, position REAL DEFAULT 0)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
+        # Playlist extensions are additive and preserve the existing schema.
+        playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
+        if "kind" not in playlist_cols:
+            conn.execute("ALTER TABLE playlists ADD COLUMN kind TEXT DEFAULT 'manual'")
+        if "rules" not in playlist_cols:
+            conn.execute("ALTER TABLE playlists ADD COLUMN rules TEXT DEFAULT '{}'")
 
         columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
         if "created_at" not in columns:
@@ -1690,6 +1714,8 @@ async def startup_event():
         asyncio.create_task(
             download_worker()
         )
+
+    asyncio.create_task(scheduled_library_scanner())
 
     for task in TASKS.values():
 
@@ -5259,6 +5285,286 @@ async def rest_playlist(
         },
         request,
     )
+
+
+
+# ============================================================
+# PLAYER / PLAYLIST / HEALTH API
+# ============================================================
+
+async def write_app_error(source, message, task_id=None):
+    try:
+        with db_connect() as conn:
+            conn.execute("INSERT INTO app_errors(created_at,source,message,task_id) VALUES(?,?,?,?)", (time.time(), str(source), str(message), task_id))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _playlist_row_to_dict(row):
+    d=dict(row)
+    d["song_ids"]=safe_song_ids(d.get("song_ids", "[]"))
+    d["rules"]=json.loads(d.get("rules") or "{}") if isinstance(d.get("rules"), str) else (d.get("rules") or {})
+    d["public"]=bool(d.get("public", 0))
+    d["kind"]=d.get("kind") or "manual"
+    return d
+
+
+@app.get("/api/player/positions")
+async def api_player_positions():
+    with db_connect() as conn:
+        rows=conn.execute("SELECT song_id,position,duration,updated_at FROM playback_positions").fetchall()
+    return {r[0]: {"position":r[1],"duration":r[2],"updated_at":r[3]} for r in rows}
+
+
+@app.post("/api/player/position")
+async def api_player_position(payload: dict = Body(...)):
+    song_id=str(payload.get("song_id") or "").strip()
+    if not song_id: raise HTTPException(400, "song_id is required")
+    position=max(0.0, float(payload.get("position") or 0))
+    duration=max(0.0, float(payload.get("duration") or 0))
+    now=time.time()
+    with db_connect() as conn:
+        conn.execute("INSERT INTO playback_positions(song_id,position,duration,updated_at) VALUES(?,?,?,?) ON CONFLICT(song_id) DO UPDATE SET position=excluded.position,duration=excluded.duration,updated_at=excluded.updated_at", (song_id,position,duration,now))
+        conn.commit()
+    return {"status":"ok"}
+
+
+@app.post("/api/player/history")
+async def api_player_history(payload: dict = Body(...)):
+    song_id=str(payload.get("song_id") or "").strip()
+    if not song_id: raise HTTPException(400, "song_id is required")
+    with db_connect() as conn:
+        conn.execute("INSERT INTO play_history(song_id,played_at,duration,position) VALUES(?,?,?,?)", (song_id,time.time(),float(payload.get("duration") or 0),float(payload.get("position") or 0)))
+        conn.commit()
+    return {"status":"ok"}
+
+
+@app.get("/api/library/recent-most")
+async def api_recent_most():
+    library=await build_library()
+    by_id={s["id"]:s for s in library["songs"]}
+    with db_connect() as conn:
+        recent=conn.execute("SELECT song_id, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY t DESC LIMIT 24").fetchall()
+        most=conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY c DESC, t DESC LIMIT 24").fetchall()
+    def pack(rows):
+        out=[]
+        for r in rows:
+            song=by_id.get(r[0])
+            if not song: continue
+            rel=str(song["path"].relative_to(DOWNLOAD_DIR)); enc=urllib.parse.quote(rel,safe="/")
+            out.append({"id":song["id"],"title":song["title"],"artist":song["artist"],"album":song["album"],"duration":song["duration"],"plays":int(r[1]),"cover":"/api/library/cover/"+enc,"stream":"/api/library/stream/"+enc})
+        return out
+    return {"recent":pack(recent),"most_played":pack(most)}
+
+
+@app.get("/api/playlists")
+async def api_playlists():
+    with db_connect() as conn:
+        conn.row_factory=sqlite3.Row
+        rows=conn.execute("SELECT * FROM playlists ORDER BY name COLLATE NOCASE").fetchall()
+    library=await build_library(); by_id={s["id"]:s for s in library["songs"]}
+    out=[]
+    for row in rows:
+        p=_playlist_row_to_dict(row)
+        ids=p["song_ids"]
+        if p["kind"]=="smart":
+            rules=p["rules"]
+            filtered=list(library["songs"])
+            if rules.get("genre"): filtered=[x for x in filtered if str(x.get("genre","" )).lower()==str(rules["genre"]).lower()]
+            if rules.get("artist"): filtered=[x for x in filtered if str(x.get("artist","" )).lower()==str(rules["artist"]).lower()]
+            if rules.get("year"): filtered=[x for x in filtered if str(x.get("year",""))==str(rules["year"])]
+            ids=[x["id"] for x in filtered]
+        out.append({"id":p["id"],"name":p["name"],"comment":p.get("comment","") ,"kind":p["kind"],"rules":p["rules"],"song_ids":[i for i in ids if i in by_id],"song_count":len([i for i in ids if i in by_id]),"created_at":p.get("created_at"),"updated_at":p.get("updated_at")})
+    return out
+
+
+@app.post("/api/playlists")
+async def api_playlist_create(payload: dict = Body(...)):
+    name=str(payload.get("name") or "New Playlist").strip()
+    if not name: raise HTTPException(400,"Playlist name required")
+    ids=[str(x) for x in (payload.get("song_ids") or [])]
+    kind="smart" if payload.get("kind")=="smart" else "manual"
+    rules=payload.get("rules") or {}
+    now=time.time(); pid="playlist-"+uuid.uuid4().hex[:16]
+    with db_connect() as conn:
+        conn.execute("INSERT INTO playlists(id,name,comment,owner,public,song_ids,created_at,updated_at,kind,rules) VALUES(?,?,?,?,?,?,?,?,?,?)", (pid,name,str(payload.get("comment") or ""),"admin",0,json.dumps(ids),now,now,kind,json.dumps(rules)))
+        conn.commit()
+    return {"status":"ok","id":pid}
+
+
+@app.put("/api/playlists/{playlist_id}")
+async def api_playlist_update(playlist_id:str,payload:dict=Body(...)):
+    with db_connect() as conn:
+        row=conn.execute("SELECT * FROM playlists WHERE id=?",(playlist_id,)).fetchone()
+        if not row: raise HTTPException(404,"Playlist not found")
+        current=dict(row)
+        name=str(payload.get("name",current["name"])).strip()
+        ids=[str(x) for x in payload.get("song_ids",safe_song_ids(current.get("song_ids","[]")))]
+        kind=payload.get("kind", current.get("kind","manual")); rules=payload.get("rules", json.loads(current.get("rules") or "{}"))
+        conn.execute("UPDATE playlists SET name=?,comment=?,song_ids=?,updated_at=?,kind=?,rules=? WHERE id=?",(name,str(payload.get("comment",current.get("comment") or "")),json.dumps(ids),time.time(),kind,json.dumps(rules),playlist_id)); conn.commit()
+    return {"status":"ok"}
+
+
+@app.delete("/api/playlists/{playlist_id}")
+async def api_playlist_delete(playlist_id:str):
+    with db_connect() as conn:
+        conn.execute("DELETE FROM playlists WHERE id=?",(playlist_id,)); conn.commit()
+    return {"status":"ok"}
+
+
+@app.get("/api/playlists/{playlist_id}")
+async def api_playlist_get(playlist_id:str):
+    allp=await api_playlists()
+    for p in allp:
+        if p["id"]==playlist_id:
+            library=await build_library(); by_id={s["id"]:s for s in library["songs"]}
+            tracks=[]
+            for sid in p["song_ids"]:
+                s=by_id.get(sid)
+                if s:
+                    rel=str(s["path"].relative_to(DOWNLOAD_DIR)); enc=urllib.parse.quote(rel,safe="/")
+                    tracks.append({"id":s["id"],"title":s["title"],"artist":s["artist"],"album":s["album"],"duration":s["duration"],"cover":"/api/library/cover/"+enc,"stream":"/api/library/stream/"+enc})
+            p["tracks"]=tracks
+            return p
+    raise HTTPException(404,"Playlist not found")
+
+
+@app.get("/api/library/health")
+async def api_library_health():
+    files=await get_all_audio_files(); unreadable=[]; bad_tags=[]; missing_art=[]; groups={}
+    for path in files:
+        try: md=await read_metadata(path)
+        except Exception as exc: unreadable.append({"path":str(path.relative_to(DOWNLOAD_DIR)),"error":str(exc)}); continue
+        title=str(md.get("title") or "").strip(); artist=str(md.get("artist") or "").strip(); album=str(md.get("album") or "").strip()
+        if not title or not artist or not album: bad_tags.append({"path":str(path.relative_to(DOWNLOAD_DIR)),"title":title,"artist":artist,"album":album})
+        if not await ensure_cover(path): missing_art.append(str(path.relative_to(DOWNLOAD_DIR)))
+        key=normalize_duplicate_key(f"{title}|{artist}|{album}")
+        groups.setdefault(key,[]).append(str(path.relative_to(DOWNLOAD_DIR)))
+    duplicates=[{"key":k,"files":v} for k,v in groups.items() if k and len(v)>1]
+    return {"unreadable":unreadable,"bad_tags":bad_tags,"missing_artwork":missing_art,"duplicates":duplicates,"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":len(duplicates)}}
+
+
+@app.post("/api/library/scan/{mode}")
+async def api_library_scan_mode(mode:str):
+    if mode not in {"quick","full"}: raise HTTPException(400,"mode must be quick or full")
+    with db_connect() as conn:
+        conn.execute("INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?, ?, ?) ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message",(time.time(),mode,"running","Scanning")); conn.commit()
+    try:
+        invalidate_library_cache()
+        library=await build_library(force=True)
+        if mode=="full":
+            for song in library["songs"]:
+                try: await ensure_cover(song["path"])
+                except Exception: pass
+        with db_connect() as conn:
+            conn.execute("UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",(time.time(),"ok",f"{len(library['songs'])} tracks scanned")); conn.commit()
+        return {"status":"ok","mode":mode,"tracks":len(library["songs"])}
+    except Exception as exc:
+        await write_app_error("library_scan",str(exc))
+        with db_connect() as conn:
+            conn.execute("UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",(time.time(),"error",str(exc))); conn.commit()
+        raise
+
+
+@app.get("/api/library/scan/status")
+async def api_library_scan_status():
+    with db_connect() as conn:
+        row=conn.execute("SELECT started_at,finished_at,mode,status,message FROM scan_state WHERE id=1").fetchone()
+    return dict(zip(["started_at","finished_at","mode","status","message"],row)) if row else {"status":"idle"}
+
+
+@app.get("/api/errors")
+async def api_errors(limit:int=Query(200,ge=1,le=1000)):
+    if not isinstance(limit, int):
+        limit = 200
+    limit = max(1, min(1000, limit))
+    with db_connect() as conn:
+        conn.row_factory=sqlite3.Row
+        rows=conn.execute("SELECT id,created_at,source,message,task_id FROM app_errors ORDER BY created_at DESC LIMIT ?",(limit,)).fetchall()
+    failures=[]
+    for task in sorted(TASKS.values(), key=lambda x:x.get("last_updated",0), reverse=True):
+        if task.get("status")=="failed" or task.get("error"):
+            failures.append({"created_at":task.get("last_updated",0)/1000 if task.get("last_updated",0)>10000000000 else task.get("last_updated",0),"source":"download","message":task.get("error") or "Download failed","task_id":task.get("id"),"title":task.get("title")})
+    return {"errors":[dict(r) for r in rows]+failures[:limit]}
+
+
+@app.post("/api/library/metadata")
+async def api_library_metadata(payload: dict = Body(...)):
+    song_id=str(payload.get("id") or "")
+    song=await find_song(song_id)
+    if not song: raise HTTPException(404,"Track not found")
+    path=song["path"]; fields={k:payload.get(k) for k in ("title","artist","album","year","genre") if k in payload}
+    if not fields: return {"status":"ok"}
+    if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
+    def write_tags():
+        audio=MutagenFile(path, easy=False)
+        if audio is None: raise RuntimeError("Unsupported audio file")
+        ext=path.suffix.lower()
+        title=str(fields.get("title",song["title"]))
+        artist=str(fields.get("artist",song["artist"]))
+        album=str(fields.get("album",song["album"]))
+        year=str(fields.get("year",song.get("year", "")))
+        genre=str(fields.get("genre",song.get("genre", "")))
+        if ext==".mp3":
+            try: audio.add_tags()
+            except Exception: pass
+            if audio.tags is None: audio.tags=ID3()
+            audio.tags.delall("TIT2"); audio.tags.delall("TPE1"); audio.tags.delall("TALB"); audio.tags.delall("TDRC"); audio.tags.delall("TCON")
+            audio.tags.add(TIT2(encoding=3,text=title)); audio.tags.add(TPE1(encoding=3,text=artist)); audio.tags.add(TALB(encoding=3,text=album));
+            if year: audio.tags.add(TDRC(encoding=3,text=year))
+            if genre: audio.tags.add(TCON(encoding=3,text=genre))
+        else:
+            tags=audio.tags or {}
+            for key,val in (("title",title),("artist",artist),("album",album),("date",year),("genre",genre)):
+                if val: tags[key]=[val]
+                else: tags.pop(key,None)
+            audio.tags=tags
+        audio.save()
+    try: await asyncio.to_thread(write_tags)
+    except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
+    invalidate_library_cache(); return {"status":"ok"}
+
+
+@app.post("/api/library/artwork/{song_id}")
+async def api_library_artwork(song_id:str, upload:UploadFile=File(...)):
+    song=await find_song(song_id)
+    if not song: raise HTTPException(404,"Track not found")
+    data=await upload.read()
+    if not data or len(data)>15*1024*1024: raise HTTPException(400,"Invalid artwork")
+    if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
+    def write_art():
+        audio=MutagenFile(song["path"], easy=False)
+        ext=song["path"].suffix.lower()
+        mime=upload.content_type or "image/jpeg"
+        if ext==".mp3":
+            if audio.tags is None: audio.add_tags()
+            audio.tags.delall("APIC")
+            audio.tags.add(APIC(mime=mime,type=3,desc="Cover",data=data))
+        elif ext==".flac" and Picture:
+            pic=Picture(); pic.type=3; pic.mime=mime; pic.data=data; audio.clear_pictures(); audio.add_picture(pic); audio.save()
+            return
+        elif ext in {".m4a",".mp4"}:
+            from mutagen.mp4 import MP4Cover
+            audio["covr"]=[MP4Cover(data,imageformat=MP4Cover.FORMAT_PNG if "png" in mime else MP4Cover.FORMAT_JPEG)]
+        else:
+            raise RuntimeError("Embedded artwork is not supported for this format")
+        audio.save()
+    try: await asyncio.to_thread(write_art)
+    except Exception as exc: await write_app_error("artwork",str(exc)); raise HTTPException(500,f"Artwork update failed: {exc}")
+    invalidate_library_cache(); return {"status":"ok"}
+
+
+async def scheduled_library_scanner():
+    while True:
+        try:
+            settings=load_settings()
+            enabled=bool(settings.get("scan_enabled",True)); minutes=max(5,int(settings.get("scan_interval_minutes",60) or 60))
+            if enabled: await asyncio.sleep(minutes*60); await api_library_scan_mode("quick")
+            else: await asyncio.sleep(300)
+        except asyncio.CancelledError: return
+        except Exception as exc:
+            await write_app_error("scheduled_scan",str(exc)); await asyncio.sleep(300)
 
 
 # ============================================================
