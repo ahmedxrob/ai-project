@@ -3503,10 +3503,16 @@ input[type="range"]:focus-visible {
 }
 
 
-/* 2.5 library/catalog controls */
+/* 2.6 library/catalog controls */
 .catalog-detail-header { display:flex; align-items:center; gap:14px; width:100%; margin-bottom:16px; padding:14px; border:1px solid var(--border-color, rgba(255,255,255,.08)); border-radius:14px; }
 .catalog-detail-header h3 { margin:0 0 4px; }
 .catalog-detail-header p { margin:0; opacity:.7; }
 .catalog-detail-header .album-detail-play { margin-left:auto; }
 .settings-info-card code { word-break:break-all; opacity:.85; }
 button:disabled { opacity:.55; cursor:not-allowed; }
+
+/* 2.6 catalog controls */
+.artist-card { justify-content: space-between; }
+.artist-card .catalog-main-action { display:flex; align-items:center; gap:14px; flex:1; min-width:0; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; padding:0; }
+.artist-card .catalog-play { flex:0 0 auto; }
+.catalog-section-heading { width:100%; margin:10px 0 2px; }
