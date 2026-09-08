@@ -41,11 +41,10 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 app = FastAPI(
     title="Xrob Music",
-    version="2.3.0",
+    version="2.3.2",
 )
 
 app.add_middleware(
@@ -67,53 +66,23 @@ app.mount(
 # CONFIGURATION
 # ============================================================
 
-def load_addon_options():
-    if not ADDON_OPTIONS_FILE.exists():
-        return {}
+DEFAULT_LIBRARY_PATH = os.getenv(
+    "DOWNLOAD_DIR",
+    "/share/mymusic/music",
+)
 
-    try:
-        with ADDON_OPTIONS_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Failed to read {ADDON_OPTIONS_FILE}: {exc}")
-        return {}
-
-
-def resolve_storage_dir():
-    # DOWNLOAD_DIR is intentionally the highest-priority override so the same
-    # image works in Docker Compose, Home Assistant and other environments.
-    configured = os.getenv("DOWNLOAD_DIR", "").strip()
-
-    if not configured:
-        configured = str(load_addon_options().get(
-            "music_path",
-            "/share/mymusic/music",
-        )).strip()
-
-    if not configured:
-        configured = "/share/mymusic/music"
-
-    path = Path(configured).expanduser()
-    if not path.is_absolute():
-        raise RuntimeError(
-            "Music storage path must be absolute. "
-            "Set DOWNLOAD_DIR or the Home Assistant music_path option."
-        )
-
-    path = path.resolve()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-DOWNLOAD_DIR = resolve_storage_dir()
+# The library path can be changed by the Home Assistant add-on through
+# /data/options.json. The legacy DOWNLOAD_DIR environment variable remains
+# supported for Docker users.
+DOWNLOAD_DIR = Path(DEFAULT_LIBRARY_PATH)
 COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
-COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 DB_FILE = DOWNLOAD_DIR / "tasks.db"
 
+ADDON_OPTIONS_FILE = Path("/data/options.json")
+
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "2.3.0"
+SERVER_VERSION = "2.3.2"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 
@@ -146,7 +115,6 @@ DEFAULT_SETTINGS = {
     "embed_metadata": True,
     "max_results": 20,
     "organize_by_artist": False,
-    "poll_interval": 1500,
     "subsonic_user": "admin",
     "subsonic_password": "",
 }
@@ -166,12 +134,92 @@ LAST_SAVED_TIME = {}
 METADATA_CACHE = {}
 LIBRARY_CACHE = None
 LIBRARY_CACHE_TIME = 0.0
-LIBRARY_CACHE_TTL = 2.0
+LIBRARY_CACHE_TTL = 10.0
+LIBRARY_CACHE_LOCK = asyncio.Lock()
 
 
 # ============================================================
-# SETTINGS
+# ADD-ON OPTIONS
 # ============================================================
+
+def load_addon_options():
+    if not ADDON_OPTIONS_FILE.exists():
+        return {}
+
+    try:
+        with open(
+            ADDON_OPTIONS_FILE,
+            "r",
+            encoding="utf-8",
+        ) as f:
+            data = json.load(f)
+
+        return data if isinstance(data, dict) else {}
+
+    except Exception as exc:
+        print("Failed to read /data/options.json:", exc)
+        return {}
+
+
+def configure_storage():
+    """Apply the configured library path and prepare its local metadata cache."""
+    global DOWNLOAD_DIR, COVER_CACHE_DIR, SETTINGS_FILE, DB_FILE
+
+    addon = load_addon_options()
+    configured = str(addon.get("music_path") or "").strip()
+    path = Path(configured or os.getenv("DOWNLOAD_DIR", DEFAULT_LIBRARY_PATH)).expanduser()
+
+    if not path.is_absolute():
+        raise RuntimeError("music_path must be an absolute path")
+
+    DOWNLOAD_DIR = path
+    COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
+    SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
+    DB_FILE = DOWNLOAD_DIR / "tasks.db"
+
+    # Do not silently create a missing explicitly configured NAS mount. That
+    # would make a disconnected NAS look like an empty local library.
+    explicit_path = bool(configured)
+    if explicit_path and not DOWNLOAD_DIR.exists():
+        raise RuntimeError(
+            f"Configured music_path does not exist or is not mounted: {DOWNLOAD_DIR}"
+        )
+
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def storage_info_sync():
+    path = DOWNLOAD_DIR
+    exists = path.exists() and path.is_dir()
+    writable = False
+    total = free = used = 0
+    if exists:
+        writable = os.access(path, os.W_OK)
+        try:
+            usage = shutil.disk_usage(path)
+            total, free = usage.total, usage.free
+            used = total - free
+        except OSError:
+            pass
+    return {
+        "path": str(path),
+        "exists": exists,
+        "writable": writable,
+        "mounted": exists,
+        "total_bytes": total,
+        "used_bytes": used,
+        "free_bytes": free,
+        "total": format_size(total),
+        "used": format_size(used),
+        "free": format_size(free),
+    }
+
+
+def invalidate_library_cache():
+    global LIBRARY_CACHE, LIBRARY_CACHE_TIME
+    LIBRARY_CACHE = None
+    LIBRARY_CACHE_TIME = 0.0
 
 
 def load_settings():
@@ -218,7 +266,6 @@ def load_settings():
     settings["embed_metadata"] = bool(settings.get("embed_metadata", True))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist", False))
     settings["max_results"] = max(5, min(safe_int(settings.get("max_results"), 20), 50))
-    settings["poll_interval"] = max(250, safe_int(settings.get("poll_interval"), 1500))
 
     return settings
 
@@ -227,10 +274,8 @@ def save_settings(data: dict):
     settings = load_settings()
 
     protected = {
-        # These are controlled by the add-on configuration / environment.
         "subsonic_user",
         "subsonic_password",
-        "music_path",
     }
 
     for key, value in data.items():
@@ -254,11 +299,7 @@ def save_settings(data: dict):
 def public_settings():
     settings = dict(load_settings())
     settings.pop("subsonic_password", None)
-    settings["music_path"] = str(DOWNLOAD_DIR)
-    settings["storage_type"] = "mounted" if (
-        os.getenv("DOWNLOAD_DIR", "").strip()
-        or load_addon_options().get("music_path")
-    ) else "local"
+    settings["storage"] = storage_info_sync()
     return settings
 
 
@@ -283,7 +324,8 @@ def init_db():
                 step TEXT,
                 error TEXT,
                 last_updated REAL,
-                final_name TEXT
+                final_name TEXT,
+                created_at REAL DEFAULT 0
             )
             """
         )
@@ -312,6 +354,10 @@ def init_db():
             """
         )
 
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        if "created_at" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN created_at REAL DEFAULT 0")
+            conn.execute("UPDATE tasks SET created_at = last_updated WHERE created_at = 0 OR created_at IS NULL")
         conn.commit()
 
 
@@ -332,9 +378,10 @@ def db_save_task_sync(task):
                 step,
                 error,
                 last_updated,
-                final_name
+                final_name,
+                created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.get("id"),
@@ -350,6 +397,7 @@ def db_save_task_sync(task):
                 task.get("error", ""),
                 task.get("last_updated", 0),
                 task.get("final_name", ""),
+                task.get("created_at", task.get("last_updated", 0)),
             ),
         )
         conn.commit()
@@ -618,13 +666,18 @@ def resolve_file_sync(filename):
         return target
 
     target_name = Path(filename).name
-
-    for match in DOWNLOAD_DIR.rglob("*"):
-        if (
-            match.is_file()
-            and match.name == target_name
-        ):
-            return match.resolve()
+    matches = [
+        match.resolve()
+        for match in DOWNLOAD_DIR.rglob("*")
+        if match.is_file() and match.name == target_name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Ambiguous filename; use the full library-relative path.",
+        )
 
     raise HTTPException(
         status_code=404,
@@ -898,186 +951,113 @@ def make_album_id(
 # BUILD LIBRARY
 # ============================================================
 
-def invalidate_library_cache():
-    global LIBRARY_CACHE, LIBRARY_CACHE_TIME
-    LIBRARY_CACHE = None
-    LIBRARY_CACHE_TIME = 0.0
-
-
-def _sort_library_songs(songs):
-    songs.sort(
-        key=lambda song: (
-            safe_int(song.get("disc"), 0) or 1,
-            safe_int(song.get("track"), 0) or 10**9,
-            str(song.get("title", "")).casefold(),
-            str(song.get("path", "")).casefold(),
-        )
-    )
-
-
 async def build_library(force=False):
     global LIBRARY_CACHE, LIBRARY_CACHE_TIME
 
     now = time.monotonic()
-    if (
-        not force
-        and LIBRARY_CACHE is not None
-        and now - LIBRARY_CACHE_TIME < LIBRARY_CACHE_TTL
-    ):
+    if not force and LIBRARY_CACHE is not None and now - LIBRARY_CACHE_TIME < LIBRARY_CACHE_TTL:
         return LIBRARY_CACHE
 
-    files = await get_all_audio_files()
+    async with LIBRARY_CACHE_LOCK:
+        now = time.monotonic()
+        if not force and LIBRARY_CACHE is not None and now - LIBRARY_CACHE_TIME < LIBRARY_CACHE_TTL:
+            return LIBRARY_CACHE
 
-    songs = []
-    artists = {}
-    albums = {}
-    genres = {}
+        files = await get_all_audio_files()
+        files.sort(key=lambda path: str(path).lower())
 
-    for path in files:
+        songs = []
+        artists = {}
+        albums = {}
+        genres = {}
 
-        try:
-            stat = path.stat()
-        except Exception:
-            continue
+        for path in files:
+            try:
+                stat = path.stat()
+                metadata = await read_metadata(path)
+            except Exception:
+                continue
 
-        metadata = await read_metadata(path)
+            song_id = make_song_id(path)
+            artist_name = clean_metadata_text(metadata.get("artist"), "Unknown Artist")
+            album_artist = clean_metadata_text(metadata.get("album_artist"), artist_name)
+            album_name = clean_metadata_text(metadata.get("album"), path.stem)
+            artist_id = make_artist_id(artist_name)
+            album_artist_id = make_artist_id(album_artist)
+            album_id = make_album_id(album_artist, album_name)
 
-        song_id = make_song_id(path)
-        album_artist = clean_metadata_text(
-            metadata.get("album_artist"),
-            metadata["artist"],
-        )
-        artist_name = re.sub(r"\s+", " ", str(metadata["artist"])).strip()
-        album_artist = re.sub(r"\s+", " ", album_artist).strip()
-        artist_id = make_artist_id(artist_name)
-        album_artist_id = make_artist_id(album_artist)
-        album_id = make_album_id(
-            album_artist,
-            metadata["album"],
-        )
-
-        song = {
-            "id": song_id,
-            "title": metadata["title"],
-            "artist": artist_name,
-            "artistId": artist_id,
-            "albumArtist": album_artist,
-            "albumArtistId": album_artist_id,
-            "album": metadata["album"],
-            "albumId": album_id,
-            "genre": metadata["genre"],
-            "year": metadata["year"],
-            "track": metadata["track"],
-            "disc": metadata["disc"],
-            "duration": safe_int(
-                metadata["duration"],
-                0,
-            ),
-            "bit_rate": safe_int(metadata.get("bit_rate"), 0),
-            "bit_depth": safe_int(metadata.get("bit_depth"), 0),
-            "sample_rate": safe_int(metadata.get("sample_rate"), 0),
-            "channels": safe_int(metadata.get("channels"), 0),
-            "path": path,
-            "suffix": path.suffix.lower(),
-            "size": stat.st_size,
-            "created": stat.st_ctime,
-            "modified": stat.st_mtime,
-        }
-
-        songs.append(song)
-
-        if artist_id not in artists:
-            artists[artist_id] = {
-                "id": artist_id,
-                "name": artist_name,
-                "albumIds": set(),
-                "songIds": [],
-            }
-
-        artists[artist_id]["albumIds"].add(
-            album_id
-        )
-
-        artists[artist_id]["songIds"].append(
-            song_id
-        )
-
-        # Album artists need their albums in the artist index too. This is
-        # especially important for files where track artist and album artist
-        # differ. Do not add a second song count for the album artist.
-        if album_artist_id != artist_id:
-            if album_artist_id not in artists:
-                artists[album_artist_id] = {
-                    "id": album_artist_id,
-                    "name": album_artist,
-                    "albumIds": set(),
-                    "songIds": [],
-                }
-            artists[album_artist_id]["albumIds"].add(album_id)
-            artists[album_artist_id]["songIds"].append(song_id)
-
-        if album_id not in albums:
-            albums[album_id] = {
-                "id": album_id,
-                "name": metadata["album"],
-                "artist": album_artist,
-                "artistId": album_artist_id,
+            song = {
+                "id": song_id,
+                "title": clean_metadata_text(metadata.get("title"), path.stem),
+                "artist": artist_name,
+                "artistId": artist_id,
                 "albumArtist": album_artist,
-                "year": metadata["year"],
-                "genre": metadata["genre"],
-                "songIds": [],
+                "albumArtistId": album_artist_id,
+                "album": album_name,
+                "albumId": album_id,
+                "genre": metadata.get("genre", ""),
+                "year": metadata.get("year", ""),
+                "track": metadata.get("track", 0),
+                "disc": metadata.get("disc", 0),
+                "duration": safe_int(metadata.get("duration"), 0),
+                "bit_rate": safe_int(metadata.get("bit_rate"), 0),
+                "bit_depth": safe_int(metadata.get("bit_depth"), 0),
+                "sample_rate": safe_int(metadata.get("sample_rate"), 0),
+                "channels": safe_int(metadata.get("channels"), 0),
                 "path": path,
+                "suffix": path.suffix.lower(),
+                "size": stat.st_size,
+                "created": stat.st_ctime,
+                "modified": stat.st_mtime,
             }
+            songs.append(song)
 
-        albums[album_id]["songIds"].append(
-            song_id
-        )
+            # Track artists own the tracks. Album artists also own the album
+            # relationship so compilation/featured-artist metadata remains useful.
+            for current_id, current_name in ((artist_id, artist_name), (album_artist_id, album_artist)):
+                if current_id not in artists:
+                    artists[current_id] = {
+                        "id": current_id,
+                        "name": current_name,
+                        "albumIds": set(),
+                        "songIds": [],
+                    }
+                artists[current_id]["albumIds"].add(album_id)
+                artists[current_id]["songIds"].append(song_id)
 
-        if metadata["genre"]:
-            genres[metadata["genre"]] = (
-                genres.get(
-                    metadata["genre"],
-                    0,
-                )
-                + 1
-            )
+            if album_id not in albums:
+                albums[album_id] = {
+                    "id": album_id,
+                    "name": album_name,
+                    "artist": album_artist,
+                    "artistId": album_artist_id,
+                    "albumArtist": album_artist,
+                    "year": metadata.get("year", ""),
+                    "genre": metadata.get("genre", ""),
+                    "songIds": [],
+                    "path": path,
+                }
+            albums[album_id]["songIds"].append(song_id)
 
-    _sort_library_songs(songs)
+            if metadata.get("genre"):
+                genres[metadata["genre"]] = genres.get(metadata["genre"], 0) + 1
 
-    for artist in artists.values():
-        artist["albumIds"] = sorted(
-            artist["albumIds"],
-            key=lambda album_id: (
-                str(albums.get(album_id, {}).get("name", "")).casefold(),
-                album_id,
-            ),
-        )
+        def song_sort_key(song):
+            disc = safe_int(song.get("disc"), 0)
+            track = safe_int(song.get("track"), 0)
+            return (disc if disc > 0 else 9999, track if track > 0 else 9999, song["title"].lower(), str(song["path"]).lower())
 
-    for album in albums.values():
-        album["songIds"].sort(
-            key=lambda song_id: next(
-                (
-                    (
-                        safe_int(song.get("disc"), 0) or 1,
-                        safe_int(song.get("track"), 0) or 10**9,
-                        str(song.get("title", "")).casefold(),
-                    )
-                    for song in songs
-                    if song["id"] == song_id
-                ),
-                (1, 10**9, song_id),
-            )
-        )
+        songs.sort(key=song_sort_key)
+        song_by_id = {song["id"]: song for song in songs}
+        for artist in artists.values():
+            artist["albumIds"] = sorted(artist["albumIds"], key=lambda aid: albums[aid]["name"].lower())
+            artist["songIds"] = sorted(artist["songIds"], key=lambda sid: song_sort_key(song_by_id[sid]))
+        for album in albums.values():
+            album["songIds"] = sorted(album["songIds"], key=lambda sid: song_sort_key(song_by_id[sid]))
 
-    library = {
-        "songs": songs,
-        "artists": artists,
-        "albums": albums,
-        "genres": genres,
-    }
-    LIBRARY_CACHE = library
-    LIBRARY_CACHE_TIME = time.monotonic()
-    return library
+        LIBRARY_CACHE = {"songs": songs, "artists": artists, "albums": albums, "genres": genres}
+        LIBRARY_CACHE_TIME = time.monotonic()
+        return LIBRARY_CACHE
 
 
 async def find_song(song_id):
@@ -1197,31 +1177,8 @@ async def resolve_cover_id(item_id):
 # DUPLICATES
 # ============================================================
 
-async def is_duplicate(title, directory=None):
-
-    root = Path(directory) if directory else DOWNLOAD_DIR
-    files = await asyncio.to_thread(
-        lambda: [
-            path
-            for path in root.rglob("*")
-            if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
-        ]
-    )
-
-    wanted = normalize_duplicate_key(title)
-
-    return any(
-        normalize_duplicate_key(file.name) == wanted
-        for file in files
-    )
-
-
 def cleanup_task_files(task_id):
-
-    for path in DOWNLOAD_DIR.glob(
-        f"*{task_id}*"
-    ):
-
+    for path in DOWNLOAD_DIR.rglob(f"*{task_id}*"):
         try:
             if path.is_file():
                 path.unlink()
@@ -1237,13 +1194,22 @@ async def download_worker():
 
     while True:
 
-        task_id = await TASK_QUEUE.get()
+        queue_item = await TASK_QUEUE.get()
+        if isinstance(queue_item, (tuple, list)) and len(queue_item) == 2:
+            task_id, queue_token = queue_item
+        else:
+            task_id, queue_token = queue_item, None
 
         try:
 
             task = TASKS.get(task_id)
 
             if not task:
+                continue
+
+            if queue_token is not None and task.get("queue_token") != queue_token:
+                # A cancelled/retried job may leave its old queue entry behind.
+                # Tokens make that stale entry harmless.
                 continue
 
             if task.get("cancel_requested"):
@@ -1645,23 +1611,9 @@ async def download_worker():
                 final_dir / final_name
             )
 
-            if (
-                final_path.exists()
-                or await is_duplicate(
-                    clean_title,
-                    final_dir,
-                )
-            ):
-
-                final_name = (
-                    f"{clean_title}_"
-                    f"{task_id[:4]}"
-                    f"{extension}"
-                )
-
-                final_path = (
-                    final_dir / final_name
-                )
+            if final_path.exists():
+                final_name = f"{clean_title}_{task_id[:4]}{extension}"
+                final_path = final_dir / final_name
 
             shutil.move(
                 str(audio_file),
@@ -1683,10 +1635,7 @@ async def download_worker():
                 time.time() * 1000
             )
 
-            METADATA_CACHE.pop(
-                str(final_path),
-                None,
-            )
+            METADATA_CACHE.pop(str(final_path), None)
             invalidate_library_cache()
 
             await notify_task_update(
@@ -1744,9 +1693,8 @@ async def download_worker():
 @app.on_event("startup")
 async def startup_event():
 
-    await asyncio.to_thread(
-        init_db
-    )
+    await asyncio.to_thread(configure_storage)
+    await asyncio.to_thread(init_db)
 
     global TASKS
 
@@ -1771,6 +1719,7 @@ async def startup_event():
             )
             task["cancel_requested"] = False
             task["last_updated"] = now
+            task["queue_token"] = uuid.uuid4().hex
 
             await db_save_task(
                 task,
@@ -1790,9 +1739,7 @@ async def startup_event():
             "status"
         ) == "queued":
 
-            await TASK_QUEUE.put(
-                task["id"]
-            )
+            await TASK_QUEUE.put((task["id"], task["queue_token"]))
 
 
 # ============================================================
@@ -1840,23 +1787,11 @@ async def home():
 @app.get("/api/health")
 async def api_health():
 
-    try:
-        storage_ok = DOWNLOAD_DIR.exists() and DOWNLOAD_DIR.is_dir()
-        storage_writable = os.access(DOWNLOAD_DIR, os.W_OK)
-    except OSError:
-        storage_ok = False
-        storage_writable = False
-
     return {
-        "status": "ok" if storage_ok and storage_writable else "degraded",
+        "status": "ok",
         "server": "Xrob Music",
         "version": SERVER_VERSION,
         "openSubsonic": True,
-        "storage": {
-            "path": str(DOWNLOAD_DIR),
-            "available": storage_ok,
-            "writable": storage_writable,
-        },
     }
 
 
@@ -2211,6 +2146,8 @@ async def api_download(
         ),
         "final_name": "",
         "cancel_requested": False,
+        "created_at": time.time() * 1000,
+        "queue_token": uuid.uuid4().hex,
     }
 
     TASKS[task_id] = task
@@ -2220,7 +2157,7 @@ async def api_download(
         force_save=True,
     )
 
-    await TASK_QUEUE.put(task_id)
+    await TASK_QUEUE.put((task_id, task["queue_token"]))
 
     return {
         "status": "ok",
@@ -2237,19 +2174,8 @@ async def api_tasks():
 
     tasks.sort(
         key=lambda task: (
-            0
-            if task.get("status") in {
-                "queued",
-                "downloading",
-                "processing",
-            }
-            else 1,
-            -safe_float(
-                task.get(
-                    "last_updated",
-                    0,
-                )
-            ),
+            0 if task.get("status") in {"queued", "downloading", "processing"} else 1,
+            safe_float(task.get("created_at", task.get("last_updated", 0)), 0) if task.get("status") in {"queued", "downloading", "processing"} else -safe_float(task.get("last_updated", 0), 0),
         )
     )
 
@@ -2299,6 +2225,31 @@ async def api_cancel_task(
         "status": "cancelled",
         "task_id": task_id,
     }
+
+
+@app.post("/api/tasks/{task_id}/retry")
+async def api_retry_task(task_id: str):
+    task = TASKS.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.get("status") not in {"error", "failed", "cancelled", "canceled"}:
+        raise HTTPException(status_code=400, detail="Only failed or cancelled tasks can be retried.")
+    if task_id in ACTIVE_PROCESSES:
+        raise HTTPException(status_code=409, detail="Task is still stopping; retry in a moment.")
+
+    task["status"] = "queued"
+    task["percent"] = 0
+    task["speed"] = ""
+    task["step"] = "Queued..."
+    task["error"] = ""
+    task["cancel_requested"] = False
+    task["created_at"] = time.time() * 1000
+    task["last_updated"] = task["created_at"]
+    task["queue_token"] = uuid.uuid4().hex
+
+    await notify_task_update(task, force_save=True)
+    await TASK_QUEUE.put((task_id, task["queue_token"]))
+    return {"status": "queued", "task_id": task_id}
 
 
 @app.delete(
@@ -2441,7 +2392,16 @@ async def api_library():
         "files": result,
         "total_size": format_size(total),
         "total_bytes": total,
+        "storage": storage_info_sync(),
     }
+
+
+@app.post("/api/library/scan")
+async def api_library_scan():
+    invalidate_library_cache()
+    library = await build_library(force=True)
+    storage = await asyncio.to_thread(storage_info_sync)
+    return {"status": "ok", "tracks": len(library["songs"]), "artists": len(library["artists"]), "albums": len(library["albums"]), "storage": storage}
 
 
 @app.get("/api/stats")
@@ -2641,10 +2601,7 @@ async def api_delete_library(
         if cover.exists():
             cover.unlink()
 
-        METADATA_CACHE.pop(
-            str(path),
-            None,
-        )
+        METADATA_CACHE.pop(str(path), None)
         invalidate_library_cache()
 
         return {
@@ -3558,11 +3515,8 @@ async def rest_get_scan_status(
     try:
 
         library = await build_library(force=True)
-
         count = len(library.get("songs", []))
-
     except Exception:
-
         count = 0
 
     return make_subsonic_response(
