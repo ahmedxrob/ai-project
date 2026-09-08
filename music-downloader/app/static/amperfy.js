@@ -10,16 +10,15 @@
     function serverUrl() {
 
         /*
-         * External Xrob Music port.
-         * Xrob itself is running internally on 8099,
-         * but config.yaml maps it to host port 8100.
+         * Xrob Music exposes OpenSubsonic on port 8099.
+         * Keep this aligned with config.yaml and Docker.
          */
 
         return (
             window.location.protocol +
             "//" +
             window.location.hostname +
-            ":8100"
+            ":8099"
         ).replace(
             /\/+$/,
             ""
