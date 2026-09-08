@@ -171,17 +171,12 @@ function setShuffle(enabled) {
 }
 
 function shuffleLibrary() {
-    if (!rawLibraryFiles.length) {
-        showToast("No tracks to shuffle");
-        return;
-    }
-    libraryPlaybackQueue = shuffledCopy(rawLibraryFiles);
+    if (!rawLibraryFiles.length) { showToast("No tracks to shuffle"); return; }
     libraryView = "tracks";
+    selectedArtistId = null; selectedAlbumId = null;
     document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.libraryView === "tracks"));
     renderLibraryView();
-    currentLibraryIndex = 0;
-    playLibraryTrack(0);
-    setShuffle(true);
+    playQueue(rawLibraryFiles, 0, true);
 }
 
 /* ============================================================
@@ -1435,6 +1430,7 @@ function bindPlayerControls() {
 
     document.getElementById("gp-shuffle-btn")?.addEventListener("click", () => setShuffle(!playerShuffle));
     document.getElementById("libraryShuffleButton")?.addEventListener("click", shuffleLibrary);
+    document.getElementById("libraryPlayAllButton")?.addEventListener("click", () => playQueue(rawLibraryFiles, 0, false));
     setShuffle(playerShuffle);
 
 
@@ -1587,9 +1583,6 @@ async function loadSettings() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const settings = await response.json();
         applySettingsToForm(settings);
-        const serverUrl = window.XrobArpeggi?.getServerUrl?.();
-        const urlInput = document.getElementById("amperfy-server-url");
-        if (urlInput) urlInput.value = serverUrl || `${location.protocol}//${location.hostname}:8099`;
     } catch (error) {
         console.warn("Settings load:", error);
     }
@@ -2145,8 +2138,7 @@ async function loadLibrary() {
 function renderLibraryView() {
     const list = document.getElementById("libraryList");
     if (!list) return;
-
-    const query = String(document.getElementById("libSearchQuery")?.value || "").toLowerCase().trim();
+    const query = String(document.getElementById("libSearchQuery")?.value || "").trim().toLowerCase();
     if (libraryView === "artists") return renderArtists(list, query);
     if (libraryView === "albums") return renderAlbums(list, query);
     if (libraryView === "artist-detail") return renderArtistDetail(list, query);
@@ -2155,7 +2147,17 @@ function renderLibraryView() {
 }
 
 function renderEmpty(list, icon, title, text = "") {
-    list.innerHTML = `<div class="downloads-empty"><div class="empty-icon">${icon}</div><div class="empty-title">${title}</div>${text ? `<div class="empty-text">${text}</div>` : ""}</div>`;
+    list.innerHTML = `<div class="downloads-empty"><div class="empty-icon">${icon}</div><div class="empty-title">${escapeHtml(title)}</div>${text ? `<div class="empty-text">${escapeHtml(text)}</div>` : ""}</div>`;
+}
+
+function playQueue(queue, index = 0, shuffle = false) {
+    if (!Array.isArray(queue) || !queue.length) { showToast("No playable tracks"); return false; }
+    libraryPlaybackQueue = shuffle ? shuffledCopy(queue) : [...queue];
+    currentLibraryIndex = Math.max(0, Math.min(index, libraryPlaybackQueue.length - 1));
+    currentPlayerSource = "library";
+    playLibraryTrack(currentLibraryIndex);
+    setShuffle(Boolean(shuffle));
+    return true;
 }
 
 function renderTracks(list, query) {
@@ -2168,10 +2170,10 @@ function renderTracks(list, query) {
         renderEmpty(list, "🎵", rawLibraryFiles.length ? "No matching tracks" : "Your library is empty", rawLibraryFiles.length ? "Try another search." : "Downloaded tracks will appear here.");
         return;
     }
-    files.forEach(file => list.appendChild(createTrackCard(file)));
+    files.forEach(file => list.appendChild(createTrackCard(file, files)));
 }
 
-function createTrackCard(file) {
+function createTrackCard(file, queue = rawLibraryFiles) {
     const encoded = encodeURIComponent(file.name || "");
     const cover = file.cover || `api/library/cover/${encoded}`;
     const stream = file.stream || `api/library/stream/${encoded}`;
@@ -2179,37 +2181,32 @@ function createTrackCard(file) {
     card.className = "result-card";
     card.dataset.libraryName = file.name || "";
     card.innerHTML = `<div class="thumb-wrapper"><img src="${escapeHtml(cover)}" alt="" loading="lazy"></div><div class="track-info"><div class="track-title">${escapeHtml(file.title || file.name || "Unknown Track")}</div><div class="track-artist">${escapeHtml(file.artist || "Unknown Artist")} · ${escapeHtml(file.album || "Unknown Album")}</div></div><div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-danger">🗑 Delete</button></div>`;
-    card.querySelector("img")?.addEventListener("error", event => { event.currentTarget.removeAttribute("src"); }, { once: true });
-    const play = () => {
-        currentPlayerSource = "library";
-        libraryPlaybackQueue = rawLibraryFiles.slice();
-        currentLibraryIndex = rawLibraryFiles.findIndex(item => item.id === file.id || item.name === file.name);
-        toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover);
-    };
-    card.querySelector(".btn-preview")?.addEventListener("click", event => { event.stopPropagation(); play(); });
-    card.querySelector(".btn-danger")?.addEventListener("click", event => { event.stopPropagation(); deleteFile(file.name); });
+    card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), { once: true });
+    const play = () => { libraryPlaybackQueue = [...queue]; currentLibraryIndex = Math.max(0, queue.findIndex(x => x.id === file.id || x.name === file.name)); currentPlayerSource = "library"; toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover); };
+    card.querySelector(".btn-preview")?.addEventListener("click", e => { e.stopPropagation(); play(); });
+    card.querySelector(".btn-danger")?.addEventListener("click", e => { e.stopPropagation(); deleteFile(file.name); });
     card.addEventListener("dblclick", play);
     return card;
 }
 
 function renderArtists(list, query) {
-    const artists = libraryArtists.filter(item => !query || String(item.name || "").toLowerCase().includes(query));
+    const artists = libraryArtists.filter(a => !query || String(a.name || "").toLowerCase().includes(query));
     list.innerHTML = "";
-    if (!artists.length) return renderEmpty(list, "👤", "No artists found", query ? "Try another search." : "Artists appear after your library is scanned.");
+    if (!artists.length) return renderEmpty(list, "👤", "No artists found", query ? "Try another search." : "Scan your library to build the artist catalog.");
     artists.forEach(artist => {
-        const card = document.createElement("button");
-        card.type = "button";
+        const card = document.createElement("article");
         card.className = "catalog-card artist-card";
-        card.innerHTML = `<div class="catalog-icon">♪</div><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count || 0} album${artist.album_count === 1 ? '' : 's'} · ${artist.song_count || 0} track${artist.song_count === 1 ? '' : 's'}</span></div>`;
-        card.addEventListener("click", () => openArtist(artist.id));
+        card.innerHTML = `<button type="button" class="catalog-main-action"><div class="catalog-icon">♪</div><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count || 0} album${artist.album_count === 1 ? "" : "s"} · ${artist.song_count || 0} track${artist.song_count === 1 ? "" : "s"}</span></div></button><button type="button" class="btn-preview catalog-play">▶ Play</button>`;
+        card.querySelector(".catalog-main-action")?.addEventListener("click", () => openArtist(artist.id));
+        card.querySelector(".catalog-play")?.addEventListener("click", e => { e.stopPropagation(); const tracks = rawLibraryFiles.filter(f => (artist.song_ids || []).includes(f.id)); playQueue(tracks, 0, false); });
         list.appendChild(card);
     });
 }
 
 function renderAlbums(list, query) {
-    const albums = libraryAlbums.filter(item => !query || `${item.name || ""} ${item.artist || ""}`.toLowerCase().includes(query));
+    const albums = libraryAlbums.filter(a => !query || `${a.name || ""} ${a.artist || ""}`.toLowerCase().includes(query));
     list.innerHTML = "";
-    if (!albums.length) return renderEmpty(list, "💿", "No albums found", query ? "Try another search." : "Albums appear after your library is scanned.");
+    if (!albums.length) return renderEmpty(list, "💿", "No albums found", query ? "Try another search." : "Scan your library to build the album catalog.");
     albums.forEach(album => list.appendChild(createAlbumCard(album)));
 }
 
@@ -2217,89 +2214,51 @@ function createAlbumCard(album) {
     const card = document.createElement("article");
     card.className = "catalog-card album-card";
     const cover = album.cover || "";
-    card.innerHTML = `<img src="${escapeHtml(cover)}" alt="" loading="lazy"><div><strong>${escapeHtml(album.name)}</strong><span>${escapeHtml(album.artist || "Unknown Artist")} · ${album.song_count || 0} track${album.song_count === 1 ? '' : 's'}${album.year ? ` · ${escapeHtml(album.year)}` : ''}</span><button type="button" class="btn-preview">▶ Play album</button></div>`;
-    const image = card.querySelector("img");
-    image?.addEventListener("error", event => { event.currentTarget.style.visibility = "hidden"; }, { once: true });
-    card.querySelector(".btn-preview")?.addEventListener("click", event => { event.stopPropagation(); playAlbum(album.id); });
-    card.addEventListener("click", event => { if (!event.target.closest("button")) openAlbum(album.id); });
+    card.innerHTML = `<img src="${escapeHtml(cover)}" alt="" loading="lazy"><div><strong>${escapeHtml(album.name)}</strong><span>${escapeHtml(album.artist || "Unknown Artist")} · ${album.song_count || 0} track${album.song_count === 1 ? "" : "s"}${album.year ? ` · ${escapeHtml(album.year)}` : ""}</span><button type="button" class="btn-preview">▶ Play album</button></div>`;
+    card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), { once: true });
+    card.querySelector(".btn-preview")?.addEventListener("click", e => { e.stopPropagation(); playAlbum(album.id); });
+    card.querySelector("strong")?.addEventListener("click", () => openAlbum(album.id));
+    card.querySelector("img")?.addEventListener("click", () => openAlbum(album.id));
     return card;
 }
 
 function renderArtistDetail(list, query) {
-    const artist = libraryArtists.find(item => item.id === selectedArtistId);
+    const artist = libraryArtists.find(a => a.id === selectedArtistId);
     if (!artist) { libraryView = "artists"; return renderArtists(list, query); }
     const ids = new Set(artist.song_ids || []);
-    const albums = libraryAlbums.filter(album => (album.song_ids || []).some(id => ids.has(id)));
-    const tracks = rawLibraryFiles.filter(file => ids.has(file.id));
-    list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button">← Artists</button><div><h3>${escapeHtml(artist.name)}</h3><p>${albums.length} album${albums.length === 1 ? '' : 's'} · ${tracks.length} track${tracks.length === 1 ? '' : 's'}</p></div></div>`;
-    const filtered = tracks.filter(file => !query || `${file.title || ""} ${file.album || ""}`.toLowerCase().includes(query));
-    if (filtered.length) filtered.forEach(file => list.appendChild(createTrackCard(file)));
-    else if (albums.length) albums.forEach(album => list.appendChild(createAlbumCard(album)));
-    else list.insertAdjacentHTML("beforeend", `<div class="downloads-empty"><div class="empty-title">No tracks found for this artist</div></div>`);
-    list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedArtistId = null; libraryView = "artists"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); });
+    const tracks = rawLibraryFiles.filter(f => ids.has(f.id));
+    const albums = libraryAlbums.filter(a => (a.song_ids || []).some(id => ids.has(id)));
+    list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button">← Artists</button><div><h3>${escapeHtml(artist.name)}</h3><p>${albums.length} album${albums.length === 1 ? "" : "s"} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview artist-detail-play">▶ Play artist</button></div>`;
+    list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedArtistId = null; libraryView = "artists"; renderLibraryView(); });
+    list.querySelector(".artist-detail-play")?.addEventListener("click", () => playQueue(tracks, 0, false));
+    if (albums.length) {
+        const heading = document.createElement("h3"); heading.className = "catalog-section-heading"; heading.textContent = "Albums"; list.appendChild(heading);
+        albums.forEach(album => list.appendChild(createAlbumCard(album)));
+    }
+    const filtered = tracks.filter(file => { const hay = `${file.title || ""} ${file.album || ""}`.toLowerCase(); return !query || hay.includes(query); });
+    if (filtered.length) {
+        const heading = document.createElement("h3"); heading.className = "catalog-section-heading"; heading.textContent = "Tracks"; list.appendChild(heading);
+        filtered.forEach(file => list.appendChild(createTrackCard(file, tracks)));
+    } else if (!albums.length) renderEmpty(list, "🎵", "No matching tracks", "Try another search.");
 }
 
 function renderAlbumDetail(list, query) {
-    const album = libraryAlbums.find(item => item.id === selectedAlbumId);
+    const album = libraryAlbums.find(a => a.id === selectedAlbumId);
     if (!album) { libraryView = "albums"; return renderAlbums(list, query); }
     const ids = new Set(album.song_ids || []);
-    const tracks = rawLibraryFiles.filter(file => ids.has(file.id));
-    list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button">← Albums</button><div><h3>${escapeHtml(album.name)}</h3><p>${escapeHtml(album.artist || "Unknown Artist")} · ${tracks.length} track${tracks.length === 1 ? '' : 's'}</p></div><button type="button" class="btn-preview album-detail-play">▶ Play album</button></div>`;
-    const filtered = tracks.filter(file => !query || `${file.title || ""} ${file.artist || ""}`.toLowerCase().includes(query));
-    if (filtered.length) filtered.forEach(file => list.appendChild(createTrackCard(file)));
-    else renderEmpty(list, "💿", "No matching tracks", "Try another search.");
-    list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedAlbumId = null; libraryView = "albums"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); });
+    const tracks = rawLibraryFiles.filter(f => ids.has(f.id));
+    list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button">← Albums</button><div><h3>${escapeHtml(album.name)}</h3><p>${escapeHtml(album.artist || "Unknown Artist")} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview album-detail-play">▶ Play album</button></div>`;
+    list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedAlbumId = null; libraryView = "albums"; renderLibraryView(); });
     list.querySelector(".album-detail-play")?.addEventListener("click", () => playAlbum(album.id));
+    const filtered = tracks.filter(file => { const hay = `${file.title || ""} ${file.artist || ""}`.toLowerCase(); return !query || hay.includes(query); });
+    if (filtered.length) filtered.forEach(file => list.appendChild(createTrackCard(file, tracks))); else renderEmpty(list, "💿", "No matching tracks", "Try another search.");
 }
 
 function filterLibrary() { renderLibraryView(); }
-
-function openArtist(artistId) {
-    if (!libraryArtists.some(item => item.id === artistId)) return;
-    selectedArtistId = artistId;
-    selectedAlbumId = null;
-    libraryView = "artist-detail";
-    document.getElementById("libSearchQuery").value = "";
-    document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.libraryView === "artists"));
-    renderLibraryView();
-}
-
-function openAlbum(albumId) {
-    if (!libraryAlbums.some(item => item.id === albumId)) return;
-    selectedAlbumId = albumId;
-    selectedArtistId = null;
-    libraryView = "album-detail";
-    document.getElementById("libSearchQuery").value = "";
-    document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.libraryView === "albums"));
-    renderLibraryView();
-}
-
-function playAlbum(albumId) {
-    const album = libraryAlbums.find(item => item.id === albumId);
-    if (!album) { showToast("Album not found"); return; }
-    const ids = new Set(album.song_ids || []);
-    libraryPlaybackQueue = rawLibraryFiles.filter(file => ids.has(file.id));
-    if (!libraryPlaybackQueue.length) { showToast("No playable tracks found for this album"); return; }
-    currentPlayerSource = "library";
-    currentLibraryIndex = 0;
-    setShuffle(false);
-    playLibraryTrack(0);
-}
-
-function playLibraryTrack(index) {
-    const queue = getLibraryQueue();
-    if (index < 0 || index >= queue.length) return;
-    const file = queue[index];
-    currentPlayerSource = "library";
-    currentLibraryIndex = index;
-    const encoded = encodeURIComponent(file.name || "");
-    const cover = file.cover || `api/library/cover/${encoded}`;
-    const stream = file.stream || `api/library/stream/${encoded}`;
-    const button = document.querySelector(`.result-card[data-library-name="${CSS.escape(file.name || "")}"] .btn-preview`) || document.createElement("button");
-    button.className = "btn-preview";
-    toggleAudioStream(button, stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover);
-}
-
+function openArtist(id) { if (!libraryArtists.some(a => a.id === id)) return; selectedArtistId = id; selectedAlbumId = null; libraryView = "artist-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
+function openAlbum(id) { if (!libraryAlbums.some(a => a.id === id)) return; selectedAlbumId = id; selectedArtistId = null; libraryView = "album-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
+function playAlbum(id) { const album = libraryAlbums.find(a => a.id === id); if (!album) return showToast("Album not found"); const ids = new Set(album.song_ids || []); const tracks = rawLibraryFiles.filter(f => ids.has(f.id)); playQueue(tracks, 0, false); }
+function playLibraryTrack(index) { const queue = getLibraryQueue(); if (!queue.length || index < 0 || index >= queue.length) return; const file = queue[index]; currentPlayerSource = "library"; currentLibraryIndex = index; const encoded = encodeURIComponent(file.name || ""); const cover = file.cover || `api/library/cover/${encoded}`; const stream = file.stream || `api/library/stream/${encoded}`; const button = document.querySelector(`.result-card[data-library-name="${CSS.escape(file.name || "")}"] .btn-preview`) || document.createElement("button"); button.type = "button"; button.className = "btn-preview"; toggleAudioStream(button, stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover); }
 
 async function deleteFile(filename) {
 
@@ -4672,89 +4631,6 @@ function bindInfiniteScroll() {
 }
 
 
-/* ============================================================
-   COPY ARPEGGI SERVER URL
-   ============================================================ */
-
-function bindArpeggiCopy() {
-
-    const button =
-        document.getElementById(
-            "amperfy-copy-url"
-        );
-
-
-    if (!button) {
-        return;
-    }
-
-
-    button.addEventListener(
-        "click",
-        async () => {
-
-            const input =
-                document.getElementById(
-                    "amperfy-server-url"
-                );
-
-
-            const value =
-                input?.value || "";
-
-
-            if (!value) {
-
-                showToast(
-                    "❌ Server URL unavailable"
-                );
-
-                return;
-            }
-
-
-            try {
-
-                await navigator.clipboard.writeText(
-                    value
-                );
-
-
-                showToast(
-                    "📋 Server URL copied"
-                );
-
-            } catch {
-
-                try {
-
-                    input.focus();
-                    input.select();
-
-                    document.execCommand(
-                        "copy"
-                    );
-
-                    showToast(
-                        "📋 Server URL copied"
-                    );
-
-                } catch {
-
-                    showToast(
-                        "❌ Could not copy URL"
-                    );
-                }
-            }
-        }
-    );
-}
-
-
-/* ============================================================
-   STARTUP
-   ============================================================ */
-
 function playHomeTrack(index) {
 
     currentPlayerSource = "home";
@@ -4855,7 +4731,6 @@ async function initializeApp() {
     bindPlayerControls();
     bindSearch();
     bindInfiniteScroll();
-    bindArpeggiCopy();
     document.getElementById("set_format")?.addEventListener("change", updateQualityState);
     document.getElementById("settings-save")?.addEventListener("click", saveSettings);
     document.getElementById("settings-reset")?.addEventListener("click", resetSettings);
