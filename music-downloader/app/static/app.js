@@ -10,7 +10,12 @@ let socketReconnectTimer = null;
 let completedSet = new Set();
 
 let rawLibraryFiles = [];
+let libraryArtists = [];
+let libraryAlbums = [];
+let libraryView = "tracks";
+let libraryPlaybackQueue = null;
 let libraryFilesSet = new Set();
+let playerShuffle = localStorage.getItem("xrob_music_shuffle") === "true";
 
 let libraryLoadedFromCache = false;
 
@@ -144,12 +149,37 @@ function cacheDom() {
    ============================================================ */
 
 function getLibraryQueue() {
+    return Array.isArray(libraryPlaybackQueue) ? libraryPlaybackQueue : (Array.isArray(rawLibraryFiles) ? rawLibraryFiles : []);
+}
 
-    return Array.isArray(
-        rawLibraryFiles
-    )
-        ? rawLibraryFiles
-        : [];
+function shuffledCopy(items) {
+    const copy = [...items];
+    for (let i = copy.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+}
+
+function setShuffle(enabled) {
+    playerShuffle = Boolean(enabled);
+    localStorage.setItem("xrob_music_shuffle", String(playerShuffle));
+    const buttons = [document.getElementById("gp-shuffle-btn"), document.getElementById("libraryShuffleButton")];
+    buttons.forEach(button => button?.classList.toggle("active", playerShuffle));
+}
+
+function shuffleLibrary() {
+    if (!rawLibraryFiles.length) {
+        showToast("No tracks to shuffle");
+        return;
+    }
+    libraryPlaybackQueue = shuffledCopy(rawLibraryFiles);
+    libraryView = "tracks";
+    document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.libraryView === "tracks"));
+    renderLibraryView();
+    currentLibraryIndex = 0;
+    playLibraryTrack(0);
+    setShuffle(true);
 }
 
 /* ============================================================
@@ -1311,11 +1341,10 @@ function bindAudioEvents() {
                 "library"
             ) {
 
-                const queue =
-                    getLibraryQueue();
-
-                const nextIndex =
-                    currentLibraryIndex + 1;
+                const queue = getLibraryQueue();
+                const nextIndex = playerShuffle
+                    ? Math.floor(Math.random() * queue.length)
+                    : currentLibraryIndex + 1;
 
                 if (
                     queue.length &&
@@ -1401,6 +1430,10 @@ function bindPlayerControls() {
         "click",
         playNextTrack
     );
+
+    document.getElementById("gp-shuffle-btn")?.addEventListener("click", () => setShuffle(!playerShuffle));
+    document.getElementById("libraryShuffleButton")?.addEventListener("click", shuffleLibrary);
+    setShuffle(playerShuffle);
 
 
     seek?.addEventListener(
@@ -1903,8 +1936,10 @@ async function refreshLibraryCache() {
             await response.json();
 
 
-        rawLibraryFiles =
-            data.files || [];
+        rawLibraryFiles = data.files || [];
+        libraryPlaybackQueue = rawLibraryFiles;
+        libraryArtists = data.artists || [];
+        libraryAlbums = data.albums || [];
 
         saveLibraryCache();
 
@@ -2112,541 +2147,127 @@ async function loadStats() {
 
 
 async function loadLibrary() {
+    const list = document.getElementById("libraryList");
+    if (!list) return;
 
-    const list =
-        document.getElementById(
-            "libraryList"
-        );
-
-    if (!list) {
-        return;
-    }
-
-
-    const hasCache =
-        loadLibraryCache();
-
-
-    if (!hasCache) {
-
-        list.innerHTML = "";
-
-        updateLoadingCircle(
-            "library",
-            5,
-            "Preparing library..."
-        );
-
-    } else {
-
-        filterLibrary();
-
-        updateLoadingCircle(
-            "library",
-            10,
-            "Refreshing library..."
-        );
-    }
-
+    const hasCache = loadLibraryCache();
+    if (hasCache) renderLibraryView();
+    updateLoadingCircle("library", hasCache ? 20 : 5, "Scanning music library...");
 
     try {
-
-        /* ----------------------------------------
-           STEP 1 — GET ACTUAL FILE LIST
-           ---------------------------------------- */
-
-        smoothLoading(
-            "library",
-            10,
-            20,
-            "Checking music files...",
-            300
-        );
-
         await refreshLibraryCache();
-
-
-        /*
-         * Tracks and size are already known now.
-         * Update them immediately instead of waiting
-         * for /api/stats.
-         */
-
-        const trackCount =
-            rawLibraryFiles.length;
-
-        const trackElement =
-            document.getElementById(
-                "statTracks"
-            );
-
-        if (trackElement) {
-
-            trackElement.textContent =
-                trackCount;
-        }
-
-
-        const sizeElement =
-            document.getElementById(
-                "libFolderSize"
-            );
-
-
-        /*
-         * refreshLibraryCache() already updates
-         * libFolderSize from /api/library.
-         */
-
-
-        smoothLoading(
-            "library",
-            20,
-            45,
-            "Preparing tracks...",
-            500
-        );
-
-
-        /* ----------------------------------------
-           STEP 2 — RENDER FILES
-           ---------------------------------------- */
-
-        filterLibrary();
-
-
-        updateLoadingCircle(
-            "library",
-            65,
-            "Library tracks loaded..."
-        );/*
-         * The actual library is already ready.
-         * Do NOT wait for stats.
-         */smoothLoading(
-            "library",
-            65,
-            100,
-            "Finalizing library...",
-            500
-        );/*
-         * Load Artists / Albums in the background.
-         * This must NOT block the loader.
-         */loadStats().catch(
-            error =>
-                console.warn(
-                    "Stats update:",
-                    error
-                )
-        );/*
-         * Library is ready immediately.
-         */setTimeout(
-            () => {
-
-                updateLoadingCircle(
-                    "library",
-                    100,
-                    "Library ready"
-                );
-
-                setTimeout(
-                    () =>
-                        hideLoadingCircle(
-                            "library"
-                        ),
-                    300
-                );
-
-            },
-            500
-        );
-
-
+        document.getElementById("statTracks")?.replaceChildren(String(rawLibraryFiles.length));
+        document.getElementById("statArtists")?.replaceChildren(String(libraryArtists.length));
+        document.getElementById("statAlbums")?.replaceChildren(String(libraryAlbums.length));
+        renderLibraryView();
+        updateLoadingCircle("library", 100, "Library ready");
+        setTimeout(() => hideLoadingCircle("library"), 250);
     } catch (error) {
-
-        console.error(
-            "Library loading failed:",
-            error
-        );
-
-
-        hideLoadingCircle(
-            "library"
-        );
-
-
-        /*
-         * Keep cached library visible if the
-         * server temporarily fails.
-         */
-        if (
-            rawLibraryFiles.length
-        ) {
-
-            filterLibrary();
-
-            showToast(
-                "⚠️ Showing saved library"
-            );
-
-            return;
+        hideLoadingCircle("library");
+        if (rawLibraryFiles.length) {
+            renderLibraryView();
+            showToast("Showing cached library");
+        } else {
+            list.innerHTML = `<div class="downloads-empty"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load library</div><div class="empty-text">${escapeHtml(error.message || "Unknown error")}</div></div>`;
         }
-
-
-        list.innerHTML = `
-            <div class="downloads-empty">
-
-                <div class="empty-icon">
-                    ⚠️
-                </div>
-
-                <div class="empty-title">
-                    Could not load library
-                </div>
-
-                <div class="empty-text">
-                    ${escapeHtml(
-                        error.message ||
-                        "Unknown error"
-                    )}
-                </div>
-
-                <button
-                    type="button"
-                    class="save-btn"
-                    onclick="loadLibrary()"
-                >
-                    🔄 Try Again
-                </button>
-
-            </div>
-        `;
     }
 }
 
+function renderLibraryView() {
+    const list = document.getElementById("libraryList");
+    if (!list) return;
+    const query = String(document.getElementById("libSearchQuery")?.value || "").toLowerCase().trim();
+    if (libraryView === "artists") return renderArtists(list, query);
+    if (libraryView === "albums") return renderAlbums(list, query);
+    renderTracks(list, query);
+}
 
-function filterLibrary() {
-
-    const list =
-        document.getElementById(
-            "libraryList"
-        );
-
-
-    if (!list) {
-        return;
-    }
-
-
-    const input =
-        document.getElementById(
-            "libSearchQuery"
-        );
-
-
-    const query =
-        String(
-            input?.value || ""
-        )
-        .toLowerCase()
-        .trim();
-
-
-    const files =
-        rawLibraryFiles.filter(
-            file =>
-                String(
-                    file.name || ""
-                )
-                .toLowerCase()
-                .includes(query)
-        );
-
-
+function renderTracks(list, query) {
+    const files = rawLibraryFiles.filter(file => {
+        const hay = `${file.title || file.name || ""} ${file.artist || ""} ${file.album || ""} ${file.name || ""}`.toLowerCase();
+        return !query || hay.includes(query);
+    });
     list.innerHTML = "";
-
-
     if (!files.length) {
-
-        list.innerHTML = `
-            <div class="downloads-empty">
-
-                <div class="empty-icon">
-                    🎵
-                </div>
-
-                <div class="empty-title">
-                    ${
-                        rawLibraryFiles.length
-                            ? "No matching tracks"
-                            : "Your library is empty"
-                    }
-                </div>
-
-                <div class="empty-text">
-                    ${
-                        rawLibraryFiles.length
-                            ? "Try another search."
-                            : "Downloaded tracks will appear here."
-                    }
-                </div>
-
-            </div>
-        `;
-
+        list.innerHTML = `<div class="downloads-empty"><div class="empty-icon">🎵</div><div class="empty-title">${rawLibraryFiles.length ? "No matching tracks" : "Your library is empty"}</div><div class="empty-text">${rawLibraryFiles.length ? "Try another search." : "Downloaded tracks will appear here."}</div></div>`;
         return;
     }
-
-
-    files.forEach(
-        file => {
-
-            const encoded =
-                encodeURIComponent(
-                    file.name || ""
-                );
-
-
-            const cover =
-                `api/library/cover/${encoded}`;
-
-
-            const stream =
-                `api/library/stream/${encoded}`;
-
-
-            const card =
-                document.createElement(
-                    "article"
-                );
-
-
-            card.className =
-                "result-card";
-
-            card.dataset.libraryName =
-                file.name;
-
-
-            card.innerHTML = `
-
-                <div class="thumb-wrapper">
-
-                    <img
-                        src="${escapeHtml(cover)}"
-                        alt=""
-                        loading="lazy"
-                    >
-
-                </div>
-
-
-                <div class="track-info">
-
-                    <div class="track-title">
-                        ${escapeHtml(
-                            file.name
-                        )}
-                    </div>
-
-                    <div class="track-artist">
-                        📦 ${escapeHtml(
-                            file.size || ""
-                        )}
-                    </div>
-
-                </div>
-
-
-                <div class="btn-group">
-
-                    <button
-                        type="button"
-                        class="btn-preview"
-                    >
-                        ▶ Play
-                    </button>
-
-                    <button
-                        type="button"
-                        class="btn-danger"
-                    >
-                        🗑 Delete
-                    </button>
-
-                </div>
-            `;
-
-
-            const image =
-                card.querySelector("img");
-
-
-            image?.addEventListener(
-                "error",
-                () => {
-
-                    image.src =
-                        "https://via.placeholder.com/100?text=Music";
-
-                },
-                {
-                    once: true
-                }
-            );
-
-
-            const play =
-                card.querySelector(
-                    ".btn-preview"
-                );
-
-
-            const remove =
-                card.querySelector(
-                    ".btn-danger"
-                );
-
-
-            if (play) {
-
-                play.dataset.type =
-                    "library";
-
-
-                play.addEventListener(
-                    "click",
-                    () =>
-                        toggleAudioStream(
-                            play,
-                            stream,
-                            "library",
-                            file.name,
-                            "Local Library",
-                            cover
-                        )
-                );
-            }
-
-            card.addEventListener(
-                "click",
-                (event) => {
-
-                    if (
-                        event.target.closest(".btn-danger")
-                    ) {
-                        return;
-                    }
-
-                    if (
-                        event.target.closest(".btn-preview")
-                    ) {
-                        return;
-                    }
-
-                    currentPlayerSource =
-                        "library";
-
-                    currentLibraryIndex =
-                        rawLibraryFiles.findIndex(
-                            libraryFile =>
-                                libraryFile.name ===
-                                file.name
-                        );
-
-                    if (play) {
-
-                        toggleAudioStream(
-                            play,
-                            stream,
-                            "library",
-                            file.name,
-                            "Local Library",
-                            cover
-                        );
-                    }
-                }
-            );
-
-
-            if (remove) {
-
-                remove.addEventListener(
-                    "click",
-                    () =>
-                        deleteFile(
-                            file.name
-                        )
-                );
-            }
-
-
-            list.appendChild(card);
-        }
-    );
+    files.forEach(file => {
+        const encoded = encodeURIComponent(file.name || "");
+        const cover = file.cover || `api/library/cover/${encoded}`;
+        const stream = file.stream || `api/library/stream/${encoded}`;
+        const card = document.createElement("article");
+        card.className = "result-card";
+        card.dataset.libraryName = file.name || "";
+        card.innerHTML = `<div class="thumb-wrapper"><img src="${escapeHtml(cover)}" alt="" loading="lazy"></div><div class="track-info"><div class="track-title">${escapeHtml(file.title || file.name || "Unknown Track")}</div><div class="track-artist">${escapeHtml(file.artist || "Unknown Artist")} · ${escapeHtml(file.album || "Unknown Album")}</div></div><div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-danger">🗑 Delete</button></div>`;
+        const image = card.querySelector("img");
+        image?.addEventListener("error", () => { image.src = "https://via.placeholder.com/100?text=Music"; }, { once: true });
+        card.querySelector(".btn-preview")?.addEventListener("click", event => {
+            event.stopPropagation();
+            currentPlayerSource = "library";
+            libraryPlaybackQueue = rawLibraryFiles;
+            currentLibraryIndex = rawLibraryFiles.findIndex(item => item.name === file.name);
+            toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover);
+        });
+        card.querySelector(".btn-danger")?.addEventListener("click", event => { event.stopPropagation(); deleteFile(file.name); });
+        card.addEventListener("click", () => {
+            currentPlayerSource = "library";
+            libraryPlaybackQueue = rawLibraryFiles;
+            currentLibraryIndex = rawLibraryFiles.findIndex(item => item.name === file.name);
+            toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover);
+        });
+        list.appendChild(card);
+    });
 }
 
+function renderArtists(list, query) {
+    const artists = libraryArtists.filter(item => !query || item.name.toLowerCase().includes(query));
+    list.innerHTML = artists.length ? artists.map(artist => `<button type="button" class="catalog-card artist-card" onclick="openArtist('${escapeHtml(artist.id)}')"><div class="catalog-icon">♪</div><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count} album${artist.album_count === 1 ? '' : 's'} · ${artist.song_count} track${artist.song_count === 1 ? '' : 's'}</span></div></button>`).join("") : `<div class="downloads-empty"><div class="empty-icon">👤</div><div class="empty-title">No artists found</div></div>`;
+}
 
-function playLibraryTrack(
-    index
-) {
+function renderAlbums(list, query) {
+    const albums = libraryAlbums.filter(item => !query || `${item.name} ${item.artist}`.toLowerCase().includes(query));
+    list.innerHTML = albums.length ? albums.map(album => `<article class="catalog-card album-card"><img src="${escapeHtml(album.cover || '')}" alt="" loading="lazy"><div><strong>${escapeHtml(album.name)}</strong><span>${escapeHtml(album.artist)} · ${album.song_count} track${album.song_count === 1 ? '' : 's'}${album.year ? ` · ${escapeHtml(album.year)}` : ''}</span><button type="button" class="btn-preview" onclick="playAlbum('${escapeHtml(album.id)}')">▶ Play album</button></div></article>`).join("") : `<div class="downloads-empty"><div class="empty-icon">💿</div><div class="empty-title">No albums found</div></div>`;
+}
 
-    const queue =
-        getLibraryQueue();
+function filterLibrary() { renderLibraryView(); }
 
-    if (
-        index < 0 ||
-        index >= queue.length
-    ) {
+function openArtist(artistId) {
+    const artist = libraryArtists.find(item => item.id === artistId);
+    if (!artist) return;
+    document.getElementById("libSearchQuery")?.setAttribute("value", artist.name);
+    document.getElementById("libSearchQuery").value = artist.name;
+    libraryView = "albums";
+    document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.libraryView === "albums"));
+    renderLibraryView();
+}
+
+function playAlbum(albumId) {
+    const album = libraryAlbums.find(item => item.id === albumId);
+    if (!album) return;
+    const ids = new Set(album.song_ids || []);
+    libraryPlaybackQueue = rawLibraryFiles.filter(file => ids.has(file.id));
+    if (!libraryPlaybackQueue.length) {
+        showToast("No playable tracks found for this album");
         return;
     }
+    currentPlayerSource = "library";
+    currentLibraryIndex = 0;
+    playLibraryTrack(0);
+}
 
-    const file =
-        queue[index];
-
-    currentPlayerSource =
-        "library";
-
-    currentLibraryIndex =
-        index;
-
-    const encoded =
-        encodeURIComponent(
-            file.name
-        );
-
-    const cover =
-        `api/library/cover/${encoded}`;
-
-    const stream =
-        `api/library/stream/${encoded}`;
-
-    let button =
-        document.querySelector(
-            `.result-card[data-library-name="${CSS.escape(file.name)}"] .btn-preview`
-        );
-
-    if (!button) {
-
-        button =
-            document.createElement(
-                "button"
-            );
-
-        button.className =
-            "btn-preview";
-
-        button.dataset.type =
-            "library";
-    }
-
-    toggleAudioStream(
-        button,
-        stream,
-        "library",
-        file.name,
-        "Local Library",
-        cover
-    );
+function playLibraryTrack(index) {
+    const queue = getLibraryQueue();
+    if (index < 0 || index >= queue.length) return;
+    const file = queue[index];
+    currentPlayerSource = "library";
+    currentLibraryIndex = index;
+    const encoded = encodeURIComponent(file.name || "");
+    const cover = file.cover || `api/library/cover/${encoded}`;
+    const stream = file.stream || `api/library/stream/${encoded}`;
+    const button = document.querySelector(`.result-card[data-library-name="${CSS.escape(file.name || "")}"] .btn-preview`) || document.createElement("button");
+    button.className = "btn-preview";
+    toggleAudioStream(button, stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover);
 }
 
 
@@ -4331,8 +3952,9 @@ function playNextTrack() {
             return;
         }
 
-        const nextIndex =
-            currentLibraryIndex + 1;
+        const nextIndex = playerShuffle
+            ? Math.floor(Math.random() * queue.length)
+            : currentLibraryIndex + 1;
 
         if (
             nextIndex >= queue.length
@@ -5185,6 +4807,13 @@ async function initializeApp() {
     bindArpeggiCopy();
     document.getElementById("settings-reset")?.addEventListener("click", resetSettings);
     document.getElementById("scanLibraryButton")?.addEventListener("click", scanLibrary);
+    document.getElementById("libraryRefreshButton")?.addEventListener("click", loadLibrary);
+    document.getElementById("libSearchQuery")?.addEventListener("input", filterLibrary);
+    document.querySelectorAll(".library-tab").forEach(button => button.addEventListener("click", () => {
+        libraryView = button.dataset.libraryView || "tracks";
+        document.querySelectorAll(".library-tab").forEach(item => item.classList.toggle("active", item === button));
+        filterLibrary();
+    }));
 
     await refreshLibraryCache();
 
@@ -5233,6 +4862,11 @@ if (
 
 window.navigate = navigate;
 window.switchTab = switchTab;
+window.filterLibrary = filterLibrary;
+window.openArtist = openArtist;
+window.playAlbum = playAlbum;
+window.playLibraryTrack = playLibraryTrack;
+window.shuffleLibrary = shuffleLibrary;
 
 window.toggleTheme = toggleTheme;
 
