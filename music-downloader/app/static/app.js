@@ -183,284 +183,25 @@ function shuffleLibrary() {
 /* ============================================================
    LOADING CIRCLE
    ============================================================ */
-function updateLoadingCircle(
-    type,
-    percent,
-    text = ""
-) {
-
-    const safePercent =
-        Math.max(
-            0,
-            Math.min(
-                100,
-                Math.round(
-                    Number(percent) || 0
-                )
-            )
-        );
-
-    const isLibrary =
-        type === "library";
-
-    const loading =
-        document.getElementById(
-            isLibrary
-                ? "libraryLoading"
-                : "recentTracksLoading"
-        );
-
-    const percentElement =
-        document.getElementById(
-            isLibrary
-                ? "libraryLoadingPercent"
-                : "recentLoadingPercent"
-        );
-
-    const circle =
-        document.getElementById(
-            isLibrary
-                ? "libraryLoadingCircle"
-                : "recentLoadingCircle"
-        );
-
-    const textElement =
-        document.getElementById(
-            isLibrary
-                ? "libraryLoadingText"
-                : "recentLoadingText"
-        );
-
-    if (!loading) {
-        return;
-    }
-
-    loading.style.display =
-        "flex";
-
-    if (percentElement) {
-
-        percentElement.textContent =
-            `${safePercent}%`;
-    }
-
-    if (textElement && text) {
-
-        textElement.textContent =
-            text;
-    }
-
-    if (circle) {
-
-        const circumference =
-            263.9;
-
-        circle.style.strokeDasharray =
-            circumference;
-
-        circle.style.strokeDashoffset =
-            circumference -
-            (
-                safePercent / 100
-            ) *
-            circumference;
-    }
-}
-
-/* ============================================================
-   SEARCH LOADING CIRCLE
-   ============================================================ */
-function updateSearchLoading(
-    percent,
-    text = ""
-) {
-
-    const safePercent =
-        Math.max(
-            0,
-            Math.min(
-                100,
-                Math.round(
-                    Number(percent) || 0
-                )
-            )
-        );
-
-    const loading =
-        document.getElementById(
-            "searchLoading"
-        );
-
-    const percentElement =
-        document.getElementById(
-            "searchLoadingPercent"
-        );
-
-    const circle =
-        document.getElementById(
-            "searchLoadingCircle"
-        );
-
-    const textElement =
-        document.getElementById(
-            "searchLoadingText"
-        );
-
-    if (!loading) {
-        return;
-    }
-
+function updateLoadingCircle(type, percent, text = "") {
+    const id = type === "library" ? "libraryLoading" : "recentTracksLoading";
+    const loading = document.getElementById(id);
+    const textElement = document.getElementById(type === "library" ? "libraryLoadingText" : "recentLoadingText");
+    if (!loading) return;
     loading.style.display = "flex";
-
-    if (percentElement) {
-        percentElement.textContent =
-            `${safePercent}%`;
-    }
-
-    if (textElement && text) {
-        textElement.textContent =
-            text;
-    }
-
-    if (circle) {
-
-        const circumference =
-            263.9;
-
-        circle.style.strokeDasharray =
-            circumference;
-
-        circle.style.strokeDashoffset =
-            circumference -
-            (
-                safePercent / 100
-            ) *
-            circumference;
-    }
+    if (textElement && text) textElement.textContent = text;
 }
-
-function smoothSearchLoading(
-    from,
-    to,
-    text,
-    duration = 400
-) {
-
-    const start =
-        performance.now();
-
-    function animate(now) {
-
-        const progress =
-            Math.min(
-                (now - start) /
-                duration,
-                1
-            );
-
-        const percent =
-            Math.round(
-                from +
-                (
-                    to - from
-                ) *
-                progress
-            );
-
-        updateSearchLoading(
-            percent,
-            text
-        );
-
-        if (progress < 1) {
-
-            requestAnimationFrame(
-                animate
-            );
-        }
-    }
-
-    requestAnimationFrame(
-        animate
-    );
+function updateSearchLoading(percent, text = "") {
+    const loading = document.getElementById("searchLoading");
+    const textElement = document.getElementById("searchLoadingText");
+    if (!loading) return;
+    loading.style.display = "flex";
+    if (textElement && text) textElement.textContent = text;
 }
-
-function hideSearchLoading() {
-
-    const loading =
-        document.getElementById(
-            "searchLoading"
-        );
-
-    if (loading) {
-        loading.style.display =
-            "none";
-    }
-}
-
-function smoothLoading(
-    type,
-    from,
-    to,
-    text,
-    duration = 400
-) {
-
-    const start =
-        performance.now();
-
-    function animate(now) {
-
-        const progress =
-            Math.min(
-                (now - start) /
-                duration,
-                1
-            );
-
-        const percent =
-            Math.round(
-                from +
-                (to - from) *
-                progress
-            );
-
-        updateLoadingCircle(
-            type,
-            percent,
-            text
-        );
-
-        if (progress < 1) {
-
-            requestAnimationFrame(
-                animate
-            );
-        }
-    }
-
-    requestAnimationFrame(
-        animate
-    );
-}
-
-function hideLoadingCircle(
-    type
-) {
-
-    const element =
-        document.getElementById(
-            type === "library"
-                ? "libraryLoading"
-                : "recentTracksLoading"
-        );
-
-    if (element) {
-
-        element.style.display =
-            "none";
-    }
-}
+function smoothSearchLoading(from, to, text) { updateSearchLoading(to, text); }
+function hideSearchLoading() { document.getElementById("searchLoading")?.style && (document.getElementById("searchLoading").style.display = "none"); }
+function smoothLoading(type, from, to, text) { updateLoadingCircle(type, to, text); }
+function hideLoadingCircle(type) { const el = document.getElementById(type === "library" ? "libraryLoading" : "recentTracksLoading"); if (el) el.style.display = "none"; }
 
 function escapeHtml(value) {
 
@@ -1505,19 +1246,23 @@ function renderStorage(storage) {
     const path = document.getElementById("storagePath");
     const status = document.getElementById("storageStatus");
     const free = document.getElementById("storageFree");
-    if (path) path.textContent = data.path || "—";
-    if (free) free.textContent = data.free || "—";
+    const usedLabel = document.getElementById("storageUsedLabel");
+    const usedMeta = document.getElementById("storageUsedMeta");
+    const fill = document.getElementById("storageProgressFill");
+    if (path) path.textContent = data.path || "Not available";
+    if (free) free.textContent = `${data.free || "0 B"} free`;
+    if (usedLabel) usedLabel.textContent = `${data.used || "0 B"} / ${data.total || "0 B"}`;
+    if (usedMeta) usedMeta.textContent = `${data.used || "0 B"} used`;
+    const total = Number(data.total_bytes) || 0;
+    const used = Number(data.used_bytes) || 0;
+    const pct = total > 0 ? Math.min(100, Math.max(0, used / total * 100)) : 0;
+    if (fill) fill.style.width = `${pct.toFixed(1)}%`;
+    const progress = fill?.parentElement;
+    if (progress) progress.setAttribute("aria-valuenow", String(Math.round(pct)));
     if (status) {
-        if (!data.exists) {
-            status.textContent = "❌ Library path is not mounted or does not exist.";
-            status.dataset.state = "error";
-        } else if (!data.writable) {
-            status.textContent = "⚠️ Library is mounted but not writable.";
-            status.dataset.state = "error";
-        } else {
-            status.textContent = `✅ Library available • ${data.used || "0 MB"} used of ${data.total || "unknown"}`;
-            status.dataset.state = "success";
-        }
+        if (!data.exists) { status.textContent = "Library storage is unavailable."; status.dataset.state = "error"; }
+        else if (!data.writable) { status.textContent = "Library storage is read-only."; status.dataset.state = "error"; }
+        else { status.textContent = "Library storage is ready."; status.dataset.state = "success"; }
     }
 }
 
@@ -4713,11 +4458,16 @@ function renderLocalIcons() {
         settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.9 1.9-.06-.06A1.7 1.7 0 0 0 16 18.44a1.7 1.7 0 0 0-1 .56 1.7 1.7 0 0 0-.44 1.14V20H12v-.08A1.7 1.7 0 0 0 10.9 18.4a1.7 1.7 0 0 0-1.83.38L9 18.85l-1.9-1.9.06-.06A1.7 1.7 0 0 0 7.56 15a1.7 1.7 0 0 0-1.14-.44H6V12h.08A1.7 1.7 0 0 0 7.6 10.9a1.7 1.7 0 0 0-.38-1.83L7.15 9l1.9-1.9.06.06A1.7 1.7 0 0 0 11 7.56a1.7 1.7 0 0 0 .44-1.14V6H14v.08A1.7 1.7 0 0 0 15.1 7.6a1.7 1.7 0 0 0 1.83-.38L17 7.15l1.9 1.9-.06.06A1.7 1.7 0 0 0 18.44 11a1.7 1.7 0 0 0 1.14.44H20V14h-.08A1.7 1.7 0 0 0 19.4 15z',
         save: 'M5 3h12l3 3v15H4V3zm3 0v6h8V3M8 21v-6h8v6',
         rotate: 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5',
+        'rotate-ccw': 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5',
         music: 'M9 18V5l10-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0m10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
+        'music-2': 'M9 18V5l10-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0m10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
         user: 'M20 21a8 8 0 0 0-16 0M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
+        'user-round': 'M18 20a6 6 0 0 0-12 0M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
         disc: 'M12 12h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
+        'disc-3': 'M12 12h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
         play: 'm8 5 11 7-11 7z',
         hard: 'M3 5h18v14H3zM7 9h10M7 13h5',
+        'hard-drive': 'M3 6h18v12H3zM6 15h.01M10 15h.01M14 15h.01',
         smartphone: 'M7 2h10v20H7zM11 18h2',
         broom: 'm3 21 9-9m2-9 7 7M16 3l5 5',
         'skip-back': 'M19 20 9 12l10-8v16M5 19V5',
@@ -4725,6 +4475,7 @@ function renderLocalIcons() {
         'volume-2': 'M11 5 6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13',
         shuffle: 'm3 3 18 18M16 3h5v5M3 21l5-5m8 0h5v5',
         refresh: 'M20 11a8 8 0 0 0-14.9-4M4 5v4h4M4 13a8 8 0 0 0 14.9 4M20 19v-4h-4',
+        'refresh-cw': 'M20 11a8 8 0 0 0-14.9-4M4 5v4h4M4 13a8 8 0 0 0 14.9 4M20 19v-4h-4',
     }
     document.querySelectorAll('[data-lucide]').forEach(el => {
         const name = el.getAttribute('data-lucide') || '';
