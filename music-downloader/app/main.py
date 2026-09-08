@@ -44,7 +44,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(
     title="Xrob Music",
-    version="2.4.0",
+    version="2.5.0",
 )
 
 app.add_middleware(
@@ -83,7 +83,7 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "2.4.0"
+SERVER_VERSION = "2.5.0"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 
@@ -114,7 +114,6 @@ DEFAULT_SETTINGS = {
     "audio_quality": "320K",
     "embed_thumbnail": True,
     "embed_metadata": True,
-    "max_results": 20,
     "organize_by_artist": False,
     "subsonic_user": "admin",
     "subsonic_password": "",
@@ -310,7 +309,7 @@ def load_settings():
     settings["embed_thumbnail"] = bool(settings.get("embed_thumbnail", True))
     settings["embed_metadata"] = bool(settings.get("embed_metadata", True))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist", False))
-    settings["max_results"] = max(5, min(safe_int(settings.get("max_results"), 20), 50))
+    settings.pop("max_results", None)
 
     return settings
 
@@ -322,7 +321,7 @@ def save_settings(data: dict):
     settings = load_settings()
     allowed = {
         "audio_format", "audio_quality", "embed_thumbnail",
-        "embed_metadata", "organize_by_artist", "max_results",
+        "embed_metadata", "organize_by_artist",
     }
 
     for key in allowed & data.keys():
@@ -341,7 +340,6 @@ def save_settings(data: dict):
     settings["embed_thumbnail"] = bool(settings.get("embed_thumbnail"))
     settings["embed_metadata"] = bool(settings.get("embed_metadata"))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist"))
-    settings["max_results"] = max(5, min(safe_int(settings.get("max_results"), 20), 50))
 
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -1891,21 +1889,7 @@ async def api_search(
     if not q.strip():
         return []
 
-    settings = load_settings()
-
-    max_results = max(
-        5,
-        min(
-            safe_int(
-                settings.get(
-                    "max_results",
-                    20,
-                ),
-                20,
-            ),
-            50,
-        ),
-    )
+    max_results = 20
 
     try:
 
@@ -2352,6 +2336,10 @@ async def api_library():
             item["title"] = song["title"]
             item["artist"] = song["artist"]
             item["album"] = song["album"]
+            item["album_artist"] = song.get("albumArtist", song.get("artist", "Unknown Artist"))
+            item["genre"] = song.get("genre", "")
+            item["year"] = song.get("year", "")
+            item["track"] = song.get("track", 0)
             item["duration"] = song.get("duration", 0)
             item["cover"] = "/api/library/cover/" + urllib.parse.quote(item["name"], safe="/")
             item["stream"] = "/api/library/stream/" + urllib.parse.quote(item["name"], safe="/")
@@ -2364,6 +2352,8 @@ async def api_library():
             "name": artist["name"],
             "song_count": len(song_ids),
             "album_count": len(album_ids),
+            "song_ids": sorted(song_ids),
+            "album_ids": album_ids,
         })
     artists.sort(key=lambda item: item["name"].lower())
 
