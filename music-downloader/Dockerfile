@@ -8,13 +8,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-RUN mkdir -p /share/navidrome/music
+RUN mkdir -p /share/mymusic/music
 
-EXPOSE 8100
+EXPOSE 8099
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8099"]
