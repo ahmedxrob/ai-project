@@ -44,7 +44,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(
     title="Xrob Music",
-    version="2.3.2",
+    version="2.4.0",
 )
 
 app.add_middleware(
@@ -76,7 +76,6 @@ DEFAULT_LIBRARY_PATH = os.getenv(
 # supported for Docker users.
 DOWNLOAD_DIR = Path(DEFAULT_LIBRARY_PATH)
 COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
-SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
 DATA_DIR = Path(os.getenv("XROB_DATA_DIR", "/data"))
 DB_FILE = DATA_DIR / "tasks.db"
 SETTINGS_FILE = DATA_DIR / "settings.json"
@@ -84,7 +83,7 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "2.3.3"
+SERVER_VERSION = "2.4.0"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 
@@ -317,27 +316,36 @@ def load_settings():
 
 
 def save_settings(data: dict):
-    settings = load_settings()
+    if not isinstance(data, dict):
+        raise ValueError("Settings must be an object.")
 
-    protected = {
-        "subsonic_user",
-        "subsonic_password",
+    settings = load_settings()
+    allowed = {
+        "audio_format", "audio_quality", "embed_thumbnail",
+        "embed_metadata", "organize_by_artist", "max_results",
     }
 
-    for key, value in data.items():
-        if key not in protected:
-            settings[key] = value
+    for key in allowed & data.keys():
+        settings[key] = data[key]
 
-    with open(
-        SETTINGS_FILE,
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            settings,
-            f,
-            indent=2,
-        )
+    fmt = str(settings.get("audio_format") or "mp3").lower().lstrip(".")
+    if fmt not in AUDIO_FORMATS:
+        raise ValueError(f"Unsupported audio format: {fmt}")
+    settings["audio_format"] = fmt
+
+    quality = str(settings.get("audio_quality") or "320K").upper()
+    if quality not in AUDIO_QUALITY_VALUES:
+        raise ValueError(f"Unsupported audio quality: {quality}")
+    settings["audio_quality"] = quality
+
+    settings["embed_thumbnail"] = bool(settings.get("embed_thumbnail"))
+    settings["embed_metadata"] = bool(settings.get("embed_metadata"))
+    settings["organize_by_artist"] = bool(settings.get("organize_by_artist"))
+    settings["max_results"] = max(5, min(safe_int(settings.get("max_results"), 20), 50))
+
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
 
     return settings
 
@@ -756,199 +764,138 @@ async def resolve_file(filename):
 # METADATA
 # ============================================================
 
+def _path_metadata_fallback(path):
+    """Build useful music metadata even when container tags are missing."""
+    stem = re.sub(r"[._]+", " ", path.stem)
+    stem = re.sub(r"\s+", " ", stem).strip()
+
+    title = stem or "Unknown Track"
+    artist = "Unknown Artist"
+    album = stem or "Unknown Album"
+
+    # Common layout: Artist/Album/01 - Title.ext
+    relative_parent = path.parent.relative_to(DOWNLOAD_DIR) if path.parent != DOWNLOAD_DIR else Path(".")
+    parts = list(relative_parent.parts)
+    if len(parts) >= 2:
+        artist = clean_metadata_text(parts[-2], artist)
+        album = clean_metadata_text(parts[-1], album)
+    elif len(parts) == 1:
+        artist = clean_metadata_text(parts[0], artist)
+
+    m = re.match(r"^\s*(\d{1,3})\s*[-_.]\s*(.+)$", title)
+    track = int(m.group(1)) if m else 0
+    if m:
+        title = m.group(2).strip()
+
+    return {
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "genre": "",
+        "year": "",
+        "track": track,
+        "disc": 0,
+        "duration": 0,
+        "bit_rate": 0,
+        "sample_rate": 0,
+        "channels": 0,
+        "bit_depth": 0,
+        "album_artist": artist,
+    }
+
+
 def read_metadata_sync(path):
+    fallback = _path_metadata_fallback(path)
     try:
         stat = path.stat()
         cache_key = str(path)
         cache_stamp = (stat.st_mtime_ns, stat.st_size)
-
         cached = METADATA_CACHE.get(cache_key)
-
         if cached and cached[0] == cache_stamp:
             return cached[1]
 
-        # Read the complete container + stream metadata. In particular,
-        # -show_format / -show_streams includes format-level and stream-level
-        # tags written by yt-dlp/FFmpeg. Without the tags, artists/albums
-        # incorrectly fall back to "Unknown Artist" / filename.
+        metadata = dict(fallback)
         command = [
-            "ffprobe",
-            "-v",
-            "quiet",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            str(path),
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_format", "-show_streams", str(path),
         ]
-
-        result = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=10,
-        )
-
-        metadata = {}
-
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
         if result.returncode == 0:
-            raw = json.loads(
-                result.stdout or "{}"
-            )
-
-            fmt = raw.get(
-                "format",
-                {},
-            )
-            # Container-level music tags live here.
-            fmt_tags = dict(fmt.get("tags") or {})
-
+            raw = json.loads(result.stdout or "{}")
+            fmt = raw.get("format") or {}
             streams = raw.get("streams") or []
-            audio_stream = next(
-                (
-                    stream
-                    for stream in streams
-                    if stream.get("codec_type") == "audio"
-                ),
-                {},
-            )
+            audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), {})
+            tags = {}
+            tags.update(fmt.get("tags") or {})
+            tags.update(audio_stream.get("tags") or {})
+            normalized = {str(k).strip().lower().replace("-", "_"): v for k, v in tags.items()}
 
-            tags = dict(fmt_tags)
-            stream_tags = dict(audio_stream.get("tags") or {})
+            def first_tag(*keys):
+                for key in keys:
+                    value = clean_metadata_text(normalized.get(key), "")
+                    if value:
+                        return value
+                return ""
 
-            # Merge container-level and audio-stream-level tags. Stream tags
-            # win when a container stores the authoritative music metadata there.
-            tags.update(stream_tags)
-
-            # Normalize common tag casing used by different containers.
-            normalized_tags = {
-                str(key).lower(): value
-                for key, value in tags.items()
-            }
-
-            metadata = {
-                "title": clean_metadata_text(
-                    normalized_tags.get("title"),
-                    path.stem,
-                ),
-                "artist": clean_metadata_text(
-                    normalized_tags.get("artist")
-                    or normalized_tags.get("album_artist")
-                    or normalized_tags.get("albumartist"),
-                    (
-                        path.parent.name
-                        if path.parent != DOWNLOAD_DIR
-                        else "Unknown Artist"
-                    ),
-                ),
-                "album": clean_metadata_text(
-                    normalized_tags.get("album"),
-                    path.stem,
-                ),
-                "genre": clean_metadata_text(
-                    normalized_tags.get("genre"),
-                    "",
-                ),
-                "year": clean_metadata_text(
-                    normalized_tags.get("date")
-                    or normalized_tags.get("year"),
-                    "",
-                ),
-                "track": parse_tag_int(
-                    normalized_tags.get("tracknumber")
-                    or normalized_tags.get("track"),
-                    0,
-                ),
-                "disc": parse_tag_int(
-                    normalized_tags.get("discnumber")
-                    or normalized_tags.get("disc"),
-                    0,
-                ),
-                "album_artist": clean_metadata_text(
-                    normalized_tags.get("album_artist")
-                    or normalized_tags.get("albumartist")
-                    or normalized_tags.get("album artist")
-                    or normalized_tags.get("artist"),
-                    normalized_tags.get("artist") or "Unknown Artist",
-                ),
-                "duration": safe_float(
-                    fmt.get("duration"),
-                    0,
-                ),
-                "bit_rate": safe_int(
-                    safe_float(audio_stream.get("bit_rate"), 0) / 1000,
-                    0,
-                ),
-                "sample_rate": safe_int(
-                    audio_stream.get("sample_rate"),
-                    0,
-                ),
-                "channels": safe_int(
-                    audio_stream.get("channels"),
-                    0,
-                ),
-                "bit_depth": safe_int(
-                    audio_stream.get("bits_per_raw_sample")
-                    or audio_stream.get("bits_per_sample"),
-                    0,
-                ),
-            }
-
+            artist = first_tag("artist", "album_artist", "albumartist") or fallback["artist"]
+            album_artist = first_tag("album_artist", "albumartist", "album artist") or artist
+            album = first_tag("album") or fallback["album"]
+            title = first_tag("title") or fallback["title"]
+            metadata.update({
+                "title": title,
+                "artist": artist,
+                "album": album,
+                "album_artist": album_artist,
+                "genre": first_tag("genre"),
+                "year": first_tag("date", "year"),
+                "track": parse_tag_int(first_tag("tracknumber", "track"), fallback["track"]),
+                "disc": parse_tag_int(first_tag("discnumber", "disc"), 0),
+                "duration": safe_float(fmt.get("duration"), 0),
+                "bit_rate": safe_int(safe_float(audio_stream.get("bit_rate"), 0) / 1000, 0),
+                "sample_rate": safe_int(audio_stream.get("sample_rate"), 0),
+                "channels": safe_int(audio_stream.get("channels"), 0),
+                "bit_depth": safe_int(audio_stream.get("bits_per_raw_sample") or audio_stream.get("bits_per_sample"), 0),
+            })
             if metadata["bit_rate"] <= 0:
-                metadata["bit_rate"] = safe_int(
-                    safe_float(fmt.get("bit_rate"), 0) / 1000,
-                    0,
-                )
+                metadata["bit_rate"] = safe_int(safe_float(fmt.get("bit_rate"), 0) / 1000, 0)
 
-        if not metadata:
-            metadata = {
-                "title": path.stem,
-                "artist": (
-                    path.parent.name
-                    if path.parent != DOWNLOAD_DIR
-                    else "Unknown Artist"
-                ),
-                "album": path.stem,
-                "genre": "",
-                "year": "",
-                "track": "",
-                "disc": "",
-                "duration": 0,
-                "bit_rate": 0,
-                "sample_rate": 0,
-                "channels": 0,
-                "bit_depth": 0,
-                "album_artist": "Unknown Artist",
-            }
+        # Mutagen is a second metadata source for files where ffprobe cannot
+        # expose tags consistently (notably some M4A/MP3 variants).
+        try:
+            from mutagen import File as MutagenFile
+            audio = MutagenFile(str(path), easy=True)
+            if audio and audio.tags:
+                def mt(*keys):
+                    for key in keys:
+                        value = audio.tags.get(key)
+                        if isinstance(value, (list, tuple)) and value:
+                            value = value[0]
+                        value = clean_metadata_text(value, "")
+                        if value:
+                            return value
+                    return ""
+                metadata["title"] = mt("title") or metadata["title"]
+                metadata["artist"] = mt("artist") or metadata["artist"]
+                metadata["album"] = mt("album") or metadata["album"]
+                metadata["album_artist"] = mt("albumartist", "album artist") or metadata["album_artist"] or metadata["artist"]
+                metadata["genre"] = mt("genre") or metadata["genre"]
+                metadata["year"] = mt("date", "year") or metadata["year"]
+                metadata["track"] = parse_tag_int(mt("tracknumber"), metadata["track"])
+                metadata["disc"] = parse_tag_int(mt("discnumber"), metadata["disc"])
+                if getattr(audio, "info", None):
+                    metadata["duration"] = safe_float(getattr(audio.info, "length", 0), metadata["duration"])
+                    metadata["bit_rate"] = safe_int(getattr(audio.info, "bitrate", 0) / 1000, metadata["bit_rate"])
+        except Exception:
+            pass
 
-        METADATA_CACHE[cache_key] = (
-            cache_stamp,
-            metadata,
-        )
-
+        metadata["artist"] = clean_metadata_text(metadata.get("artist"), fallback["artist"])
+        metadata["album_artist"] = clean_metadata_text(metadata.get("album_artist"), metadata["artist"])
+        metadata["album"] = clean_metadata_text(metadata.get("album"), fallback["album"])
+        metadata["title"] = clean_metadata_text(metadata.get("title"), fallback["title"])
+        METADATA_CACHE[cache_key] = (cache_stamp, metadata)
         return metadata
-
     except Exception:
-        return {
-            "title": path.stem,
-            "artist": (
-                path.parent.name
-                if path.parent != DOWNLOAD_DIR
-                else "Unknown Artist"
-            ),
-            "album": path.stem,
-            "genre": "",
-            "year": "",
-            "track": "",
-            "disc": "",
-            "duration": 0,
-            "bit_rate": 0,
-            "sample_rate": 0,
-            "channels": 0,
-            "bit_depth": 0,
-            "album_artist": "Unknown Artist",
-        }
+        return fallback
 
 
 async def read_metadata(path):
@@ -1074,7 +1021,11 @@ async def build_library(force=False):
 
             # Track artists own the tracks. Album artists also own the album
             # relationship so compilation/featured-artist metadata remains useful.
-            for current_id, current_name in ((artist_id, artist_name), (album_artist_id, album_artist)):
+            artist_roles = {
+                artist_id: artist_name,
+                album_artist_id: album_artist,
+            }
+            for current_id, current_name in artist_roles.items():
                 if current_id not in artists:
                     artists[current_id] = {
                         "id": current_id,
@@ -1083,7 +1034,8 @@ async def build_library(force=False):
                         "songIds": [],
                     }
                 artists[current_id]["albumIds"].add(album_id)
-                artists[current_id]["songIds"].append(song_id)
+                if song_id not in artists[current_id]["songIds"]:
+                    artists[current_id]["songIds"].append(song_id)
 
             if album_id not in albums:
                 albums[album_id] = {
@@ -1532,112 +1484,51 @@ async def download_worker():
                 or f".{fmt}"
             )
 
-            task["status"] = "processing"
-            task["percent"] = 96
-            task["step"] = (
-                "Cleaning metadata..."
-            )
-            task["last_updated"] = (
-                time.time() * 1000
-            )
-
-            await notify_task_update(
-                task,
-                force_save=True,
-            )
-
-            clean_title = clean_filename(
-                task.get(
-                    "title",
-                    "Unknown Track",
-                )
-            )
-
-            clean_file = (
-                DOWNLOAD_DIR
-                / f"clean_{task_id}{extension}"
-            )
-
-            clean_command = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(audio_file),
-                "-map",
-                "0",
-                "-c",
-                "copy",
-                "-metadata",
-                f"title={clean_title}",
-                "-metadata",
-                (
-                    "artist="
-                    f"{task.get('artist', 'Unknown Artist')}"
-                ),
-                "-metadata",
-                (
-                    "album="
-                    f"{task.get('album') or clean_title}"
-                ),
-                str(clean_file),
-            ]
-
-            clean_process = (
-                await asyncio.create_subprocess_exec(
-                    *clean_command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-            )
-            ACTIVE_PROCESSES[task_id] = clean_process
-
-            _, clean_stderr = (
-                await clean_process.communicate()
-            )
-            ACTIVE_PROCESSES.pop(task_id, None)
-
-            if task.get("cancel_requested"):
-                await asyncio.to_thread(cleanup_task_files, task_id)
-                task["status"] = "cancelled"
-                task["step"] = "Cancelled"
-                task["percent"] = 0
+            if settings.get("embed_metadata", True):
+                task["status"] = "processing"
+                task["percent"] = 96
+                task["step"] = "Finalizing metadata..."
                 task["last_updated"] = time.time() * 1000
                 await notify_task_update(task, force_save=True)
-                continue
 
-            if (
-                clean_process.returncode == 0
-                and clean_file.exists()
-            ):
-
-                try:
-                    audio_file.unlink()
-                except Exception:
-                    pass
-
-                audio_file = clean_file
-
-            elif not audio_file.exists():
-
-                task["status"] = "error"
-                task["step"] = "Processing failed"
-                task["error"] = (
-                    clean_stderr.decode(
-                        "utf-8",
-                        errors="ignore",
-                    )[-1200:]
-                    or "FFmpeg failed."
+                clean_title = clean_filename(task.get("title", "Unknown Track"))
+                clean_file = DOWNLOAD_DIR / f"clean_{task_id}{extension}"
+                clean_command = [
+                    "ffmpeg", "-y", "-i", str(audio_file), "-map", "0", "-c", "copy",
+                    "-metadata", f"title={clean_title}",
+                    "-metadata", f"artist={task.get('artist', 'Unknown Artist')}",
+                    "-metadata", f"album={task.get('album') or clean_title}",
+                    str(clean_file),
+                ]
+                clean_process = await asyncio.create_subprocess_exec(
+                    *clean_command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
-                task["last_updated"] = (
-                    time.time() * 1000
-                )
+                ACTIVE_PROCESSES[task_id] = clean_process
+                _, clean_stderr = await clean_process.communicate()
+                ACTIVE_PROCESSES.pop(task_id, None)
 
-                await notify_task_update(
-                    task,
-                    force_save=True,
-                )
+                if task.get("cancel_requested"):
+                    await asyncio.to_thread(cleanup_task_files, task_id)
+                    task["status"] = "cancelled"
+                    task["step"] = "Cancelled"
+                    task["percent"] = 0
+                    task["last_updated"] = time.time() * 1000
+                    await notify_task_update(task, force_save=True)
+                    continue
 
-                continue
+                if clean_process.returncode == 0 and clean_file.exists():
+                    try:
+                        audio_file.unlink()
+                    except OSError:
+                        pass
+                    audio_file = clean_file
+                else:
+                    # Keep the downloaded file when metadata rewriting fails; the
+                    # download itself is still usable.
+                    print(
+                        "Warning: metadata rewrite failed:",
+                        clean_stderr.decode("utf-8", errors="ignore")[-1000:],
+                    )
 
             artist = clean_filename(
                 task.get(
@@ -1864,7 +1755,10 @@ async def api_get_settings():
 async def api_post_settings(
     data: dict = Body(...),
 ):
-    save_settings(data)
+    try:
+        save_settings(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return public_settings()
 
 
@@ -2448,11 +2342,56 @@ async def api_library():
             item["name"].lower()
     )
 
+    library = await build_library()
+    song_by_path = {str(song["path"]): song for song in library["songs"]}
+    for item in result:
+        path = str((DOWNLOAD_DIR / item["name"]).resolve())
+        song = song_by_path.get(path)
+        if song:
+            item["id"] = song["id"]
+            item["title"] = song["title"]
+            item["artist"] = song["artist"]
+            item["album"] = song["album"]
+            item["duration"] = song.get("duration", 0)
+            item["cover"] = "/api/library/cover/" + urllib.parse.quote(item["name"], safe="/")
+            item["stream"] = "/api/library/stream/" + urllib.parse.quote(item["name"], safe="/")
+    artists = []
+    for artist in library["artists"].values():
+        song_ids = set(artist.get("songIds", []))
+        album_ids = list(artist.get("albumIds", []))
+        artists.append({
+            "id": artist["id"],
+            "name": artist["name"],
+            "song_count": len(song_ids),
+            "album_count": len(album_ids),
+        })
+    artists.sort(key=lambda item: item["name"].lower())
+
+    albums = []
+    song_map = {song["id"]: song for song in library["songs"]}
+    for album in library["albums"].values():
+        songs = [song_map[sid] for sid in album["songIds"] if sid in song_map]
+        cover = "/api/library/cover/" + urllib.parse.quote(str(album["path"].relative_to(DOWNLOAD_DIR)), safe="/") if songs else ""
+        albums.append({
+            "id": album["id"],
+            "name": album["name"],
+            "artist": album["artist"],
+            "artist_id": album["artistId"],
+            "year": album.get("year", ""),
+            "genre": album.get("genre", ""),
+            "song_count": len(songs),
+            "cover": cover,
+            "song_ids": [song["id"] for song in songs],
+        })
+    albums.sort(key=lambda item: (item["artist"].lower(), item["name"].lower()))
+
     return {
         "files": result,
         "total_size": format_size(total),
         "total_bytes": total,
         "storage": storage_info_sync(),
+        "artists": artists,
+        "albums": albums,
     }
 
 
@@ -2575,16 +2514,15 @@ async def api_home():
         }
     )
 
-    # /api/stats is requested independently by the frontend.
-    # Returning the lightweight track count here prevents Home from
-    # performing another full metadata scan.
+    library = await build_library()
+    total_bytes = sum(song.get("size", 0) for song in library["songs"])
     return {
         "stats": {
-            "tracks": len(files),
-            "artists": 0,
-            "albums": 0,
-            "total_bytes": 0,
-            "folder_size": "0 MB",
+            "tracks": len(library["songs"]),
+            "artists": len(library["artists"]),
+            "albums": len(library["albums"]),
+            "total_bytes": total_bytes,
+            "folder_size": format_size(total_bytes),
         },
         "active_downloads": active,
         "recently_added": recent,
