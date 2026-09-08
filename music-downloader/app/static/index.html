@@ -39,12 +39,10 @@
         rel="stylesheet"
     >
 
-    <!-- LUCIDE -->
-    <script>window.lucide={createIcons:function(){}};</script>
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=206"
+        href="/static/style.css?v=207"
     >
 
 </head>
@@ -641,53 +639,6 @@
                 ></div>
 
 
-                <!-- ARPEGGI -->
-
-                <div class="home-connect-card">
-
-                    <div class="home-connect-icon">
-
-                        <i
-                            data-lucide="smartphone"
-                            aria-hidden="true"
-                        ></i>
-
-                    </div>
-
-
-                    <div class="home-connect-content">
-
-                        <h3>
-                            Connect Arpeggi directly
-                        </h3>
-
-
-                        <p>
-                            Xrob Music includes its own
-                            OpenSubsonic server.
-                            No external music server is required.
-                        </p>
-
-                    </div>
-
-
-                    <button
-                        type="button"
-                        class="btn-refresh"
-                        onclick="navigate('settings')"
-                    >
-
-                        <i
-                            data-lucide="settings"
-                            aria-hidden="true"
-                        ></i>
-
-                        Arpeggi Setup
-
-                    </button>
-
-                </div>
-
             </section>
 
 
@@ -707,7 +658,7 @@
                     </h2>
 
                     <p>
-                        Search and download music to your library.
+                        Find music, preview it, and save it to your library.
                     </p>
 
                 </div>
@@ -999,12 +950,16 @@
                         <button type="button" class="library-tab" data-library-view="albums">Albums</button>
                     </div>
                     <div class="library-actions">
-                        <input id="libSearchQuery" type="search" placeholder="Search tracks, artists or albums..." autocomplete="off" spellcheck="false">
+                        <label class="library-search">
+                            <span class="library-search-icon" aria-hidden="true">⌕</span>
+                            <input id="libSearchQuery" type="search" placeholder="Search your library…" autocomplete="off" spellcheck="false" aria-label="Search your library">
+                            <button type="button" id="librarySearchClear" class="library-search-clear" title="Clear search" aria-label="Clear search" hidden>×</button>
+                        </label>
                         <button type="button" id="libraryPlayAllButton" class="btn-refresh" title="Play all tracks">
-                            <i data-lucide="play" aria-hidden="true"></i> Play all
+                            <span aria-hidden="true">▶</span> Play all
                         </button>
                         <button type="button" id="libraryShuffleButton" class="btn-refresh" title="Shuffle all tracks">
-                            <i data-lucide="shuffle" aria-hidden="true"></i> Shuffle
+                            <span class="player-symbol" aria-hidden="true">⤨</span> Shuffle
                         </button>
                         <button type="button" class="btn-refresh" id="libraryRefreshButton" title="Rescan library">
                             <i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh
@@ -1125,7 +1080,7 @@
                 aria-label="Shuffle playback"
                 title="Shuffle playback"
             >
-                <i data-lucide="shuffle" aria-hidden="true"></i>
+                <span class="player-symbol" aria-hidden="true">⤨</span>
             </button>
 
 
@@ -1137,10 +1092,7 @@
                 title="Previous track"
             >
 
-                <i
-                    data-lucide="skip-back"
-                    aria-hidden="true"
-                ></i>
+                <span class="player-symbol" aria-hidden="true">⏮</span>
 
             </button>
 
@@ -1168,10 +1120,7 @@
                 title="Next track"
             >
 
-                <i
-                    data-lucide="skip-forward"
-                    aria-hidden="true"
-                ></i>
+                <span class="player-symbol" aria-hidden="true">⏭</span>
 
             </button>
 
@@ -1361,24 +1310,8 @@
      SCRIPTS
      ============================================================ -->
 
-<script src="/static/app.js?v=206"></script>
+<script src="/static/app.js?v=207"></script>
 
-
-<script>
-document.addEventListener(
-    "DOMContentLoaded",
-    function () {
-
-        if (
-            window.lucide &&
-            typeof window.lucide.createIcons === "function"
-        ) {
-            window.lucide.createIcons();
-        }
-
-    }
-);
-</script>
 
 
 </body>
