@@ -1481,125 +1481,95 @@ function bindPlayerControls() {
    SETTINGS
    ============================================================ */
 
-async function loadSettings() {
-
-    try {
-
-        const response =
-            await fetch(
-                "api/settings",
-                {
-                    cache: "no-store"
-                }
-            );
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                `HTTP ${response.status}`
-            );
+function renderStorage(storage) {
+    const data = storage || {};
+    const path = document.getElementById("storagePath");
+    const status = document.getElementById("storageStatus");
+    const free = document.getElementById("storageFree");
+    if (path) path.value = data.path || "—";
+    if (free) free.textContent = data.free || "—";
+    if (status) {
+        if (!data.exists) {
+            status.textContent = "❌ Library path is not mounted or does not exist.";
+            status.dataset.state = "error";
+        } else if (!data.writable) {
+            status.textContent = "⚠️ Library is mounted but not writable.";
+            status.dataset.state = "error";
+        } else {
+            status.textContent = `✅ Library available • ${data.used || "0 MB"} used of ${data.total || "unknown"}`;
+            status.dataset.state = "success";
         }
+    }
+}
 
-
-        const settings =
-            await response.json();
-
-
-        const setValue = (
-            id,
-            value
-        ) => {
-
-            const element =
-                document.getElementById(id);
-
-            if (element) {
-                element.value =
-                    value ?? "";
-            }
-        };
-
-
-        const setChecked = (
-            id,
-            value
-        ) => {
-
-            const element =
-                document.getElementById(id);
-
-            if (element) {
-
-                element.checked =
-                    Boolean(value);
-            }
-        };
-
-
-        setValue(
-            "set_format",
-            settings.audio_format || "mp3"
-        );
-
-
-        setValue(
-            "set_quality",
-            settings.audio_quality || "320K"
-        );
-
-
-        setValue(
-            "set_max_results",
-            settings.max_results || 20
-        );
-
-
-        setChecked(
-            "set_thumb",
-            settings.embed_thumbnail
-        );
-
-
-        setChecked(
-            "set_meta",
-            settings.embed_metadata
-        );
-
-
-        setChecked(
-            "set_organize",
-            settings.organize_by_artist
-        );
-
-
-        setValue(
-            "set_subsonic_user",
-            settings.subsonic_user || "admin"
-        );
-
-
-        const serverUrl =
-            window.XrobArpeggi?.getServerUrl?.();
-
-
-        setValue(
-            "amperfy-server-url",
-            serverUrl ||
-            (
-                location.protocol +
-                "//" +
-                location.hostname +
-                ":8100"
-            )
-        );
-
+async function scanLibrary() {
+    const button = document.getElementById("scanLibraryButton");
+    if (button) { button.disabled = true; button.textContent = "Scanning..."; }
+    try {
+        const response = await fetch("api/library/scan", { method: "POST", cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Library scan failed.");
+        renderStorage(data.storage);
+        await refreshLibraryCache();
+        await loadStats();
+        await loadHome();
+        showToast(`✅ Library rescanned • ${data.tracks || 0} tracks`);
     } catch (error) {
+        showToast("❌ " + error.message);
+    } finally {
+        if (button) { button.disabled = false; button.textContent = "↻ Rescan"; }
+    }
+}
 
-        console.warn(
-            "Settings load:",
-            error
-        );
+async function resetSettings() {
+    const defaults = {
+        audio_format: "mp3",
+        audio_quality: "320K",
+        embed_thumbnail: true,
+        embed_metadata: true,
+        organize_by_artist: false,
+        max_results: 20
+    };
+    try {
+        const response = await fetch("api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(defaults)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Failed to reset settings.");
+        applySettingsToForm(data);
+        showToast("↺ Settings reset to defaults");
+    } catch (error) {
+        showToast("❌ " + error.message);
+    }
+}
+
+function applySettingsToForm(settings) {
+    const setValue = (id, value) => { const element = document.getElementById(id); if (element) element.value = value ?? ""; };
+    const setChecked = (id, value) => { const element = document.getElementById(id); if (element) element.checked = Boolean(value); };
+    setValue("set_format", settings.audio_format || "mp3");
+    setValue("set_quality", settings.audio_quality || "320K");
+    setValue("set_max_results", settings.max_results || 20);
+    setChecked("set_thumb", settings.embed_thumbnail);
+    setChecked("set_meta", settings.embed_metadata);
+    setChecked("set_organize", settings.organize_by_artist);
+    renderStorage(settings.storage);
+}
+
+async function loadSettings() {
+    try {
+        const response = await fetch("api/settings", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const settings = await response.json();
+        applySettingsToForm(settings);
+        const user = document.getElementById("set_subsonic_user");
+        if (user) user.value = settings.subsonic_user || "admin";
+        const serverUrl = window.XrobArpeggi?.getServerUrl?.();
+        const urlInput = document.getElementById("amperfy-server-url");
+        if (urlInput) urlInput.value = serverUrl || `${location.protocol}//${location.hostname}:8099`;
+    } catch (error) {
+        console.warn("Settings load:", error);
     }
 }
 
@@ -3632,23 +3602,14 @@ function createDownloadCard(
                 )
         );
 
+    } else if (["error", "failed", "cancelled", "canceled"].includes(String(task.status || "").toLowerCase())) {
+        actionButton.className = "save-btn";
+        actionButton.textContent = "↻ Retry";
+        actionButton.addEventListener("click", () => retryTask(task.id));
     } else {
-
-        actionButton.className =
-            "download-remove-btn";
-
-
-        actionButton.textContent =
-            "Remove";
-
-
-        actionButton.addEventListener(
-            "click",
-            () =>
-                removeDownloadTask(
-                    task.id
-                )
-        );
+        actionButton.className = "download-remove-btn";
+        actionButton.textContent = "Remove";
+        actionButton.addEventListener("click", () => removeDownloadTask(task.id));
     }
 
 
@@ -4224,6 +4185,20 @@ async function removeDownloadTask(taskId) {
             "❌ " +
             error.message
         );
+    }
+}
+
+
+async function retryTask(taskId) {
+    try {
+        const response = await fetch(`api/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Retry failed.");
+        completedSet.delete(taskId);
+        await pollTasks(true);
+        showToast("↻ Download queued again");
+    } catch (error) {
+        showToast("❌ " + error.message);
     }
 }
 
@@ -5208,7 +5183,8 @@ async function initializeApp() {
     bindSearch();
     bindInfiniteScroll();
     bindArpeggiCopy();
-
+    document.getElementById("settings-reset")?.addEventListener("click", resetSettings);
+    document.getElementById("scanLibraryButton")?.addEventListener("click", scanLibrary);
 
     await refreshLibraryCache();
 
