@@ -664,7 +664,8 @@
 
                         <p>
                             Xrob Music includes its own
-                            OpenSubsonic server for compatible clients.
+                            OpenSubsonic server.
+                            No external music server is required.
                         </p>
 
                     </div>
@@ -1183,6 +1184,34 @@
                 <div class="settings-card">
 
                     <div class="settings-divider">
+                        Library Storage
+                    </div>
+
+                    <div class="setting-row">
+                        <div>
+                            <div class="setting-label">Music Library</div>
+                            <div class="setting-desc">The folder Xrob Music reads and writes. For a NAS, mount the share in Home Assistant and point music_path to that mount.</div>
+                        </div>
+                        <div class="inline-control">
+                            <input id="storagePath" type="text" readonly aria-label="Music library path">
+                            <button type="button" id="scanLibraryButton" class="btn-refresh">
+                                <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                                Rescan
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="storageStatus" class="integration-status" aria-live="polite">Checking storage...</div>
+
+                    <div class="setting-row">
+                        <div>
+                            <div class="setting-label">Free Space</div>
+                            <div class="setting-desc">Available space on the library filesystem.</div>
+                        </div>
+                        <span id="storageFree">—</span>
+                    </div>
+
+                    <div class="settings-divider">
                         OpenSubsonic / Arpeggi
                     </div>
 
@@ -1247,41 +1276,6 @@
                         aria-live="polite"
                     >
                         Checking...
-                    </div>
-
-                    <div class="settings-divider">
-                        Storage
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Music Storage</div>
-                            <div class="setting-desc">Use a local folder or a NAS folder mounted into the container. Configure the path in the add-on or container environment.</div>
-                        </div>
-
-                        <div class="inline-control">
-                            <input
-                                id="set_music_path"
-                                type="text"
-                                readonly
-                                aria-label="Music storage path"
-                            >
-                        </div>
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Storage Status</div>
-                            <div class="setting-desc">Current availability and write access of the configured music storage.</div>
-                        </div>
-
-                        <div
-                            id="set_storage_status"
-                            class="integration-status"
-                            aria-live="polite"
-                        >
-                            Checking...
-                        </div>
                     </div>
 
                     <div class="settings-divider">
@@ -1368,22 +1362,6 @@
                             inputmode="numeric"
                             aria-label="Maximum search results"
                         >
-                    </div>
-
-                    <div class="settings-divider">
-                        Appearance
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Theme</div>
-                            <div class="setting-desc">Choose the appearance of the Xrob Music interface.</div>
-                        </div>
-
-                        <select id="set_theme" aria-label="Theme">
-                            <option value="dark">Dark</option>
-                            <option value="light">Light</option>
-                        </select>
                     </div>
 
                     <div class="settings-actions">
