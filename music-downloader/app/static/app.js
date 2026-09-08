@@ -47,6 +47,7 @@ let playBtn = null;
 let prevBtn = null;
 let nextBtn = null;
 let seek = null;
+let isSeeking = false;
 let volume = null;
 let curTime = null;
 let durTime = null;
@@ -852,11 +853,9 @@ function updateProgress() {
     }
 
 
-    seek.value =
-        (
-            audio.currentTime /
-            audio.duration
-        ) * 100;
+    if (!isSeeking) {
+        seek.value = (audio.currentTime / audio.duration) * 100;
+    }
 
 
     if (curTime) {
@@ -1434,27 +1433,16 @@ function bindPlayerControls() {
     setShuffle(playerShuffle);
 
 
-    seek?.addEventListener(
-        "input",
-        () => {
-
-            if (
-                audio &&
-                Number.isFinite(
-                    audio.duration
-                )
-            ) {
-
-                audio.currentTime =
-                    (
-                        Number(
-                            seek.value
-                        ) / 100
-                    ) *
-                    audio.duration;
-            }
+    seek?.addEventListener("pointerdown", () => { isSeeking = true; });
+    seek?.addEventListener("input", () => {
+        if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+            const ratio = Math.max(0, Math.min(1, Number(seek.value) / 100));
+            audio.currentTime = ratio * audio.duration;
+            if (curTime) curTime.textContent = formatSeconds(audio.currentTime);
         }
-    );
+    });
+    seek?.addEventListener("change", () => { isSeeking = false; updateProgress(); });
+    seek?.addEventListener("pointerup", () => { isSeeking = false; updateProgress(); });
 
 
     const savedVolume =
@@ -1517,7 +1505,7 @@ function renderStorage(storage) {
     const path = document.getElementById("storagePath");
     const status = document.getElementById("storageStatus");
     const free = document.getElementById("storageFree");
-    if (path) path.value = data.path || "—";
+    if (path) path.textContent = data.path || "—";
     if (free) free.textContent = data.free || "—";
     if (status) {
         if (!data.exists) {
@@ -2155,8 +2143,8 @@ function playQueue(queue, index = 0, shuffle = false) {
     libraryPlaybackQueue = shuffle ? shuffledCopy(queue) : [...queue];
     currentLibraryIndex = Math.max(0, Math.min(index, libraryPlaybackQueue.length - 1));
     currentPlayerSource = "library";
-    playLibraryTrack(currentLibraryIndex);
     setShuffle(Boolean(shuffle));
+    playLibraryTrack(currentLibraryIndex);
     return true;
 }
 
@@ -4716,8 +4704,51 @@ async function refreshLibrary() {
     }
 }
 
+function renderLocalIcons() {
+    const paths = {
+        house: 'M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5zM9 21v-6h6v6',
+        search: 'm21 21-4.35-4.35M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z',
+        download: 'M12 3v11m0 0 4-4m-4 4-4-4M4 19h16',
+        library: 'M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 1 4 16.5zM4 16.5V5.5',
+        settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.9 1.9-.06-.06A1.7 1.7 0 0 0 16 18.44a1.7 1.7 0 0 0-1 .56 1.7 1.7 0 0 0-.44 1.14V20H12v-.08A1.7 1.7 0 0 0 10.9 18.4a1.7 1.7 0 0 0-1.83.38L9 18.85l-1.9-1.9.06-.06A1.7 1.7 0 0 0 7.56 15a1.7 1.7 0 0 0-1.14-.44H6V12h.08A1.7 1.7 0 0 0 7.6 10.9a1.7 1.7 0 0 0-.38-1.83L7.15 9l1.9-1.9.06.06A1.7 1.7 0 0 0 11 7.56a1.7 1.7 0 0 0 .44-1.14V6H14v.08A1.7 1.7 0 0 0 15.1 7.6a1.7 1.7 0 0 0 1.83-.38L17 7.15l1.9 1.9-.06.06A1.7 1.7 0 0 0 18.44 11a1.7 1.7 0 0 0 1.14.44H20V14h-.08A1.7 1.7 0 0 0 19.4 15z',
+        save: 'M5 3h12l3 3v15H4V3zm3 0v6h8V3M8 21v-6h8v6',
+        rotate: 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5',
+        music: 'M9 18V5l10-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0m10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
+        user: 'M20 21a8 8 0 0 0-16 0M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
+        disc: 'M12 12h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
+        play: 'm8 5 11 7-11 7z',
+        hard: 'M3 5h18v14H3zM7 9h10M7 13h5',
+        smartphone: 'M7 2h10v20H7zM11 18h2',
+        broom: 'm3 21 9-9m2-9 7 7M16 3l5 5',
+        'skip-back': 'M19 20 9 12l10-8v16M5 19V5',
+        'skip-forward': 'm5 4 10 8-10 8V4m14 15V5',
+        'volume-2': 'M11 5 6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13',
+        shuffle: 'm3 3 18 18M16 3h5v5M3 21l5-5m8 0h5v5',
+        refresh: 'M20 11a8 8 0 0 0-14.9-4M4 5v4h4M4 13a8 8 0 0 0 14.9 4M20 19v-4h-4',
+    }
+    document.querySelectorAll('[data-lucide]').forEach(el => {
+        const name = el.getAttribute('data-lucide') || '';
+        const path = paths[name] || paths[name.replace(/-(.)/g, (_, c) => c)] || null;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+        svg.setAttribute('viewBox','0 0 24 24');
+        svg.setAttribute('fill','none');
+        svg.setAttribute('stroke','currentColor');
+        svg.setAttribute('stroke-width','2');
+        svg.setAttribute('stroke-linecap','round');
+        svg.setAttribute('stroke-linejoin','round');
+        svg.setAttribute('aria-hidden','true');
+        if (path) {
+            const pathNode = document.createElementNS('http://www.w3.org/2000/svg','path');
+            pathNode.setAttribute('d', path);
+            svg.appendChild(pathNode);
+        }
+        el.replaceWith(svg);
+    });
+}
+
 async function initializeApp() {
 
+    renderLocalIcons();
     cacheDom();
 
     toggleTheme(
@@ -4735,7 +4766,20 @@ async function initializeApp() {
     document.getElementById("settings-save")?.addEventListener("click", saveSettings);
     document.getElementById("settings-reset")?.addEventListener("click", resetSettings);
     document.getElementById("libraryRefreshButton")?.addEventListener("click", refreshLibrary);
-    document.getElementById("libSearchQuery")?.addEventListener("input", filterLibrary);
+    document.getElementById("libSearchQuery")?.addEventListener("input", () => {
+        const input = document.getElementById("libSearchQuery");
+        const clear = document.getElementById("librarySearchClear");
+        if (clear) clear.hidden = !(input?.value || "").trim();
+        filterLibrary();
+    });
+    document.getElementById("librarySearchClear")?.addEventListener("click", () => {
+        const input = document.getElementById("libSearchQuery");
+        if (input) input.value = "";
+        const clear = document.getElementById("librarySearchClear");
+        if (clear) clear.hidden = true;
+        filterLibrary();
+        input?.focus();
+    });
     document.querySelectorAll(".library-tab").forEach(button => button.addEventListener("click", () => {
         libraryView = button.dataset.libraryView || "tracks";
         selectedArtistId = null;
@@ -4745,6 +4789,7 @@ async function initializeApp() {
     }));
 
     await refreshLibraryCache();
+    await loadSettings();
 
     await pollTasks(true);
 
