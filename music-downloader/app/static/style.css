@@ -3596,3 +3596,45 @@ button:disabled { opacity:.55; cursor:not-allowed; }
     .library-actions > * { flex: 1 1 auto; }
     .settings-info-card code { max-width: 48%; }
 }
+
+
+/* XROB 2.8 visual refresh */
+.xrob-loading {
+    min-height: 150px; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px; width:100%; padding:28px 16px;
+}
+.xrob-spinner { width:36px; height:36px; border:3px solid var(--bg-elevated); border-top-color:var(--accent); border-radius:50%; animation:xrob-spin .8s linear infinite; }
+@keyframes xrob-spin { to { transform:rotate(360deg); } }
+.xrob-loader-text { color:var(--text-secondary); font-size:11px; font-weight:700; text-align:center; }
+.home-stat-icon svg, .library-stats-bar svg, .library-actions svg, .settings-actions svg { width:20px; height:20px; }
+.home-stat-icon { width:46px; height:46px; border-radius:13px; }
+.home-stat-card strong { font-size:24px; line-height:1; }
+.home-stat-card span { font-size:10px; margin-top:6px; display:block; }
+.home-stat-card { min-height:104px; padding:20px; }
+.library-toolbar { align-items:stretch; }
+.library-tabs { flex:0 0 auto; }
+.library-actions { flex:1 1 620px; justify-content:flex-end; }
+.library-search { flex:1 1 280px; min-width:220px; }
+.library-search-icon { left:14px; font-size:18px; opacity:.7; }
+.library-search input { background:var(--bg-input); border-radius:12px; height:44px; }
+.library-actions .btn-refresh { white-space:nowrap; }
+.library-stats-bar { padding:12px 4px 14px; border-bottom:1px solid var(--border); }
+.library-stats-bar > span { display:inline-flex; align-items:center; gap:6px; }
+.library-stats-bar strong { font-weight:800; }
+.settings-card { max-width:none; width:100%; padding:0 28px 26px; margin-bottom:16px; }
+.settings-divider { padding-top:24px; font-size:11px; }
+.setting-row { min-height:74px; }
+.settings-actions { display:flex; gap:10px; align-items:center; margin-top:10px; }
+.integration-status { margin-top:14px; }
+.storage-capacity { margin:14px 0 8px; padding:16px; background:var(--bg-elevated); border:1px solid var(--border); border-radius:12px; }
+.storage-capacity-head, .storage-capacity-meta { display:flex; justify-content:space-between; gap:12px; align-items:center; color:var(--text-secondary); font-size:10px; }
+.storage-capacity-head strong { color:var(--text-primary); font-size:12px; }
+.storage-progress { height:9px; margin:11px 0 8px; overflow:hidden; border-radius:999px; background:var(--bg-input); }
+.storage-progress > span { display:block; height:100%; width:0; border-radius:inherit; background:var(--accent); transition:width .35s ease; }
+@media (min-width:1000px) {
+    .main-content { padding-left:48px; padding-right:48px; }
+}
+@media (max-width:860px) {
+    .library-actions { justify-content:stretch; }
+    .library-search { min-width:100%; }
+    .settings-card { padding-left:18px; padding-right:18px; }
+}
