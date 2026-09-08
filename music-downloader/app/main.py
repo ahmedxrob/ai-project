@@ -77,12 +77,14 @@ DEFAULT_LIBRARY_PATH = os.getenv(
 DOWNLOAD_DIR = Path(DEFAULT_LIBRARY_PATH)
 COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
 SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
-DB_FILE = DOWNLOAD_DIR / "tasks.db"
+DATA_DIR = Path(os.getenv("XROB_DATA_DIR", "/data"))
+DB_FILE = DATA_DIR / "tasks.db"
+SETTINGS_FILE = DATA_DIR / "settings.json"
 
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "2.3.2"
+SERVER_VERSION = "2.3.3"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 
@@ -161,6 +163,33 @@ def load_addon_options():
         return {}
 
 
+def migrate_legacy_db(source: Path, destination: Path):
+    """Best-effort migration from the old NAS-hosted SQLite database.
+
+    A locked legacy DB must never prevent startup. If it cannot be backed up
+    safely, the new local DB is initialized instead and the legacy file is
+    left untouched.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        source_conn = sqlite3.connect(source, timeout=5.0)
+        source_conn.execute("PRAGMA busy_timeout = 5000")
+        destination_conn = sqlite3.connect(destination, timeout=30.0)
+        try:
+            source_conn.backup(destination_conn)
+        finally:
+            destination_conn.close()
+            source_conn.close()
+        print(f"Migrated legacy database: {source} -> {destination}")
+    except (sqlite3.Error, OSError) as exc:
+        try:
+            if destination.exists():
+                destination.unlink()
+        except OSError:
+            pass
+        print(f"Warning: could not migrate legacy database: {exc}. Starting with a new local database.")
+
+
 def configure_storage():
     """Apply the configured library path and prepare its local metadata cache."""
     global DOWNLOAD_DIR, COVER_CACHE_DIR, SETTINGS_FILE, DB_FILE
@@ -174,8 +203,25 @@ def configure_storage():
 
     DOWNLOAD_DIR = path
     COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
-    SETTINGS_FILE = DOWNLOAD_DIR / ".settings.json"
-    DB_FILE = DOWNLOAD_DIR / "tasks.db"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    # SQLite databases should never live on the NAS/SMB mount. Network
+    # filesystem locking is unreliable and can prevent the application from
+    # starting with "database is locked". Keep the DB and settings on the
+    # add-on's persistent local /data volume.
+    legacy_db = DOWNLOAD_DIR / "tasks.db"
+    legacy_settings = DOWNLOAD_DIR / ".settings.json"
+    SETTINGS_FILE = DATA_DIR / "settings.json"
+    DB_FILE = DATA_DIR / "tasks.db"
+
+    if not DB_FILE.exists() and legacy_db.exists():
+        migrate_legacy_db(legacy_db, DB_FILE)
+
+    if not SETTINGS_FILE.exists() and legacy_settings.exists():
+        try:
+            shutil.copy2(legacy_settings, SETTINGS_FILE)
+        except OSError as exc:
+            print(f"Warning: could not migrate legacy settings: {exc}")
 
     # Do not silently create a missing explicitly configured NAS mount. That
     # would make a disconnected NAS look like an empty local library.
@@ -307,8 +353,22 @@ def public_settings():
 # DATABASE
 # ============================================================
 
+def db_connect():
+    """Open the local persistent SQLite database with safe lock handling.
+
+    The music library may live on SMB/NFS, but SQLite must stay on the
+    add-on's local /data volume. This avoids unreliable file locking on
+    network filesystems.
+    """
+    DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_FILE, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 def init_db():
-    with sqlite3.connect(DB_FILE) as conn:
+    with db_connect() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (
@@ -362,7 +422,7 @@ def init_db():
 
 
 def db_save_task_sync(task):
-    with sqlite3.connect(DB_FILE) as conn:
+    with db_connect() as conn:
         conn.execute(
             """
             INSERT OR REPLACE INTO tasks (
@@ -425,7 +485,7 @@ def db_load_tasks_sync():
 
     tasks = {}
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with db_connect() as conn:
         conn.row_factory = sqlite3.Row
 
         for row in conn.execute(
@@ -438,7 +498,7 @@ def db_load_tasks_sync():
 
 
 def db_clear_finished_sync():
-    with sqlite3.connect(DB_FILE) as conn:
+    with db_connect() as conn:
         conn.execute(
             """
             DELETE FROM tasks
@@ -455,7 +515,7 @@ def db_clear_finished_sync():
 
 
 def db_delete_task_sync(task_id):
-    with sqlite3.connect(DB_FILE) as conn:
+    with db_connect() as conn:
         conn.execute(
             "DELETE FROM tasks WHERE id = ?",
             (task_id,),
@@ -3027,7 +3087,7 @@ def subsonic_error(
 
 def get_starred_at_sync(item_id):
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with db_connect() as conn:
 
         row = conn.execute(
             """
@@ -3050,7 +3110,7 @@ def set_star_sync(
     enabled,
 ):
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with db_connect() as conn:
 
         if enabled:
 
@@ -5028,7 +5088,7 @@ async def rest_starred2(
     if error:
         return error
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with db_connect() as conn:
 
         rows = conn.execute(
             "SELECT item_id FROM stars"
@@ -5080,9 +5140,7 @@ def safe_song_ids(raw):
 
 def playlists_sync():
 
-    with sqlite3.connect(
-        DB_FILE
-    ) as conn:
+    with db_connect() as conn:
 
         conn.row_factory = sqlite3.Row
 
@@ -5104,9 +5162,7 @@ def playlist_sync(
     playlist_id,
 ):
 
-    with sqlite3.connect(
-        DB_FILE
-    ) as conn:
+    with db_connect() as conn:
 
         conn.row_factory = sqlite3.Row
 
