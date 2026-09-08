@@ -664,8 +664,7 @@
 
                         <p>
                             Xrob Music includes its own
-                            OpenSubsonic server.
-                            No Navidrome is required.
+                            OpenSubsonic server for compatible clients.
                         </p>
 
                     </div>
@@ -1248,6 +1247,41 @@
                         aria-live="polite"
                     >
                         Checking...
+                    </div>
+
+                    <div class="settings-divider">
+                        Storage
+                    </div>
+
+                    <div class="setting-row">
+                        <div>
+                            <div class="setting-label">Music Storage</div>
+                            <div class="setting-desc">Use a local folder or a NAS folder mounted into the container. Configure the path in the add-on or container environment.</div>
+                        </div>
+
+                        <div class="inline-control">
+                            <input
+                                id="set_music_path"
+                                type="text"
+                                readonly
+                                aria-label="Music storage path"
+                            >
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div>
+                            <div class="setting-label">Storage Status</div>
+                            <div class="setting-desc">Current availability and write access of the configured music storage.</div>
+                        </div>
+
+                        <div
+                            id="set_storage_status"
+                            class="integration-status"
+                            aria-live="polite"
+                        >
+                            Checking...
+                        </div>
                     </div>
 
                     <div class="settings-divider">
