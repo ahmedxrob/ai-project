@@ -1975,7 +1975,8 @@ function createTrackCard(file, queue = rawLibraryFiles) {
     const card = document.createElement("article");
     card.className = "result-card";
     card.dataset.libraryName = file.name || "";
-    card.innerHTML = `<div class="thumb-wrapper"><img src="${escapeHtml(cover)}" alt="" loading="lazy"></div><div class="track-info"><div class="track-title">${escapeHtml(file.title || file.name || "Unknown Track")}</div><div class="track-artist">${escapeHtml(file.artist || "Unknown Artist")} · ${escapeHtml(file.album || "Unknown Album")}</div></div><div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-secondary metadata-edit-btn">✎ Edit</button><button type="button" class="btn-danger">🗑 Delete</button></div>`;
+    const plays = Number(file.play_count ?? file.plays ?? 0);
+    card.innerHTML = `<div class="thumb-wrapper"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="track-play-count" title="${plays} play${plays === 1 ? "" : "s"}">▶ ${plays}</span></div><div class="track-info"><div class="track-title">${escapeHtml(file.title || file.name || "Unknown Track")}</div><div class="track-artist">${escapeHtml(file.artist || "Unknown Artist")} · ${escapeHtml(file.album || "Unknown Album")}</div><div class="track-meta-line"><span>${plays === 1 ? "1 play" : `${plays} plays`}</span></div></div><div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-secondary metadata-edit-btn">✎ Edit</button><button type="button" class="btn-danger">🗑 Delete</button></div>`;
     card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), { once: true });
     const play = () => { libraryPlaybackQueue = [...queue]; currentLibraryIndex = Math.max(0, queue.findIndex(x => x.id === file.id || x.name === file.name)); currentPlayerSource = "library"; if (typeof setEnhancedQueue === "function") setEnhancedQueue(queue, currentLibraryIndex); toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover); };
     card.querySelector(".btn-preview")?.addEventListener("click", e => { e.stopPropagation(); play(); });
@@ -4640,9 +4641,7 @@ async function openMetadataEditor(file) {
     document.getElementById("metadataTitle").value=file.title||"";
     document.getElementById("metadataArtist").value=file.artist||"";
     document.getElementById("metadataAlbum").value=file.album||"";
-    document.getElementById("metadataYear").value=file.year||"";
-    document.getElementById("metadataGenre").value=file.genre||"";
-    document.getElementById("metadataArtwork").value=""; modal.hidden=false;
+    modal.hidden=false;
 }
 
 function renderEnhancedQueue() {
@@ -4675,7 +4674,7 @@ async function renderLibraryCollections(mode){
     if(!endpoint)return;
     const r=await fetch("api/library/recent-most",{cache:"no-store"}); const d=await r.json(); const rows=d[endpoint]||[]; list.innerHTML="";
     if(!rows.length){renderEmpty(list,"🎧",mode==="recent"?"Nothing recently played":"No play history yet","Play some tracks to build this list.");return;}
-    rows.forEach(t=>{ const f={...t,name:t.title,stream:t.stream,cover:t.cover}; list.appendChild(createTrackCard(f,rows)); });
+    rows.forEach((t, rank)=>{ const f={...t,name:t.title,stream:t.stream,cover:t.cover,play_count:Number(t.plays||0)}; const card=createTrackCard(f,rows); card.classList.add("collection-track"); card.dataset.rank=String(rank+1); list.appendChild(card); });
 }
 
 async function loadPlaylistsView(){
@@ -4689,7 +4688,7 @@ function installEnhancedFeatures(){
     loadEnhancedQueue(); loadEnhancedPositions(); applyRepeatLabel();
     document.getElementById("gp-queue-btn")?.addEventListener("click",openQueueDrawer); document.getElementById("queueClose")?.addEventListener("click",closeQueueDrawer); document.getElementById("queueClear")?.addEventListener("click",()=>{enhancedQueue=[];enhancedQueueIndex=-1;libraryPlaybackQueue=[];saveEnhancedQueue();renderEnhancedQueue();}); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
-    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value,year:document.getElementById('metadataYear').value,genre:document.getElementById('metadataGenre').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const art=document.getElementById('metadataArtwork').files[0];if(r.ok&&art){const fd=new FormData();fd.append('upload',art);await fetch(`api/library/artwork/${encodeURIComponent(id)}`,{method:'POST',body:fd});}if(r.ok){showToast('✅ Metadata saved');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
+    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
     document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{showToast('⏳ Full metadata rebuild…');const r=await fetch('api/library/scan/full',{method:'POST'});showToast(r.ok?'✅ Full scan complete':'❌ Full scan failed');await refreshLibraryCache();renderLibraryView();});
     document.getElementById("libraryRefreshButton")?.addEventListener("click",async()=>{showToast('⏳ Quick scan…');const r=await fetch('api/library/scan/quick',{method:'POST'});showToast(r.ok?'✅ Quick scan complete':'❌ Quick scan failed');await refreshLibraryCache();renderLibraryView();});
     document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{const r=await fetch('api/library/health');const d=await r.json();document.getElementById('healthContent').innerHTML=`<div class="health-summary"><strong>Unreadable: ${d.counts.unreadable}</strong><strong>Bad tags: ${d.counts.bad_tags}</strong><strong>Missing artwork: ${d.counts.missing_artwork}</strong><strong>Duplicate groups: ${d.counts.duplicates}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;document.getElementById('health-modal').hidden=false;});
