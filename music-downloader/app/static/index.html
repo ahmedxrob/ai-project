@@ -42,7 +42,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=207"
+        href="/static/style.css?v=208"
     >
 
 </head>
@@ -581,60 +581,12 @@
 
                 <!-- RECENT LOADING -->
 
-                <div
-                    id="recentTracksLoading"
-                    class="xrob-loading"
-                    aria-live="polite"
-                >
-
-                    <div class="xrob-loader-circle">
-
-                        <svg
-                            class="xrob-loader-svg"
-                            viewBox="0 0 100 100"
-                            aria-hidden="true"
-                        >
-
-                            <circle
-                                class="xrob-loader-track"
-                                cx="50"
-                                cy="50"
-                                r="42"
-                            ></circle>
-
-                            <circle
-                                id="recentLoadingCircle"
-                                class="xrob-loader-progress"
-                                cx="50"
-                                cy="50"
-                                r="42"
-                            ></circle>
-
-                        </svg>
-
-
-                        <div
-                            id="recentLoadingPercent"
-                            class="xrob-loader-percent"
-                        >
-                            0%
-                        </div>
-
-                    </div>
-
-
-                    <div
-                        id="recentLoadingText"
-                        class="xrob-loader-text"
-                    >
-                        Loading Recently Added...
-                    </div>
-
+                <div id="recentTracksLoading" class="xrob-loading" aria-live="polite">
+                    <div class="xrob-spinner" aria-hidden="true"></div>
+                    <div id="recentLoadingText" class="xrob-loader-text">Loading Recently Added…</div>
                 </div>
 
-
-                <div
-                    id="recentTracks"
+                <div id="recentTracks"
                     class="recent-grid"
                 ></div>
 
@@ -694,57 +646,10 @@
 
                 <!-- SEARCH LOADING -->
 
-                <div
-                    id="searchLoading"
-                    class="xrob-loading"
-                    style="display:none;"
-                >
-
-                    <div class="xrob-loader-circle">
-
-                        <svg
-                            class="xrob-loader-svg"
-                            viewBox="0 0 100 100"
-                        >
-
-                            <circle
-                                class="xrob-loader-track"
-                                cx="50"
-                                cy="50"
-                                r="42"
-                            ></circle>
-
-
-                            <circle
-                                id="searchLoadingCircle"
-                                class="xrob-loader-progress"
-                                cx="50"
-                                cy="50"
-                                r="42"
-                            ></circle>
-
-                        </svg>
-
-
-                        <div
-                            id="searchLoadingPercent"
-                            class="xrob-loader-percent"
-                        >
-                            0%
-                        </div>
-
-                    </div>
-
-
-                    <div
-                        id="searchLoadingText"
-                        class="xrob-loader-text"
-                    >
-                        Synchronizing...
-                    </div>
-
+                <div id="searchLoading" class="xrob-loading" aria-live="polite" style="display:none;">
+                    <div class="xrob-spinner" aria-hidden="true"></div>
+                    <div id="searchLoadingText" class="xrob-loader-text">Searching…</div>
                 </div>
-
 
                 <div
                     id="statusMsg"
@@ -968,21 +873,15 @@
                 </div>
 
                 <div class="library-stats-bar">
-                    <span><i data-lucide="music-2" aria-hidden="true"></i> Tracks: <strong id="statTracks">0</strong></span>
-                    <span><i data-lucide="user-round" aria-hidden="true"></i> Artists: <strong id="statArtists">0</strong></span>
-                    <span><i data-lucide="disc-3" aria-hidden="true"></i> Albums: <strong id="statAlbums">0</strong></span>
+                    <span><i data-lucide="music-2" aria-hidden="true"></i><strong id="statTracks">0</strong></span>
+                    <span><i data-lucide="user-round" aria-hidden="true"></i><strong id="statArtists">0</strong></span>
+                    <span><i data-lucide="disc-3" aria-hidden="true"></i><strong id="statAlbums">0</strong></span>
                     <span><i data-lucide="hard-drive" aria-hidden="true"></i> Size: <strong id="libFolderSize">0 MB</strong></span>
                 </div>
 
                 <div id="libraryLoading" class="xrob-loading" aria-live="polite">
-                    <div class="xrob-loader-circle">
-                        <svg class="xrob-loader-svg" viewBox="0 0 100 100" aria-hidden="true">
-                            <circle class="xrob-loader-track" cx="50" cy="50" r="42"></circle>
-                            <circle id="libraryLoadingCircle" class="xrob-loader-progress" cx="50" cy="50" r="42"></circle>
-                        </svg>
-                        <div id="libraryLoadingPercent" class="xrob-loader-percent">0%</div>
-                    </div>
-                    <div id="libraryLoadingText" class="xrob-loader-text">Loading Library...</div>
+                    <div class="xrob-spinner" aria-hidden="true"></div>
+                    <div id="libraryLoadingText" class="xrob-loader-text">Loading library…</div>
                 </div>
 
                 <div id="libraryList" class="results-grid"></div>
@@ -1013,8 +912,12 @@
                 <div class="settings-card settings-info-card">
                     <div class="settings-divider">Library status</div>
                     <div class="setting-row"><div><div class="setting-label">Music folder</div></div><code id="storagePath">—</code></div>
-                    <div id="storageStatus" class="integration-status" aria-live="polite">Checking storage...</div>
-                    <div class="setting-row"><div><div class="setting-label">Free space</div></div><span id="storageFree">—</span></div>
+                    <div class="storage-capacity" id="storageCapacity">
+                        <div class="storage-capacity-head"><span>Storage usage</span><strong id="storageUsedLabel">—</strong></div>
+                        <div class="storage-progress" role="progressbar" aria-label="Library storage usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="storageProgressFill"></span></div>
+                        <div class="storage-capacity-meta"><span id="storageUsedMeta">— used</span><span id="storageFree">— free</span></div>
+                    </div>
+                    <div id="storageStatus" class="integration-status" aria-live="polite">Checking storage…</div>
                     <div class="setting-row"><div><div class="setting-label">OpenSubsonic</div><div class="setting-desc">Available to Amperfy and other OpenSubsonic clients.</div></div><strong>Ready</strong></div>
                 </div>
                 <div class="settings-actions"><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
@@ -1310,7 +1213,7 @@
      SCRIPTS
      ============================================================ -->
 
-<script src="/static/app.js?v=207"></script>
+<script src="/static/app.js?v=208"></script>
 
 
 
