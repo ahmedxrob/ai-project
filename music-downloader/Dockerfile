@@ -8,11 +8,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-
-RUN mkdir -p /share/mymusic/music
 
 EXPOSE 8099
 
