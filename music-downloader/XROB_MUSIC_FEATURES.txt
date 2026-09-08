@@ -1,0 +1,106 @@
+XROB MUSIC 2.4.0
+Feature list and repair summary
+
+CORE
+- Self-hosted Xrob Music web application.
+- YouTube music search using yt-dlp.
+- Audio-only downloads with selectable output format and quality.
+- Download queue with progress, speed, status, cancel, retry and clear completed actions.
+- Persistent download task database stored on local /data instead of the music/NAS filesystem.
+- WebSocket task updates for live download progress.
+- Automatic recovery of interrupted queued/downloading tasks after restart.
+
+LIBRARY
+- Recursive scan of the configured music folder.
+- Supported audio files: MP3, FLAC, M4A, OGG, OPUS, WAV, AAC and ALAC.
+- Real metadata extraction from FFmpeg/ffprobe with Mutagen fallback.
+- Metadata fallback from common Artist/Album/folder layouts when tags are missing.
+- Track, artist and album statistics.
+- Library browsing by Tracks, Artists and Albums.
+- Library search across title, artist, album and filename.
+- Album covers served from embedded artwork when available.
+- Play tracks directly from the local library.
+- Play an entire album.
+- Shuffle all library music.
+- Shuffle playback mode in the global player.
+- Delete individual library files.
+- Manual full library rescan.
+- Library storage path, writable state, used space and free space display.
+- Stable IDs for songs, artists and albums.
+
+HOME
+- Correct Tracks, Artists and Albums counters generated from the real metadata library.
+- Recently Added tracks with title, artist, album, cover and playback.
+- Active download count.
+- Fast cached browser library state for better loading behavior.
+
+PLAYER
+- Global persistent audio player.
+- Play/pause, previous, next and seek controls.
+- Shuffle mode.
+- Volume control.
+- Current track artwork, title and artist.
+- Playback position persistence across page reloads.
+- Visualizer canvas.
+- Automatic next-track playback.
+- Album/library queue support.
+
+SETTINGS
+- Simplified settings page containing only operational options.
+- Music library path and storage health.
+- OpenSubsonic server address and connection test.
+- Download format: MP3, FLAC, M4A or OPUS.
+- Lossy quality selection: 320K, 256K, 192K or 128K.
+- Embed metadata on/off.
+- Embed album artwork on/off.
+- Organize new downloads by artist on/off.
+- Search results per page, limited to a safe 5-50 range.
+- Save and reset settings.
+- Server-managed OpenSubsonic username/password remain in the Home Assistant add-on options and are not exposed in the web settings page.
+
+OPENSUBSONIC / AMPERFY / ARPEGGI
+- OpenSubsonic/Subsonic-compatible REST API.
+- JSON and XML responses.
+- Authentication using configured username/password.
+- ping, license, extensions and user endpoints.
+- Music folders.
+- Artist indexes and artist browsing.
+- Album list and album detail.
+- Music directory navigation: Music -> Artist -> Album -> Song.
+- Song detail.
+- Search for artists, albums and songs.
+- Random songs.
+- Genres and songs by genre.
+- Stream and download endpoints.
+- Cover art endpoint for songs, albums and artists.
+- Star/unstar support.
+- Starred/favorites listing.
+- Playlist support.
+- Scrobble and now-playing endpoints.
+- Similar songs endpoint.
+- Lyrics endpoint.
+- Amperfy/OpenSubsonic connection test from the Xrob Music settings page.
+
+REPAIRS IN 2.4.0
+- Fixed Home Artists and Albums permanently showing 0.
+- Fixed library statistics so artist/album counts come from the actual music catalog.
+- Fixed the web library so it is no longer just a filename list.
+- Added real artist and album views.
+- Added album playback.
+- Added shuffle playback.
+- Added a player shuffle control.
+- Fixed artist song-count duplication when artist and album artist are the same.
+- Improved metadata normalization across different tag casing and containers.
+- Added Mutagen metadata fallback for files where ffprobe tags are incomplete.
+- Added folder/filename metadata fallback for untagged music.
+- Fixed settings persistence validation for unsupported formats and invalid values.
+- Fixed the Embed Metadata setting so disabling it prevents the extra FFmpeg metadata rewrite step.
+- Removed the duplicate settings-file declaration that could cause confusing configuration behavior.
+- Kept SQLite task/state data on local /data to avoid network-filesystem locking problems.
+- Kept explicit NAS/library mount validation so an unavailable mount is not silently treated as an empty library.
+- Kept stable OpenSubsonic song/artist/album IDs so clients can navigate the hierarchy reliably.
+- Updated application/add-on version to 2.4.0.
+
+NOTES
+- For Amperfy from outside the Home Assistant host, use the reachable Xrob Music/OpenSubsonic URL (for example a published port/tunnel URL). The local server address shown in Settings is the direct add-on address, not automatically a public tunnel URL.
+- Music downloads should only be made from sources the user has permission or legal rights to download.
