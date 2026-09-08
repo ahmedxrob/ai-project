@@ -6,6 +6,7 @@ import os
 import random
 import re
 import shutil
+import sys
 import sqlite3
 import subprocess
 import time
@@ -44,7 +45,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(
     title="Xrob Music",
-    version="2.5.0",
+    version="2.6.0",
 )
 
 app.add_middleware(
@@ -83,7 +84,7 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "2.5.0"
+SERVER_VERSION = "2.6.0"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 
@@ -121,6 +122,12 @@ DEFAULT_SETTINGS = {
 
 AUDIO_FORMATS = {"mp3", "flac", "m4a", "opus", "ogg", "wav", "aac", "alac"}
 AUDIO_QUALITY_VALUES = {"0", "5", "64K", "96K", "128K", "160K", "192K", "256K", "320K"}
+
+
+# Always invoke yt-dlp through the running Python environment.
+# This works reliably inside the add-on even when the console script is not on PATH.
+YT_DLP_COMMAND = [sys.executable, "-m", "yt_dlp"]
+FFMPEG_COMMAND = [shutil.which("ffmpeg") or "ffmpeg"]
 
 
 # ============================================================
@@ -350,6 +357,8 @@ def save_settings(data: dict):
 
 def public_settings():
     settings = dict(load_settings())
+    # Subsonic credentials are add-on/server configuration, not web UI settings.
+    settings.pop("subsonic_user", None)
     settings.pop("subsonic_password", None)
     settings["storage"] = storage_info_sync()
     return settings
@@ -1266,7 +1275,7 @@ async def download_worker():
             )
 
             command = [
-                "yt-dlp",
+                *YT_DLP_COMMAND,
                 "--no-playlist",
                 "-x",
                 "--audio-format",
@@ -1492,7 +1501,7 @@ async def download_worker():
                 clean_title = clean_filename(task.get("title", "Unknown Track"))
                 clean_file = DOWNLOAD_DIR / f"clean_{task_id}{extension}"
                 clean_command = [
-                    "ffmpeg", "-y", "-i", str(audio_file), "-map", "0", "-c", "copy",
+                    *FFMPEG_COMMAND, "-y", "-i", str(audio_file), "-map", "0", "-c", "copy",
                     "-metadata", f"title={clean_title}",
                     "-metadata", f"artist={task.get('artist', 'Unknown Artist')}",
                     "-metadata", f"album={task.get('album') or clean_title}",
@@ -1779,7 +1788,7 @@ async def youtube_search(
     end = page * max_results
 
     command = [
-        "yt-dlp",
+        *YT_DLP_COMMAND,
         "--flat-playlist",
         "--dump-single-json",
         "--skip-download",
@@ -1791,13 +1800,16 @@ async def youtube_search(
         f"ytsearch{end}:{query}",
     ]
 
-    process = (
-        await asyncio.create_subprocess_exec(
+    try:
+        process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-    )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed."
+        ) from exc
 
     stdout, stderr = await process.communicate()
 
@@ -1922,9 +1934,9 @@ async def api_preview(
             detail="URL missing",
         )
 
-    process = (
-        await asyncio.create_subprocess_exec(
-            "yt-dlp",
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *YT_DLP_COMMAND,
             "-g",
             "-f",
             "ba/bestaudio/b",
@@ -1932,7 +1944,11 @@ async def api_preview(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-    )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed.",
+        ) from exc
 
     stdout, stderr = await process.communicate()
 
