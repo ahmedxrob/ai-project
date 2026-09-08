@@ -44,7 +44,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=204"
+        href="/static/style.css?v=205"
     >
 
 </head>
@@ -986,184 +986,48 @@
                  LIBRARY
                  ================================================== -->
 
-            <section
-                id="tab-library"
-                class="tab-content"
-            >
-
+            <section id="tab-library" class="tab-content">
                 <div class="page-heading">
-
-                    <h2>
-                        Library
-                    </h2>
-
-                    <p>
-                        Your local Xrob Music collection.
-                    </p>
-
+                    <h2>Library</h2>
+                    <p>Browse your music by tracks, artists, or albums.</p>
                 </div>
 
-
-                <div class="search-card">
-
-                    <input
-                        id="libSearchQuery"
-                        type="search"
-                        placeholder="Filter local library tracks..."
-                        autocomplete="off"
-                        spellcheck="false"
-                        oninput="filterLibrary()"
-                    >
-
+                <div class="library-toolbar">
+                    <div class="library-tabs" role="tablist" aria-label="Library view">
+                        <button type="button" class="library-tab active" data-library-view="tracks">Tracks</button>
+                        <button type="button" class="library-tab" data-library-view="artists">Artists</button>
+                        <button type="button" class="library-tab" data-library-view="albums">Albums</button>
+                    </div>
+                    <div class="library-actions">
+                        <input id="libSearchQuery" type="search" placeholder="Search your library..." autocomplete="off" spellcheck="false">
+                        <button type="button" id="libraryShuffleButton" class="btn-refresh" title="Shuffle all tracks">
+                            <i data-lucide="shuffle" aria-hidden="true"></i> Shuffle
+                        </button>
+                        <button type="button" class="btn-refresh" id="libraryRefreshButton" title="Rescan library">
+                            <i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh
+                        </button>
+                    </div>
                 </div>
-
 
                 <div class="library-stats-bar">
-
-
-                    <span>
-
-                        <i
-                            data-lucide="music-2"
-                            aria-hidden="true"
-                        ></i>
-
-                        Tracks:
-
-                        <strong id="statTracks">
-                            0
-                        </strong>
-
-                    </span>
-
-
-                    <span>
-
-                        <i
-                            data-lucide="user-round"
-                            aria-hidden="true"
-                        ></i>
-
-                        Artists:
-
-                        <strong id="statArtists">
-                            0
-                        </strong>
-
-                    </span>
-
-
-                    <span>
-
-                        <i
-                            data-lucide="disc-3"
-                            aria-hidden="true"
-                        ></i>
-
-                        Albums:
-
-                        <strong id="statAlbums">
-                            0
-                        </strong>
-
-                    </span>
-
-
-                    <span>
-
-                        <i
-                            data-lucide="hard-drive"
-                            aria-hidden="true"
-                        ></i>
-
-                        Size:
-
-                        <strong id="libFolderSize">
-                            0 MB
-                        </strong>
-
-                    </span>
-
-
-                    <button
-                        type="button"
-                        class="btn-refresh"
-                        onclick="loadLibrary()"
-                    >
-
-                        <i
-                            data-lucide="refresh-cw"
-                            aria-hidden="true"
-                        ></i>
-
-                        Refresh
-
-                    </button>
-
+                    <span><i data-lucide="music-2" aria-hidden="true"></i> Tracks: <strong id="statTracks">0</strong></span>
+                    <span><i data-lucide="user-round" aria-hidden="true"></i> Artists: <strong id="statArtists">0</strong></span>
+                    <span><i data-lucide="disc-3" aria-hidden="true"></i> Albums: <strong id="statAlbums">0</strong></span>
+                    <span><i data-lucide="hard-drive" aria-hidden="true"></i> Size: <strong id="libFolderSize">0 MB</strong></span>
                 </div>
 
-
-                <!-- LIBRARY LOADING -->
-
-                <div
-                    id="libraryLoading"
-                    class="xrob-loading"
-                    aria-live="polite"
-                    aria-label="Loading music library"
-                >
-
+                <div id="libraryLoading" class="xrob-loading" aria-live="polite">
                     <div class="xrob-loader-circle">
-
-                        <svg
-                            class="xrob-loader-svg"
-                            viewBox="0 0 100 100"
-                            aria-hidden="true"
-                        >
-
-                            <circle
-                                class="xrob-loader-track"
-                                cx="50"
-                                cy="50"
-                                r="42"
-                            ></circle>
-
-
-                            <circle
-                                id="libraryLoadingCircle"
-                                class="xrob-loader-progress"
-                                cx="50"
-                                cy="50"
-                                r="42"
-                            ></circle>
-
+                        <svg class="xrob-loader-svg" viewBox="0 0 100 100" aria-hidden="true">
+                            <circle class="xrob-loader-track" cx="50" cy="50" r="42"></circle>
+                            <circle id="libraryLoadingCircle" class="xrob-loader-progress" cx="50" cy="50" r="42"></circle>
                         </svg>
-
-
-                        <div
-                            id="libraryLoadingPercent"
-                            class="xrob-loader-percent"
-                        >
-                            0%
-                        </div>
-
+                        <div id="libraryLoadingPercent" class="xrob-loader-percent">0%</div>
                     </div>
-
-
-                    <div
-                        id="libraryLoadingText"
-                        class="xrob-loader-text"
-                    >
-                        Loading Library...
-                    </div>
-
+                    <div id="libraryLoadingText" class="xrob-loader-text">Loading Library...</div>
                 </div>
 
-
-                <div
-                    id="libraryList"
-                    class="results-grid"
-                ></div>
-
+                <div id="libraryList" class="results-grid"></div>
             </section>
 
 
@@ -1171,225 +1035,47 @@
                  SETTINGS
                  ================================================== -->
 
-            <section
-                id="tab-settings"
-                class="tab-content"
-            >
-
+            <section id="tab-settings" class="tab-content">
                 <div class="page-heading">
                     <h2>Settings</h2>
-                    <p>Configure the options that affect Xrob Music.</p>
+                    <p>Only the options that affect downloads, search, and your music library.</p>
                 </div>
 
                 <div class="settings-card">
-
-                    <div class="settings-divider">
-                        Library Storage
-                    </div>
-
+                    <div class="settings-divider">Library</div>
                     <div class="setting-row">
                         <div>
-                            <div class="setting-label">Music Library</div>
-                            <div class="setting-desc">The folder Xrob Music reads and writes. For a NAS, mount the share in Home Assistant and point music_path to that mount.</div>
+                            <div class="setting-label">Music folder</div>
+                            <div class="setting-desc">The folder Xrob Music scans for local music.</div>
                         </div>
                         <div class="inline-control">
                             <input id="storagePath" type="text" readonly aria-label="Music library path">
                             <button type="button" id="scanLibraryButton" class="btn-refresh">
-                                <i data-lucide="refresh-cw" aria-hidden="true"></i>
-                                Rescan
+                                <i data-lucide="refresh-cw" aria-hidden="true"></i> Rescan
                             </button>
                         </div>
                     </div>
-
                     <div id="storageStatus" class="integration-status" aria-live="polite">Checking storage...</div>
+                    <div class="setting-row"><div><div class="setting-label">Free space</div><div class="setting-desc">Available space on the music filesystem.</div></div><span id="storageFree">—</span></div>
 
+                    <div class="settings-divider">OpenSubsonic</div>
                     <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Free Space</div>
-                            <div class="setting-desc">Available space on the library filesystem.</div>
-                        </div>
-                        <span id="storageFree">—</span>
+                        <div><div class="setting-label">Server address</div><div class="setting-desc">Use this URL in Amperfy, Arpeggi, or another OpenSubsonic player.</div></div>
+                        <div class="inline-control"><input id="amperfy-server-url" type="text" readonly aria-label="Xrob Music server URL"><button type="button" id="amperfy-copy-url" class="btn-refresh"><i data-lucide="copy" aria-hidden="true"></i> Copy</button></div>
                     </div>
+                    <div class="setting-row"><div><div class="setting-label">Connection</div><div class="setting-desc">Check whether the OpenSubsonic API is responding correctly.</div></div><button type="button" id="amperfy-test-button" class="btn-refresh"><i data-lucide="plug-zap" aria-hidden="true"></i> Test</button></div>
+                    <div id="amperfy-status" class="integration-status" aria-live="polite">Checking...</div>
 
-                    <div class="settings-divider">
-                        OpenSubsonic / Arpeggi
-                    </div>
+                    <div class="settings-divider">Downloads</div>
+                    <div class="setting-row"><div><div class="setting-label">Format</div><div class="setting-desc">Format used for new downloads.</div></div><select id="set_format"><option value="mp3">MP3</option><option value="flac">FLAC</option><option value="m4a">M4A</option><option value="opus">OPUS</option></select></div>
+                    <div class="setting-row"><div><div class="setting-label">Quality</div><div class="setting-desc">Bitrate used by lossy formats.</div></div><select id="set_quality"><option value="320K">320 Kbps</option><option value="256K">256 Kbps</option><option value="192K">192 Kbps</option><option value="128K">128 Kbps</option></select></div>
+                    <div class="setting-row"><div><div class="setting-label">Embed metadata</div><div class="setting-desc">Write title, artist, album, and other tags into downloaded files.</div></div><label class="switch"><input type="checkbox" id="set_meta"><span class="slider"></span></label></div>
+                    <div class="setting-row"><div><div class="setting-label">Embed album art</div><div class="setting-desc">Store cover artwork inside downloaded files when available.</div></div><label class="switch"><input type="checkbox" id="set_thumb"><span class="slider"></span></label></div>
+                    <div class="setting-row"><div><div class="setting-label">Organize by artist</div><div class="setting-desc">Keep downloads in artist folders.</div></div><label class="switch"><input type="checkbox" id="set_organize"><span class="slider"></span></label></div>
+                    <div class="setting-row"><div><div class="setting-label">Search results</div><div class="setting-desc">Number of results loaded per search page.</div></div><input id="set_max_results" type="number" min="5" max="50" step="1" inputmode="numeric" aria-label="Maximum search results"></div>
 
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Server Address</div>
-                            <div class="setting-desc">Use this address in Arpeggi or another OpenSubsonic client.</div>
-                        </div>
-
-                        <div class="inline-control">
-                            <input
-                                id="amperfy-server-url"
-                                type="text"
-                                readonly
-                                aria-label="Xrob Music server URL"
-                            >
-                            <button
-                                type="button"
-                                id="amperfy-copy-url"
-                                class="btn-refresh"
-                            >
-                                <i data-lucide="copy" aria-hidden="true"></i>
-                                Copy
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Username</div>
-                            <div class="setting-desc">OpenSubsonic username configured in the add-on.</div>
-                        </div>
-
-                        <input
-                            id="set_subsonic_user"
-                            type="text"
-                            readonly
-                            autocomplete="username"
-                            aria-label="OpenSubsonic username"
-                        >
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Server Status</div>
-                            <div class="setting-desc">Check that the Xrob Music OpenSubsonic server is reachable.</div>
-                        </div>
-
-                        <button
-                            type="button"
-                            id="amperfy-test-button"
-                            class="btn-refresh"
-                        >
-                            <i data-lucide="plug-zap" aria-hidden="true"></i>
-                            Test Connection
-                        </button>
-                    </div>
-
-                    <div
-                        id="amperfy-status"
-                        class="integration-status"
-                        aria-live="polite"
-                    >
-                        Checking...
-                    </div>
-
-                    <div class="settings-divider">
-                        Downloads
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Audio Format</div>
-                            <div class="setting-desc">Format used for new downloads.</div>
-                        </div>
-
-                        <select id="set_format" aria-label="Audio format">
-                            <option value="mp3">MP3</option>
-                            <option value="flac">FLAC (Lossless)</option>
-                            <option value="m4a">M4A (AAC)</option>
-                            <option value="opus">OPUS</option>
-                        </select>
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Audio Quality</div>
-                            <div class="setting-desc">Bitrate for lossy formats.</div>
-                        </div>
-
-                        <select id="set_quality" aria-label="Audio quality">
-                            <option value="320K">320 Kbps</option>
-                            <option value="256K">256 Kbps</option>
-                            <option value="192K">192 Kbps</option>
-                            <option value="128K">128 Kbps</option>
-                        </select>
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Embed Album Art</div>
-                            <div class="setting-desc">Store the cover artwork inside downloaded files.</div>
-                        </div>
-
-                        <label class="switch">
-                            <input type="checkbox" id="set_thumb">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Embed Metadata</div>
-                            <div class="setting-desc">Write title, artist, album and other tags to downloads.</div>
-                        </div>
-
-                        <label class="switch">
-                            <input type="checkbox" id="set_meta">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Organize by Artist</div>
-                            <div class="setting-desc">Put downloaded tracks into artist folders.</div>
-                        </div>
-
-                        <label class="switch">
-                            <input type="checkbox" id="set_organize">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-
-                    <div class="setting-row">
-                        <div>
-                            <div class="setting-label">Max Search Results</div>
-                            <div class="setting-desc">Results loaded for each search page, from 5 to 50.</div>
-                        </div>
-
-                        <input
-                            id="set_max_results"
-                            type="number"
-                            min="5"
-                            max="50"
-                            step="1"
-                            value="20"
-                            inputmode="numeric"
-                            aria-label="Maximum search results"
-                        >
-                    </div>
-
-                    <div class="settings-actions">
-                        <button
-                            type="button"
-                            class="save-btn"
-                            onclick="saveSettings()"
-                        >
-                            <i data-lucide="save" aria-hidden="true"></i>
-                            Save Settings
-                        </button>
-
-                        <button
-                            type="button"
-                            class="btn-refresh"
-                            id="settings-reset"
-                        >
-                            <i data-lucide="rotate-ccw" aria-hidden="true"></i>
-                            Reset Defaults
-                        </button>
-                    </div>
-
-                    <div
-                        id="settingsMsg"
-                        class="status-msg"
-                        aria-live="polite"
-                    ></div>
-
+                    <div class="settings-actions"><button type="button" class="save-btn" onclick="saveSettings()"><i data-lucide="save" aria-hidden="true"></i> Save</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
+                    <div id="settingsMsg" class="status-msg" aria-live="polite"></div>
                 </div>
             </section>
 
@@ -1444,6 +1130,17 @@
 
 
             <!-- PREVIOUS -->
+
+            <button
+                type="button"
+                id="gp-shuffle-btn"
+                class="gp-skip-btn"
+                aria-label="Shuffle playback"
+                title="Shuffle playback"
+            >
+                <i data-lucide="shuffle" aria-hidden="true"></i>
+            </button>
+
 
             <button
                 type="button"
