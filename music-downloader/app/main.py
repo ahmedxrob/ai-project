@@ -2369,6 +2369,8 @@ async def api_library():
     )
 
     library = await build_library()
+    with db_connect() as conn:
+        play_counts = {r[0]: int(r[1]) for r in conn.execute("SELECT song_id, COUNT(*) FROM play_history GROUP BY song_id").fetchall()}
     song_by_path = {str(song["path"]): song for song in library["songs"]}
     for item in result:
         path = str((DOWNLOAD_DIR / item["name"]).resolve())
@@ -2383,6 +2385,7 @@ async def api_library():
             item["year"] = song.get("year", "")
             item["track"] = song.get("track", 0)
             item["duration"] = song.get("duration", 0)
+            item["play_count"] = play_counts.get(song["id"], 0)
             item["cover"] = "/api/library/cover/" + urllib.parse.quote(item["name"], safe="/")
             item["stream"] = "/api/library/stream/" + urllib.parse.quote(item["name"], safe="/")
     artists = []
