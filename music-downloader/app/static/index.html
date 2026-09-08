@@ -69,7 +69,7 @@
 <audio
     id="global-audio-element"
     crossorigin="anonymous"
-    preload="metadata"
+    preload="auto"
 ></audio>
 
 
@@ -853,6 +853,9 @@
                         <button type="button" class="library-tab active" data-library-view="tracks">Tracks</button>
                         <button type="button" class="library-tab" data-library-view="artists">Artists</button>
                         <button type="button" class="library-tab" data-library-view="albums">Albums</button>
+                        <button type="button" class="library-tab" data-library-view="playlists">Playlists</button>
+                        <button type="button" class="library-tab" data-library-view="recent">Recently Played</button>
+                        <button type="button" class="library-tab" data-library-view="most">Most Played</button>
                     </div>
                     <div class="library-actions">
                         <label class="library-search">
@@ -866,9 +869,11 @@
                         <button type="button" id="libraryShuffleButton" class="btn-refresh" title="Shuffle all tracks">
                             <span class="player-symbol" aria-hidden="true">⤨</span> Shuffle
                         </button>
-                        <button type="button" class="btn-refresh" id="libraryRefreshButton" title="Rescan library">
-                            <i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh
+                        <button type="button" class="btn-refresh" id="libraryRefreshButton" title="Quick rescan">
+                            <i data-lucide="refresh-cw" aria-hidden="true"></i> Quick scan
                         </button>
+                        <button type="button" class="btn-refresh" id="libraryFullScanButton" title="Full metadata rebuild">Full scan</button>
+                        <button type="button" class="btn-refresh" id="libraryHealthButton" title="Library health">Health</button>
                     </div>
                 </div>
 
@@ -908,6 +913,8 @@
                     <div class="setting-row"><div><div class="setting-label">Write metadata</div><div class="setting-desc">Store title, artist and album tags in downloaded files.</div></div><label class="switch"><input type="checkbox" id="set_meta"><span class="slider"></span></label></div>
                     <div class="setting-row"><div><div class="setting-label">Embed artwork</div><div class="setting-desc">Add album artwork to downloaded files.</div></div><label class="switch"><input type="checkbox" id="set_thumb"><span class="slider"></span></label></div>
                     <div class="setting-row"><div><div class="setting-label">Artist folders</div><div class="setting-desc">Save downloads inside an artist folder.</div></div><label class="switch"><input type="checkbox" id="set_organize"><span class="slider"></span></label></div>
+                    <div class="setting-row"><div><div class="setting-label">Background library scan</div><div class="setting-desc">Periodically refresh library metadata in the background.</div></div><label class="switch"><input type="checkbox" id="set_scan_enabled"><span class="slider"></span></label></div>
+                    <div class="setting-row"><div><div class="setting-label">Scan interval</div><div class="setting-desc">Minutes between automatic quick scans (minimum 5).</div></div><input id="set_scan_interval" type="number" min="5" step="5" value="60" style="max-width:120px"></div>
                 </div>
                 <div class="settings-card settings-info-card">
                     <div class="settings-divider">Library status</div>
@@ -920,7 +927,7 @@
                     <div id="storageStatus" class="integration-status" aria-live="polite">Checking storage…</div>
                     <div class="setting-row"><div><div class="setting-label">OpenSubsonic</div><div class="setting-desc">Available to Amperfy and other OpenSubsonic clients.</div></div><strong>Ready</strong></div>
                 </div>
-                <div class="settings-actions"><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
+                <div class="settings-actions"><button type="button" class="btn-refresh" id="errorsButton">Error log</button><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
                 <div id="settingsMsg" class="status-msg" aria-live="polite"></div>
             </section>
 
@@ -931,6 +938,19 @@
 
 </div>
 
+
+<aside id="queue-drawer" class="queue-drawer" aria-label="Up Next queue" hidden>
+  <div class="queue-drawer-head"><strong>Up Next</strong><button type="button" id="queueClose" class="icon-btn">×</button></div>
+  <div class="queue-actions"><button id="queueClear" class="btn-refresh">Clear</button><button id="queueSave" class="btn-refresh">Save as playlist</button></div>
+  <div id="queueList" class="queue-list"></div>
+  <div class="queue-drawer-foot"><button id="queueRepeat" class="btn-refresh">Repeat: Off</button></div>
+</aside>
+
+<div id="metadata-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><strong>Edit metadata</strong><button id="metadataClose" class="icon-btn">×</button></div><form id="metadataForm"><input type="hidden" id="metadataId"><label>Title<input id="metadataTitle"></label><label>Artist<input id="metadataArtist"></label><label>Album<input id="metadataAlbum"></label><label>Year<input id="metadataYear" type="number"></label><label>Genre<input id="metadataGenre"></label><label>Artwork<input id="metadataArtwork" type="file" accept="image/*"></label><div class="settings-actions"><button class="save-btn" type="submit">Save metadata</button></div></form></div></div>
+
+<div id="errors-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><strong>Error log</strong><button id="errorsClose" class="icon-btn">×</button></div><div id="errorsContent">Loading…</div></div></div>
+
+<div id="health-modal" class="xrob-modal" hidden><div class="xrob-modal-card xrob-health-card"><div class="xrob-modal-head"><strong>Library health</strong><button id="healthClose" class="icon-btn">×</button></div><div id="healthContent">Checking…</div></div></div>
 
 <!-- ============================================================
      GLOBAL PLAYER
@@ -1014,6 +1034,8 @@
 
 
             <!-- NEXT -->
+
+            <button type="button" id="gp-queue-btn" class="gp-skip-btn" aria-label="Open queue" title="Up Next">☰</button>
 
             <button
                 type="button"
@@ -1213,7 +1235,7 @@
      SCRIPTS
      ============================================================ -->
 
-<script src="/static/app.js?v=208"></script>
+<script src="/static/app.js?v=209"></script>
 
 
 
