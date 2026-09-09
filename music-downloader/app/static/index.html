@@ -42,7 +42,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=208"
+        href="/static/style.css?v=209"
     >
 
 </head>
@@ -952,6 +952,7 @@
                 <div class="settings-card settings-info-card">
                     <div class="settings-divider">Library status</div>
                     <div class="setting-row"><div><div class="setting-label">Music folder</div></div><code id="storagePath">—</code></div>
+                    <div class="library-status-grid"><div><span>Tracks</span><strong id="statusTracks">0</strong></div><div><span>Albums</span><strong id="statusAlbums">0</strong></div><div><span>Artists</span><strong id="statusArtists">0</strong></div><div><span>Total plays</span><strong id="statusPlays">0</strong></div><div><span>Track size</span><strong id="statusSize">0 MB</strong></div></div>
                     <div class="storage-capacity" id="storageCapacity">
                         <div class="storage-capacity-head"><span>Storage usage</span><strong id="storageUsedLabel">—</strong></div>
                         <div class="storage-progress" role="progressbar" aria-label="Library storage usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="storageProgressFill"></span></div>
@@ -960,7 +961,7 @@
                     <div id="storageStatus" class="integration-status" aria-live="polite">Checking storage…</div>
                     <div class="setting-row"><div><div class="setting-label">OpenSubsonic</div><div class="setting-desc">Available to Amperfy and other OpenSubsonic clients.</div></div><strong>Ready</strong></div>
                 </div>
-                <div class="settings-card"><div class="settings-divider">Maintenance</div><div class="setting-row"><div><div class="setting-label">Library health</div><div class="setting-desc">Check unreadable files, missing artwork, bad tags and duplicates.</div></div><button type="button" class="btn-refresh" id="libraryHealthButton">Check library health</button></div><div class="setting-row"><div><div class="setting-label">Error log</div><div class="setting-desc">View failed downloads and media-processing errors.</div></div><button type="button" class="btn-refresh" id="errorsButton">Open error log</button></div></div><div class="settings-actions"><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
+                <div class="settings-card"><div class="settings-divider">Account</div><div class="setting-row"><div><div class="setting-label">Username</div><div class="setting-desc">Username used for the Xrob Music login page.</div></div><input id="set_web_username" type="text" autocomplete="username" maxlength="64" style="max-width:260px"></div><div class="setting-row"><div><div class="setting-label">New password</div><div class="setting-desc">Leave blank to keep the current password.</div></div><input id="set_web_password" type="password" autocomplete="new-password" maxlength="256" style="max-width:260px"></div></div><div class="settings-card"><div class="settings-divider">Maintenance</div><div class="setting-row"><div><div class="setting-label">Library health</div><div class="setting-desc">Check unreadable files, missing artwork, bad tags and duplicates.</div></div><button type="button" class="btn-refresh" id="libraryHealthButton">Check library health</button></div><div class="setting-row"><div><div class="setting-label">Error log</div><div class="setting-desc">View failed downloads and media-processing errors.</div></div><button type="button" class="btn-refresh" id="errorsButton">Open error log</button></div></div><div class="settings-actions"><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
                 <div id="settingsMsg" class="status-msg" aria-live="polite"></div>
             </section>
 
