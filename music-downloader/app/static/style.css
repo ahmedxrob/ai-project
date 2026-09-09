@@ -3910,3 +3910,93 @@ button:disabled { opacity:.55; cursor:not-allowed; }
     .album-card img { width: 62px; height: 62px; flex-basis: 62px; }
     .settings-logout-btn span { display: inline; }
 }
+
+
+/* Final navigation/editor polish: keep every nav item on one consistent rhythm. */
+.side-nav .nav-link,
+.bottom-nav .nav-link {
+    box-sizing: border-box;
+}
+.side-nav .nav-link {
+    min-height: 44px;
+    padding: 9px 14px;
+    gap: 12px;
+}
+.side-nav .nav-link > svg {
+    width: 19px;
+    height: 19px;
+    flex: 0 0 19px;
+    stroke-width: 2;
+}
+.side-nav .nav-label {
+    line-height: 1.15;
+    gap: 8px;
+}
+.side-nav .nav-text {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+.side-nav .nav-count {
+    margin-left: auto;
+    padding: 0;
+    min-width: 2ch;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+.side-nav .nav-link.active {
+    background: rgba(255,255,255,.075);
+}
+
+/* The settings icon should read as controls, not as a large generic gear. */
+#btn-settings > svg,
+#mob-btn-settings > svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Songs Editor header: title stays left, refresh stays in a compact right action slot. */
+.editor-page-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 18px;
+}
+.editor-page-heading > div {
+    min-width: 0;
+}
+.editor-page-heading .editor-refresh-btn {
+    flex: 0 0 auto;
+    margin-left: auto;
+    align-self: center;
+    white-space: nowrap;
+}
+
+/* Spotify-like native select typography and spacing. */
+#songEditorImportSelect,
+.editor-import-select {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1.2;
+    color: var(--text-primary);
+}
+#songEditorImportSelect option,
+.editor-import-select option {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+@media (max-width: 700px) {
+    .editor-page-heading {
+        align-items: flex-start;
+        gap: 12px;
+    }
+    .editor-page-heading .editor-refresh-btn {
+        margin-left: 0;
+    }
+}
