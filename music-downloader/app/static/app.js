@@ -3825,6 +3825,130 @@ function playPreviousTrack() {
     else if (currentPlayerSource === "home") playHomeTrack(previousIndex);
 }
 
+async function checkWebAuth() {
+    try { const r=await fetch("api/auth/status",{cache:"no-store"}); if(!r.ok) return false; const d=await r.json(); return !!d.authenticated; } catch (_) { return false; }
+}
+
+function showAuthenticatedApp() { document.getElementById("login-screen")?.classList.add("hidden"); const shell=document.getElementById("app-shell"); if(shell) shell.hidden=false; renderLocalIcons(); }
+
+async function handleLoginSubmit(e){
+    e.preventDefault();
+    const error=document.getElementById("loginError");
+    const btn=document.querySelector(".login-submit");
+    if(error) error.textContent="";
+    const body={username:String(document.getElementById("loginUsername")?.value||"").trim(),password:document.getElementById("loginPassword")?.value||""};
+    localStorage.setItem("xrob_music_login_user", body.username);
+    if(btn){btn.disabled=true; btn.dataset.originalText=btn.textContent; btn.textContent="Signing in…";}
+    try{const r=await fetch("api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||"Sign in failed"); document.getElementById("loginPassword").value=""; showAuthenticatedApp(); await startAppAfterAuth(); }catch(err){if(error)error.textContent=err.message||"Sign in failed";} finally{if(btn){btn.disabled=false;btn.textContent=btn.dataset.originalText||"Sign in";}}
+}
+
+
+async function logoutWebAuth(){ await fetch("api/auth/logout",{method:"POST"}).catch(()=>{}); location.reload(); }
+
+async function initializeApp() {
+
+    renderLocalIcons();
+    const savedLoginUser = localStorage.getItem("xrob_music_login_user");
+    if(savedLoginUser && document.getElementById("loginUsername")) document.getElementById("loginUsername").value=savedLoginUser;
+    document.getElementById("loginForm")?.addEventListener("submit",handleLoginSubmit);
+    setTimeout(()=>document.getElementById("loginUsername")?.focus(),50);
+    document.getElementById("logoutButton")?.addEventListener("click",logoutWebAuth);
+    if(!(await checkWebAuth())) return;
+    showAuthenticatedApp();
+    await startAppAfterAuth();
+}
+
+async function startAppAfterAuth() {
+
+    cacheDom();
+
+    toggleTheme(
+        localStorage.getItem(
+            "xrob_music_theme"
+        ) || "dark"
+    );
+
+
+    bindAudioEvents();
+    bindPlayerControls();
+    bindSearch();
+    bindInfiniteScroll();
+    document.getElementById("set_format")?.addEventListener("change", updateQualityState);
+    document.getElementById("settings-save")?.addEventListener("click", saveSettings);
+    document.getElementById("settings-reset")?.addEventListener("click", resetSettings);
+    document.getElementById("songEditorRefresh")?.addEventListener("click",loadSongEditor);
+    document.getElementById("libraryRefreshButton")?.addEventListener("click", refreshLibrary);
+    document.getElementById("libSearchQuery")?.addEventListener("input", () => {
+        const input = document.getElementById("libSearchQuery");
+        const clear = document.getElementById("librarySearchClear");
+        if (clear) clear.hidden = !(input?.value || "").trim();
+        filterLibrary();
+    });
+    document.getElementById("librarySearchClear")?.addEventListener("click", () => {
+        const input = document.getElementById("libSearchQuery");
+        if (input) input.value = "";
+        const clear = document.getElementById("librarySearchClear");
+        if (clear) clear.hidden = true;
+        filterLibrary();
+        input?.focus();
+    });
+    document.querySelectorAll(".library-tab").forEach(button => button.addEventListener("click", () => {
+        libraryView = button.dataset.libraryView || "tracks";
+        selectedArtistId = null;
+        selectedAlbumId = null;
+        document.querySelectorAll(".library-tab").forEach(item => item.classList.toggle("active", item === button));
+        filterLibrary();
+    }));
+
+    const cached = loadLibraryCache();
+    if (cached) renderLibraryView();
+    // Fast first paint: library/stats may initially come from the filesystem index.
+    // Poll briefly for the background metadata warmup to finish, then refresh once.
+    const startupJobs = [refreshLibraryCache(), loadSettings(), loadSongEditor(), pollTasks(true), loadStats(), loadHome()];
+    await Promise.allSettled(startupJobs);
+    if (rawLibraryFiles.length) renderLibraryView();
+    let libraryWarmupChecks = 0;
+    const warmupTimer = setInterval(async () => {
+        libraryWarmupChecks += 1;
+        if (libraryWarmupChecks > 30) return clearInterval(warmupTimer);
+        try {
+            const r = await fetch('api/library', {cache:'no-store'});
+            if (!r.ok) return;
+            const d = await r.json();
+            if (d.ready) {
+                clearInterval(warmupTimer);
+                rawLibraryFiles = d.files || [];
+                libraryPlaybackQueue = rawLibraryFiles;
+                libraryArtists = d.artists || libraryArtists;
+                libraryAlbums = d.albums || libraryAlbums;
+                saveLibraryCache();
+                renderLibraryView();
+                loadStats();
+                loadSongEditor();
+            }
+        } catch (_) {}
+    }, 1000);
+    handleHash();
+
+
+    initWebSocket();
+
+
+    installEnhancedFeatures();
+    document.getElementById("errorsButton")?.addEventListener("click",async()=>{const r=await fetch("api/errors");const d=await r.json();document.getElementById("errorsContent").innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';document.getElementById("errors-modal").hidden=false;});
+    document.getElementById("errorsClose")?.addEventListener("click",()=>document.getElementById("errors-modal").hidden=true);
+    restorePlayerState();
+
+
+    setInterval(
+        () => pollTasks(),
+        2000
+    );
+}
+
+
+
+
 async function openMetadataEditor(file) {
     const modal=document.getElementById("metadata-modal"); if(!modal) return;
     document.getElementById("metadataId").value=file.id||"";
