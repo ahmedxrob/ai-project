@@ -882,7 +882,7 @@
                         <label class="library-search">
                             <span class="library-search-icon" aria-hidden="true">⌕</span>
                             <input id="libSearchQuery" type="search" placeholder="Search your library…" autocomplete="off" spellcheck="false" aria-label="Search your library">
-                            <button type="button" id="librarySearchClear" class="library-search-clear" title="Clear search" aria-label="Clear search" hidden>×</button>
+                            <button type="button" id="librarySearchClear" class="library-search-clear" title="Clear search" aria-label="Clear search" hidden><i data-lucide="x" aria-hidden="true"></i></button>
                         </label>
                         <button type="button" id="libraryPlayAllButton" class="btn-refresh" title="Play all tracks">
                             <span aria-hidden="true">▶</span> Play all
@@ -918,7 +918,7 @@
                  ================================================== -->
             <section id="tab-songs-editor" class="tab-content">
                 <div class="page-heading">
-                    <div><h2><i data-lucide="pencil-line" aria-hidden="true"></i> Songs Editor</h2><p>Edit tags for tracks that still need review. Search the queue, re-add everything, or import one existing library track.</p></div>
+                    <div><h2><i data-lucide="pencil-line" aria-hidden="true"></i> Songs Editor</h2><p>Edit tags for tracks that still need review. Reopen a previously edited track from the existing-track selector.</p></div>
                     <button type="button" class="btn-refresh" id="songEditorRefresh"><i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh</button>
                 </div>
                 <div class="editor-stats-banner">
@@ -926,10 +926,10 @@
                     <div class="editor-stat-copy"><strong>Edit queue</strong><span>Edited or skipped tracks leave the queue. New downloads enter automatically.</span></div>
                 </div>
                 <div class="editor-toolbar">
-                    <label class="editor-search"><span aria-hidden="true">⌕</span><input id="songEditorSearch" type="search" placeholder="Search title, artist, album, or filename…" autocomplete="off" spellcheck="false"><button type="button" id="songEditorSearchClear" class="library-search-clear" hidden>×</button></label>
-                    <button type="button" class="btn-refresh" id="songEditorReset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Re-add all tracks</button>
-                    <select id="songEditorImportSelect" class="editor-import-select" aria-label="Select a library track to import"><option value="">Choose a library track…</option></select>
-                    <button type="button" class="btn-preview" id="songEditorImport"><i data-lucide="plus" aria-hidden="true"></i> Import track</button>
+                    <label class="editor-search"><span aria-hidden="true"><i data-lucide="search"></i></span><input id="songEditorSearch" type="search" placeholder="Search title, artist, album, or filename…" autocomplete="off" spellcheck="false"><button type="button" id="songEditorSearchClear" class="library-search-clear" hidden><i data-lucide="x" aria-hidden="true"></i></button></label>
+                    <button type="button" class="btn-refresh" id="songEditorReset" title="Put every library track back into the review queue"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Re-add all tracks</button>
+                    <select id="songEditorImportSelect" class="editor-import-select" aria-label="Select a previously edited library track"><option value="">Choose an edited library track…</option></select>
+                    <button type="button" class="btn-preview" id="songEditorImport" title="Return the selected edited track to the review queue"><i data-lucide="plus" aria-hidden="true"></i> Reopen track</button>
                 </div>
                 <div id="songEditorList" class="songs-editor-list"></div>
             </section>
@@ -989,17 +989,17 @@
 
 
 <aside id="queue-drawer" class="queue-drawer" aria-label="Up Next queue" hidden>
-  <div class="queue-drawer-head"><strong>Up Next</strong><button type="button" id="queueClose" class="icon-btn">×</button></div>
+  <div class="queue-drawer-head"><strong>Up Next</strong><button type="button" id="queueClose" class="icon-btn" title="Close queue" aria-label="Close queue"><i data-lucide="x" aria-hidden="true"></i></button></div>
   <div class="queue-actions"><button id="queueClear" class="btn-refresh">Clear</button><button id="queueSave" class="btn-refresh">Save as playlist</button></div>
   <div id="queueList" class="queue-list"></div>
   <div class="queue-drawer-foot"><button id="queueRepeat" class="btn-refresh">Repeat: Off</button></div>
 </aside>
 
-<div id="metadata-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><div><strong>Edit song</strong><div id="metadataFileName" class="modal-subtitle"></div></div><button id="metadataClose" class="icon-btn">×</button></div><form id="metadataForm"><input type="hidden" id="metadataId"><label>Title<input id="metadataTitle" autocomplete="off"></label><label>Artist<input id="metadataArtist" autocomplete="off"></label><label>Album<input id="metadataAlbum" autocomplete="off"></label><div class="settings-actions"><button class="save-btn" type="submit">Save &amp; remove from editor</button></div></form></div></div>
+<div id="metadata-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><div><strong>Edit song</strong><div id="metadataFileName" class="modal-subtitle"></div></div><button id="metadataClose" class="icon-btn" title="Close editor" aria-label="Close editor"><i data-lucide="x" aria-hidden="true"></i></button></div><form id="metadataForm"><input type="hidden" id="metadataId"><label>Title<input id="metadataTitle" autocomplete="off"></label><label>Artist<input id="metadataArtist" autocomplete="off"></label><label>Album<input id="metadataAlbum" autocomplete="off"></label><div class="settings-actions"><button class="save-btn" type="submit">Save &amp; remove from editor</button></div></form></div></div>
 
-<div id="errors-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><strong>Error log</strong><button id="errorsClose" class="icon-btn">×</button></div><div id="errorsContent">Loading…</div></div></div>
+<div id="errors-modal" class="xrob-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><strong>Error log</strong><button id="errorsClose" class="icon-btn" title="Close error log" aria-label="Close error log"><i data-lucide="x" aria-hidden="true"></i></button></div><div id="errorsContent">Loading…</div></div></div>
 
-<div id="health-modal" class="xrob-modal" hidden><div class="xrob-modal-card xrob-health-card"><div class="xrob-modal-head"><strong>Library health</strong><button id="healthClose" class="icon-btn">×</button></div><div id="healthContent">Checking…</div></div></div>
+<div id="health-modal" class="xrob-modal" hidden><div class="xrob-modal-card xrob-health-card"><div class="xrob-modal-head"><strong>Library health</strong><button id="healthClose" class="icon-btn" title="Close library health" aria-label="Close library health"><i data-lucide="x" aria-hidden="true"></i></button></div><div id="healthContent">Checking…</div></div></div>
 
 <!-- ============================================================
      GLOBAL PLAYER
