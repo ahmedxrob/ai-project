@@ -3799,29 +3799,114 @@ button:disabled { opacity:.55; cursor:not-allowed; }
     .song-editor-actions button { min-width: 0; }
 }
 
-/* Visual polish: keep compact navigation counts and settings icons consistent. */
-.nav-label{display:flex;align-items:center;min-width:0;gap:6px}
-.nav-label .nav-badge{margin-left:auto;flex:0 0 auto}
-#tab-settings .settings-divider > i[data-lucide],
-#tab-settings .settings-divider > svg{width:15px!important;height:15px!important;flex:0 0 15px}
-#tab-settings .settings-info-card code{max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#tab-songs-editor .page-heading{margin-bottom:18px}
-#tab-songs-editor .songs-editor-list{gap:8px}
-#tab-songs-editor .song-editor-card{padding:10px 12px;border-radius:12px}
-@media(max-width:700px){
-  .editor-overview{flex-direction:column}
-  .editor-stat-card{min-width:0}
-  .editor-overview-copy{min-height:58px}
+
+/* XROB visual correction pass */
+.side-nav .nav-link { min-width: 0; }
+.side-nav .nav-link > svg { flex: 0 0 19px; }
+.side-nav .nav-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.side-nav .nav-text {
+    min-width: 0;
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.side-nav .nav-count {
+    flex: 0 0 auto;
+    min-width: 2ch;
+    margin-left: auto;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    opacity: .78;
+}
+.side-nav .nav-link.active .nav-count { color: var(--text-primary); opacity: .92; }
+
+/* Mobile nav uses the exact same counter treatment. */
+.bottom-nav .nav-link { min-width: 0; }
+.bottom-nav .nav-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+}
+.bottom-nav .nav-text {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bottom-nav .nav-count {
+    margin-left: 2px;
+    min-width: 1.6ch;
+    color: inherit;
+    font-size: 10px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    opacity: .72;
 }
 
+/* Settings heading/actions */
+#tab-settings .settings-divider-account {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.settings-logout-btn {
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 7px 11px;
+    font-size: 12px;
+}
+.settings-logout-btn svg { width: 14px; height: 14px; }
 
-/* XROB navigation + Songs Editor correction */
-.nav-label{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-width:0}
-.nav-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nav-count{flex:0 0 auto;min-width:2ch;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary);font-size:11px;font-weight:700;line-height:1;opacity:.78}
-.nav-link.active .nav-count{color:var(--text-primary);opacity:.92}
-.editor-page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:16px}
-.editor-page-heading > div{min-width:0}
-.editor-refresh-btn{flex:0 0 auto;height:40px;min-width:40px;padding:0 14px;margin-top:2px;gap:7px}
-.editor-refresh-btn svg{width:16px;height:16px}
-@media(max-width:700px){.editor-page-heading{align-items:center;gap:12px}.editor-refresh-btn{width:40px;min-width:40px;padding:0;justify-content:center}.editor-refresh-btn span{display:none}}
+/* Albums: keep the content column anchored so clicking/opening an album does not shove text left. */
+.album-card {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr);
+    align-items: center;
+    gap: 14px;
+}
+.album-card > div {
+    min-width: 0;
+}
+.album-card strong,
+.album-card span {
+    text-align: left;
+}
+.album-card .btn-preview {
+    display: inline-flex;
+    margin-top: 10px;
+}
+.catalog-detail-header > div:not(.catalog-icon) {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.catalog-detail-header h3,
+.catalog-detail-header p { text-align: left; }
+
+/* No numeric overlay on track artwork; play count remains in the metadata line. */
+.track-play-count { display: none !important; }
+.thumb-wrapper { position: relative; overflow: hidden; }
+.track-meta-line { font-size: .72rem; opacity: .55; margin-top: 4px; }
+
+@media (max-width: 700px) {
+    .side-nav .nav-count { font-size: 10px; }
+    .album-card { grid-template-columns: 62px minmax(0, 1fr); gap: 12px; }
+    .album-card img { width: 62px; height: 62px; flex-basis: 62px; }
+    .settings-logout-btn span { display: inline; }
+}
