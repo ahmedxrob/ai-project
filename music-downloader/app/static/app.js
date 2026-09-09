@@ -4520,22 +4520,23 @@ async function refreshLibrary() {
     const button = document.getElementById("libraryRefreshButton");
     if (button) button.disabled = true;
     try {
-        updateLoadingCircle("library", 10, "Rescanning music library...");
-        const response = await fetch("api/library/scan", { method: "POST", cache: "no-store" });
+        updateLoadingCircle("library", 10, "Quick scan…");
+        const response = await fetch("api/library/scan/quick", { method: "POST", cache: "no-store" });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || "Library refresh failed.");
+        if (!response.ok) throw new Error(data.detail || "Quick scan failed.");
         await refreshLibraryCache();
         await loadStats();
         renderLibraryView();
         updateLoadingCircle("library", 100, "Library ready");
-        showToast(`✅ Library refreshed • ${data.tracks || rawLibraryFiles.length} tracks`);
+        showToast(`✅ Quick scan complete • ${data.tracks || rawLibraryFiles.length} tracks`);
     } catch (error) {
-        showToast("❌ " + (error.message || "Library refresh failed."));
+        showToast("❌ " + (error.message || "Quick scan failed."));
     } finally {
         setTimeout(() => hideLoadingCircle("library"), 250);
         if (button) button.disabled = false;
     }
 }
+
 
 function renderLocalIcons() {
     const paths = {
@@ -4546,6 +4547,7 @@ function renderLocalIcons() {
         settings: [['circle','12 12 3'],['path','M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.9 1.9-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.1h-2.7v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-1.9-1.9.1-.1A1.7 1.7 0 0 0 7.7 15 1.7 1.7 0 0 0 6 14H5.9v-2.7H6a1.7 1.7 0 0 0 1.7-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.9-1.9.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.1h2.7v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.9 1.9-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1V14h-.1a1.7 1.7 0 0 0-1.6 1z']],
         save: [['path','M5 3h12l3 3v15H4V3z'],['path','M8 3v6h8V3'],['path','M8 21v-6h8v6']],
         'rotate-ccw': [['path','M3 12a9 9 0 1 0 3-6.7'],['path','M3 4v5h5']],
+        plus: [['path','M12 5v14'],['path','M5 12h14']],
         'music-2': [['path','M9 18V5l10-2v13'],['circle','6 18 3'],['circle','16 16 3']],
         'user-round': [['circle','12 7 4'],['path','M18 20a6 6 0 0 0-12 0']],
         'disc-3': [['circle','12 12 9'],['circle','12 12 1'],['path','M15.5 8.5 12 12']],
@@ -4755,27 +4757,69 @@ async function loadPlaylistsView(){
     document.getElementById("newPlaylistBtn").onclick=async()=>{const name=prompt("Playlist name","New Playlist");if(!name)return;const kind=confirm("Make this a smart playlist?\nOK = smart, Cancel = manual")?'smart':'manual';let rules={};if(kind==='smart'){const genre=prompt("Genre rule (optional)","");const artist=prompt("Artist rule (optional)","");if(genre)rules.genre=genre;if(artist)rules.artist=artist;}await fetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind,rules,song_ids:[]})});loadPlaylistsView();};
 }
 
-async function loadSongEditor(){
-    const list=document.getElementById("songEditorList"); if(!list)return;
-    list.innerHTML='<div class="editor-empty">Loading tracks waiting for review…</div>';
-    try{
-        const r=await fetch("api/song-editor",{cache:"no-store"});
-        if(!r.ok) throw new Error("Could not load Songs Editor");
-        const d=await r.json(); const tracks=d.tracks||[];
-        const count=tracks.length; document.getElementById("songEditorCount")?.replaceChildren(String(count)); document.getElementById("songEditorBadge")?.replaceChildren(String(count));
-        list.innerHTML="";
-        if(!tracks.length){list.innerHTML='<div class="editor-empty"><div class="empty-title">All caught up</div><div>No songs are waiting for review. New downloads will appear here automatically.</div></div>';return;}
-        tracks.forEach(track=>{
-            const card=document.createElement("article"); card.className="song-editor-card";
-            card.innerHTML=`<img class="song-editor-art" src="${escapeHtml(track.cover||'')}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title||track.name||'Unknown Track')}</div><div class="song-editor-artist">${escapeHtml(track.artist||'Unknown Artist')} · ${escapeHtml(track.album||'Unknown Album')}</div><div class="song-editor-file">${escapeHtml(track.name||'')}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="square-pen" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
-            card.querySelector(".editor-edit").onclick=()=>openMetadataEditor(track);
-            card.querySelector(".editor-skip").onclick=async()=>{const r=await fetch(`api/song-editor/${encodeURIComponent(track.id)}/skip`,{method:"POST"}); if(r.ok){card.remove(); updateSongEditorCount(-1); showToast("Skipped");} else showToast("❌ Could not skip track");};
-            card.querySelector("img")?.addEventListener("error",e=>e.currentTarget.style.visibility="hidden",{once:true});
-            list.appendChild(card);
-        });
-        renderLocalIcons();
-    }catch(err){list.innerHTML=`<div class="editor-empty">${escapeHtml(err.message||"Could not load editor")}</div>`;}
+let songEditorTracks = [];
+
+function renderSongEditorTracks(query = "") {
+    const list = document.getElementById("songEditorList");
+    if (!list) return;
+    const q = String(query || "").trim().toLowerCase();
+    const tracks = songEditorTracks.filter(track => {
+        if (!q) return true;
+        return `${track.title || ""} ${track.artist || ""} ${track.album || ""} ${track.name || ""}`.toLowerCase().includes(q);
+    });
+    list.innerHTML = "";
+    if (!tracks.length) {
+        list.innerHTML = `<div class="editor-empty"><div class="empty-title">${q ? "No matching tracks" : "All caught up"}</div><div>${q ? "Try another search." : "New downloads will appear here automatically."}</div></div>`;
+        return;
+    }
+    tracks.forEach(track => {
+        const card = document.createElement("article");
+        card.className = "song-editor-card";
+        card.dataset.songId = track.id;
+        card.innerHTML = `<img class="song-editor-art" src="${escapeHtml(track.cover || "")}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title || track.name || "Unknown Track")}</div><div class="song-editor-artist">${escapeHtml(track.artist || "Unknown Artist")} <span aria-hidden="true">•</span> ${escapeHtml(track.album || "Unknown Album")}</div><div class="song-editor-file">${escapeHtml(track.name || "")}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="square-pen" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
+        card.querySelector(".editor-edit").onclick = () => openMetadataEditor(track);
+        card.querySelector(".editor-skip").onclick = async () => {
+            const r = await fetch(`api/song-editor/${encodeURIComponent(track.id)}/skip`, {method:"POST"});
+            if (!r.ok) return showToast("❌ Could not skip track");
+            songEditorTracks = songEditorTracks.filter(x => x.id !== track.id);
+            const input = document.getElementById("songEditorSearch");
+            document.getElementById("songEditorCount")?.replaceChildren(String(songEditorTracks.length));
+            document.getElementById("songEditorBadge")?.replaceChildren(String(songEditorTracks.length));
+            renderSongEditorTracks(input?.value || "");
+            showToast("Skipped");
+        };
+        card.querySelector("img")?.addEventListener("error", e => { e.currentTarget.removeAttribute("src"); e.currentTarget.style.visibility = "hidden"; }, {once:true});
+        list.appendChild(card);
+    });
+    renderLocalIcons();
 }
+
+async function loadSongEditor(){
+    const list = document.getElementById("songEditorList"); if (!list) return;
+    if (!songEditorTracks.length) list.innerHTML = '<div class="editor-empty">Loading tracks waiting for review…</div>';
+    try {
+        const r = await fetch("api/song-editor", {cache:"no-store"});
+        if (!r.ok) throw new Error("Could not load Songs Editor");
+        const d = await r.json();
+        songEditorTracks = Array.isArray(d.tracks) ? d.tracks : [];
+        document.getElementById("songEditorCount")?.replaceChildren(String(songEditorTracks.length));
+        document.getElementById("songEditorBadge")?.replaceChildren(String(songEditorTracks.length));
+        const select = document.getElementById("songEditorImportSelect");
+        if (select) {
+            const existing = select.value;
+            select.innerHTML = '<option value="">Choose a library track…</option>';
+            const allTracks = Array.isArray(rawLibraryFiles) && rawLibraryFiles.length ? rawLibraryFiles : songEditorTracks;
+            allTracks.forEach(t => {
+                const o=document.createElement('option'); o.value=t.id||''; o.textContent=`${t.title||t.name||'Unknown Track'} — ${t.artist||'Unknown Artist'}`; select.appendChild(o);
+            });
+            if(existing && [...select.options].some(o=>o.value===existing)) select.value=existing;
+        }
+        renderSongEditorTracks(document.getElementById("songEditorSearch")?.value || "");
+    } catch (err) {
+        list.innerHTML = `<div class="editor-empty">${escapeHtml(err.message || "Could not load editor")}</div>`;
+    }
+}
+
 function updateSongEditorCount(delta=0){const el=document.getElementById("songEditorCount"),badge=document.getElementById("songEditorBadge"); const cur=Math.max(0,(parseInt(el?.textContent||"0",10)||0)+delta); if(el)el.textContent=String(cur); if(badge)badge.textContent=String(cur);}
 
 function installEnhancedFeatures(){
@@ -4783,8 +4827,39 @@ function installEnhancedFeatures(){
     document.getElementById("gp-queue-btn")?.addEventListener("click",openQueueDrawer); document.getElementById("queueClose")?.addEventListener("click",closeQueueDrawer); document.getElementById("queueClear")?.addEventListener("click",()=>{enhancedQueue=[];enhancedQueueIndex=-1;libraryPlaybackQueue=[];saveEnhancedQueue();renderEnhancedQueue();}); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
     document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
-    document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{showToast('⏳ Full metadata rebuild…');const r=await fetch('api/library/scan/full',{method:'POST'});showToast(r.ok?'✅ Full scan complete':'❌ Full scan failed');await refreshLibraryCache();renderLibraryView();});
-    document.getElementById("libraryRefreshButton")?.addEventListener("click",async()=>{showToast('⏳ Quick scan…');const r=await fetch('api/library/scan/quick',{method:'POST'});showToast(r.ok?'✅ Quick scan complete':'❌ Quick scan failed');await refreshLibraryCache();renderLibraryView();});
+    document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{
+        const btn=document.getElementById("libraryFullScanButton"); if(btn) btn.disabled=true;
+        showToast('⏳ Full metadata rebuild…');
+        try { const r=await fetch('api/library/scan/full',{method:'POST'}); if(!r.ok) throw new Error('Full scan failed'); showToast('✅ Full scan complete'); await refreshLibraryCache(); await loadStats(); renderLibraryView(); }
+        catch(err){ showToast('❌ '+(err.message||'Full scan failed')); }
+        finally { if(btn) btn.disabled=false; }
+    });
+    document.getElementById("songEditorSearch")?.addEventListener("input", e => {
+        const clear = document.getElementById("songEditorSearchClear");
+        if (clear) clear.hidden = !e.target.value;
+        renderSongEditorTracks(e.target.value);
+    });
+    document.getElementById("songEditorSearchClear")?.addEventListener("click", () => {
+        const input=document.getElementById("songEditorSearch");
+        if(input){input.value="";input.focus();}
+        document.getElementById("songEditorSearchClear")?.setAttribute("hidden", "");
+        renderSongEditorTracks("");
+    });
+    document.getElementById("songEditorReset")?.addEventListener("click", async()=>{
+        if(!confirm('Re-add all library tracks to Songs Editor? This marks every track as pending again.')) return;
+        const btn=document.getElementById('songEditorReset'); if(btn) btn.disabled=true;
+        try{ const r=await fetch('api/song-editor/reset',{method:'POST'}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||'Reset failed'); await loadSongEditor(); showToast(`✅ ${d.count||0} tracks added to editor`); }
+        catch(err){ showToast('❌ '+(err.message||'Reset failed')); }
+        finally{ if(btn) btn.disabled=false; }
+    });
+    document.getElementById("songEditorImport")?.addEventListener("click", async()=>{
+        const pick=document.getElementById('songEditorImportSelect');
+        if(!pick){ showToast('❌ Import selector unavailable'); return; }
+        const id=pick.value; if(!id){ showToast('Select a track to import'); return; }
+        const r=await fetch(`api/song-editor/${encodeURIComponent(id)}/import`,{method:'POST'});
+        if(r.ok){ const label=pick.options[pick.selectedIndex]?.text||'Track'; showToast(`✅ ${label} added to editor`); await loadSongEditor(); }
+        else { const d=await r.json().catch(()=>({})); showToast('❌ '+(d.detail||'Could not import track')); }
+    });
     document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{const r=await fetch('api/library/health');const d=await r.json();document.getElementById('healthContent').innerHTML=`<div class="health-summary"><strong>Unreadable: ${d.counts.unreadable}</strong><strong>Bad tags: ${d.counts.bad_tags}</strong><strong>Missing artwork: ${d.counts.missing_artwork}</strong><strong>Duplicate groups: ${d.counts.duplicates}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;document.getElementById('health-modal').hidden=false;});
 
     const originalPlayQueue=playQueue; window._xrobOriginalPlayQueue=originalPlayQueue;
