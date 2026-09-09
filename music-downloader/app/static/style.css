@@ -3952,7 +3952,7 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 /* Final sidebar typography: one consistent, compact size across desktop and mobile navigation. */
 .side-nav .nav-text,
 .bottom-nav .nav-text {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
 }
 .side-nav .nav-link {
