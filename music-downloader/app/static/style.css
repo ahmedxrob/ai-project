@@ -3931,6 +3931,15 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 .side-nav .nav-label {
     line-height: 1.15;
     gap: 8px;
+    position: relative;
+}
+.side-nav .nav-label .nav-text {
+    flex: 0 1 auto;
+    text-align: center;
+}
+.side-nav .nav-label .nav-count {
+    position: absolute;
+    right: 0;
 }
 .side-nav .nav-text {
     font-size: 13px;
@@ -3952,8 +3961,11 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 /* Final sidebar typography: one consistent, compact size across desktop and mobile navigation. */
 .side-nav .nav-text,
 .bottom-nav .nav-text {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
+}
+.side-nav .nav-label {
+    justify-content: center;
 }
 .side-nav .nav-link {
     gap: 11px;
