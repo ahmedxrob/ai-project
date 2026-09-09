@@ -195,6 +195,48 @@ function cacheDom() {
 
 
 /* ============================================================
+   LOCAL ICON RENDERER
+   ============================================================ */
+const LOCAL_ICON_PATHS = {
+    house: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+    download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+    library: '<path d="M4 19.5V6.5a2 2 0 0 1 2-2h13v15H6a2 2 0 0 0-2 2Z"/><path d="M6 19.5h13"/>',
+    'pencil-line': '<path d="m12 20 9-9"/><path d="m16 4 4 4"/><path d="M5 20h4l10-10-4-4L5 16v4Z"/>',
+    settings: '<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.42 1.42-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V19.6h-2v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-1.42-1.42.06-.06A1.7 1.7 0 0 0 9.4 15a1.7 1.7 0 0 0-1.56-1.03H7.75v-2h.09A1.7 1.7 0 0 0 9.4 10.44a1.7 1.7 0 0 0-.34-1.88L9 8.5l1.42-1.42.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 13.39 6V5.9h2V6a1.7 1.7 0 0 0 1.03 1.48 1.7 1.7 0 0 0 1.88-.34l.06-.06L19.78 8.5l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.94 11.5H21v2h-.06A1.7 1.7 0 0 0 19.4 15Z"/>',
+    'music-2': '<path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
+    'user-round': '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    'disc-3': '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/><path d="M12 5v2"/>',
+    broom: '<path d="m16 3 5 5"/><path d="m14 5 5 5"/><path d="m17 8-9 9"/><path d="M6 21h5"/><path d="M3 18 8 13l3 3-5 5H3Z"/>',
+    'refresh-cw': '<path d="M20 11a8 8 0 0 0-14.9-4L3 10"/><path d="M3 4v6h6"/><path d="M4 13a8 8 0 0 0 14.9 4l2.1-3"/><path d="M21 20v-6h-6"/>',
+    'square-pen': '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
+    save: '<path d="M5 3h12l3 3v15H4V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-6h8v6"/>',
+    'rotate-ccw': '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+    'arrow-down': '<path d="M12 5v14"/><path d="m18 13-6 6-6-6"/>',
+};
+
+function renderLocalIcons(root = document) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('[data-lucide]').forEach((el) => {
+        const name = el.getAttribute('data-lucide') || '';
+        const paths = LOCAL_ICON_PATHS[name] || '<circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/>';
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', el.getAttribute('aria-hidden') || 'true');
+        svg.innerHTML = paths;
+        for (const attr of el.attributes) {
+            if (!['data-lucide', 'aria-hidden'].includes(attr.name)) svg.setAttribute(attr.name, attr.value);
+        }
+        el.replaceWith(svg);
+    });
+}
+
+/* ============================================================
    HELPERS
    ============================================================ */
 
