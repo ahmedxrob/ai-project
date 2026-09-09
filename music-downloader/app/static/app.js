@@ -362,6 +362,7 @@ function switchTab(tab) {
         "search",
         "downloads",
         "library",
+        "songs-editor",
         "settings"
     ];
 
@@ -419,6 +420,10 @@ function switchTab(tab) {
         loadLibrary();
     }
 
+    if (tab === "songs-editor") {
+        loadSongEditor();
+    }
+
     if (tab === "settings") {
         loadSettings();
     }
@@ -437,6 +442,7 @@ function handleHash() {
         "search",
         "downloads",
         "library",
+        "songs-editor",
         "settings"
     ];
 
@@ -1976,11 +1982,10 @@ function createTrackCard(file, queue = rawLibraryFiles) {
     card.className = "result-card";
     card.dataset.libraryName = file.name || "";
     const plays = Number(file.play_count ?? file.plays ?? 0);
-    card.innerHTML = `<div class="thumb-wrapper"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="track-play-count" title="${plays} play${plays === 1 ? "" : "s"}">▶ ${plays}</span></div><div class="track-info"><div class="track-title">${escapeHtml(file.title || file.name || "Unknown Track")}</div><div class="track-artist">${escapeHtml(file.artist || "Unknown Artist")} · ${escapeHtml(file.album || "Unknown Album")}</div><div class="track-meta-line"><span>${plays === 1 ? "1 play" : `${plays} plays`}</span></div></div><div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-secondary metadata-edit-btn">✎ Edit</button><button type="button" class="btn-danger">🗑 Delete</button></div>`;
+    card.innerHTML = `<div class="thumb-wrapper"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="track-play-count" title="${plays} play${plays === 1 ? "" : "s"}">▶ ${plays}</span></div><div class="track-info"><div class="track-title">${escapeHtml(file.title || file.name || "Unknown Track")}</div><div class="track-artist">${escapeHtml(file.artist || "Unknown Artist")} · ${escapeHtml(file.album || "Unknown Album")}</div><div class="track-meta-line"><span>${plays === 1 ? "1 play" : `${plays} plays`}</span></div></div><div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-danger">🗑 Delete</button></div>`;
     card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), { once: true });
     const play = () => { libraryPlaybackQueue = [...queue]; currentLibraryIndex = Math.max(0, queue.findIndex(x => x.id === file.id || x.name === file.name)); currentPlayerSource = "library"; if (typeof setEnhancedQueue === "function") setEnhancedQueue(queue, currentLibraryIndex); toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover); };
     card.querySelector(".btn-preview")?.addEventListener("click", e => { e.stopPropagation(); play(); });
-    card.querySelector(".metadata-edit-btn")?.addEventListener("click", e => { e.stopPropagation(); openMetadataEditor(file); });
     card.querySelector(".btn-danger")?.addEventListener("click", e => { e.stopPropagation(); deleteFile(file.name); });
     card.addEventListener("dblclick", play);
     return card;
@@ -4540,6 +4545,8 @@ function renderLocalIcons() {
         shuffle: 'm3 3 18 18M16 3h5v5M3 21l5-5m8 0h5v5',
         refresh: 'M20 11a8 8 0 0 0-14.9-4M4 5v4h4M4 13a8 8 0 0 0 14.9 4M20 19v-4h-4',
         'refresh-cw': 'M20 11a8 8 0 0 0-14.9-4M4 5v4h4M4 13a8 8 0 0 0 14.9 4M20 19v-4h-4',
+        'pencil-line': 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z',
+        'log-out': 'M10 17l5-5-5-5M15 12H3M21 19V5a2 2 0 0 0-2-2h-5',
     }
     document.querySelectorAll('[data-lucide]').forEach(el => {
         const name = el.getAttribute('data-lucide') || '';
@@ -4561,9 +4568,32 @@ function renderLocalIcons() {
     });
 }
 
+async function checkWebAuth() {
+    try { const r=await fetch("api/auth/status",{cache:"no-store"}); if(!r.ok) return false; const d=await r.json(); return !!d.authenticated; } catch (_) { return false; }
+}
+
+function showAuthenticatedApp() { document.getElementById("login-screen")?.classList.add("hidden"); const shell=document.getElementById("app-shell"); if(shell) shell.hidden=false; renderLocalIcons(); }
+
+async function handleLoginSubmit(e){
+    e.preventDefault(); const error=document.getElementById("loginError"); if(error) error.textContent="";
+    const body={username:document.getElementById("loginUsername")?.value||"",password:document.getElementById("loginPassword")?.value||""};
+    try{const r=await fetch("api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||"Sign in failed"); showAuthenticatedApp(); await startAppAfterAuth(); }catch(err){if(error)error.textContent=err.message||"Sign in failed";}
+}
+
+async function logoutWebAuth(){ await fetch("api/auth/logout",{method:"POST"}).catch(()=>{}); location.reload(); }
+
 async function initializeApp() {
 
     renderLocalIcons();
+    document.getElementById("loginForm")?.addEventListener("submit",handleLoginSubmit);
+    document.getElementById("logoutButton")?.addEventListener("click",logoutWebAuth);
+    if(!(await checkWebAuth())) return;
+    showAuthenticatedApp();
+    await startAppAfterAuth();
+}
+
+async function startAppAfterAuth() {
+
     cacheDom();
 
     toggleTheme(
@@ -4580,6 +4610,7 @@ async function initializeApp() {
     document.getElementById("set_format")?.addEventListener("change", updateQualityState);
     document.getElementById("settings-save")?.addEventListener("click", saveSettings);
     document.getElementById("settings-reset")?.addEventListener("click", resetSettings);
+    document.getElementById("songEditorRefresh")?.addEventListener("click",loadSongEditor);
     document.getElementById("libraryRefreshButton")?.addEventListener("click", refreshLibrary);
     document.getElementById("libSearchQuery")?.addEventListener("input", () => {
         const input = document.getElementById("libSearchQuery");
@@ -4605,6 +4636,7 @@ async function initializeApp() {
 
     await refreshLibraryCache();
     await loadSettings();
+    await loadSongEditor();
 
     await pollTasks(true);
 
@@ -4641,6 +4673,7 @@ async function openMetadataEditor(file) {
     document.getElementById("metadataTitle").value=file.title||"";
     document.getElementById("metadataArtist").value=file.artist||"";
     document.getElementById("metadataAlbum").value=file.album||"";
+    const name=document.getElementById("metadataFileName"); if(name) name.textContent=file.name||file.path||"";
     modal.hidden=false;
 }
 
@@ -4684,11 +4717,34 @@ async function loadPlaylistsView(){
     document.getElementById("newPlaylistBtn").onclick=async()=>{const name=prompt("Playlist name","New Playlist");if(!name)return;const kind=confirm("Make this a smart playlist?\nOK = smart, Cancel = manual")?'smart':'manual';let rules={};if(kind==='smart'){const genre=prompt("Genre rule (optional)","");const artist=prompt("Artist rule (optional)","");if(genre)rules.genre=genre;if(artist)rules.artist=artist;}await fetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind,rules,song_ids:[]})});loadPlaylistsView();};
 }
 
+async function loadSongEditor(){
+    const list=document.getElementById("songEditorList"); if(!list)return;
+    list.innerHTML='<div class="editor-empty">Loading tracks waiting for review…</div>';
+    try{
+        const r=await fetch("api/song-editor",{cache:"no-store"});
+        if(!r.ok) throw new Error("Could not load Songs Editor");
+        const d=await r.json(); const tracks=d.tracks||[];
+        const count=tracks.length; document.getElementById("songEditorCount")?.replaceChildren(String(count)); document.getElementById("songEditorBadge")?.replaceChildren(String(count));
+        list.innerHTML="";
+        if(!tracks.length){list.innerHTML='<div class="editor-empty"><div class="empty-title">All caught up</div><div>No songs are waiting for review. New downloads will appear here automatically.</div></div>';return;}
+        tracks.forEach(track=>{
+            const card=document.createElement("article"); card.className="song-editor-card";
+            card.innerHTML=`<img class="song-editor-art" src="${escapeHtml(track.cover||'')}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title||track.name||'Unknown Track')}</div><div class="song-editor-artist">${escapeHtml(track.artist||'Unknown Artist')} · ${escapeHtml(track.album||'Unknown Album')}</div><div class="song-editor-file">${escapeHtml(track.name||'')}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="pencil-line" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
+            card.querySelector(".editor-edit").onclick=()=>openMetadataEditor(track);
+            card.querySelector(".editor-skip").onclick=async()=>{const r=await fetch(`api/song-editor/${encodeURIComponent(track.id)}/skip`,{method:"POST"}); if(r.ok){card.remove(); updateSongEditorCount(-1); showToast("Skipped");} else showToast("❌ Could not skip track");};
+            card.querySelector("img")?.addEventListener("error",e=>e.currentTarget.style.visibility="hidden",{once:true});
+            list.appendChild(card);
+        });
+        renderLocalIcons();
+    }catch(err){list.innerHTML=`<div class="editor-empty">${escapeHtml(err.message||"Could not load editor")}</div>`;}
+}
+function updateSongEditorCount(delta=0){const el=document.getElementById("songEditorCount"),badge=document.getElementById("songEditorBadge"); const cur=Math.max(0,(parseInt(el?.textContent||"0",10)||0)+delta); if(el)el.textContent=String(cur); if(badge)badge.textContent=String(cur);}
+
 function installEnhancedFeatures(){
     loadEnhancedQueue(); loadEnhancedPositions(); applyRepeatLabel();
     document.getElementById("gp-queue-btn")?.addEventListener("click",openQueueDrawer); document.getElementById("queueClose")?.addEventListener("click",closeQueueDrawer); document.getElementById("queueClear")?.addEventListener("click",()=>{enhancedQueue=[];enhancedQueueIndex=-1;libraryPlaybackQueue=[];saveEnhancedQueue();renderEnhancedQueue();}); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
-    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
+    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
     document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{showToast('⏳ Full metadata rebuild…');const r=await fetch('api/library/scan/full',{method:'POST'});showToast(r.ok?'✅ Full scan complete':'❌ Full scan failed');await refreshLibraryCache();renderLibraryView();});
     document.getElementById("libraryRefreshButton")?.addEventListener("click",async()=>{showToast('⏳ Quick scan…');const r=await fetch('api/library/scan/quick',{method:'POST'});showToast(r.ok?'✅ Quick scan complete':'❌ Quick scan failed');await refreshLibraryCache();renderLibraryView();});
     document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{const r=await fetch('api/library/health');const d=await r.json();document.getElementById('healthContent').innerHTML=`<div class="health-summary"><strong>Unreadable: ${d.counts.unreadable}</strong><strong>Bad tags: ${d.counts.bad_tags}</strong><strong>Missing artwork: ${d.counts.missing_artwork}</strong><strong>Duplicate groups: ${d.counts.duplicates}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;document.getElementById('health-modal').hidden=false;});
@@ -4757,6 +4813,7 @@ window.clearDoneTasks =
     clearDoneTasks;
 
 window.loadSettings = loadSettings;
+window.loadSongEditor = loadSongEditor;
 window.saveSettings = saveSettings;
 
 window.toggleAudioStream =
