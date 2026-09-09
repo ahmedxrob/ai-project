@@ -5562,7 +5562,7 @@ async def api_library_scan_status():
 
 
 @app.post("/api/auth/login")
-async def api_auth_login(payload: dict = Body(...)):
+async def api_auth_login(request: Request, payload: dict = Body(...)):
     user = str(payload.get("username") or "")
     password = str(payload.get("password") or "")
     expected_user, expected_password = _current_web_credentials()
