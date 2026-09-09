@@ -5,7 +5,7 @@ HOME
 - Real Tracks / Artists / Albums counters from the scanned library.
 - Recently Added tracks with playback.
 - Download shortcut.
-- Active download status.
+- Total Plays counter with live updates.
 
 SEARCH & DOWNLOAD
 - YouTube search through yt-dlp.
@@ -121,3 +121,30 @@ NOTES
 - Reopening an edited track returns it to the pending review queue, where it can be edited again normally.
 - Replaced inconsistent emoji/text controls in the enhanced queue, library track actions, playlists, search/close controls, and empty states with the app’s local Lucide-style SVG icon system.
 - Improved queue drawer, modal surfaces, icon buttons, editor search controls, empty states, and mobile spacing while preserving existing functionality.
+
+
+## 2.9.2 CURRENT FIXES
+- Home dashboard uses Total Plays instead of Active Downloads.
+- Live library counters update without transient resets to zero when a response is incomplete or not ready.
+- Play count updates immediately after a track play is recorded.
+- Track, artist, album and storage statistics are shared through one live-stat state in the UI.
+- Newly selected tracks always start from 0:00; previously saved per-track positions are not restored when selecting a track again.
+- Download completion triggers a live statistics/home refresh so library counters update without a full-page reload.
+
+## 2.9.3 FEATURE ROADMAP
+
+20. Detailed library statistics dashboard.
+21. Recommended tracks.
+22. Because You Played recommendations.
+23. Similar artists.
+24. Similar albums.
+25. Trending tracks.
+26. Daily Mix.
+27. Weekly Mix.
+28. Random Mix.
+29. New Releases section.
+30. Genre-based discovery.
+31. Smart playlists.
+32. Automatic playlist generation.
+33. Collaborative playlists.
+50. Full Xrob Music database/settings backup and restore.
