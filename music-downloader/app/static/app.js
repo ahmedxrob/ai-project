@@ -4580,10 +4580,13 @@ async function checkWebAuth() {
 function showAuthenticatedApp() { document.getElementById("login-screen")?.classList.add("hidden"); const shell=document.getElementById("app-shell"); if(shell) shell.hidden=false; renderLocalIcons(); }
 
 async function handleLoginSubmit(e){
-    e.preventDefault(); const error=document.getElementById("loginError"), btn=document.querySelector(".login-submit"); if(error) error.textContent="";
+    e.preventDefault();
+    const error=document.getElementById("loginError");
+    const btn=document.querySelector(".login-submit");
+    if(error) error.textContent="";
+    const body={username:String(document.getElementById("loginUsername")?.value||"").trim(),password:document.getElementById("loginPassword")?.value||""};
     localStorage.setItem("xrob_music_login_user", body.username);
     if(btn){btn.disabled=true; btn.dataset.originalText=btn.textContent; btn.textContent="Signing in…";}
-    const body={username:String(document.getElementById("loginUsername")?.value||"").trim(),password:document.getElementById("loginPassword")?.value||""};
     try{const r=await fetch("api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||"Sign in failed"); document.getElementById("loginPassword").value=""; showAuthenticatedApp(); await startAppAfterAuth(); }catch(err){if(error)error.textContent=err.message||"Sign in failed";} finally{if(btn){btn.disabled=false;btn.textContent=btn.dataset.originalText||"Sign in";}}
 }
 
