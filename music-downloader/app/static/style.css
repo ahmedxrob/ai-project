@@ -3652,3 +3652,17 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 .modal-subtitle{font-size:.78rem;opacity:.58;margin-top:3px}
 #tab-settings .settings-card + .settings-card{margin-top:14px}
 @media (max-width:700px){.track-play-count{font-size:.65rem;padding:3px 6px}.track-meta-line{font-size:.68rem}}
+
+
+/* Xrob authentication + Songs Editor */
+.login-screen{position:fixed;inset:0;z-index:5000;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at top,#20242d 0,#101217 42%,#0b0d10 100%)}
+.login-screen.hidden{display:none}
+.login-card{width:min(410px,100%);padding:34px;border:1px solid var(--border,#2b2f37);background:rgba(24,26,31,.94);backdrop-filter:blur(18px);border-radius:24px;box-shadow:0 30px 90px rgba(0,0,0,.45);text-align:center}
+.login-logo{width:82px;height:82px;object-fit:contain;margin:0 auto 18px;display:block;border-radius:18px}
+.login-card h1{margin:0 0 6px;font-size:28px}.login-card>p{margin:0 0 24px;color:var(--text-secondary,#9298a3)}
+.login-card form{display:grid;gap:14px;text-align:left}.login-card label{display:grid;gap:6px;font-size:12px;font-weight:700}.login-card input{height:46px}.login-submit{width:100%;justify-content:center;height:46px}.login-error{min-height:18px;text-align:center;color:#ff7474;font-size:12px;font-weight:700}
+.page-heading h2{display:flex;align-items:center;gap:9px}.page-heading h2 svg{width:23px;height:23px}
+.nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;margin-left:5px;padding:0 6px;border-radius:999px;background:var(--accent);color:#fff;font-size:10px;font-weight:800}
+.songs-editor-list{display:grid;gap:10px}.editor-summary{display:flex;justify-content:space-between;gap:14px;padding:14px 16px;margin:0 0 14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:14px;color:var(--text-secondary);font-size:12px}.editor-summary strong{color:var(--text-primary);font-size:18px;margin-right:5px}
+.song-editor-card{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px;border:1px solid var(--border);background:var(--bg-elevated);border-radius:14px}.song-editor-art{width:64px;height:64px;object-fit:cover;border-radius:10px;background:var(--bg-input)}.song-editor-info{min-width:0}.song-editor-title{font-size:14px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-editor-artist{margin-top:3px;color:var(--text-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-editor-file{margin-top:7px;color:var(--text-secondary);opacity:.58;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-editor-actions{display:flex;gap:8px;align-items:center}.editor-empty{padding:54px 22px;text-align:center;color:var(--text-secondary);border:1px dashed var(--border);border-radius:16px}.editor-empty .empty-title{color:var(--text-primary);font-size:18px;font-weight:800;margin-bottom:7px}
+@media(max-width:700px){.editor-summary{align-items:flex-start;flex-direction:column}.song-editor-card{grid-template-columns:52px minmax(0,1fr);}.song-editor-art{width:52px;height:52px}.song-editor-actions{grid-column:1/-1}.song-editor-actions button{flex:1}.login-card{padding:26px 20px}}
