@@ -42,7 +42,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=209"
+        href="/static/style.css?v=210"
     >
 
 </head>
@@ -305,7 +305,7 @@
 
                     <span class="nav-label">
                         Library
-                        (<span id="sideLibCount">0</span>)
+                        <span id="sideLibCount" class="nav-badge">0</span>
                     </span>
 
                 </button>
@@ -918,10 +918,19 @@
                  ================================================== -->
             <section id="tab-songs-editor" class="tab-content">
                 <div class="page-heading">
-                    <div><h2>Songs Editor</h2><p>Tracks waiting for review. Edit the title, artist and album, or skip a track. New downloads appear here automatically.</p></div>
+                    <div><h2><i data-lucide="pencil-line" aria-hidden="true"></i> Songs Editor</h2><p>Edit tags for tracks that still need review. Search the queue, re-add everything, or import one existing library track.</p></div>
                     <button type="button" class="btn-refresh" id="songEditorRefresh"><i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh</button>
                 </div>
-                <div class="editor-summary"><span><strong id="songEditorCount">0</strong> tracks waiting</span><span>Each track disappears after you edit or skip it.</span></div>
+                <div class="editor-stats-banner">
+                    <div class="editor-stat-card"><div class="editor-stat-icon"><i data-lucide="pencil-line" aria-hidden="true"></i></div><div><strong id="songEditorCount">0</strong><span>Tracks waiting</span></div></div>
+                    <div class="editor-stat-copy"><strong>Edit queue</strong><span>Edited or skipped tracks leave the queue. New downloads enter automatically.</span></div>
+                </div>
+                <div class="editor-toolbar">
+                    <label class="editor-search"><span aria-hidden="true">⌕</span><input id="songEditorSearch" type="search" placeholder="Search title, artist, album, or filename…" autocomplete="off" spellcheck="false"><button type="button" id="songEditorSearchClear" class="library-search-clear" hidden>×</button></label>
+                    <button type="button" class="btn-refresh" id="songEditorReset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Re-add all tracks</button>
+                    <select id="songEditorImportSelect" class="editor-import-select" aria-label="Select a library track to import"><option value="">Choose a library track…</option></select>
+                    <button type="button" class="btn-preview" id="songEditorImport"><i data-lucide="plus" aria-hidden="true"></i> Import track</button>
+                </div>
                 <div id="songEditorList" class="songs-editor-list"></div>
             </section>
 
@@ -950,9 +959,15 @@
                     <div class="setting-row"><div><div class="setting-label">Scan interval</div><div class="setting-desc">Minutes between automatic quick scans (minimum 5).</div></div><input id="set_scan_interval" type="number" min="5" step="5" value="60" style="max-width:120px"></div>
                 </div>
                 <div class="settings-card settings-info-card">
-                    <div class="settings-divider">Library status</div>
-                    <div class="setting-row"><div><div class="setting-label">Music folder</div></div><code id="storagePath">—</code></div>
-                    <div class="library-status-grid"><div><span>Tracks</span><strong id="statusTracks">0</strong></div><div><span>Albums</span><strong id="statusAlbums">0</strong></div><div><span>Artists</span><strong id="statusArtists">0</strong></div><div><span>Total plays</span><strong id="statusPlays">0</strong></div><div><span>Track size</span><strong id="statusSize">0 MB</strong></div></div>
+                    <div class="settings-divider"><i data-lucide="library" aria-hidden="true"></i> Library status</div>
+                    <div class="setting-row"><div><div class="setting-label">Music folder</div><div class="setting-desc">The directory used for your Xrob Music library.</div></div><code id="storagePath">—</code></div>
+                    <div class="library-status-grid">
+                        <div class="library-status-item"><span>Tracks</span><strong id="statusTracks">0</strong></div>
+                        <div class="library-status-item"><span>Albums</span><strong id="statusAlbums">0</strong></div>
+                        <div class="library-status-item"><span>Artists</span><strong id="statusArtists">0</strong></div>
+                        <div class="library-status-item"><span>Total plays</span><strong id="statusPlays">0</strong></div>
+                        <div class="library-status-item wide"><span>Track size</span><strong id="statusSize">0 MB</strong></div>
+                    </div>
                     <div class="storage-capacity" id="storageCapacity">
                         <div class="storage-capacity-head"><span>Storage usage</span><strong id="storageUsedLabel">—</strong></div>
                         <div class="storage-progress" role="progressbar" aria-label="Library storage usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="storageProgressFill"></span></div>
@@ -1238,7 +1253,7 @@
 
         <span class="nav-label">
             Library
-            (<span id="mobLibCount">0</span>)
+            <span id="mobLibCount" class="nav-badge">0</span>
         </span>
 
     </button>
@@ -1274,7 +1289,7 @@
      SCRIPTS
      ============================================================ -->
 
-<script src="/static/app.js?v=209"></script>
+<script src="/static/app.js?v=210"></script>
 
 
 
