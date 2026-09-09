@@ -2002,7 +2002,10 @@ async function loadStats() {
                 stats.artists || 0,
 
             homeAlbums:
-                stats.albums || 0
+                stats.albums || 0,
+
+            homeDownloads:
+                stats.all_play_count || 0
         };
 
         Object.entries(
@@ -4355,7 +4358,7 @@ async function loadHome() {
 
         setText(
             "homeDownloads",
-            data.active_downloads || 0
+            stats.all_play_count || 0
         );
 
 
@@ -4889,6 +4892,12 @@ async function startAppAfterAuth() {
         () => pollTasks(),
         2000
     );
+
+    // Keep library/home/sidebar counters live without requiring a page reload.
+    setInterval(
+        () => loadStats(),
+        3000
+    );
 }
 
 
@@ -5196,8 +5205,9 @@ function installEnhancedFeatures(){
         audio.addEventListener('loadedmetadata',()=>{
             const id=currentSongId();
             if (id && playSessionTrackId !== id) beginPlaySession(id);
-            const pos=enhancedSongPositions[id]?.position;
-            if(id&&Number.isFinite(pos)&&pos>2&&pos<(audio.duration||Infinity)-2){try{audio.currentTime=pos;}catch(_){}}
+            // Track switching should start the selected track from the beginning.
+            // Saved positions remain available for data/history purposes, but are not
+            // restored when moving between tracks.
             recordPlay(id);
         });
         audio.addEventListener('timeupdate',()=>{
