@@ -1885,6 +1885,20 @@ async function loadStats() {
             }
         );
 
+        const statusMap = {
+            statusTracks: stats.tracks || 0,
+            statusAlbums: stats.albums || 0,
+            statusArtists: stats.artists || 0,
+            statusPlays: stats.all_play_count || 0,
+            statusSize: stats.folder_size || "0 MB"
+        };
+        Object.entries(statusMap).forEach(([id, value]) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = String(value);
+        });
+        const subsonicStatus = document.getElementById("subsonicStatusValue");
+        if (subsonicStatus) subsonicStatus.textContent = `${stats.tracks || 0} tracks ready`;
+
     } catch (error) {
 
         if (
@@ -4525,54 +4539,45 @@ async function refreshLibrary() {
 
 function renderLocalIcons() {
     const paths = {
-        house: 'M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5zM9 21v-6h6v6',
-        search: 'm21 21-4.35-4.35M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4z',
-        download: 'M12 3v11m0 0 4-4m-4 4-4-4M4 19h16',
-        library: 'M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 1 4 16.5zM4 16.5V5.5',
-        settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.9 1.9-.06-.06A1.7 1.7 0 0 0 16 18.44a1.7 1.7 0 0 0-1 .56 1.7 1.7 0 0 0-.44 1.14V20H12v-.08A1.7 1.7 0 0 0 10.9 18.4a1.7 1.7 0 0 0-1.83.38L9 18.85l-1.9-1.9.06-.06A1.7 1.7 0 0 0 7.56 15a1.7 1.7 0 0 0-1.14-.44H6V12h.08A1.7 1.7 0 0 0 7.6 10.9a1.7 1.7 0 0 0-.38-1.83L7.15 9l1.9-1.9.06.06A1.7 1.7 0 0 0 11 7.56a1.7 1.7 0 0 0 .44-1.14V6H14v.08A1.7 1.7 0 0 0 15.1 7.6a1.7 1.7 0 0 0 1.83-.38L17 7.15l1.9 1.9-.06.06A1.7 1.7 0 0 0 18.44 11a1.7 1.7 0 0 0 1.14.44H20V14h-.08A1.7 1.7 0 0 0 19.4 15z',
-        save: 'M5 3h12l3 3v15H4V3zm3 0v6h8V3M8 21v-6h8v6',
-        rotate: 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5',
-        'rotate-ccw': 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5',
-        music: 'M9 18V5l10-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0m10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
-        'music-2': 'M9 18V5l10-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0m10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
-        user: 'M20 21a8 8 0 0 0-16 0M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
-        'user-round': 'M18 20a6 6 0 0 0-12 0M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
-        disc: 'M12 12h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
-        'disc-3': 'M12 12h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
-        play: 'm8 5 11 7-11 7z',
-        hard: 'M3 5h18v14H3zM7 9h10M7 13h5',
-        'hard-drive': 'M3 6h18v12H3zM6 15h.01M10 15h.01M14 15h.01',
-        smartphone: 'M7 2h10v20H7zM11 18h2',
-        broom: 'm3 21 9-9m2-9 7 7M16 3l5 5',
-        'skip-back': 'M19 20 9 12l10-8v16M5 19V5',
-        'skip-forward': 'm5 4 10 8-10 8V4m14 15V5',
-        'volume-2': 'M11 5 6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13',
-        shuffle: 'm3 3 18 18M16 3h5v5M3 21l5-5m8 0h5v5',
-        refresh: 'M20 11a8 8 0 0 0-14.9-4M4 5v4h4M4 13a8 8 0 0 0 14.9 4M20 19v-4h-4',
-        'refresh-cw': 'M20 11a8 8 0 0 0-14.9-4M4 5v4h4M4 13a8 8 0 0 0 14.9 4M20 19v-4h-4',
-        'pencil-line': 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z',
-        'log-out': 'M10 17l5-5-5-5M15 12H3M21 19V5a2 2 0 0 0-2-2h-5',
-    }
+        house: [['path','M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z'],['path','M9 21v-6h6v6']],
+        search: [['circle','11 11 7 7'],['path','m20 20-4-4']],
+        download: [['path','M12 3v12'],['path','m7 10 5 5 5-5'],['path','M5 21h14']],
+        library: [['path','M4 19.5V6.5A2.5 2.5 0 0 1 6.5 4H20v16H6.5A2.5 2.5 0 0 1 4 17.5'],['path','M4 17.5A2.5 2.5 0 0 1 6.5 15H20']],
+        settings: [['circle','12 12 3'],['path','M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.9 1.9-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.1h-2.7v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-1.9-1.9.1-.1A1.7 1.7 0 0 0 7.7 15 1.7 1.7 0 0 0 6 14H5.9v-2.7H6a1.7 1.7 0 0 0 1.7-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.9-1.9.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.1h2.7v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.9 1.9-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1V14h-.1a1.7 1.7 0 0 0-1.6 1z']],
+        save: [['path','M5 3h12l3 3v15H4V3z'],['path','M8 3v6h8V3'],['path','M8 21v-6h8v6']],
+        'rotate-ccw': [['path','M3 12a9 9 0 1 0 3-6.7'],['path','M3 4v5h5']],
+        'music-2': [['path','M9 18V5l10-2v13'],['circle','6 18 3'],['circle','16 16 3']],
+        'user-round': [['circle','12 7 4'],['path','M18 20a6 6 0 0 0-12 0']],
+        'disc-3': [['circle','12 12 9'],['circle','12 12 1'],['path','M15.5 8.5 12 12']],
+        'hard-drive': [['path','M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z'],['path','M6 15h.01M10 15h.01M14 15h.01']],
+        'pencil-line': [['path','M12 20h9'],['path','M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z']],
+        'square-pen': [['path','M12 20h9'],['path','M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z']],
+        'log-out': [['path','m10 17 5-5-5-5'],['path','M15 12H3'],['path','M21 19V5a2 2 0 0 0-2-2h-5']],
+        'refresh-cw': [['path','M20 11a8 8 0 0 0-14.9-4'],['path','M4 5v4h4'],['path','M4 13a8 8 0 0 0 14.9 4'],['path','M20 19v-4h-4']],
+        broom: [['path','m3 21 9-9'],['path','m14 3 7 7'],['path','m16 3 5 5']],
+        'volume-2': [['path','M11 5 6 9H3v6h3l5 4z'],['path','M15.5 8.5a5 5 0 0 1 0 7'],['path','M18.5 5.5a9 9 0 0 1 0 13']],
+        play: [['path','m8 5 11 7-11 7z']],
+        'skip-back': [['path','M19 20 9 12l10-8v16'],['path','M5 19V5']],
+        'skip-forward': [['path','m5 4 10 8-10 8V4'],['path','M19 5v14']],
+        shuffle: [['path','m3 3 18 18'],['path','M16 3h5v5'],['path','m3 21 5-5'],['path','M16 16h5v5']],
+    };
+    const ns = 'http://www.w3.org/2000/svg';
     document.querySelectorAll('[data-lucide]').forEach(el => {
         const name = el.getAttribute('data-lucide') || '';
-        const path = paths[name] || paths[name.replace(/-(.)/g, (_, c) => c)] || null;
-        const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-        svg.setAttribute('viewBox','0 0 24 24');
-        svg.setAttribute('fill','none');
-        svg.setAttribute('stroke','currentColor');
-        svg.setAttribute('stroke-width','2');
-        svg.setAttribute('stroke-linecap','round');
-        svg.setAttribute('stroke-linejoin','round');
-        svg.setAttribute('aria-hidden','true');
-        if (path) {
-            const pathNode = document.createElementNS('http://www.w3.org/2000/svg','path');
-            pathNode.setAttribute('d', path);
-            svg.appendChild(pathNode);
-        }
+        const defs = paths[name];
+        if (!defs) return;
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor');
+        svg.setAttribute('stroke-width','2'); svg.setAttribute('stroke-linecap','round'); svg.setAttribute('stroke-linejoin','round'); svg.setAttribute('aria-hidden','true');
+        defs.forEach(([kind, value]) => {
+            const node = document.createElementNS(ns, kind);
+            if (kind === 'circle') { const [cx,cy,r]=value.split(' '); node.setAttribute('cx',cx); node.setAttribute('cy',cy); node.setAttribute('r',r); }
+            else node.setAttribute('d', value);
+            svg.appendChild(node);
+        });
         el.replaceWith(svg);
     });
 }
-
 async function checkWebAuth() {
     try { const r=await fetch("api/auth/status",{cache:"no-store"}); if(!r.ok) return false; const d=await r.json(); return !!d.authenticated; } catch (_) { return false; }
 }
@@ -4650,9 +4655,32 @@ async function startAppAfterAuth() {
 
     const cached = loadLibraryCache();
     if (cached) renderLibraryView();
+    // Fast first paint: library/stats may initially come from the filesystem index.
+    // Poll briefly for the background metadata warmup to finish, then refresh once.
     const startupJobs = [refreshLibraryCache(), loadSettings(), loadSongEditor(), pollTasks(true), loadStats(), loadHome()];
     await Promise.allSettled(startupJobs);
     if (rawLibraryFiles.length) renderLibraryView();
+    let libraryWarmupChecks = 0;
+    const warmupTimer = setInterval(async () => {
+        libraryWarmupChecks += 1;
+        if (libraryWarmupChecks > 30) return clearInterval(warmupTimer);
+        try {
+            const r = await fetch('api/library', {cache:'no-store'});
+            if (!r.ok) return;
+            const d = await r.json();
+            if (d.ready) {
+                clearInterval(warmupTimer);
+                rawLibraryFiles = d.files || [];
+                libraryPlaybackQueue = rawLibraryFiles;
+                libraryArtists = d.artists || libraryArtists;
+                libraryAlbums = d.albums || libraryAlbums;
+                saveLibraryCache();
+                renderLibraryView();
+                loadStats();
+                loadSongEditor();
+            }
+        } catch (_) {}
+    }, 1000);
     handleHash();
 
 
@@ -4739,7 +4767,7 @@ async function loadSongEditor(){
         if(!tracks.length){list.innerHTML='<div class="editor-empty"><div class="empty-title">All caught up</div><div>No songs are waiting for review. New downloads will appear here automatically.</div></div>';return;}
         tracks.forEach(track=>{
             const card=document.createElement("article"); card.className="song-editor-card";
-            card.innerHTML=`<img class="song-editor-art" src="${escapeHtml(track.cover||'')}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title||track.name||'Unknown Track')}</div><div class="song-editor-artist">${escapeHtml(track.artist||'Unknown Artist')} · ${escapeHtml(track.album||'Unknown Album')}</div><div class="song-editor-file">${escapeHtml(track.name||'')}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="pencil-line" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
+            card.innerHTML=`<img class="song-editor-art" src="${escapeHtml(track.cover||'')}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title||track.name||'Unknown Track')}</div><div class="song-editor-artist">${escapeHtml(track.artist||'Unknown Artist')} · ${escapeHtml(track.album||'Unknown Album')}</div><div class="song-editor-file">${escapeHtml(track.name||'')}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="square-pen" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
             card.querySelector(".editor-edit").onclick=()=>openMetadataEditor(track);
             card.querySelector(".editor-skip").onclick=async()=>{const r=await fetch(`api/song-editor/${encodeURIComponent(track.id)}/skip`,{method:"POST"}); if(r.ok){card.remove(); updateSongEditorCount(-1); showToast("Skipped");} else showToast("❌ Could not skip track");};
             card.querySelector("img")?.addEventListener("error",e=>e.currentTarget.style.visibility="hidden",{once:true});
