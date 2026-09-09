@@ -280,8 +280,8 @@
                     ></i>
 
                     <span class="nav-label">
-                        <span>Downloads</span>
-                        <span id="queueCount" class="nav-badge">0</span>
+                        <span class="nav-text">Downloads</span>
+                        <span id="queueCount" class="nav-count">0</span>
                     </span>
 
                 </button>
@@ -304,8 +304,8 @@
                     ></i>
 
                     <span class="nav-label">
-                        Library
-                        <span id="sideLibCount" class="nav-badge">0</span>
+                        <span class="nav-text">Library</span>
+                        <span id="sideLibCount" class="nav-count">0</span>
                     </span>
 
                 </button>
@@ -316,7 +316,10 @@
             <li>
                 <button type="button" class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')">
                     <i data-lucide="pencil-line" aria-hidden="true"></i>
-                    <span class="nav-label">Songs Editor <span id="songEditorBadge" class="nav-badge">0</span></span>
+                    <span class="nav-label">
+                        <span class="nav-text">Songs Editor</span>
+                        <span id="songEditorBadge" class="nav-count">0</span>
+                    </span>
                 </button>
             </li>
 
@@ -917,9 +920,14 @@
                  SONGS EDITOR
                  ================================================== -->
             <section id="tab-songs-editor" class="tab-content">
-                <div class="page-heading">
-                    <div><h2><i data-lucide="pencil-line" aria-hidden="true"></i> Songs Editor</h2><p>Edit tags for tracks that still need review. Reopen a previously edited track from the existing-track selector.</p></div>
-                    <button type="button" class="btn-refresh" id="songEditorRefresh"><i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh</button>
+                <div class="page-heading editor-page-heading">
+                    <div>
+                        <h2><i data-lucide="pencil-line" aria-hidden="true"></i> Songs Editor</h2>
+                        <p>Edit tags for tracks that still need review. Reopen a previously edited track from the existing-track selector.</p>
+                    </div>
+                    <button type="button" class="btn-refresh editor-refresh-btn" id="songEditorRefresh" title="Refresh songs editor" aria-label="Refresh songs editor">
+                        <i data-lucide="refresh-cw" aria-hidden="true"></i><span>Refresh</span>
+                    </button>
                 </div>
                 <div class="editor-overview">
                     <div class="editor-stat-card">
