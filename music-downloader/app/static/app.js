@@ -122,7 +122,7 @@ async function loadEnhancedPositions() {
 }
 
 function persistCurrentPosition() {
-    const id=currentSongId();
+    const id = audio?.dataset?.xrobSongId || currentSongId();
     if(!id || !audio) return;
     const position=Number(audio.currentTime||0), duration=Number(audio.duration||0);
     enhancedSongPositions[id]={position,duration,updated_at:Date.now()/1000};
@@ -164,7 +164,12 @@ function recordPlay(id) {
                 duration: Number(audio?.duration || 0),
                 position
             })
-        });
+        })
+        .then(response => response.ok ? response.json() : null)
+        .then(data => {
+            if (data?.all_play_count !== undefined) applyLivePlayCount(data.all_play_count);
+        })
+        .catch(() => {});
     } catch (_) {}
 }
 
@@ -988,7 +993,8 @@ function toggleAudioStream(
     type,
     title,
     artist,
-    art
+    art,
+    songId = null
 ) {
 
     if (
@@ -1097,10 +1103,12 @@ function toggleAudioStream(
     }
 
 
+    // Keep the old song ID until pause() saves its final position.
     audio.pause();
 
     audio.removeAttribute("src");
 
+    audio.dataset.xrobSongId = String(songId || "");
     audio.src = absoluteUrl;
 
     audio.load();
@@ -1943,6 +1951,49 @@ async function refreshLibraryCache() {
 }
 
 
+const liveStats = {
+    tracks: null,
+    artists: null,
+    albums: null,
+    all_play_count: null,
+    total_bytes: null,
+    folder_size: null
+};
+
+function setLiveCounter(id, value) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) return;
+    element.textContent = String(Math.trunc(number));
+}
+
+function applyLiveStats(stats) {
+    if (!stats || stats.ready === false) return;
+
+    ["tracks", "artists", "albums", "all_play_count", "total_bytes"].forEach(key => {
+        const value = Number(stats[key]);
+        if (Number.isFinite(value) && value >= 0) liveStats[key] = value;
+    });
+    if (typeof stats.folder_size === "string" && stats.folder_size.trim()) liveStats.folder_size = stats.folder_size;
+
+    if (liveStats.tracks !== null) ["statTracks", "downloadStatTracks", "homeTracks", "statusTracks", "subsonicTracks"].forEach(id => setLiveCounter(id, liveStats.tracks));
+    if (liveStats.artists !== null) ["statArtists", "homeArtists", "statusArtists"].forEach(id => setLiveCounter(id, liveStats.artists));
+    if (liveStats.albums !== null) ["statAlbums", "downloadStatAlbums", "homeAlbums", "statusAlbums"].forEach(id => setLiveCounter(id, liveStats.albums));
+    if (liveStats.all_play_count !== null) ["homePlays", "statusPlays"].forEach(id => setLiveCounter(id, liveStats.all_play_count));
+    if (liveStats.folder_size !== null) {
+        const el = document.getElementById("statusSize");
+        if (el) el.textContent = liveStats.folder_size;
+    }
+}
+
+function applyLivePlayCount(value) {
+    const count = Number(value);
+    if (!Number.isFinite(count) || count < 0) return;
+    if (liveStats.all_play_count === null || count > liveStats.all_play_count) liveStats.all_play_count = count;
+    ["homePlays", "statusPlays"].forEach(id => setLiveCounter(id, liveStats.all_play_count));
+}
+
 async function loadStats() {
 
     const controller =
@@ -1978,63 +2029,9 @@ async function loadStats() {
         const stats =
             await response.json();
 
-        const values = {
-
-            statTracks:
-                stats.tracks || 0,
-
-            statArtists:
-                stats.artists || 0,
-
-            statAlbums:
-                stats.albums || 0,
-
-            downloadStatTracks:
-                stats.tracks || 0,
-
-            downloadStatAlbums:
-                stats.albums || 0,
-
-            homeTracks:
-                stats.tracks || 0,
-
-            homeArtists:
-                stats.artists || 0,
-
-            homeAlbums:
-                stats.albums || 0
-        };
-
-        Object.entries(
-            values
-        ).forEach(
-            ([id, value]) => {
-
-                const element =
-                    document.getElementById(
-                        id
-                    );
-
-                if (element) {
-                    element.textContent =
-                        value;
-                }
-            }
-        );
-
-        const statusMap = {
-            statusTracks: stats.tracks || 0,
-            statusAlbums: stats.albums || 0,
-            statusArtists: stats.artists || 0,
-            statusPlays: stats.all_play_count || 0,
-            statusSize: stats.folder_size || "0 MB"
-        };
-        Object.entries(statusMap).forEach(([id, value]) => {
-            const el = document.getElementById(id);
-            if (el) el.textContent = String(value);
-        });
+        applyLiveStats(stats);
         const subsonicStatus = document.getElementById("subsonicStatusValue");
-        if (subsonicStatus) subsonicStatus.textContent = `${stats.tracks || 0} tracks ready`;
+        if (subsonicStatus && liveStats.tracks !== null) subsonicStatus.textContent = `${liveStats.tracks} tracks ready`;
 
     } catch (error) {
 
@@ -2178,13 +2175,14 @@ function createTrackCard(file, queue = rawLibraryFiles) {
                     "library",
                     file.title || file.name,
                     file.artist || "Unknown Artist",
-                    cover
+                    cover,
+                    file.id || null
                 );
             }
             return;
         }
         currentPlayerSource = "library";
-        toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover);
+        toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover, file.id || null);
     };
     card.querySelector(".btn-preview")?.addEventListener("click", e => { e.stopPropagation(); play(); });
     card.querySelector(".btn-danger")?.addEventListener("click", e => { e.stopPropagation(); deleteFile(file.name); });
@@ -2262,7 +2260,7 @@ function filterLibrary() { renderLibraryView(); }
 function openArtist(id) { if (!libraryArtists.some(a => a.id === id)) return; selectedArtistId = id; selectedAlbumId = null; libraryView = "artist-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
 function openAlbum(id) { if (!libraryAlbums.some(a => a.id === id)) return; selectedAlbumId = id; selectedArtistId = null; libraryView = "album-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
 function playAlbum(id) { const album = libraryAlbums.find(a => a.id === id); if (!album) return showToast("Album not found"); const ids = new Set(album.song_ids || []); const tracks = rawLibraryFiles.filter(f => ids.has(f.id)); playQueue(tracks, 0, false); }
-function playLibraryTrack(index) { const queue = getLibraryQueue(); if (!queue.length || index < 0 || index >= queue.length) return; const file = queue[index]; currentPlayerSource = "library"; currentLibraryIndex = index; const encoded = encodeURIComponent(file.name || ""); const cover = file.cover || `api/library/cover/${encoded}`; const stream = file.stream || `api/library/stream/${encoded}`; const button = document.querySelector(`.result-card[data-library-name="${CSS.escape(file.name || "")}"] .btn-preview`) || document.createElement("button"); button.type = "button"; button.className = "btn-preview"; toggleAudioStream(button, stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover); }
+function playLibraryTrack(index) { const queue = getLibraryQueue(); if (!queue.length || index < 0 || index >= queue.length) return; const file = queue[index]; currentPlayerSource = "library"; currentLibraryIndex = index; const encoded = encodeURIComponent(file.name || ""); const cover = file.cover || `api/library/cover/${encoded}`; const stream = file.stream || `api/library/stream/${encoded}`; const button = document.querySelector(`.result-card[data-library-name="${CSS.escape(file.name || "")}"] .btn-preview`) || document.createElement("button"); button.type = "button"; button.className = "btn-preview"; toggleAudioStream(button, stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover, file.id || null); }
 
 async function deleteFile(filename) {
 
@@ -3573,9 +3571,10 @@ async function pollTasks(force = false) {
             );
 
 
+        const taskChanged = signature !== lastTaskSignature;
         if (
             force ||
-            signature !== lastTaskSignature
+            taskChanged
         ) {
 
             renderDownloads(
@@ -3583,6 +3582,10 @@ async function pollTasks(force = false) {
             );
         }
 
+        if (taskChanged && latestTasks.some(task => task.status === "completed")) {
+            loadStats().catch(() => {});
+            loadHome().catch(() => {});
+        }
 
         lastTaskSignature =
             signature;
@@ -4320,43 +4323,7 @@ async function loadHome() {
             data.stats || {};
 
 
-        const setText = (
-            id,
-            value
-        ) => {
-
-            const element =
-                document.getElementById(
-                    id
-                );
-
-            if (element) {
-
-                element.textContent =
-                    value ?? 0;
-            }
-        };
-
-
-        setText(
-            "homeTracks",
-            stats.tracks || 0
-        );
-
-        setText(
-            "homeArtists",
-            stats.artists || 0
-        );
-
-        setText(
-            "homeAlbums",
-            stats.albums || 0
-        );
-
-        setText(
-            "homeDownloads",
-            data.active_downloads || 0
-        );
+        applyLiveStats({ ...stats, ready: true });
 
 
         const recent =
@@ -4693,7 +4660,8 @@ function playHomeTrack(index) {
         "home",
         track.title,
         track.artist,
-        track.cover
+        track.cover,
+        track.id || null
     );
 }
 
@@ -4888,6 +4856,11 @@ async function startAppAfterAuth() {
     setInterval(
         () => pollTasks(),
         2000
+    );
+
+    setInterval(
+        () => loadStats().catch(() => {}),
+        5000
     );
 }
 
