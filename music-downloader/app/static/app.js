@@ -1978,10 +1978,6 @@ async function loadStats() {
         const stats =
             await response.json();
 
-        if (Number.isFinite(Number(stats.all_play_count))) {
-            window.__lastKnownPlayCount = Number(stats.all_play_count);
-        }
-
         const values = {
 
             statTracks:
@@ -2009,7 +2005,7 @@ async function loadStats() {
                 stats.albums || 0,
 
             homeDownloads:
-                stats.all_play_count ?? window.__lastKnownPlayCount ?? 0
+                stats.all_play_count || 0
         };
 
         Object.entries(
@@ -3013,8 +3009,7 @@ function updateQueueCounters(tasks) {
     [
         "queueCount",
         "mobQueueCount",
-        "downloadQueueCount",
-        "homeDownloads"
+        "downloadQueueCount"
     ].forEach(
         id => {
 
@@ -4362,11 +4357,8 @@ async function loadHome() {
 
         setText(
             "homeDownloads",
-            stats.all_play_count ?? window.__lastKnownPlayCount ?? 0
+            stats.all_play_count || 0
         );
-        if (Number.isFinite(Number(stats.all_play_count))) {
-            window.__lastKnownPlayCount = Number(stats.all_play_count);
-        }
 
 
         const recent =
