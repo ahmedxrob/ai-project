@@ -2067,7 +2067,9 @@ function renderLibraryView() {
 }
 
 function renderEmpty(list, icon, title, text = "") {
-    list.innerHTML = `<div class="downloads-empty"><div class="empty-icon">${icon}</div><div class="empty-title">${escapeHtml(title)}</div>${text ? `<div class="empty-text">${escapeHtml(text)}</div>` : ""}</div>`;
+    const iconName = /^[a-z0-9-]+$/i.test(String(icon || "")) ? String(icon) : "music-2";
+    list.innerHTML = `<div class="downloads-empty"><div class="empty-icon"><i data-lucide="${escapeHtml(iconName)}" aria-hidden="true"></i></div><div class="empty-title">${escapeHtml(title)}</div>${text ? `<div class="empty-text">${escapeHtml(text)}</div>` : ""}</div>`;
+    renderLocalIcons();
 }
 
 function playQueue(queue, index = 0, shuffle = false) {
@@ -2101,7 +2103,7 @@ function renderTracks(list, query) {
     });
     list.innerHTML = "";
     if (!files.length) {
-        renderEmpty(list, "🎵", rawLibraryFiles.length ? "No matching tracks" : "Your library is empty", rawLibraryFiles.length ? "Try another search." : "Downloaded tracks will appear here.");
+        renderEmpty(list, "music-2", rawLibraryFiles.length ? "No matching tracks" : "Your library is empty", rawLibraryFiles.length ? "Try another search." : "Downloaded tracks will appear here.");
         return;
     }
     files.forEach(file => list.appendChild(createTrackCard(file, files)));
@@ -2115,7 +2117,7 @@ function createTrackCard(file, queue = rawLibraryFiles) {
     card.className = "result-card";
     card.dataset.libraryName = file.name || "";
     const plays = Number(file.play_count ?? file.plays ?? 0);
-    card.innerHTML = `<div class="thumb-wrapper"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="track-play-count" title="${plays} play${plays === 1 ? "" : "s"}">▶ ${plays}</span></div><div class="track-info"><div class="track-title">${escapeHtml(file.title || file.name || "Unknown Track")}</div><div class="track-artist">${escapeHtml(file.artist || "Unknown Artist")} · ${escapeHtml(file.album || "Unknown Album")}</div><div class="track-meta-line"><span>${plays === 1 ? "1 play" : `${plays} plays`}</span></div></div><div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-danger">🗑 Delete</button></div>`;
+    card.innerHTML = `<div class="thumb-wrapper"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="track-play-count" title="${plays} play${plays === 1 ? "" : "s"}"><i data-lucide="play" aria-hidden="true"></i> ${plays}</span></div><div class="track-info"><div class="track-title">${escapeHtml(file.title || file.name || "Unknown Track")}</div><div class="track-artist">${escapeHtml(file.artist || "Unknown Artist")} · ${escapeHtml(file.album || "Unknown Album")}</div><div class="track-meta-line"><span>${plays === 1 ? "1 play" : `${plays} plays`}</span></div></div><div class="btn-group"><button type="button" class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button type="button" class="btn-danger"><i data-lucide="trash-2" aria-hidden="true"></i> Delete</button></div>`;
     card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), { once: true });
     const play = () => {
         const activeQueue = getLibraryQueue();
@@ -2157,7 +2159,7 @@ function createTrackCard(file, queue = rawLibraryFiles) {
 function renderArtists(list, query) {
     const artists = libraryArtists.filter(a => !query || String(a.name || "").toLowerCase().includes(query));
     list.innerHTML = "";
-    if (!artists.length) return renderEmpty(list, "👤", "No artists found", query ? "Try another search." : "Scan your library to build the artist catalog.");
+    if (!artists.length) return renderEmpty(list, "user-round", "No artists found", query ? "Try another search." : "Scan your library to build the artist catalog.");
     artists.forEach(artist => {
         const card = document.createElement("article");
         card.className = "catalog-card artist-card";
@@ -2172,7 +2174,7 @@ function renderArtists(list, query) {
 function renderAlbums(list, query) {
     const albums = libraryAlbums.filter(a => !query || `${a.name || ""} ${a.artist || ""}`.toLowerCase().includes(query));
     list.innerHTML = "";
-    if (!albums.length) return renderEmpty(list, "💿", "No albums found", query ? "Try another search." : "Scan your library to build the album catalog.");
+    if (!albums.length) return renderEmpty(list, "disc-3", "No albums found", query ? "Try another search." : "Scan your library to build the album catalog.");
     albums.forEach(album => list.appendChild(createAlbumCard(album)));
 }
 
@@ -4698,13 +4700,21 @@ function renderLocalIcons() {
         'pencil-line': [['path','M12 20h9'],['path','M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z']],
         'square-pen': [['path','M12 20h9'],['path','M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z']],
         'log-out': [['path','m10 17 5-5-5-5'],['path','M15 12H3'],['path','M21 19V5a2 2 0 0 0-2-2h-5']],
+        'grip-vertical': [['circle','9 5 1'],['circle','15 5 1'],['circle','9 12 1'],['circle','15 12 1'],['circle','9 19 1'],['circle','15 19 1']],
+        'trash-2': [['path','M3 6h18'],['path','M8 6V4h8v2'],['path','M19 6l-1 14H6L5 6'],['path','M10 11v5'],['path','M14 11v5']],
+        'x': [['path','M18 6 6 18'],['path','m6 6 12 12']],
+        'arrow-left': [['path','m12 19-7-7 7-7'],['path','M5 12h14']],
+        'clock-3': [['circle','12 12 9'],['path','M12 7v5l3 2']],
+        'circle-check': [['circle','12 12 9'],['path','m9 12 2 2 4-4']],
+        'search-x': [['circle','11 11 7'],['path','m20 20-4-4'],['path','m8.5 8.5 5 5'],['path','m13.5 8.5-5 5']],
+
         'refresh-cw': [['path','M20 11a8 8 0 0 0-14.9-4'],['path','M4 5v4h4'],['path','M4 13a8 8 0 0 0 14.9 4'],['path','M20 19v-4h-4']],
         broom: [['path','m3 21 9-9'],['path','m14 3 7 7'],['path','m16 3 5 5']],
         'volume-2': [['path','M11 5 6 9H3v6h3l5 4z'],['path','M15.5 8.5a5 5 0 0 1 0 7'],['path','M18.5 5.5a9 9 0 0 1 0 13']],
         play: [['path','m8 5 11 7-11 7z']],
         'skip-back': [['path','M19 20 9 12l10-8v16'],['path','M5 19V5']],
         'skip-forward': [['path','m5 4 10 8-10 8V4'],['path','M19 5v14']],
-        shuffle: [['path','m3 3 18 18'],['path','M16 3h5v5'],['path','m3 21 5-5'],['path','M16 16h5v5']],
+        shuffle: [['path','M3 6h3c3 0 4 6 7 6h8'],['path','m18 9 3 3-3 3'],['path','M3 18h3c3 0 4-6 7-6h2'],['path','m18 3 3 3-3 3']],
     };
     const ns = 'http://www.w3.org/2000/svg';
     document.querySelectorAll('[data-lucide]').forEach(el => {
@@ -4977,6 +4987,7 @@ function renderEnhancedQueue() {
 
         box.appendChild(row);
     });
+    renderLocalIcons();
 }
 
 function setEnhancedQueue(queue, index = 0) {
@@ -4999,14 +5010,15 @@ async function renderLibraryCollections(mode){
     let endpoint=mode==="recent"?"recent":mode==="most"?"most_played":null;
     if(!endpoint)return;
     const r=await fetch("api/library/recent-most",{cache:"no-store"}); const d=await r.json(); const rows=d[endpoint]||[]; list.innerHTML="";
-    if(!rows.length){renderEmpty(list,"🎧",mode==="recent"?"Nothing recently played":"No play history yet","Play some tracks to build this list.");return;}
+    if(!rows.length){renderEmpty(list,"clock-3",mode==="recent"?"Nothing recently played":"No play history yet","Play some tracks to build this list.");return;}
     rows.forEach((t, rank)=>{ const f={...t,name:t.title,stream:t.stream,cover:t.cover,play_count:Number(t.plays||0)}; const card=createTrackCard(f,rows); card.classList.add("collection-track"); card.dataset.rank=String(rank+1); list.appendChild(card); });
 }
 
 async function loadPlaylistsView(){
     const list=document.getElementById("libraryList"); if(!list)return; const r=await fetch("api/playlists",{cache:"no-store"}); const rows=await r.json(); list.innerHTML="";
-    const head=document.createElement("div"); head.className="catalog-detail-header"; head.innerHTML='<div><h3>Playlists</h3><p>Create manual or smart playlists.</p></div><button class="btn-preview" id="newPlaylistBtn">＋ New playlist</button>'; list.appendChild(head);
-    rows.forEach(p=>{const c=document.createElement("article");c.className="catalog-card";c.innerHTML=`<div><strong>${escapeHtml(p.name)}</strong><span>${p.kind==='smart'?'Smart':'Manual'} · ${p.song_count} tracks</span></div><div class="btn-group"><button class="btn-preview">▶ Play</button><button class="btn-danger">Delete</button></div>`;c.querySelector('.btn-preview').onclick=async()=>{const rr=await fetch(`api/playlists/${encodeURIComponent(p.id)}`);const full=await rr.json();setEnhancedQueue(full.tracks,0);playLibraryTrack(0);};c.querySelector('.btn-danger').onclick=async()=>{if(confirm(`Delete ${p.name}?`)){await fetch(`api/playlists/${encodeURIComponent(p.id)}`,{method:'DELETE'});loadPlaylistsView();}};list.appendChild(c);});
+    const head=document.createElement("div"); head.className="catalog-detail-header"; head.innerHTML='<div><h3>Playlists</h3><p>Create manual or smart playlists.</p></div><button class="btn-preview" id="newPlaylistBtn"><i data-lucide="plus" aria-hidden="true"></i> New playlist</button>'; list.appendChild(head);
+    rows.forEach(p=>{const c=document.createElement("article");c.className="catalog-card";c.innerHTML=`<div><strong>${escapeHtml(p.name)}</strong><span>${p.kind==='smart'?'Smart':'Manual'} · ${p.song_count} tracks</span></div><div class="btn-group"><button class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button class="btn-danger"><i data-lucide="trash-2" aria-hidden="true"></i> Delete</button></div>`;c.querySelector('.btn-preview').onclick=async()=>{const rr=await fetch(`api/playlists/${encodeURIComponent(p.id)}`);const full=await rr.json();setEnhancedQueue(full.tracks,0);playLibraryTrack(0);};c.querySelector('.btn-danger').onclick=async()=>{if(confirm(`Delete ${p.name}?`)){await fetch(`api/playlists/${encodeURIComponent(p.id)}`,{method:'DELETE'});loadPlaylistsView();}};list.appendChild(c);});
+    renderLocalIcons();
     document.getElementById("newPlaylistBtn").onclick=async()=>{const name=prompt("Playlist name","New Playlist");if(!name)return;const kind=confirm("Make this a smart playlist?\nOK = smart, Cancel = manual")?'smart':'manual';let rules={};if(kind==='smart'){const genre=prompt("Genre rule (optional)","");const artist=prompt("Artist rule (optional)","");if(genre)rules.genre=genre;if(artist)rules.artist=artist;}await fetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind,rules,song_ids:[]})});loadPlaylistsView();};
 }
 
@@ -5022,7 +5034,8 @@ function renderSongEditorTracks(query = "") {
     });
     list.innerHTML = "";
     if (!tracks.length) {
-        list.innerHTML = `<div class="editor-empty"><div class="empty-title">${q ? "No matching tracks" : "All caught up"}</div><div>${q ? "Try another search." : "New downloads will appear here automatically."}</div></div>`;
+        list.innerHTML = `<div class="editor-empty"><div class="empty-icon"><i data-lucide="${q ? 'search-x' : 'circle-check'}" aria-hidden="true"></i></div><div class="empty-title">${q ? "No matching tracks" : "All caught up"}</div><div>${q ? "Try another search." : "New downloads will appear here automatically."}</div></div>`;
+        renderLocalIcons();
         return;
     }
     tracks.forEach(track => {
@@ -5060,12 +5073,17 @@ async function loadSongEditor(){
         const select = document.getElementById("songEditorImportSelect");
         if (select) {
             const existing = select.value;
-            select.innerHTML = '<option value="">Choose a library track…</option>';
-            const allTracks = Array.isArray(rawLibraryFiles) && rawLibraryFiles.length ? rawLibraryFiles : songEditorTracks;
-            allTracks.forEach(t => {
-                const o=document.createElement('option'); o.value=t.id||''; o.textContent=`${t.title||t.name||'Unknown Track'} — ${t.artist||'Unknown Artist'}`; select.appendChild(o);
+            select.innerHTML = '<option value="">Choose an edited library track…</option>';
+            const editedTracks = Array.isArray(d.edited_tracks) ? d.edited_tracks : [];
+            editedTracks.forEach(t => {
+                const o=document.createElement('option');
+                o.value=t.id||'';
+                o.textContent=`${t.title||t.name||'Unknown Track'} — ${t.artist||'Unknown Artist'}`;
+                select.appendChild(o);
             });
             if(existing && [...select.options].some(o=>o.value===existing)) select.value=existing;
+            select.disabled = editedTracks.length === 0;
+            select.title = editedTracks.length ? 'Choose a previously edited library track to reopen it' : 'No previously edited tracks yet';
         }
         renderSongEditorTracks(document.getElementById("songEditorSearch")?.value || "");
     } catch (err) {
