@@ -104,6 +104,10 @@ AUTH_SESSIONS = {}
 def _auth_token():
     return secrets.token_urlsafe(32)
 
+def _current_web_credentials():
+    settings = load_settings()
+    return str(settings.get("web_username") or AUTH_USER), str(settings.get("web_password") or AUTH_PASSWORD)
+
 def _is_authenticated(token):
     if not token:
         return False
@@ -155,6 +159,8 @@ DEFAULT_SETTINGS = {
     "scan_interval_minutes": 60,
     "subsonic_user": "admin",
     "subsonic_password": "",
+    "web_username": os.getenv("XROB_USERNAME", "admin"),
+    "web_password": os.getenv("XROB_PASSWORD", "admin"),
 }
 
 AUDIO_FORMATS = {"mp3", "flac", "m4a", "opus", "ogg", "wav", "aac", "alac"}
@@ -394,9 +400,12 @@ def save_settings(data: dict):
     settings = load_settings()
     allowed = {
         "audio_format", "audio_quality", "embed_thumbnail",
-        "embed_metadata", "organize_by_artist",
+        "embed_metadata", "organize_by_artist", "scan_enabled",
+        "scan_interval_minutes", "web_username", "web_password",
     }
 
+    old_user = str(settings.get("web_username") or "")
+    old_password = str(settings.get("web_password") or "")
     for key in allowed & data.keys():
         settings[key] = data[key]
 
@@ -413,10 +422,16 @@ def save_settings(data: dict):
     settings["embed_thumbnail"] = bool(settings.get("embed_thumbnail"))
     settings["embed_metadata"] = bool(settings.get("embed_metadata"))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist"))
+    settings["scan_enabled"] = bool(settings.get("scan_enabled", True))
+    settings["scan_interval_minutes"] = max(5, int(settings.get("scan_interval_minutes", 60) or 60))
+    settings["web_username"] = str(settings.get("web_username") or os.getenv("XROB_USERNAME", "admin"))[:64]
+    settings["web_password"] = str(settings.get("web_password") or os.getenv("XROB_PASSWORD", "admin"))[:256]
 
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
+    if old_user != settings.get("web_username") or ("web_password" in data and old_password != settings.get("web_password")):
+        AUTH_SESSIONS.clear()
 
     return settings
 
@@ -426,6 +441,9 @@ def public_settings():
     # Subsonic credentials are add-on/server configuration, not web UI settings.
     settings.pop("subsonic_user", None)
     settings.pop("subsonic_password", None)
+    settings["web_password_set"] = bool(settings.get("web_password"))
+    settings["web_username"] = str(settings.get("web_username") or "admin")
+    settings.pop("web_password", None)
     settings["storage"] = storage_info_sync()
     return settings
 
@@ -500,6 +518,7 @@ def init_db():
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS song_review (song_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', actioned_at REAL DEFAULT 0)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS artist_artwork (artist_id TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, updated_at REAL NOT NULL)""")
         # Playlist extensions are additive and preserve the existing schema.
         playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
         if "kind" not in playlist_cols:
@@ -2462,6 +2481,7 @@ async def api_library():
             "album_count": len(album_ids),
             "song_ids": sorted(song_ids),
             "album_ids": album_ids,
+            "cover": f"/api/library/artist-artwork/{artist['id']}",
         })
     artists.sort(key=lambda item: item["name"].lower())
 
@@ -2511,17 +2531,18 @@ async def api_stats():
     artists = library["artists"]
     albums = library["albums"]
 
-    total = sum(
-        song["size"]
-        for song in songs
-    )
-
+    total = sum(song["size"] for song in songs)
+    with db_connect() as conn:
+        all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+        distinct_played = int(conn.execute("SELECT COUNT(DISTINCT song_id) FROM play_history").fetchone()[0])
     return {
         "tracks": len(songs),
         "artists": len(artists),
         "albums": len(albums),
         "total_bytes": total,
         "folder_size": format_size(total),
+        "all_play_count": all_play_count,
+        "played_tracks": distinct_played,
     }
 
 
@@ -5544,16 +5565,19 @@ async def api_library_scan_status():
 async def api_auth_login(payload: dict = Body(...)):
     user = str(payload.get("username") or "")
     password = str(payload.get("password") or "")
-    if not secrets.compare_digest(user, AUTH_USER) or not secrets.compare_digest(password, AUTH_PASSWORD):
+    expected_user, expected_password = _current_web_credentials()
+    if not secrets.compare_digest(user, expected_user) or not secrets.compare_digest(password, expected_password):
         raise HTTPException(401, "Invalid username or password")
     token = _auth_token(); AUTH_SESSIONS[token] = time.time()
-    response = JSONResponse({"status":"ok", "username":AUTH_USER})
-    response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_TTL, httponly=True, samesite="lax")
+    response = JSONResponse({"status":"ok", "username":expected_user})
+    response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_TTL, httponly=True, samesite="lax", secure=request.url.scheme == "https")
     return response
 
 @app.get("/api/auth/status")
 async def api_auth_status(request: Request):
-    return {"authenticated": _is_authenticated(request.cookies.get(AUTH_COOKIE)), "username": AUTH_USER if _is_authenticated(request.cookies.get(AUTH_COOKIE)) else None}
+    authenticated = _is_authenticated(request.cookies.get(AUTH_COOKIE))
+    expected_user, _ = _current_web_credentials()
+    return {"authenticated": authenticated, "username": expected_user if authenticated else None}
 
 @app.post("/api/auth/logout")
 async def api_auth_logout(request: Request):
@@ -5637,6 +5661,26 @@ async def api_song_editor_skip(song_id:str):
     with db_connect() as conn:
         conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'skipped',?) ON CONFLICT(song_id) DO UPDATE SET state='skipped',actioned_at=excluded.actioned_at",(song_id,time.time())); conn.commit()
     return {"status":"ok"}
+
+
+@app.get("/api/library/artist-artwork/{artist_id}")
+async def api_artist_artwork(artist_id: str):
+    with db_connect() as conn:
+        row = conn.execute("SELECT data,mime FROM artist_artwork WHERE artist_id=?", (artist_id,)).fetchone()
+    if not row: raise HTTPException(404, "Artist artwork not found")
+    return Response(content=row[0], media_type=row[1])
+
+@app.post("/api/library/artist-artwork/{artist_id}")
+async def api_artist_artwork_upload(artist_id: str, upload: UploadFile = File(...)):
+    data = await upload.read()
+    if not data or len(data) > 15 * 1024 * 1024: raise HTTPException(400, "Invalid artwork")
+    mime = upload.content_type or "image/jpeg"
+    if mime not in {"image/jpeg","image/png","image/webp"}: raise HTTPException(400, "Use JPEG, PNG or WebP artwork")
+    with db_connect() as conn:
+        conn.execute("INSERT INTO artist_artwork(artist_id,data,mime,updated_at) VALUES(?,?,?,?) ON CONFLICT(artist_id) DO UPDATE SET data=excluded.data,mime=excluded.mime,updated_at=excluded.updated_at", (artist_id,data,mime,time.time()))
+        conn.commit()
+    invalidate_library_cache()
+    return {"status":"ok","artist_id":artist_id}
 
 @app.post("/api/library/artwork/{song_id}")
 async def api_library_artwork(song_id:str, upload:UploadFile=File(...)):
