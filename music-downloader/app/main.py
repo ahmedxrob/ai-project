@@ -195,6 +195,8 @@ LIBRARY_CACHE = None
 LIBRARY_CACHE_TIME = 0.0
 LIBRARY_CACHE_TTL = 10.0
 LIBRARY_CACHE_LOCK = asyncio.Lock()
+LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
+LIBRARY_WARMUP_TASK = None
 
 
 # ============================================================
@@ -249,7 +251,7 @@ def migrate_legacy_db(source: Path, destination: Path):
 
 def configure_storage():
     """Apply the configured library path and prepare its local metadata cache."""
-    global DOWNLOAD_DIR, COVER_CACHE_DIR, SETTINGS_FILE, DB_FILE
+    global DOWNLOAD_DIR, COVER_CACHE_DIR, SETTINGS_FILE, DB_FILE, LIBRARY_INDEX_FILE
 
     addon = load_addon_options()
     configured = str(addon.get("music_path") or "").strip()
@@ -269,6 +271,7 @@ def configure_storage():
     legacy_db = DOWNLOAD_DIR / "tasks.db"
     legacy_settings = DOWNLOAD_DIR / ".settings.json"
     SETTINGS_FILE = DATA_DIR / "settings.json"
+    LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
 AUTH_USER = os.getenv("XROB_USERNAME", "admin")
 AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "admin")
 AUTH_COOKIE = "xrob_session"
@@ -1059,6 +1062,86 @@ def make_album_id(
 
 
 # ============================================================
+# FAST LIBRARY INDEX
+# ============================================================
+
+def _load_library_index_sync():
+    if not LIBRARY_INDEX_FILE.exists():
+        return {}
+    try:
+        with open(LIBRARY_INDEX_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_library_index_sync(entries):
+    tmp = LIBRARY_INDEX_FILE.with_suffix(".tmp")
+    payload = {"version": 1, "entries": entries}
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+    tmp.replace(LIBRARY_INDEX_FILE)
+
+def _fast_file_library_sync():
+    files = get_audio_files_sync()
+    rows = []
+    for path in files:
+        try:
+            st = path.stat()
+            rel = str(path.relative_to(DOWNLOAD_DIR))
+            rows.append({"path": rel, "size": st.st_size, "mtime_ns": st.st_mtime_ns, "title": path.stem})
+        except OSError:
+            continue
+    rows.sort(key=lambda x: x["path"].lower())
+    return rows
+
+async def fast_library_snapshot():
+    rows = await asyncio.to_thread(_fast_file_library_sync)
+    index = await asyncio.to_thread(_load_library_index_sync)
+    cached = index.get("entries", {}) if isinstance(index, dict) else {}
+    files=[]
+    total=0
+    for row in rows:
+        total += int(row["size"] or 0)
+        cached_row = cached.get(row["path"], {}) if isinstance(cached, dict) else {}
+        title = cached_row.get("title") or row["title"]
+        artist = cached_row.get("artist") or "Unknown Artist"
+        album = cached_row.get("album") or "Unknown Album"
+        enc = urllib.parse.quote(row["path"], safe="/")
+        files.append({"name": row["path"], "title": title, "artist": artist, "album": album, "size": format_size(row["size"]), "bytes": row["size"], "duration": safe_float(cached_row.get("duration"), 0), "play_count": 0, "cover": "/api/library/cover/"+enc, "stream": "/api/library/stream/"+enc})
+    # Cached metadata can provide artist/album counts before the full scan finishes.
+    artists=set(); albums=set()
+    for v in cached.values() if isinstance(cached, dict) else []:
+        if v.get("artist"): artists.add(str(v["artist"]).strip().lower())
+        if v.get("album"):
+            albums.add((str(v.get("artist") or "Unknown Artist").strip().lower(), str(v["album"]).strip().lower()))
+    return {"files": files, "total_size": format_size(total), "total_bytes": total, "artists_count": len(artists), "albums_count": len(albums), "ready": False, "storage": await asyncio.to_thread(storage_info_sync)}
+
+async def persist_library_index(library):
+    entries={}
+    for song in library.get("songs", []):
+        try:
+            st=song["path"].stat()
+            entries[str(song["path"].relative_to(DOWNLOAD_DIR))]={"mtime_ns":st.st_mtime_ns,"size":st.st_size,"title":song.get("title"),"artist":song.get("artist"),"album":song.get("album"),"album_artist":song.get("albumArtist"),"genre":song.get("genre"),"year":song.get("year"),"track":song.get("track"),"disc":song.get("disc"),"duration":song.get("duration"),"bit_rate":song.get("bit_rate"),"sample_rate":song.get("sample_rate"),"channels":song.get("channels"),"bit_depth":song.get("bit_depth")}
+        except Exception:
+            pass
+    try:
+        await asyncio.to_thread(_save_library_index_sync, entries)
+    except Exception as exc:
+        print("Warning: could not save library index:", exc)
+
+async def background_library_warmup():
+    global LIBRARY_WARMUP_TASK
+    try:
+        library = await build_library(force=True)
+        await persist_library_index(library)
+    except Exception as exc:
+        print("Library warmup failed:", exc)
+    finally:
+        LIBRARY_WARMUP_TASK = None
+
+# ============================================================
 # BUILD LIBRARY
 # ============================================================
 
@@ -1076,6 +1159,8 @@ async def build_library(force=False):
 
         files = await get_all_audio_files()
         files.sort(key=lambda path: str(path).lower())
+        disk_index = await asyncio.to_thread(_load_library_index_sync)
+        disk_entries = disk_index.get("entries", {}) if isinstance(disk_index, dict) else {}
 
         songs = []
         artists = {}
@@ -1085,7 +1170,12 @@ async def build_library(force=False):
         for path in files:
             try:
                 stat = path.stat()
-                metadata = await read_metadata(path)
+                rel = str(path.relative_to(DOWNLOAD_DIR))
+                cached_disk = disk_entries.get(rel) if isinstance(disk_entries, dict) else None
+                if cached_disk and int(cached_disk.get("mtime_ns", -1)) == int(stat.st_mtime_ns) and int(cached_disk.get("size", -1)) == int(stat.st_size):
+                    metadata = dict(cached_disk)
+                else:
+                    metadata = await read_metadata(path)
             except Exception:
                 continue
 
@@ -1798,6 +1888,9 @@ async def startup_event():
         )
 
     asyncio.create_task(scheduled_library_scanner())
+    global LIBRARY_WARMUP_TASK
+    if LIBRARY_WARMUP_TASK is None:
+        LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
 
     for task in TASKS.values():
 
@@ -2418,6 +2511,11 @@ async def api_delete_task(
 
 @app.get("/api/library")
 async def api_library():
+    global LIBRARY_WARMUP_TASK
+    if LIBRARY_CACHE is None:
+        if LIBRARY_WARMUP_TASK is None:
+            LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
+        return await fast_library_snapshot()
 
     files = await get_all_audio_files()
 
@@ -2510,6 +2608,7 @@ async def api_library():
         "storage": storage_info_sync(),
         "artists": artists,
         "albums": albums,
+        "ready": True,
     }
 
 
@@ -2523,6 +2622,11 @@ async def api_library_scan():
 
 @app.get("/api/stats")
 async def api_stats():
+    if LIBRARY_CACHE is None:
+        snap = await fast_library_snapshot()
+        with db_connect() as conn:
+            all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+        return {"tracks": len(snap["files"]), "artists": snap.get("artists_count", 0), "albums": snap.get("albums_count", 0), "total_bytes": snap["total_bytes"], "folder_size": snap["total_size"], "all_play_count": all_play_count, "played_tracks": 0, "ready": False}
 
     library = await build_library()
 
