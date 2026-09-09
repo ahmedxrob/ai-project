@@ -112,3 +112,12 @@ NOTES
 - Clear Queue keeps the currently playing library track and removes upcoming tracks only.
 - Current queue item cannot be removed while it is playing, preventing invalid playback state.
 - Queue, dialog and mobile-player layering were corrected to avoid controls being hidden behind the player or bottom navigation.
+
+
+## Songs Editor / UI polish update
+
+- Songs Editor review list contains only tracks still in `pending` review state.
+- The existing-track selector now lists only library tracks whose review state is `edited`, allowing a previously edited song to be reopened without showing all pending/new songs.
+- Reopening an edited track returns it to the pending review queue, where it can be edited again normally.
+- Replaced inconsistent emoji/text controls in the enhanced queue, library track actions, playlists, search/close controls, and empty states with the app’s local Lucide-style SVG icon system.
+- Improved queue drawer, modal surfaces, icon buttons, editor search controls, empty states, and mobile spacing while preserving existing functionality.
