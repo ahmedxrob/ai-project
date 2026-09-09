@@ -5550,7 +5550,7 @@ async def api_recent_most():
     library=await build_library()
     by_id={s["id"]:s for s in library["songs"]}
     with db_connect() as conn:
-        recent=conn.execute("SELECT song_id, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY t DESC LIMIT 24").fetchall()
+        recent=conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY t DESC LIMIT 24").fetchall()
         most=conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY c DESC, t DESC LIMIT 24").fetchall()
     def pack(rows):
         out=[]
