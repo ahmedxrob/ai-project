@@ -71,6 +71,8 @@ let savedPlayerState = {
 let playerRepeatMode = localStorage.getItem("xrob_music_repeat") || "off";
 let enhancedQueue = [];
 let enhancedQueueIndex = -1;
+let enhancedNaturalQueue = [];
+let homeNaturalQueue = [];
 let enhancedSongPositions = {};
 let lastRecordedTrackId = null;
 const ENHANCED_QUEUE_KEY = "xrob_music_up_next_queue";
@@ -85,11 +87,11 @@ function currentSongId() {
 }
 
 function saveEnhancedQueue() {
-    try { localStorage.setItem(ENHANCED_QUEUE_KEY, JSON.stringify({queue: enhancedQueue, index: enhancedQueueIndex})); } catch (_) {}
+    try { localStorage.setItem(ENHANCED_QUEUE_KEY, JSON.stringify({queue: enhancedQueue, natural: enhancedNaturalQueue, index: enhancedQueueIndex})); } catch (_) {}
 }
 
 function loadEnhancedQueue() {
-    try { const v=JSON.parse(localStorage.getItem(ENHANCED_QUEUE_KEY)||"null"); if(v?.queue?.length) { enhancedQueue=v.queue; enhancedQueueIndex=Number.isInteger(v.index)?v.index:-1; libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; } } catch (_) {}
+    try { const v=JSON.parse(localStorage.getItem(ENHANCED_QUEUE_KEY)||"null"); if(v?.queue?.length) { enhancedQueue=v.queue; enhancedNaturalQueue=Array.isArray(v.natural)&&v.natural.length?v.natural:[...v.queue]; enhancedQueueIndex=Number.isInteger(v.index)?v.index:-1; libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; } } catch (_) {}
 }
 
 async function loadEnhancedPositions() {
@@ -200,6 +202,10 @@ function getLibraryQueue() {
     return Array.isArray(libraryPlaybackQueue) ? libraryPlaybackQueue : (Array.isArray(rawLibraryFiles) ? rawLibraryFiles : []);
 }
 
+function queueId(track) {
+    return track?.id || track?.name || track?.path || null;
+}
+
 function shuffledCopy(items) {
     const copy = [...items];
     for (let i = copy.length - 1; i > 0; i -= 1) {
@@ -209,20 +215,120 @@ function shuffledCopy(items) {
     return copy;
 }
 
-function setShuffle(enabled) {
-    playerShuffle = Boolean(enabled);
+function syncLibraryQueue() {
+    if (enhancedQueue.length) {
+        libraryPlaybackQueue = enhancedQueue;
+        currentLibraryIndex = enhancedQueueIndex;
+    } else if (!Array.isArray(libraryPlaybackQueue) || !libraryPlaybackQueue.length) {
+        libraryPlaybackQueue = Array.isArray(rawLibraryFiles) ? [...rawLibraryFiles] : [];
+    }
+}
+
+function getActiveQueue() {
+    if (currentPlayerSource === "library") {
+        syncLibraryQueue();
+        return getLibraryQueue();
+    }
+    return Array.isArray(window.xrobHomeQueue) ? window.xrobHomeQueue : [];
+}
+
+function getActiveQueueIndex() {
+    return currentPlayerSource === "library"
+        ? currentLibraryIndex
+        : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1);
+}
+
+function setActiveQueueIndex(index) {
+    if (currentPlayerSource === "library") {
+        currentLibraryIndex = index;
+        if (enhancedQueue.length) enhancedQueueIndex = index;
+    } else {
+        window.xrobHomeQueueIndex = index;
+    }
+}
+
+function setShuffle(enabled, {rebuild = true} = {}) {
+    const next = Boolean(enabled);
+    if (next === playerShuffle && !rebuild) {
+        updateShuffleButtons();
+        return;
+    }
+    playerShuffle = next;
     localStorage.setItem("xrob_music_shuffle", String(playerShuffle));
-    const buttons = [document.getElementById("gp-shuffle-btn"), document.getElementById("libraryShuffleButton")];
-    buttons.forEach(button => button?.classList.toggle("active", playerShuffle));
+    updateShuffleButtons();
+
+    if (!rebuild) return;
+
+    const queue = getActiveQueue();
+    const index = getActiveQueueIndex();
+    if (!queue.length) return;
+
+    if (playerShuffle) {
+        if (currentPlayerSource === "library" && enhancedQueue.length && !enhancedNaturalQueue.length) enhancedNaturalQueue = [...queue];
+        if (currentPlayerSource === "home" && !homeNaturalQueue.length) homeNaturalQueue = [...queue];
+        const current = index >= 0 && index < queue.length ? queue[index] : null;
+        const remaining = queue.filter((track, i) => i !== index);
+        const ordered = current ? [current, ...shuffledCopy(remaining)] : shuffledCopy(queue);
+        if (currentPlayerSource === "library") {
+            libraryPlaybackQueue = ordered;
+            currentLibraryIndex = current ? 0 : 0;
+            if (enhancedQueue.length) {
+                enhancedQueue = [...ordered];
+                enhancedQueueIndex = currentLibraryIndex;
+            }
+        } else {
+            window.xrobHomeQueue = ordered;
+            window.xrobHomeQueueIndex = current ? 0 : 0;
+        }
+    } else {
+        const current = index >= 0 && index < queue.length ? queue[index] : null;
+        const base = currentPlayerSource === "library" ? (enhancedQueue.length ? enhancedNaturalQueue : rawLibraryFiles) : (homeNaturalQueue.length ? homeNaturalQueue : (window.xrobHomeQueue || []));
+        if (Array.isArray(base) && base.length) {
+            const currentId = queueId(current);
+            const baseIndex = base.findIndex(t => queueId(t) === currentId);
+            if (currentPlayerSource === "library") {
+                libraryPlaybackQueue = [...base];
+                currentLibraryIndex = Math.max(0, baseIndex);
+                if (enhancedQueue.length) {
+                    enhancedQueue = [...base];
+                    enhancedQueueIndex = currentLibraryIndex;
+                }
+            } else {
+                window.xrobHomeQueue = [...base];
+                window.xrobHomeQueueIndex = Math.max(0, baseIndex);
+            }
+        }
+    }
+    if (currentPlayerSource === "library") saveEnhancedQueue();
+    if (typeof renderEnhancedQueue === "function") renderEnhancedQueue();
+}
+
+function updateShuffleButtons() {
+    [document.getElementById("gp-shuffle-btn"), document.getElementById("libraryShuffleButton")]
+        .forEach(button => button?.classList.toggle("active", playerShuffle));
+}
+
+function toggleShuffle() {
+    if (!getActiveQueue().length) {
+        showToast("No tracks in the current queue");
+        return;
+    }
+    setShuffle(!playerShuffle, {rebuild: true});
 }
 
 function shuffleLibrary() {
     if (!rawLibraryFiles.length) { showToast("No tracks to shuffle"); return; }
     libraryView = "tracks";
-    selectedArtistId = null; selectedAlbumId = null;
+    selectedArtistId = null;
+    selectedAlbumId = null;
     document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.libraryView === "tracks"));
     renderLibraryView();
-    playQueue(rawLibraryFiles, 0, true);
+    currentPlayerSource = "library";
+    libraryPlaybackQueue = [...rawLibraryFiles];
+    currentLibraryIndex = 0;
+    playerShuffle = false;
+    setShuffle(true, {rebuild: true});
+    playLibraryTrack(0);
 }
 
 /* ============================================================
@@ -1099,61 +1205,20 @@ function bindAudioEvents() {
                 return;
             }
 
-            if (typeof playerRepeatMode !== "undefined" && playerRepeatMode === "queue" && currentPlayerSource === "library" && getLibraryQueue().length && currentLibraryIndex >= getLibraryQueue().length - 1) {
-                playLibraryTrack(0);
-                return;
-            }
-
-            if (
-                currentPlayerSource ===
-                "home"
-            ) {
-
-                const queue =
-                    window.xrobHomeQueue || [];
-
-                const currentIndex =
-                    Number.isInteger(
-                        window.xrobHomeQueueIndex
-                    )
-                        ? window.xrobHomeQueueIndex
-                        : -1;
-
-                if (
-                    queue.length &&
-                    currentIndex >= 0 &&
-                    currentIndex <
-                        queue.length - 1
-                ) {
-
-                    playHomeTrack(
-                        currentIndex + 1
-                    );
-
+            const queue = getActiveQueue();
+            const currentIndex = getActiveQueueIndex();
+            if (queue.length && currentIndex >= 0) {
+                const atEnd = currentIndex >= queue.length - 1;
+                if (playerRepeatMode === "queue" && atEnd) {
+                    setActiveQueueIndex(0);
+                    if (currentPlayerSource === "library") playLibraryTrack(0);
+                    else playHomeTrack(0);
                     return;
                 }
-            }
-
-
-            if (
-                currentPlayerSource ===
-                "library"
-            ) {
-
-                const queue = getLibraryQueue();
-                const nextIndex = playerShuffle
-                    ? Math.floor(Math.random() * queue.length)
-                    : currentLibraryIndex + 1;
-
-                if (
-                    queue.length &&
-                    nextIndex < queue.length
-                ) {
-
-                    playLibraryTrack(
-                        nextIndex
-                    );
-
+                if (!atEnd) {
+                    const nextIndex = currentIndex + 1;
+                    if (currentPlayerSource === "library") playLibraryTrack(nextIndex);
+                    else playHomeTrack(nextIndex);
                     return;
                 }
             }
@@ -1230,7 +1295,7 @@ function bindPlayerControls() {
         playNextTrack
     );
 
-    document.getElementById("gp-shuffle-btn")?.addEventListener("click", () => setShuffle(!playerShuffle));
+    document.getElementById("gp-shuffle-btn")?.addEventListener("click", toggleShuffle);
     document.getElementById("libraryShuffleButton")?.addEventListener("click", shuffleLibrary);
     document.getElementById("libraryPlayAllButton")?.addEventListener("click", () => playQueue(rawLibraryFiles, 0, false));
     setShuffle(playerShuffle);
@@ -1971,10 +2036,19 @@ function renderEmpty(list, icon, title, text = "") {
 
 function playQueue(queue, index = 0, shuffle = false) {
     if (!Array.isArray(queue) || !queue.length) { showToast("No playable tracks"); return false; }
-    libraryPlaybackQueue = shuffle ? shuffledCopy(queue) : [...queue];
-    currentLibraryIndex = Math.max(0, Math.min(index, libraryPlaybackQueue.length - 1));
     currentPlayerSource = "library";
-    setShuffle(Boolean(shuffle));
+    enhancedQueue = [];
+    enhancedQueueIndex = -1;
+    enhancedNaturalQueue = [...queue];
+    libraryPlaybackQueue = [...queue];
+    currentLibraryIndex = Math.max(0, Math.min(index, queue.length - 1));
+    if (shuffle) {
+        playerShuffle = false;
+        setShuffle(true, {rebuild: true});
+    } else {
+        setShuffle(false, {rebuild: false});
+        updateShuffleButtons();
+    }
     playLibraryTrack(currentLibraryIndex);
     return true;
 }
@@ -3708,1004 +3782,48 @@ async function clearDoneTasks() {
    ============================================================ */
 
 function playNextTrack() {
-
-    if (
-        currentPlayerSource ===
-        "home"
-    ) {
-
-        const queue =
-            window.xrobHomeQueue || [];
-
-        if (!queue.length) {
-            return;
-        }
-
-        const currentIndex =
-            Number.isInteger(
-                window.xrobHomeQueueIndex
-            )
-                ? window.xrobHomeQueueIndex
-                : -1;
-
-        const nextIndex =
-            currentIndex + 1;
-
-        if (
-            nextIndex >= queue.length
-        ) {
-
-            showToast(
-                "🎵 End of Recently Added"
-            );
-
-            return;
-        }
-
-        playHomeTrack(
-            nextIndex
-        );
-
+    const queue = getActiveQueue();
+    if (!queue.length) return;
+    const currentIndex = getActiveQueueIndex();
+    if (playerRepeatMode === "queue" && currentIndex >= queue.length - 1) {
+        if (currentPlayerSource === "library") playLibraryTrack(0);
+        else if (currentPlayerSource === "home") playHomeTrack(0);
         return;
     }
-
-
-    if (
-        currentPlayerSource ===
-        "library"
-    ) {
-
-        const queue =
-            getLibraryQueue();
-
-        if (!queue.length) {
-            return;
-        }
-
-        const nextIndex = playerShuffle
-            ? Math.floor(Math.random() * queue.length)
-            : currentLibraryIndex + 1;
-
-        if (
-            nextIndex >= queue.length
-        ) {
-
-            showToast(
-                "🎵 End of Library"
-            );
-
-            return;
-        }
-
-        playLibraryTrack(
-            nextIndex
-        );
-
+    const nextIndex = currentIndex < 0 ? 0 : currentIndex + 1;
+    if (nextIndex >= queue.length) {
+        showToast(`🎵 End of ${currentPlayerSource === "home" ? "Recently Added" : "Library"}`);
         return;
     }
+    if (currentPlayerSource === "library") playLibraryTrack(nextIndex);
+    else if (currentPlayerSource === "home") playHomeTrack(nextIndex);
 }
 
 function playPreviousTrack() {
+    const queue = getActiveQueue();
+    if (!queue.length) return;
+    const currentIndex = getActiveQueueIndex();
 
-    if (
-        currentPlayerSource ===
-        "home"
-    ) {
-
-        const queue =
-            window.xrobHomeQueue || [];
-
-        if (!queue.length) {
-            return;
-        }
-
-        const currentIndex =
-            Number.isInteger(
-                window.xrobHomeQueueIndex
-            )
-                ? window.xrobHomeQueueIndex
-                : 0;
-
-        if (
-            audio &&
-            audio.currentTime > 3
-        ) {
-
-            audio.currentTime = 0;
-
-            return;
-        }
-
-        const previousIndex =
-            currentIndex - 1;
-
-        if (
-            previousIndex < 0
-        ) {
-
-            showToast(
-                "🎵 This is the first track"
-            );
-
-            return;
-        }
-
-        playHomeTrack(
-            previousIndex
-        );
-
+    if (audio && audio.currentTime > 3) {
+        audio.currentTime = 0;
         return;
     }
 
-
-    if (
-        currentPlayerSource ===
-        "library"
-    ) {
-
-        const queue =
-            getLibraryQueue();
-
-        if (!queue.length) {
-            return;
-        }
-
-        if (
-            audio &&
-            audio.currentTime > 3
-        ) {
-
-            audio.currentTime = 0;
-
-            return;
-        }
-
-        const previousIndex =
-            currentLibraryIndex - 1;
-
-        if (
-            previousIndex < 0
-        ) {
-
-            showToast(
-                "🎵 This is the first library track"
-            );
-
-            return;
-        }
-
-        playLibraryTrack(
-            previousIndex
-        );
-    }
-}
-
-
-function renderRecentlyAdded(
-    recent
-) {
-
-    const container =
-        document.getElementById(
-            "recentTracks"
-        );
-
-    if (!container) {
+    if (playerRepeatMode === "queue" && currentIndex <= 0) {
+        const last = queue.length - 1;
+        if (currentPlayerSource === "library") playLibraryTrack(last);
+        else if (currentPlayerSource === "home") playHomeTrack(last);
         return;
     }
 
-    container.innerHTML = "";
-
-    if (
-        !Array.isArray(recent) ||
-        !recent.length
-    ) {
-
-        container.innerHTML = `
-            <div class="home-empty">
-                No music in your library yet.
-            </div>
-        `;
-
+    const previousIndex = currentIndex - 1;
+    if (previousIndex < 0) {
+        showToast("🎵 This is the first track");
         return;
     }
-
-
-    window.xrobHomeQueue =
-        recent;
-
-    if (
-        !Number.isInteger(
-            window.xrobHomeQueueIndex
-        )
-    ) {
-
-        window.xrobHomeQueueIndex =
-            -1;
-    }
-
-
-    recent.forEach(
-        (
-            track,
-            index
-        ) => {
-
-            const card =
-                document.createElement(
-                    "button"
-                );
-
-            card.type =
-                "button";
-
-            card.className =
-                "recent-card";
-
-            card.dataset.type =
-                "home";
-
-
-            const img =
-                document.createElement(
-                    "img"
-                );
-
-            img.src =
-                track.cover ||
-                "https://via.placeholder.com/100?text=Music";
-
-            img.alt = "";
-
-            img.loading =
-                "lazy";
-
-
-            img.addEventListener(
-                "error",
-                () => {
-
-                    img.src =
-                        "https://via.placeholder.com/100?text=Music";
-
-                },
-                {
-                    once: true
-                }
-            );
-
-
-            const title =
-                document.createElement(
-                    "div"
-                );
-
-            title.className =
-                "recent-card-title";
-
-            title.textContent =
-                track.title ||
-                "Unknown Track";
-
-
-            const artist =
-                document.createElement(
-                    "div"
-                );
-
-            artist.className =
-                "recent-card-artist";
-
-            artist.textContent =
-                track.artist ||
-                "Unknown Artist";
-
-
-            card.appendChild(
-                img
-            );
-
-            card.appendChild(
-                title
-            );
-
-            card.appendChild(
-                artist
-            );
-
-
-            track._card =
-                card;
-
-
-            card.addEventListener(
-                "click",
-                () => {
-
-                    window.xrobHomeQueueIndex =
-                        index;
-
-                    playHomeTrack(
-                        index
-                    );
-                }
-            );
-
-
-            container.appendChild(
-                card
-            );
-
-        }
-    );
+    if (currentPlayerSource === "library") playLibraryTrack(previousIndex);
+    else if (currentPlayerSource === "home") playHomeTrack(previousIndex);
 }
-
-
-async function loadHome() {
-
-    const container =
-        document.getElementById(
-            "recentTracks"
-        );
-
-    if (!container) {
-        return;
-    }
-
-
-    const cachedRecent =
-        loadRecentlyAddedCache();
-
-
-    if (
-        cachedRecent.length
-    ) {
-
-        recentTracksCache =
-            cachedRecent;
-
-        renderRecentlyAdded(
-            cachedRecent
-        );
-
-        hideLoadingCircle(
-            "recent"
-        );
-
-    } else {
-
-        updateLoadingCircle(
-            "recent",
-            5,
-            "Loading Recently Added..."
-        );
-
-        container.innerHTML =
-            "";
-    }
-
-
-    const controller =
-        new AbortController();
-
-    const timeout =
-        setTimeout(
-            () =>
-                controller.abort(),
-            15000
-        );
-
-
-    try {
-
-        if (
-            !cachedRecent.length
-        ) {
-
-            updateLoadingCircle(
-                "recent",
-                15,
-                "Connecting to Xrob Music..."
-            );
-        }
-
-
-        const response =
-            await fetch(
-                "api/home",
-                {
-                    cache:
-                        "no-store",
-
-                    signal:
-                        controller.signal
-                }
-            );
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                `Home API returned HTTP ${response.status}`
-            );
-        }
-
-
-        const data =
-            await response.json();
-
-
-        const stats =
-            data.stats || {};
-
-
-        const setText = (
-            id,
-            value
-        ) => {
-
-            const element =
-                document.getElementById(
-                    id
-                );
-
-            if (element) {
-
-                element.textContent =
-                    value ?? 0;
-            }
-        };
-
-
-        setText(
-            "homeTracks",
-            stats.tracks || 0
-        );
-
-        setText(
-            "homeArtists",
-            stats.artists || 0
-        );
-
-        setText(
-            "homeAlbums",
-            stats.albums || 0
-        );
-
-        setText(
-            "homeDownloads",
-            data.active_downloads || 0
-        );
-
-
-        const recent =
-            Array.isArray(
-                data.recently_added
-            )
-                ? data.recently_added
-                : [];
-
-
-        recentTracksCache =
-            recent;
-
-        saveRecentlyAddedCache(
-            recent
-        );
-
-
-        renderRecentlyAdded(
-            recent
-        );
-
-
-        updateLoadingCircle(
-            "recent",
-            100,
-            "Recently Added ready"
-        );
-
-
-        setTimeout(
-            () =>
-                hideLoadingCircle(
-                    "recent"
-                ),
-            250
-        );
-
-
-    } catch (error) {
-
-        console.error(
-            "Home loading failed:",
-            error
-        );
-
-
-        if (
-            cachedRecent.length
-        ) {
-
-            renderRecentlyAdded(
-                cachedRecent
-            );
-
-            hideLoadingCircle(
-                "recent"
-            );
-
-            showToast(
-                "⚠️ Showing cached Recently Added"
-            );
-
-        } else {
-
-            hideLoadingCircle(
-                "recent"
-            );
-
-            container.innerHTML = `
-                <div class="home-empty">
-
-                    <div class="empty-icon">
-                        ⚠️
-                    </div>
-
-                    <div class="empty-title">
-                        Could not load Recently Added
-                    </div>
-
-                    <div class="empty-text">
-                        ${escapeHtml(
-                            error.message ||
-                            "Unknown error"
-                        )}
-                    </div>
-
-                    <button
-                        type="button"
-                        class="save-btn"
-                        onclick="loadHome()"
-                    >
-                        🔄 Try Again
-                    </button>
-
-                </div>
-            `;
-        }
-
-    } finally {
-
-        clearTimeout(
-            timeout
-        );
-    }
-}
-
-
-/* ============================================================
-   WEBSOCKET
-   ============================================================ */
-
-function initWebSocket() {
-
-    if (
-        socket &&
-        (
-            socket.readyState === WebSocket.OPEN ||
-            socket.readyState === WebSocket.CONNECTING
-        )
-    ) {
-        return;
-    }
-
-
-    const protocol =
-        location.protocol === "https:"
-            ? "wss:"
-            : "ws:";
-
-
-    try {
-
-        socket =
-            new WebSocket(
-                `${protocol}//${location.host}/ws`
-            );
-
-    } catch (error) {
-
-        console.warn(
-            "WebSocket:",
-            error
-        );
-
-        scheduleWebSocketReconnect();
-
-        return;
-    }
-
-
-    socket.onopen =
-        () => {
-
-            console.log(
-                "Xrob Music WebSocket connected"
-            );
-
-        };
-
-
-    socket.onmessage =
-        event => {
-
-            try {
-
-                const data =
-                    JSON.parse(
-                        event.data
-                    );
-
-
-                if (
-                    data.type === "task_update"
-                ) {
-
-                    pollTasks();
-
-                }
-
-            } catch (error) {
-
-                console.warn(
-                    "WebSocket message:",
-                    error
-                );
-            }
-        };
-
-
-    socket.onerror =
-        error => {
-
-            console.warn(
-                "WebSocket error:",
-                error
-            );
-        };
-
-
-    socket.onclose =
-        () => {
-
-            socket = null;
-
-            scheduleWebSocketReconnect();
-        };
-}
-
-
-function scheduleWebSocketReconnect() {
-
-    if (socketReconnectTimer) {
-        return;
-    }
-
-
-    socketReconnectTimer =
-        setTimeout(
-            () => {
-
-                socketReconnectTimer =
-                    null;
-
-                initWebSocket();
-
-            },
-            3000
-        );
-}
-
-
-/* ============================================================
-   INFINITE SCROLL
-   ============================================================ */
-
-function bindInfiniteScroll() {
-
-    window.addEventListener(
-        "scroll",
-        () => {
-
-            const searchTab =
-                document.getElementById(
-                    "tab-search"
-                );
-
-
-            if (
-                !searchTab ||
-                !searchTab.classList.contains(
-                    "active"
-                )
-            ) {
-                return;
-            }
-
-
-            const nearBottom =
-                window.innerHeight +
-                window.scrollY >=
-                document.documentElement.scrollHeight -
-                500;
-
-
-            if (nearBottom) {
-                loadMoreResults();
-            }
-        },
-        {
-            passive: true
-        }
-    );
-}
-
-
-function playHomeTrack(index) {
-
-    currentPlayerSource = "home";
-
-    const queue =
-        window.xrobHomeQueue || [];
-
-    if (
-        index < 0 ||
-        index >= queue.length
-    ) {
-        return;
-    }
-
-    const track =
-        queue[index];
-
-    const streamUrl =
-        track.stream ||
-        "";
-
-    if (!streamUrl) {
-
-        showToast(
-            "❌ Track stream URL unavailable"
-        );
-
-        return;
-    }
-
-    window.xrobHomeQueueIndex =
-        index;
-
-    const card =
-        track._card || null;
-
-    if (activePreviewBtn) {
-
-        resetPreviewButton(
-            activePreviewBtn
-        );
-    }
-
-    activePreviewBtn =
-        card;
-
-    if (card) {
-
-        card.classList.add(
-            "playing"
-        );
-    }
-
-    toggleAudioStream(
-        card ||
-            document.createElement("button"),
-        streamUrl,
-        "home",
-        track.title,
-        track.artist,
-        track.cover
-    );
-}
-
-async function refreshLibrary() {
-    const button = document.getElementById("libraryRefreshButton");
-    if (button) button.disabled = true;
-    try {
-        updateLoadingCircle("library", 10, "Quick scan…");
-        const response = await fetch("api/library/scan/quick", { method: "POST", cache: "no-store" });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || "Quick scan failed.");
-        await refreshLibraryCache();
-        await loadStats();
-        renderLibraryView();
-        updateLoadingCircle("library", 100, "Library ready");
-        showToast(`✅ Quick scan complete • ${data.tracks || rawLibraryFiles.length} tracks`);
-    } catch (error) {
-        showToast("❌ " + (error.message || "Quick scan failed."));
-    } finally {
-        setTimeout(() => hideLoadingCircle("library"), 250);
-        if (button) button.disabled = false;
-    }
-}
-
-
-function renderLocalIcons() {
-    const paths = {
-        house: [['path','M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z'],['path','M9 21v-6h6v6']],
-        search: [['circle','11 11 7 7'],['path','m20 20-4-4']],
-        download: [['path','M12 3v12'],['path','m7 10 5 5 5-5'],['path','M5 21h14']],
-        library: [['path','M4 19.5V6.5A2.5 2.5 0 0 1 6.5 4H20v16H6.5A2.5 2.5 0 0 1 4 17.5'],['path','M4 17.5A2.5 2.5 0 0 1 6.5 15H20']],
-        settings: [['circle','12 12 3'],['path','M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.9 1.9-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.1h-2.7v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-1.9-1.9.1-.1A1.7 1.7 0 0 0 7.7 15 1.7 1.7 0 0 0 6 14H5.9v-2.7H6a1.7 1.7 0 0 0 1.7-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.9-1.9.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.1h2.7v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.9 1.9-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1V14h-.1a1.7 1.7 0 0 0-1.6 1z']],
-        save: [['path','M5 3h12l3 3v15H4V3z'],['path','M8 3v6h8V3'],['path','M8 21v-6h8v6']],
-        'rotate-ccw': [['path','M3 12a9 9 0 1 0 3-6.7'],['path','M3 4v5h5']],
-        plus: [['path','M12 5v14'],['path','M5 12h14']],
-        'music-2': [['path','M9 18V5l10-2v13'],['circle','6 18 3'],['circle','16 16 3']],
-        'user-round': [['circle','12 7 4'],['path','M18 20a6 6 0 0 0-12 0']],
-        'disc-3': [['circle','12 12 9'],['circle','12 12 1'],['path','M15.5 8.5 12 12']],
-        'hard-drive': [['path','M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z'],['path','M6 15h.01M10 15h.01M14 15h.01']],
-        'pencil-line': [['path','M12 20h9'],['path','M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z']],
-        'square-pen': [['path','M12 20h9'],['path','M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z']],
-        'log-out': [['path','m10 17 5-5-5-5'],['path','M15 12H3'],['path','M21 19V5a2 2 0 0 0-2-2h-5']],
-        'refresh-cw': [['path','M20 11a8 8 0 0 0-14.9-4'],['path','M4 5v4h4'],['path','M4 13a8 8 0 0 0 14.9 4'],['path','M20 19v-4h-4']],
-        broom: [['path','m3 21 9-9'],['path','m14 3 7 7'],['path','m16 3 5 5']],
-        'volume-2': [['path','M11 5 6 9H3v6h3l5 4z'],['path','M15.5 8.5a5 5 0 0 1 0 7'],['path','M18.5 5.5a9 9 0 0 1 0 13']],
-        play: [['path','m8 5 11 7-11 7z']],
-        'skip-back': [['path','M19 20 9 12l10-8v16'],['path','M5 19V5']],
-        'skip-forward': [['path','m5 4 10 8-10 8V4'],['path','M19 5v14']],
-        shuffle: [['path','m3 3 18 18'],['path','M16 3h5v5'],['path','m3 21 5-5'],['path','M16 16h5v5']],
-    };
-    const ns = 'http://www.w3.org/2000/svg';
-    document.querySelectorAll('[data-lucide]').forEach(el => {
-        const name = el.getAttribute('data-lucide') || '';
-        const defs = paths[name];
-        if (!defs) return;
-        const svg = document.createElementNS(ns, 'svg');
-        svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor');
-        svg.setAttribute('stroke-width','2'); svg.setAttribute('stroke-linecap','round'); svg.setAttribute('stroke-linejoin','round'); svg.setAttribute('aria-hidden','true');
-        defs.forEach(([kind, value]) => {
-            const node = document.createElementNS(ns, kind);
-            if (kind === 'circle') { const [cx,cy,r]=value.split(' '); node.setAttribute('cx',cx); node.setAttribute('cy',cy); node.setAttribute('r',r); }
-            else node.setAttribute('d', value);
-            svg.appendChild(node);
-        });
-        el.replaceWith(svg);
-    });
-}
-async function checkWebAuth() {
-    try { const r=await fetch("api/auth/status",{cache:"no-store"}); if(!r.ok) return false; const d=await r.json(); return !!d.authenticated; } catch (_) { return false; }
-}
-
-function showAuthenticatedApp() { document.getElementById("login-screen")?.classList.add("hidden"); const shell=document.getElementById("app-shell"); if(shell) shell.hidden=false; renderLocalIcons(); }
-
-async function handleLoginSubmit(e){
-    e.preventDefault();
-    const error=document.getElementById("loginError");
-    const btn=document.querySelector(".login-submit");
-    if(error) error.textContent="";
-    const body={username:String(document.getElementById("loginUsername")?.value||"").trim(),password:document.getElementById("loginPassword")?.value||""};
-    localStorage.setItem("xrob_music_login_user", body.username);
-    if(btn){btn.disabled=true; btn.dataset.originalText=btn.textContent; btn.textContent="Signing in…";}
-    try{const r=await fetch("api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||"Sign in failed"); document.getElementById("loginPassword").value=""; showAuthenticatedApp(); await startAppAfterAuth(); }catch(err){if(error)error.textContent=err.message||"Sign in failed";} finally{if(btn){btn.disabled=false;btn.textContent=btn.dataset.originalText||"Sign in";}}
-}
-
-
-async function logoutWebAuth(){ await fetch("api/auth/logout",{method:"POST"}).catch(()=>{}); location.reload(); }
-
-async function initializeApp() {
-
-    renderLocalIcons();
-    const savedLoginUser = localStorage.getItem("xrob_music_login_user");
-    if(savedLoginUser && document.getElementById("loginUsername")) document.getElementById("loginUsername").value=savedLoginUser;
-    document.getElementById("loginForm")?.addEventListener("submit",handleLoginSubmit);
-    setTimeout(()=>document.getElementById("loginUsername")?.focus(),50);
-    document.getElementById("logoutButton")?.addEventListener("click",logoutWebAuth);
-    if(!(await checkWebAuth())) return;
-    showAuthenticatedApp();
-    await startAppAfterAuth();
-}
-
-async function startAppAfterAuth() {
-
-    cacheDom();
-
-    toggleTheme(
-        localStorage.getItem(
-            "xrob_music_theme"
-        ) || "dark"
-    );
-
-
-    bindAudioEvents();
-    bindPlayerControls();
-    bindSearch();
-    bindInfiniteScroll();
-    document.getElementById("set_format")?.addEventListener("change", updateQualityState);
-    document.getElementById("settings-save")?.addEventListener("click", saveSettings);
-    document.getElementById("settings-reset")?.addEventListener("click", resetSettings);
-    document.getElementById("songEditorRefresh")?.addEventListener("click",loadSongEditor);
-    document.getElementById("libraryRefreshButton")?.addEventListener("click", refreshLibrary);
-    document.getElementById("libSearchQuery")?.addEventListener("input", () => {
-        const input = document.getElementById("libSearchQuery");
-        const clear = document.getElementById("librarySearchClear");
-        if (clear) clear.hidden = !(input?.value || "").trim();
-        filterLibrary();
-    });
-    document.getElementById("librarySearchClear")?.addEventListener("click", () => {
-        const input = document.getElementById("libSearchQuery");
-        if (input) input.value = "";
-        const clear = document.getElementById("librarySearchClear");
-        if (clear) clear.hidden = true;
-        filterLibrary();
-        input?.focus();
-    });
-    document.querySelectorAll(".library-tab").forEach(button => button.addEventListener("click", () => {
-        libraryView = button.dataset.libraryView || "tracks";
-        selectedArtistId = null;
-        selectedAlbumId = null;
-        document.querySelectorAll(".library-tab").forEach(item => item.classList.toggle("active", item === button));
-        filterLibrary();
-    }));
-
-    const cached = loadLibraryCache();
-    if (cached) renderLibraryView();
-    // Fast first paint: library/stats may initially come from the filesystem index.
-    // Poll briefly for the background metadata warmup to finish, then refresh once.
-    const startupJobs = [refreshLibraryCache(), loadSettings(), loadSongEditor(), pollTasks(true), loadStats(), loadHome()];
-    await Promise.allSettled(startupJobs);
-    if (rawLibraryFiles.length) renderLibraryView();
-    let libraryWarmupChecks = 0;
-    const warmupTimer = setInterval(async () => {
-        libraryWarmupChecks += 1;
-        if (libraryWarmupChecks > 30) return clearInterval(warmupTimer);
-        try {
-            const r = await fetch('api/library', {cache:'no-store'});
-            if (!r.ok) return;
-            const d = await r.json();
-            if (d.ready) {
-                clearInterval(warmupTimer);
-                rawLibraryFiles = d.files || [];
-                libraryPlaybackQueue = rawLibraryFiles;
-                libraryArtists = d.artists || libraryArtists;
-                libraryAlbums = d.albums || libraryAlbums;
-                saveLibraryCache();
-                renderLibraryView();
-                loadStats();
-                loadSongEditor();
-            }
-        } catch (_) {}
-    }, 1000);
-    handleHash();
-
-
-    initWebSocket();
-
-
-    installEnhancedFeatures();
-    document.getElementById("errorsButton")?.addEventListener("click",async()=>{const r=await fetch("api/errors");const d=await r.json();document.getElementById("errorsContent").innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';document.getElementById("errors-modal").hidden=false;});
-    document.getElementById("errorsClose")?.addEventListener("click",()=>document.getElementById("errors-modal").hidden=true);
-    restorePlayerState();
-
-
-    setInterval(
-        () => pollTasks(),
-        2000
-    );
-}
-
-
-
-/* ============================================================
-   ENHANCED PLAYER / LIBRARY FEATURES
-   ============================================================ */
 
 async function openMetadataEditor(file) {
     const modal=document.getElementById("metadata-modal"); if(!modal) return;
@@ -4724,8 +3842,8 @@ function renderEnhancedQueue() {
     enhancedQueue.forEach((t,i)=>{
         const row=document.createElement("div"); row.className=`queue-row ${i===enhancedQueueIndex?'current':''}`; row.draggable=true; row.dataset.index=String(i);
         row.innerHTML=`<span class="queue-drag">⋮⋮</span><img src="${escapeHtml(t.cover||'')}" alt=""><div class="queue-row-info"><strong>${escapeHtml(t.title||t.name||'Unknown')}</strong><span>${escapeHtml(t.artist||'Unknown Artist')}</span></div><button class="queue-next btn-refresh" title="Play next">Next</button><button class="queue-remove icon-btn" title="Remove">×</button>`;
-        row.querySelector(".queue-next").onclick=()=>{ if(i===enhancedQueueIndex || i===enhancedQueueIndex+1) return; const [x]=enhancedQueue.splice(i,1); const target=Math.min(enhancedQueueIndex+1,enhancedQueue.length); enhancedQueue.splice(target,0,x); if(i<enhancedQueueIndex) enhancedQueueIndex--; saveEnhancedQueue(); renderEnhancedQueue(); };
-        row.querySelector(".queue-remove").onclick=()=>{ enhancedQueue.splice(i,1); if(i<enhancedQueueIndex) enhancedQueueIndex--; else if(i===enhancedQueueIndex) enhancedQueueIndex=Math.min(enhancedQueueIndex,enhancedQueue.length-1); libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; saveEnhancedQueue(); renderEnhancedQueue(); };
+        row.querySelector(".queue-next").onclick=()=>{ if(i===enhancedQueueIndex || i===enhancedQueueIndex+1) return; const [x]=enhancedQueue.splice(i,1); const target=Math.min(enhancedQueueIndex+1,enhancedQueue.length); enhancedQueue.splice(target,0,x); if(i<enhancedQueueIndex) enhancedQueueIndex--; libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; saveEnhancedQueue(); renderEnhancedQueue(); };
+        row.querySelector(".queue-remove").onclick=()=>{ if(i===enhancedQueueIndex){ showToast("Stop playback before removing the current track"); return; } enhancedQueue.splice(i,1); if(i<enhancedQueueIndex) enhancedQueueIndex--; else if(i===enhancedQueueIndex) enhancedQueueIndex=Math.min(enhancedQueueIndex,enhancedQueue.length-1); libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; saveEnhancedQueue(); renderEnhancedQueue(); };
         row.addEventListener("dragstart",e=>e.dataTransfer.setData("text/plain",String(i)));
         row.addEventListener("dragover",e=>e.preventDefault());
         row.addEventListener("drop",e=>{e.preventDefault(); const from=Number(e.dataTransfer.getData("text/plain")); const to=Number(row.dataset.index); if(!Number.isInteger(from)||from===to)return; const [x]=enhancedQueue.splice(from,1); enhancedQueue.splice(to,0,x); if(enhancedQueueIndex===from) enhancedQueueIndex=to; else if(from<enhancedQueueIndex&&to>=enhancedQueueIndex) enhancedQueueIndex--; else if(from>enhancedQueueIndex&&to<=enhancedQueueIndex) enhancedQueueIndex++; libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; saveEnhancedQueue(); renderEnhancedQueue(); });
@@ -4733,7 +3851,7 @@ function renderEnhancedQueue() {
     });
 }
 
-function setEnhancedQueue(queue,index=0) { enhancedQueue=Array.isArray(queue)?[...queue]:[]; enhancedQueueIndex=Math.max(0,Math.min(index,enhancedQueue.length-1)); libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; saveEnhancedQueue(); renderEnhancedQueue(); }
+function setEnhancedQueue(queue,index=0) { enhancedNaturalQueue=Array.isArray(queue)?[...queue]:[]; enhancedQueue=[...enhancedNaturalQueue]; enhancedQueueIndex=Math.max(0,Math.min(index,enhancedQueue.length-1)); libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; currentPlayerSource="library"; saveEnhancedQueue(); renderEnhancedQueue(); }
 
 function openQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d){d.hidden=false;renderEnhancedQueue();applyRepeatLabel();} }
 function closeQueueDrawer(){const d=document.getElementById("queue-drawer"); if(d)d.hidden=true;}
@@ -4862,9 +3980,19 @@ function installEnhancedFeatures(){
     });
     document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{const r=await fetch('api/library/health');const d=await r.json();document.getElementById('healthContent').innerHTML=`<div class="health-summary"><strong>Unreadable: ${d.counts.unreadable}</strong><strong>Bad tags: ${d.counts.bad_tags}</strong><strong>Missing artwork: ${d.counts.missing_artwork}</strong><strong>Duplicate groups: ${d.counts.duplicates}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;document.getElementById('health-modal').hidden=false;});
 
-    const originalPlayQueue=playQueue; window._xrobOriginalPlayQueue=originalPlayQueue;
-    playQueue=function(queue,index=0,shuffle=false){const ok=originalPlayQueue(queue,index,shuffle); if(ok) setEnhancedQueue(libraryPlaybackQueue,currentLibraryIndex); return ok;};
-    const originalPlayLibraryTrack=playLibraryTrack; playLibraryTrack=function(index){ const q=enhancedQueue.length?enhancedQueue:getLibraryQueue(); if(enhancedQueue.length) { if(index<0 || index>=enhancedQueue.length) return; libraryPlaybackQueue=[...q]; currentLibraryIndex=index; enhancedQueueIndex=index; saveEnhancedQueue();renderEnhancedQueue();} originalPlayLibraryTrack(index); };
+    const originalPlayLibraryTrack=playLibraryTrack;
+    playLibraryTrack=function(index){
+        const q=enhancedQueue.length ? enhancedQueue : getLibraryQueue();
+        if (enhancedQueue.length) {
+            if(index<0 || index>=enhancedQueue.length) return;
+            libraryPlaybackQueue=[...q];
+            currentLibraryIndex=index;
+            enhancedQueueIndex=index;
+            saveEnhancedQueue();
+            renderEnhancedQueue();
+        }
+        originalPlayLibraryTrack(index);
+    };
     const originalPlayHomeTrack=window.playHomeTrack; if(typeof originalPlayHomeTrack==='function'){ window.playHomeTrack=originalPlayHomeTrack; }
     if(audio){
         audio.addEventListener('loadedmetadata',()=>{const id=currentSongId();const pos=enhancedSongPositions[id]?.position; if(id&&Number.isFinite(pos)&&pos>2&&pos<(audio.duration||Infinity)-2){try{audio.currentTime=pos;}catch(_){}}});
