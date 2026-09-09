@@ -955,8 +955,7 @@
 
             <section id="tab-settings" class="tab-content">
                 <div class="page-heading">
-                    <div><h2><i data-lucide="settings" aria-hidden="true"></i> Settings</h2><p>Only settings that affect new downloads and library organization.</p></div>
-                    <button type="button" class="btn-refresh" id="logoutButton"><i data-lucide="log-out" aria-hidden="true"></i> Log out</button>
+                    <div><h2><i data-lucide="settings-2" aria-hidden="true"></i> Settings</h2><p>Only settings that affect new downloads and library organization.</p></div>
                 </div>
 
                 <div class="settings-card">
@@ -973,7 +972,7 @@
                     <div class="setting-row"><div><div class="setting-label">Scan interval</div><div class="setting-desc">Minutes between automatic quick scans (minimum 5).</div></div><input id="set_scan_interval" type="number" min="5" step="5" value="60" style="max-width:120px"></div>
                 </div>
                 <div class="settings-card settings-info-card">
-                    <div class="settings-divider"><i data-lucide="library" aria-hidden="true"></i> Library status</div>
+                    <div class="settings-divider"><i data-lucide="folder-open" aria-hidden="true"></i> Library status</div>
                     <div class="setting-row"><div><div class="setting-label">Music folder</div><div class="setting-desc">The directory used for your Xrob Music library.</div></div><code id="storagePath">—</code></div>
                     <div class="library-status-grid">
                         <div class="library-status-item"><span>Tracks</span><strong id="statusTracks">0</strong></div>
@@ -990,7 +989,9 @@
                     <div id="storageStatus" class="integration-status" aria-live="polite">Checking storage…</div>
                     <div class="setting-row"><div><div class="setting-label">OpenSubsonic</div><div class="setting-desc">Available to Amperfy and other OpenSubsonic clients.</div></div><strong>Ready</strong></div>
                 </div>
-                <div class="settings-card"><div class="settings-divider">Account</div><div class="setting-row"><div><div class="setting-label">Username</div><div class="setting-desc">Username used for the Xrob Music login page.</div></div><input id="set_web_username" type="text" autocomplete="username" maxlength="64" style="max-width:260px"></div><div class="setting-row"><div><div class="setting-label">New password</div><div class="setting-desc">Leave blank to keep the current password.</div></div><input id="set_web_password" type="password" autocomplete="new-password" maxlength="256" style="max-width:260px"></div></div><div class="settings-card"><div class="settings-divider">Maintenance</div><div class="setting-row"><div><div class="setting-label">Library health</div><div class="setting-desc">Check unreadable files, missing artwork, bad tags and duplicates.</div></div><button type="button" class="btn-refresh" id="libraryHealthButton">Check library health</button></div><div class="setting-row"><div><div class="setting-label">Error log</div><div class="setting-desc">View failed downloads and media-processing errors.</div></div><button type="button" class="btn-refresh" id="errorsButton">Open error log</button></div></div><div class="settings-actions"><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
+                <div class="settings-card">
+                    <div class="settings-divider settings-divider-account"><span>Account</span><button type="button" class="btn-refresh settings-logout-btn" id="logoutButton"><i data-lucide="log-out" aria-hidden="true"></i> Log out</button></div>
+                    <div class="setting-row"><div><div class="setting-label">Username</div><div class="setting-desc">Username used for the Xrob Music login page.</div></div><input id="set_web_username" type="text" autocomplete="username" maxlength="64" style="max-width:260px"></div><div class="setting-row"><div><div class="setting-label">New password</div><div class="setting-desc">Leave blank to keep the current password.</div></div><input id="set_web_password" type="password" autocomplete="new-password" maxlength="256" style="max-width:260px"></div></div><div class="settings-card"><div class="settings-divider">Maintenance</div><div class="setting-row"><div><div class="setting-label">Library health</div><div class="setting-desc">Check unreadable files, missing artwork, bad tags and duplicates.</div></div><button type="button" class="btn-refresh" id="libraryHealthButton">Check library health</button></div><div class="setting-row"><div><div class="setting-label">Error log</div><div class="setting-desc">View failed downloads and media-processing errors.</div></div><button type="button" class="btn-refresh" id="errorsButton">Open error log</button></div></div><div class="settings-actions"><button type="button" class="save-btn" id="settings-save"><i data-lucide="save" aria-hidden="true"></i> Save changes</button><button type="button" class="btn-refresh" id="settings-reset"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Reset</button></div>
                 <div id="settingsMsg" class="status-msg" aria-live="polite"></div>
             </section>
 
@@ -1246,8 +1247,8 @@
         ></i>
 
         <span class="nav-label">
-            Downloads
-            (<span id="mobQueueCount">0</span>)
+            <span class="nav-text">Downloads</span>
+            <span id="mobQueueCount" class="nav-count">0</span>
         </span>
 
     </button>
@@ -1266,8 +1267,8 @@
         ></i>
 
         <span class="nav-label">
-            Library
-            <span id="mobLibCount" class="nav-badge">0</span>
+            <span class="nav-text">Library</span>
+            <span id="mobLibCount" class="nav-count">0</span>
         </span>
 
     </button>
