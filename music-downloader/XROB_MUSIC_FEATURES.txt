@@ -90,3 +90,12 @@ NOTES
 - Xrob Music does not create public Internet access by itself.
 - External OpenSubsonic clients need a reachable server address/tunnel.
 - Only download content you are authorized to download.
+
+
+## 2.9.0 UI/performance update
+- Startup renders the cached library immediately and loads library/settings/editor/tasks/stats/home in parallel.
+- Login remembers the username locally, disables the submit button during authentication, focuses the form automatically, and uses the site session cookie.
+- Account credentials can be changed in Settings.
+- Up Next queue remains the source of truth for library playback and guards invalid queue indexes.
+- Artist cards support custom artist cover uploads.
+- Settings Library status reports tracks, albums, artists, total play count and total track size.
