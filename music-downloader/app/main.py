@@ -12,6 +12,7 @@ import subprocess
 import time
 import urllib.parse
 import uuid
+import secrets
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
@@ -26,6 +27,7 @@ from fastapi import (
     WebSocketDisconnect,
     UploadFile,
     File,
+    Cookie,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -49,6 +51,17 @@ app = FastAPI(
     title="Xrob Music",
     version="2.6.0",
 )
+
+@app.middleware("http")
+async def web_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # OpenSubsonic and static assets keep their existing authentication behavior.
+    if path.startswith("/rest/") or path.startswith("/static/") or path == "/api/auth/login" or path == "/api/auth/status" or path == "/api/auth/logout" or path == "/favicon.ico":
+        return await call_next(request)
+    if path.startswith("/api/") and not _is_authenticated(request.cookies.get(AUTH_COOKIE)):
+        return JSONResponse({"detail":"Authentication required"}, status_code=401)
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,6 +95,26 @@ COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
 DATA_DIR = Path(os.getenv("XROB_DATA_DIR", "/data"))
 DB_FILE = DATA_DIR / "tasks.db"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+AUTH_USER = os.getenv("XROB_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "admin")
+AUTH_COOKIE = "xrob_session"
+AUTH_TTL = 60 * 60 * 24 * 14
+AUTH_SESSIONS = {}
+
+def _auth_token():
+    return secrets.token_urlsafe(32)
+
+def _is_authenticated(token):
+    if not token:
+        return False
+    created = AUTH_SESSIONS.get(token)
+    if not created:
+        return False
+    if time.time() - created > AUTH_TTL:
+        AUTH_SESSIONS.pop(token, None)
+        return False
+    return True
+
 
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
@@ -230,6 +263,26 @@ def configure_storage():
     legacy_db = DOWNLOAD_DIR / "tasks.db"
     legacy_settings = DOWNLOAD_DIR / ".settings.json"
     SETTINGS_FILE = DATA_DIR / "settings.json"
+AUTH_USER = os.getenv("XROB_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "admin")
+AUTH_COOKIE = "xrob_session"
+AUTH_TTL = 60 * 60 * 24 * 14
+AUTH_SESSIONS = {}
+
+def _auth_token():
+    return secrets.token_urlsafe(32)
+
+def _is_authenticated(token):
+    if not token:
+        return False
+    created = AUTH_SESSIONS.get(token)
+    if not created:
+        return False
+    if time.time() - created > AUTH_TTL:
+        AUTH_SESSIONS.pop(token, None)
+        return False
+    return True
+
     DB_FILE = DATA_DIR / "tasks.db"
 
     if not DB_FILE.exists() and legacy_db.exists():
@@ -446,6 +499,7 @@ def init_db():
         conn.execute("""CREATE TABLE IF NOT EXISTS play_history (id INTEGER PRIMARY KEY AUTOINCREMENT, song_id TEXT NOT NULL, played_at REAL NOT NULL, duration REAL DEFAULT 0, position REAL DEFAULT 0)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS song_review (song_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', actioned_at REAL DEFAULT 0)""")
         # Playlist extensions are additive and preserve the existing schema.
         playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
         if "kind" not in playlist_cols:
@@ -1619,6 +1673,15 @@ async def download_worker():
 
             METADATA_CACHE.pop(str(final_path), None)
             invalidate_library_cache()
+            try:
+                with db_connect() as conn:
+                    # New downloads always enter the Songs Editor review queue.
+                    library_now = await build_library(force=True)
+                    matched = next((x for x in library_now.get("songs",[]) if str(x.get("path")) == str(final_path)), None)
+                    if matched:
+                        conn.execute("INSERT OR REPLACE INTO song_review(song_id,state,actioned_at) VALUES(?,'pending',0)", (matched["id"],)); conn.commit()
+            except Exception as review_exc:
+                await write_app_error("song_editor",str(review_exc))
 
             await notify_task_update(
                 task,
@@ -5477,6 +5540,27 @@ async def api_library_scan_status():
     return dict(zip(["started_at","finished_at","mode","status","message"],row)) if row else {"status":"idle"}
 
 
+@app.post("/api/auth/login")
+async def api_auth_login(payload: dict = Body(...)):
+    user = str(payload.get("username") or "")
+    password = str(payload.get("password") or "")
+    if not secrets.compare_digest(user, AUTH_USER) or not secrets.compare_digest(password, AUTH_PASSWORD):
+        raise HTTPException(401, "Invalid username or password")
+    token = _auth_token(); AUTH_SESSIONS[token] = time.time()
+    response = JSONResponse({"status":"ok", "username":AUTH_USER})
+    response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_TTL, httponly=True, samesite="lax")
+    return response
+
+@app.get("/api/auth/status")
+async def api_auth_status(request: Request):
+    return {"authenticated": _is_authenticated(request.cookies.get(AUTH_COOKIE)), "username": AUTH_USER if _is_authenticated(request.cookies.get(AUTH_COOKIE)) else None}
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(request: Request):
+    token=request.cookies.get(AUTH_COOKIE)
+    if token: AUTH_SESSIONS.pop(token, None)
+    response=JSONResponse({"status":"ok"}); response.delete_cookie(AUTH_COOKIE); return response
+
 @app.get("/api/errors")
 async def api_errors(limit:int=Query(200,ge=1,le=1000)):
     if not isinstance(limit, int):
@@ -5497,7 +5581,7 @@ async def api_library_metadata(payload: dict = Body(...)):
     song_id=str(payload.get("id") or "")
     song=await find_song(song_id)
     if not song: raise HTTPException(404,"Track not found")
-    path=song["path"]; fields={k:payload.get(k) for k in ("title","artist","album","year","genre") if k in payload}
+    path=song["path"]; fields={k:payload.get(k) for k in ("title","artist","album") if k in payload}
     if not fields: return {"status":"ok"}
     if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
     def write_tags():
@@ -5507,27 +5591,52 @@ async def api_library_metadata(payload: dict = Body(...)):
         title=str(fields.get("title",song["title"]))
         artist=str(fields.get("artist",song["artist"]))
         album=str(fields.get("album",song["album"]))
-        year=str(fields.get("year",song.get("year", "")))
-        genre=str(fields.get("genre",song.get("genre", "")))
         if ext==".mp3":
             try: audio.add_tags()
             except Exception: pass
             if audio.tags is None: audio.tags=ID3()
-            audio.tags.delall("TIT2"); audio.tags.delall("TPE1"); audio.tags.delall("TALB"); audio.tags.delall("TDRC"); audio.tags.delall("TCON")
-            audio.tags.add(TIT2(encoding=3,text=title)); audio.tags.add(TPE1(encoding=3,text=artist)); audio.tags.add(TALB(encoding=3,text=album));
-            if year: audio.tags.add(TDRC(encoding=3,text=year))
-            if genre: audio.tags.add(TCON(encoding=3,text=genre))
+            audio.tags.delall("TIT2"); audio.tags.delall("TPE1"); audio.tags.delall("TALB")
+            audio.tags.add(TIT2(encoding=3,text=title)); audio.tags.add(TPE1(encoding=3,text=artist)); audio.tags.add(TALB(encoding=3,text=album))
         else:
             tags=audio.tags or {}
-            for key,val in (("title",title),("artist",artist),("album",album),("date",year),("genre",genre)):
+            for key,val in (("title",title),("artist",artist),("album",album)):
                 if val: tags[key]=[val]
                 else: tags.pop(key,None)
             audio.tags=tags
         audio.save()
     try: await asyncio.to_thread(write_tags)
     except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
+    with db_connect() as conn:
+        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id,time.time())); conn.commit()
     invalidate_library_cache(); return {"status":"ok"}
 
+
+@app.get("/api/song-editor")
+async def api_song_editor():
+    library=await build_library()
+    songs=library["songs"]
+    now=time.time()
+    with db_connect() as conn:
+        conn.execute("DELETE FROM song_review WHERE song_id NOT IN (%s)" % (",".join("?"*len(songs)) if songs else "''"), [s["id"] for s in songs])
+        for s in songs:
+            conn.execute("INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)", (s["id"],"pending"))
+        conn.commit()
+        conn.row_factory=sqlite3.Row
+        states={r["song_id"]:dict(r) for r in conn.execute("SELECT * FROM song_review WHERE state='pending'")}
+    out=[]
+    for s in songs:
+        if s["id"] not in states: continue
+        rel=str(s["path"].relative_to(DOWNLOAD_DIR)); enc=urllib.parse.quote(rel,safe="/")
+        out.append({"id":s["id"],"title":s["title"],"artist":s["artist"],"album":s["album"],"name":rel,"duration":s.get("duration",0),"cover":"/api/library/cover/"+enc,"stream":"/api/library/stream/"+enc})
+    return {"tracks":out,"count":len(out)}
+
+@app.post("/api/song-editor/{song_id}/skip")
+async def api_song_editor_skip(song_id:str):
+    song=await find_song(song_id)
+    if not song: raise HTTPException(404,"Track not found")
+    with db_connect() as conn:
+        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'skipped',?) ON CONFLICT(song_id) DO UPDATE SET state='skipped',actioned_at=excluded.actioned_at",(song_id,time.time())); conn.commit()
+    return {"status":"ok"}
 
 @app.post("/api/library/artwork/{song_id}")
 async def api_library_artwork(song_id:str, upload:UploadFile=File(...)):
