@@ -1,4 +1,4 @@
-XROB MUSIC 2.9.3
+XROB MUSIC 2.9.2
 Complete verified feature list
 
 HOME
@@ -6,7 +6,6 @@ HOME
 - Recently Added tracks with playback.
 - Download shortcut.
 - Active download status.
-- Recently Added playback queue with synchronized Previous / Next behavior.
 
 SEARCH & DOWNLOAD
 - YouTube search through yt-dlp.
@@ -29,18 +28,11 @@ LIBRARY
 - Album detail pages with tracks.
 - Search across the active library view.
 - Play track, Play all, Play album and Play artist.
-- Library shuffle with a real shuffled queue rather than a new random choice for every Next action.
-- Shuffle state is synchronized with the global player and Up Next queue.
-- Previous / Next playback follows the same queue and index.
-- Repeat Off / Track / Queue.
-- Queue drawer with current-track highlighting.
-- Drag-to-reorder queue.
-- Play-next queue action.
-- Remove upcoming queue items without changing the current track.
-- Save the current queue as a playlist.
+- Library shuffle with queue-synchronized playback order.
+- Up Next queue with drag reorder, Play Next, remove, clear-upcoming and repeat controls.
+- Previous / Next playback.
 - Delete individual library files.
-- Quick library refresh with cached metadata reuse.
-- Full metadata rebuild.
+- Real library refresh/rescan.
 - Cached catalog for faster startup and offline resilience.
 - Album artwork from embedded covers.
 - Storage path, free space and writable state.
@@ -50,24 +42,13 @@ PLAYER
 - Play / pause.
 - Previous / next.
 - Seek and volume persistence.
-- Synchronized shuffle mode.
+- Shuffle mode with persistent, queue-synchronized order (no per-track random jumps).
 - Artwork, title and artist.
-- Automatic next-track playback using the active queue.
+- Automatic next-track playback.
 - Queue-aware library playback.
+- Queue state persists across reloads with a validated current index.
 - Playback state persistence.
-- Saved playback positions.
-- Play history / play counts.
 - Visualizer.
-
-SONGS EDITOR
-- Tracks awaiting metadata review.
-- Search by title, artist, album or filename.
-- Edit title, artist and album metadata.
-- Skip an editor item.
-- Re-add all library tracks to the editor for a complete re-review.
-- Import one existing library track back into the editor.
-- Live editor queue count and navigation badge.
-- Responsive editor cards and controls.
 
 SETTINGS
 Only settings that change download behavior are exposed:
@@ -76,13 +57,9 @@ Only settings that change download behavior are exposed:
 - Write metadata on/off.
 - Embed artwork on/off.
 - Artist folders on/off.
-- Background library scan on/off.
-- Scan interval.
 - Save changes.
 - Reset to defaults.
 - Read-only library/storage status.
-- Tracks, albums, artists, total plays and total track size.
-- Storage usage progress bar.
 - Read-only OpenSubsonic availability status.
 
 OPENSUBSONIC / AMPERFY
@@ -110,29 +87,28 @@ RELIABILITY
 - Download task state is stored on the local /data volume.
 - Network-library disconnection is detected instead of silently appearing as an empty library.
 - Temporary download files are excluded from the library.
-- Global player controls and Up Next now use one synchronized queue model for library playback.
-- Shuffle preserves the currently playing track, then randomizes the remaining queue.
-- Disabling Shuffle restores the natural queue order for the active library/home queue where available.
-
-PERFORMANCE
-- Startup renders the cached library immediately.
-- Library, settings, editor, download tasks, stats and home data load in parallel.
-- Quick Scan avoids duplicate event handlers.
-- Quick Scan reuses cached metadata whenever possible.
-- Full scan metadata work is parallelized.
-- Library index is persisted for faster subsequent startup and refreshes.
-- Songs Editor renders with browser content visibility optimization for larger queues.
-
-UI / VISUAL
-- Consistent control heights, icon sizing and button alignment.
-- Responsive library statistics cards.
-- Responsive Songs Editor toolbar and cards.
-- Consistent Settings library status cards.
-- Storage capacity progress bar.
-- Improved Up Next queue spacing and mobile layout.
-- Library and editor badges display plain numbers instead of parenthesized counts.
 
 NOTES
 - Xrob Music does not create public Internet access by itself.
 - External OpenSubsonic clients need a reachable server address/tunnel.
 - Only download content you are authorized to download.
+
+
+## 2.9.0 UI/performance update
+- Startup renders the cached library immediately and loads library/settings/editor/tasks/stats/home in parallel.
+- Login remembers the username locally, disables the submit button during authentication, focuses the form automatically, and uses the site session cookie.
+- Account credentials can be changed in Settings.
+- Up Next queue remains the source of truth for library playback and guards invalid queue indexes.
+- Artist cards support custom artist cover uploads.
+- Settings Library status reports tracks, albums, artists, total play count and total track size.
+
+
+## 2.9.2 QUEUE / UI FIXES
+- Global Shuffle and Library Shuffle now use the same playback queue that Up Next displays.
+- Next and automatic ended playback advance by queue index instead of generating a different random track.
+- Shuffle keeps the current track fixed and shuffles the remaining tracks.
+- Turning Shuffle off restores the queue order that existed when shuffle was enabled.
+- Up Next queue editing keeps the current track/index synchronized with playback.
+- Clear Queue keeps the currently playing library track and removes upcoming tracks only.
+- Current queue item cannot be removed while it is playing, preventing invalid playback state.
+- Queue, dialog and mobile-player layering were corrected to avoid controls being hidden behind the player or bottom navigation.
