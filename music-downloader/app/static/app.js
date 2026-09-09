@@ -74,7 +74,9 @@ let playerRepeatMode = localStorage.getItem("xrob_music_repeat") || "off";
 let enhancedQueue = [];
 let enhancedQueueIndex = -1;
 let enhancedSongPositions = {};
-let lastRecordedTrackId = null;
+let playSessionTrackId = null;
+let playSessionRecorded = false;
+const PLAY_COUNT_THRESHOLD_SECONDS = 30;
 const ENHANCED_QUEUE_KEY = "xrob_music_up_next_queue";
 const ENHANCED_REPEAT_KEY = "xrob_music_repeat";
 
@@ -127,10 +129,43 @@ function persistCurrentPosition() {
     try { fetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({song_id:id,position,duration})}); } catch (_) {}
 }
 
+function beginPlaySession(id) {
+    if (!id) return;
+    playSessionTrackId = id;
+    playSessionRecorded = false;
+}
+
+function resetPlaySession() {
+    playSessionTrackId = null;
+    playSessionRecorded = false;
+}
+
+function playCountThreshold() {
+    const duration = Number(audio?.duration || 0);
+    if (Number.isFinite(duration) && duration > 0 && duration < PLAY_COUNT_THRESHOLD_SECONDS) {
+        // Short clips can still earn a play after roughly half has been heard.
+        return Math.max(5, duration * 0.5);
+    }
+    return PLAY_COUNT_THRESHOLD_SECONDS;
+}
+
 function recordPlay(id) {
-    if(!id || lastRecordedTrackId===id) return;
-    lastRecordedTrackId=id;
-    try { fetch("api/player/history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({song_id:id,duration:Number(audio?.duration||0),position:Number(audio?.currentTime||0)})}); } catch (_) {}
+    if (!id || playSessionRecorded || playSessionTrackId !== id) return;
+    const position = Number(audio?.currentTime || 0);
+    if (position < playCountThreshold()) return;
+
+    playSessionRecorded = true;
+    try {
+        fetch("api/player/history", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                song_id: id,
+                duration: Number(audio?.duration || 0),
+                position
+            })
+        });
+    } catch (_) {}
 }
 
 function applyRepeatLabel() { const b=document.getElementById("queueRepeat"); if(b) b.textContent=`Repeat: ${playerRepeatMode === "track" ? "Track" : playerRepeatMode === "queue" ? "Queue" : "Off"}`; }
@@ -5158,9 +5193,26 @@ function installEnhancedFeatures(){
     const originalPlayLibraryTrack=playLibraryTrack; playLibraryTrack=function(index){ const q=enhancedQueue.length?enhancedQueue:getLibraryQueue(); if(enhancedQueue.length) { if(index<0 || index>=enhancedQueue.length) return; libraryPlaybackQueue=[...q]; currentLibraryIndex=index; enhancedQueueIndex=index; saveEnhancedQueue();renderEnhancedQueue();} originalPlayLibraryTrack(index); };
     const originalPlayHomeTrack=window.playHomeTrack; if(typeof originalPlayHomeTrack==='function'){ window.playHomeTrack=originalPlayHomeTrack; }
     if(audio){
-        audio.addEventListener('loadedmetadata',()=>{const id=currentSongId();const pos=enhancedSongPositions[id]?.position; if(id&&Number.isFinite(pos)&&pos>2&&pos<(audio.duration||Infinity)-2){try{audio.currentTime=pos;}catch(_){}}});
-        audio.addEventListener('timeupdate',()=>{if(Math.floor(audio.currentTime)%5===0)persistCurrentPosition();});
-        audio.addEventListener('play',()=>recordPlay(currentSongId()));
+        audio.addEventListener('loadedmetadata',()=>{
+            const id=currentSongId();
+            if (id && playSessionTrackId !== id) beginPlaySession(id);
+            const pos=enhancedSongPositions[id]?.position;
+            if(id&&Number.isFinite(pos)&&pos>2&&pos<(audio.duration||Infinity)-2){try{audio.currentTime=pos;}catch(_){}}
+            recordPlay(id);
+        });
+        audio.addEventListener('timeupdate',()=>{
+            if(Math.floor(audio.currentTime)%5===0) persistCurrentPosition();
+            recordPlay(currentSongId());
+        });
+        audio.addEventListener('play',()=>{
+            const id=currentSongId();
+            if (id && playSessionTrackId !== id) beginPlaySession(id);
+            recordPlay(id);
+        });
+        audio.addEventListener('ended',()=>{
+            recordPlay(currentSongId());
+            resetPlaySession();
+        });
         audio.addEventListener('pause',persistCurrentPosition); window.addEventListener('beforeunload',persistCurrentPosition);
     }
     const originalRenderLibraryView=renderLibraryView; window._xrobOriginalRenderLibraryView=originalRenderLibraryView;
