@@ -2753,6 +2753,8 @@ async def api_home():
 
     library = await build_library()
     total_bytes = sum(song.get("size", 0) for song in library["songs"])
+    with db_connect() as conn:
+        all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
     return {
         "stats": {
             "tracks": len(library["songs"]),
@@ -2760,6 +2762,7 @@ async def api_home():
             "albums": len(library["albums"]),
             "total_bytes": total_bytes,
             "folder_size": format_size(total_bytes),
+            "all_play_count": all_play_count,
         },
         "active_downloads": active,
         "recently_added": recent,
@@ -5542,7 +5545,8 @@ async def api_player_history(payload: dict = Body(...)):
     with db_connect() as conn:
         conn.execute("INSERT INTO play_history(song_id,played_at,duration,position) VALUES(?,?,?,?)", (song_id,time.time(),float(payload.get("duration") or 0),float(payload.get("position") or 0)))
         conn.commit()
-    return {"status":"ok"}
+        total_plays = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+    return {"status":"ok", "all_play_count": total_plays}
 
 
 @app.get("/api/library/recent-most")
