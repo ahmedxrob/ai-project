@@ -3690,3 +3690,109 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 /* Queue/dialog layering and compact mobile safeguards */
 .queue-row .btn-refresh,.queue-row .icon-btn{flex:0 0 auto}
 @media(max-width:480px){.xrob-modal{padding:10px}.xrob-modal-card{max-height:calc(100vh - 20px);padding:14px}.queue-actions .btn-refresh{flex:1 1 120px}.queue-row{gap:6px;padding:6px}.queue-row img{width:36px;height:36px}}
+
+
+/* ============================================================
+   UI POLISH: ICONS / EDITOR / QUEUE
+   ============================================================ */
+.btn-preview svg,
+.btn-refresh svg,
+.btn-secondary svg,
+.btn-danger svg,
+.save-btn svg,
+.library-tab svg,
+.library-search-clear svg,
+.icon-btn svg,
+.editor-search svg,
+.track-play-count svg {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
+    stroke-width: 2;
+}
+
+.btn-danger,
+.btn-preview,
+.btn-refresh,
+.btn-secondary,
+.save-btn {
+    gap: 7px;
+}
+
+.icon-btn {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease;
+}
+.icon-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--border);
+}
+.icon-btn:focus-visible,
+.library-search-clear:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+.icon-btn.danger { color: #ff6475; }
+.icon-btn.danger:hover { background: rgba(233,20,41,.12); border-color: rgba(233,20,41,.25); }
+
+.queue-drawer {
+    background: var(--bg-elevated, #242424);
+    border-color: var(--border-strong, rgba(255,255,255,.14));
+    color: var(--text-primary);
+    z-index: 1400;
+}
+.queue-row {
+    background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+    border: 1px solid transparent;
+    transition: background .15s ease, border-color .15s ease, transform .15s ease;
+}
+.queue-row:hover { background: var(--bg-hover); border-color: var(--border); }
+.queue-row.current { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); outline: none; }
+.queue-drag { display:grid; place-items:center; cursor:grab; }
+.queue-drag svg { width:16px; height:16px; }
+.queue-next { color: var(--text-secondary); }
+.queue-next:hover { color: var(--accent); }
+
+.xrob-modal-card {
+    background: var(--bg-elevated, #242424);
+    border-color: var(--border-strong, rgba(255,255,255,.14));
+    color: var(--text-primary);
+    box-shadow: 0 24px 80px rgba(0,0,0,.4);
+}
+
+.editor-search > span {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+}
+.editor-search > span svg { width: 17px; height: 17px; }
+.editor-import-select:disabled { opacity: .6; cursor: not-allowed; }
+
+.empty-icon {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 12px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+}
+.empty-icon svg { width: 24px; height: 24px; }
+
+.track-play-count {
+    display:inline-flex;
+    align-items:center;
+    gap:4px;
+}
+.track-play-count svg { width:11px; height:11px; flex-basis:11px; }
+
+@media (max-width:700px) {
+    .queue-drawer { bottom: calc(var(--player-height) + 8px); max-height: calc(100vh - var(--player-height) - 20px); }
+    .queue-list { max-height: calc(100vh - var(--player-height) - 150px); }
+    .song-editor-actions { gap: 6px; }
+    .song-editor-actions button { min-width: 0; }
+}
