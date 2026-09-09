@@ -5788,13 +5788,18 @@ async def api_song_editor():
             conn.execute("INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)", (s["id"],"pending"))
         conn.commit()
         conn.row_factory=sqlite3.Row
-        states={r["song_id"]:dict(r) for r in conn.execute("SELECT * FROM song_review WHERE state='pending'")}
+        states={r["song_id"]:dict(r) for r in conn.execute("SELECT * FROM song_review")}
     out=[]
+    edited=[]
     for s in songs:
-        if s["id"] not in states: continue
+        state = states.get(s["id"], {}).get("state", "pending")
         rel=str(s["path"].relative_to(DOWNLOAD_DIR)); enc=urllib.parse.quote(rel,safe="/")
-        out.append({"id":s["id"],"title":s["title"],"artist":s["artist"],"album":s["album"],"name":rel,"duration":s.get("duration",0),"cover":"/api/library/cover/"+enc,"stream":"/api/library/stream/"+enc})
-    return {"tracks":out,"count":len(out)}
+        item={"id":s["id"],"title":s["title"],"artist":s["artist"],"album":s["album"],"name":rel,"duration":s.get("duration",0),"cover":"/api/library/cover/"+enc,"stream":"/api/library/stream/"+enc}
+        if state == "pending":
+            out.append(item)
+        elif state == "edited":
+            edited.append(item)
+    return {"tracks":out,"count":len(out),"edited_tracks":edited,"edited_count":len(edited)}
 
 @app.post("/api/song-editor/reset")
 async def api_song_editor_reset():
