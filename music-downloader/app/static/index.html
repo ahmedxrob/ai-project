@@ -281,7 +281,7 @@
 
                     <span class="nav-label">
                         Downloads
-                        (<span id="queueCount">0</span>)
+                        <span id="queueCount" class="nav-badge">0</span>
                     </span>
 
                 </button>
@@ -921,15 +921,23 @@
                     <div><h2><i data-lucide="pencil-line" aria-hidden="true"></i> Songs Editor</h2><p>Edit tags for tracks that still need review. Reopen a previously edited track from the existing-track selector.</p></div>
                     <button type="button" class="btn-refresh" id="songEditorRefresh"><i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh</button>
                 </div>
-                <div class="editor-stats-banner">
-                    <div class="editor-stat-card"><div class="editor-stat-icon"><i data-lucide="pencil-line" aria-hidden="true"></i></div><div><strong id="songEditorCount">0</strong><span>Tracks waiting</span></div></div>
-                    <div class="editor-stat-copy"><strong>Edit queue</strong><span>Edited or skipped tracks leave the queue. New downloads enter automatically.</span></div>
+                <div class="editor-overview">
+                    <div class="editor-stat-card">
+                        <div class="editor-stat-icon"><i data-lucide="pencil-line" aria-hidden="true"></i></div>
+                        <div><strong id="songEditorCount">0</strong><span>Tracks waiting</span></div>
+                    </div>
+                    <div class="editor-stat-copy">
+                        <strong>Edit queue</strong>
+                        <span>Edited or skipped tracks leave the queue. New downloads enter automatically.</span>
+                    </div>
                 </div>
                 <div class="editor-toolbar">
-                    <label class="editor-search"><span aria-hidden="true"><i data-lucide="search"></i></span><input id="songEditorSearch" type="search" placeholder="Search title, artist, album, or filename…" autocomplete="off" spellcheck="false"><button type="button" id="songEditorSearchClear" class="library-search-clear" hidden><i data-lucide="x" aria-hidden="true"></i></button></label>
-                    <button type="button" class="btn-refresh" id="songEditorReset" title="Put every library track back into the review queue"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Re-add all tracks</button>
-                    <select id="songEditorImportSelect" class="editor-import-select" aria-label="Select a previously edited library track"><option value="">Choose an edited library track…</option></select>
-                    <button type="button" class="btn-preview" id="songEditorImport" title="Return the selected edited track to the review queue"><i data-lucide="plus" aria-hidden="true"></i> Reopen track</button>
+                    <label class="editor-search"><span aria-hidden="true"><i data-lucide="search"></i></span><input id="songEditorSearch" type="search" placeholder="Search title, artist, album, or filename…" autocomplete="off" spellcheck="false"><button type="button" id="songEditorSearchClear" class="library-search-clear" hidden aria-label="Clear search"><i data-lucide="x" aria-hidden="true"></i></button></label>
+                    <div class="editor-actions-group editor-existing-group">
+                        <div class="editor-control-copy"><strong>Existing edits</strong><span>Reopen a track you've already edited.</span></div>
+                        <div class="editor-existing-controls"><select id="songEditorImportSelect" class="editor-import-select" aria-label="Select a previously edited library track"><option value="">Choose an edited library track…</option></select><button type="button" class="btn-preview" id="songEditorImport" title="Return the selected edited track to the review queue"><i data-lucide="rotate-cw" aria-hidden="true"></i> Reopen</button></div>
+                    </div>
+                    <button type="button" class="btn-secondary editor-reset-btn" id="songEditorReset" title="Put every library track back into the review queue"><i data-lucide="rotate-ccw" aria-hidden="true"></i> Re-add all</button>
                 </div>
                 <div id="songEditorList" class="songs-editor-list"></div>
             </section>
@@ -1233,7 +1241,7 @@
 
         <span class="nav-label">
             Downloads
-            (<span id="mobQueueCount">0</span>)
+            <span id="mobQueueCount" class="nav-badge">0</span>
         </span>
 
     </button>
