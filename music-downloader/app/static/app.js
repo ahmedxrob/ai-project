@@ -5169,8 +5169,9 @@ function installEnhancedFeatures(){
         audio.addEventListener('loadedmetadata',()=>{
             const id=currentSongId();
             if (id && playSessionTrackId !== id) beginPlaySession(id);
-            const pos=enhancedSongPositions[id]?.position;
-            if(id&&Number.isFinite(pos)&&pos>2&&pos<(audio.duration||Infinity)-2){try{audio.currentTime=pos;}catch(_){}}
+            // Every newly selected track starts from the beginning.
+            // Keep position persistence for existing data, but never restore it on track selection.
+            if (audio) audio.currentTime = 0;
             recordPlay(id);
         });
         audio.addEventListener('timeupdate',()=>{
