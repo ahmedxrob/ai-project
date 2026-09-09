@@ -3941,7 +3941,7 @@ button:disabled { opacity:.55; cursor:not-allowed; }
     margin-left: auto;
     padding: 0;
     min-width: 2ch;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     line-height: 1;
 }
@@ -3952,7 +3952,7 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 /* Final sidebar typography: one consistent, compact size across desktop and mobile navigation. */
 .side-nav .nav-text,
 .bottom-nav .nav-text {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
 }
 .side-nav .nav-link {
