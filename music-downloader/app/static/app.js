@@ -4692,6 +4692,7 @@ function renderLocalIcons() {
         settings: [['circle','12 12 3'],['path','M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.9 1.9-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.1h-2.7v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-1.9-1.9.1-.1A1.7 1.7 0 0 0 7.7 15 1.7 1.7 0 0 0 6 14H5.9v-2.7H6a1.7 1.7 0 0 0 1.7-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.9-1.9.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.1h2.7v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.9 1.9-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1V14h-.1a1.7 1.7 0 0 0-1.6 1z']],
         save: [['path','M5 3h12l3 3v15H4V3z'],['path','M8 3v6h8V3'],['path','M8 21v-6h8v6']],
         'rotate-ccw': [['path','M3 12a9 9 0 1 0 3-6.7'],['path','M3 4v5h5']],
+        'rotate-cw': [['path','M21 12a9 9 0 1 1-3-6.7'],['path','M21 4v5h-5']],
         plus: [['path','M12 5v14'],['path','M5 12h14']],
         'music-2': [['path','M9 18V5l10-2v13'],['circle','6 18 3'],['circle','16 16 3']],
         'user-round': [['circle','12 7 4'],['path','M18 20a6 6 0 0 0-12 0']],
@@ -5042,7 +5043,7 @@ function renderSongEditorTracks(query = "") {
         const card = document.createElement("article");
         card.className = "song-editor-card";
         card.dataset.songId = track.id;
-        card.innerHTML = `<img class="song-editor-art" src="${escapeHtml(track.cover || "")}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title || track.name || "Unknown Track")}</div><div class="song-editor-artist">${escapeHtml(track.artist || "Unknown Artist")} <span aria-hidden="true">•</span> ${escapeHtml(track.album || "Unknown Album")}</div><div class="song-editor-file">${escapeHtml(track.name || "")}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="square-pen" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
+        card.innerHTML = `<img class="song-editor-art" src="${escapeHtml(track.cover || "")}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title || track.name || "Unknown Track")}</div><div class="song-editor-artist">${escapeHtml(track.artist || "Unknown Artist")} <span aria-hidden="true">•</span> ${escapeHtml(track.album || "Unknown Album")}</div><div class="song-editor-file">${escapeHtml(track.name || "")}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="square-pen" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button" title="Skip this track"><i data-lucide="skip-forward" aria-hidden="true"></i> Skip</button></div>`;
         card.querySelector(".editor-edit").onclick = () => openMetadataEditor(track);
         card.querySelector(".editor-skip").onclick = async () => {
             const r = await fetch(`api/song-editor/${encodeURIComponent(track.id)}/skip`, {method:"POST"});
