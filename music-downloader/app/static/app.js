@@ -1363,6 +1363,8 @@ function applySettingsToForm(settings) {
     setChecked("set_organize", settings.organize_by_artist);
     setChecked("set_scan_enabled", settings.scan_enabled !== false);
     setValue("set_scan_interval", settings.scan_interval_minutes || 60);
+    setValue("set_web_username", settings.web_username || "admin");
+    setValue("set_web_password", "");
     renderStorage(settings.storage);
     updateQualityState();
 }
@@ -1414,6 +1416,8 @@ async function saveSettings() {
             getChecked("set_organize"),
         scan_enabled: getChecked("set_scan_enabled"),
         scan_interval_minutes: Math.max(5, Number(getValue("set_scan_interval") || 60)),
+        web_username: getValue("set_web_username") || "admin",
+        ...(getValue("set_web_password") ? {web_password:getValue("set_web_password")} : {}),
     };
 
 
@@ -1998,9 +2002,10 @@ function renderArtists(list, query) {
     artists.forEach(artist => {
         const card = document.createElement("article");
         card.className = "catalog-card artist-card";
-        card.innerHTML = `<button type="button" class="catalog-main-action"><div class="catalog-icon">♪</div><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count || 0} album${artist.album_count === 1 ? "" : "s"} · ${artist.song_count || 0} track${artist.song_count === 1 ? "" : "s"}</span></div></button><button type="button" class="btn-preview catalog-play">▶ Play</button>`;
+        card.innerHTML = `<button type="button" class="catalog-main-action"><img class="artist-cover" src="${escapeHtml(artist.cover||"")}" alt="" loading="lazy" onerror="this.style.display='none'"/><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count || 0} album${artist.album_count === 1 ? "" : "s"} · ${artist.song_count || 0} track${artist.song_count === 1 ? "" : "s"}</span></div></button><div class="catalog-actions"><button type="button" class="btn-refresh artist-art-btn">Cover</button><button type="button" class="btn-preview catalog-play">▶ Play</button></div>`;
         card.querySelector(".catalog-main-action")?.addEventListener("click", () => openArtist(artist.id));
         card.querySelector(".catalog-play")?.addEventListener("click", e => { e.stopPropagation(); const tracks = rawLibraryFiles.filter(f => (artist.song_ids || []).includes(f.id)); playQueue(tracks, 0, false); });
+        card.querySelector(".artist-art-btn")?.addEventListener("click", e => { e.stopPropagation(); const input=document.createElement("input"); input.type="file"; input.accept="image/jpeg,image/png,image/webp"; input.onchange=async()=>{const file=input.files?.[0]; if(!file)return; const fd=new FormData(); fd.append("upload",file); const rr=await fetch(`api/library/artist-artwork/${encodeURIComponent(artist.id)}`,{method:"POST",body:fd}); if(rr.ok){showToast("✅ Artist cover saved"); renderArtists(list,query);} else showToast("❌ Could not save artist cover");}; input.click(); });
         list.appendChild(card);
     });
 }
@@ -4575,17 +4580,23 @@ async function checkWebAuth() {
 function showAuthenticatedApp() { document.getElementById("login-screen")?.classList.add("hidden"); const shell=document.getElementById("app-shell"); if(shell) shell.hidden=false; renderLocalIcons(); }
 
 async function handleLoginSubmit(e){
-    e.preventDefault(); const error=document.getElementById("loginError"); if(error) error.textContent="";
-    const body={username:document.getElementById("loginUsername")?.value||"",password:document.getElementById("loginPassword")?.value||""};
-    try{const r=await fetch("api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||"Sign in failed"); showAuthenticatedApp(); await startAppAfterAuth(); }catch(err){if(error)error.textContent=err.message||"Sign in failed";}
+    e.preventDefault(); const error=document.getElementById("loginError"), btn=document.querySelector(".login-submit"); if(error) error.textContent="";
+    localStorage.setItem("xrob_music_login_user", body.username);
+    if(btn){btn.disabled=true; btn.dataset.originalText=btn.textContent; btn.textContent="Signing in…";}
+    const body={username:String(document.getElementById("loginUsername")?.value||"").trim(),password:document.getElementById("loginPassword")?.value||""};
+    try{const r=await fetch("api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||"Sign in failed"); document.getElementById("loginPassword").value=""; showAuthenticatedApp(); await startAppAfterAuth(); }catch(err){if(error)error.textContent=err.message||"Sign in failed";} finally{if(btn){btn.disabled=false;btn.textContent=btn.dataset.originalText||"Sign in";}}
 }
+
 
 async function logoutWebAuth(){ await fetch("api/auth/logout",{method:"POST"}).catch(()=>{}); location.reload(); }
 
 async function initializeApp() {
 
     renderLocalIcons();
+    const savedLoginUser = localStorage.getItem("xrob_music_login_user");
+    if(savedLoginUser && document.getElementById("loginUsername")) document.getElementById("loginUsername").value=savedLoginUser;
     document.getElementById("loginForm")?.addEventListener("submit",handleLoginSubmit);
+    setTimeout(()=>document.getElementById("loginUsername")?.focus(),50);
     document.getElementById("logoutButton")?.addEventListener("click",logoutWebAuth);
     if(!(await checkWebAuth())) return;
     showAuthenticatedApp();
@@ -4634,15 +4645,11 @@ async function startAppAfterAuth() {
         filterLibrary();
     }));
 
-    await refreshLibraryCache();
-    await loadSettings();
-    await loadSongEditor();
-
-    await pollTasks(true);
-
-    await loadStats();
-
-
+    const cached = loadLibraryCache();
+    if (cached) renderLibraryView();
+    const startupJobs = [refreshLibraryCache(), loadSettings(), loadSongEditor(), pollTasks(true), loadStats(), loadHome()];
+    await Promise.allSettled(startupJobs);
+    if (rawLibraryFiles.length) renderLibraryView();
     handleHash();
 
 
@@ -4684,7 +4691,7 @@ function renderEnhancedQueue() {
     enhancedQueue.forEach((t,i)=>{
         const row=document.createElement("div"); row.className=`queue-row ${i===enhancedQueueIndex?'current':''}`; row.draggable=true; row.dataset.index=String(i);
         row.innerHTML=`<span class="queue-drag">⋮⋮</span><img src="${escapeHtml(t.cover||'')}" alt=""><div class="queue-row-info"><strong>${escapeHtml(t.title||t.name||'Unknown')}</strong><span>${escapeHtml(t.artist||'Unknown Artist')}</span></div><button class="queue-next btn-refresh" title="Play next">Next</button><button class="queue-remove icon-btn" title="Remove">×</button>`;
-        row.querySelector(".queue-next").onclick=()=>{ const [x]=enhancedQueue.splice(i,1); const target=Math.min(Math.max(enhancedQueueIndex+1,0),enhancedQueue.length); enhancedQueue.splice(target,0,x); if(i<=enhancedQueueIndex) enhancedQueueIndex=Math.max(0,enhancedQueueIndex-1); saveEnhancedQueue(); renderEnhancedQueue(); };
+        row.querySelector(".queue-next").onclick=()=>{ if(i===enhancedQueueIndex || i===enhancedQueueIndex+1) return; const [x]=enhancedQueue.splice(i,1); const target=Math.min(enhancedQueueIndex+1,enhancedQueue.length); enhancedQueue.splice(target,0,x); if(i<enhancedQueueIndex) enhancedQueueIndex--; saveEnhancedQueue(); renderEnhancedQueue(); };
         row.querySelector(".queue-remove").onclick=()=>{ enhancedQueue.splice(i,1); if(i<enhancedQueueIndex) enhancedQueueIndex--; else if(i===enhancedQueueIndex) enhancedQueueIndex=Math.min(enhancedQueueIndex,enhancedQueue.length-1); libraryPlaybackQueue=[...enhancedQueue]; currentLibraryIndex=enhancedQueueIndex; saveEnhancedQueue(); renderEnhancedQueue(); };
         row.addEventListener("dragstart",e=>e.dataTransfer.setData("text/plain",String(i)));
         row.addEventListener("dragover",e=>e.preventDefault());
@@ -4751,7 +4758,7 @@ function installEnhancedFeatures(){
 
     const originalPlayQueue=playQueue; window._xrobOriginalPlayQueue=originalPlayQueue;
     playQueue=function(queue,index=0,shuffle=false){const ok=originalPlayQueue(queue,index,shuffle); if(ok) setEnhancedQueue(libraryPlaybackQueue,currentLibraryIndex); return ok;};
-    const originalPlayLibraryTrack=playLibraryTrack; playLibraryTrack=function(index){ const q=enhancedQueue.length?enhancedQueue:getLibraryQueue(); if(enhancedQueue.length) {libraryPlaybackQueue=[...q]; currentLibraryIndex=index; enhancedQueueIndex=index; saveEnhancedQueue();renderEnhancedQueue();} originalPlayLibraryTrack(index); };
+    const originalPlayLibraryTrack=playLibraryTrack; playLibraryTrack=function(index){ const q=enhancedQueue.length?enhancedQueue:getLibraryQueue(); if(enhancedQueue.length) { if(index<0 || index>=enhancedQueue.length) return; libraryPlaybackQueue=[...q]; currentLibraryIndex=index; enhancedQueueIndex=index; saveEnhancedQueue();renderEnhancedQueue();} originalPlayLibraryTrack(index); };
     const originalPlayHomeTrack=window.playHomeTrack; if(typeof originalPlayHomeTrack==='function'){ window.playHomeTrack=originalPlayHomeTrack; }
     if(audio){
         audio.addEventListener('loadedmetadata',()=>{const id=currentSongId();const pos=enhancedSongPositions[id]?.position; if(id&&Number.isFinite(pos)&&pos>2&&pos<(audio.duration||Infinity)-2){try{audio.currentTime=pos;}catch(_){}}});
