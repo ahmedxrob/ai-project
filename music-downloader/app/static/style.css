@@ -3666,3 +3666,12 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 .songs-editor-list{display:grid;gap:10px}.editor-summary{display:flex;justify-content:space-between;gap:14px;padding:14px 16px;margin:0 0 14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:14px;color:var(--text-secondary);font-size:12px}.editor-summary strong{color:var(--text-primary);font-size:18px;margin-right:5px}
 .song-editor-card{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px;border:1px solid var(--border);background:var(--bg-elevated);border-radius:14px}.song-editor-art{width:64px;height:64px;object-fit:cover;border-radius:10px;background:var(--bg-input)}.song-editor-info{min-width:0}.song-editor-title{font-size:14px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-editor-artist{margin-top:3px;color:var(--text-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-editor-file{margin-top:7px;color:var(--text-secondary);opacity:.58;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-editor-actions{display:flex;gap:8px;align-items:center}.editor-empty{padding:54px 22px;text-align:center;color:var(--text-secondary);border:1px dashed var(--border);border-radius:16px}.editor-empty .empty-title{color:var(--text-primary);font-size:18px;font-weight:800;margin-bottom:7px}
 @media(max-width:700px){.editor-summary{align-items:flex-start;flex-direction:column}.song-editor-card{grid-template-columns:52px minmax(0,1fr);}.song-editor-art{width:52px;height:52px}.song-editor-actions{grid-column:1/-1}.song-editor-actions button{flex:1}.login-card{padding:26px 20px}}
+
+/* final visual polish */
+.catalog-card{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.catalog-main-action{flex:1;min-width:0;background:transparent;border:0;color:inherit;padding:0}
+.catalog-actions button{white-space:nowrap}
+.library-status-grid strong{font-variant-numeric:tabular-nums}
+.icon-btn{display:inline-grid;place-items:center;width:36px;height:36px}
+.btn-refresh,.btn-preview,.btn-secondary,.save-btn{min-height:38px}
+.login-card input{box-sizing:border-box}
