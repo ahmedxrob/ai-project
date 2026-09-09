@@ -3949,6 +3949,16 @@ button:disabled { opacity:.55; cursor:not-allowed; }
     background: rgba(255,255,255,.075);
 }
 
+/* Final sidebar typography: one consistent, compact size across desktop and mobile navigation. */
+.side-nav .nav-text,
+.bottom-nav .nav-text {
+    font-size: 12px;
+    font-weight: 600;
+}
+.side-nav .nav-link {
+    gap: 11px;
+}
+
 /* The settings icon should read as controls, not as a large generic gear. */
 #btn-settings > svg,
 #mob-btn-settings > svg {
