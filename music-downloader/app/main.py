@@ -126,6 +126,7 @@ SUBSONIC_VERSION = "1.16.1"
 SERVER_VERSION = "2.7.0"
 
 MAX_CONCURRENT_DOWNLOADS = 3
+LIBRARY_METADATA_CONCURRENCY = max(4, min(12, int(os.getenv("XROB_LIBRARY_METADATA_CONCURRENCY", "8"))))
 
 AUDIO_EXTENSIONS = {
     ".mp3",
@@ -1167,16 +1168,29 @@ async def build_library(force=False):
         albums = {}
         genres = {}
 
-        for path in files:
+        metadata_semaphore = asyncio.Semaphore(LIBRARY_METADATA_CONCURRENCY)
+
+        async def prepare_song_input(path):
             try:
-                stat = path.stat()
+                stat = await asyncio.to_thread(path.stat)
                 rel = str(path.relative_to(DOWNLOAD_DIR))
                 cached_disk = disk_entries.get(rel) if isinstance(disk_entries, dict) else None
                 if cached_disk and int(cached_disk.get("mtime_ns", -1)) == int(stat.st_mtime_ns) and int(cached_disk.get("size", -1)) == int(stat.st_size):
                     metadata = dict(cached_disk)
                 else:
-                    metadata = await read_metadata(path)
+                    async with metadata_semaphore:
+                        metadata = await read_metadata(path)
+                return path, stat, metadata
             except Exception:
+                return path, None, None
+
+        prepared = await asyncio.gather(
+            *(prepare_song_input(path) for path in files),
+            return_exceptions=False,
+        )
+
+        for path, stat, metadata in prepared:
+            if stat is None or metadata is None:
                 continue
 
             song_id = make_song_id(path)
@@ -5637,24 +5651,48 @@ async def api_library_health():
 
 
 @app.post("/api/library/scan/{mode}")
-async def api_library_scan_mode(mode:str):
-    if mode not in {"quick","full"}: raise HTTPException(400,"mode must be quick or full")
+async def api_library_scan_mode(mode: str):
+    if mode not in {"quick", "full"}:
+        raise HTTPException(400, "mode must be quick or full")
     with db_connect() as conn:
-        conn.execute("INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?, ?, ?) ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message",(time.time(),mode,"running","Scanning")); conn.commit()
+        conn.execute(
+            "INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message",
+            (time.time(), mode, "running", "Scanning"),
+        )
+        conn.commit()
     try:
         invalidate_library_cache()
-        library=await build_library(force=True)
-        if mode=="full":
-            for song in library["songs"]:
-                try: await ensure_cover(song["path"])
-                except Exception: pass
+        # build_library already uses the on-disk index and only reads tags for
+        # new/changed files. Metadata reads are performed concurrently.
+        library = await build_library(force=True)
+        if mode == "full":
+            cover_tasks = [ensure_cover(song["path"]) for song in library["songs"]]
+            if cover_tasks:
+                semaphore = asyncio.Semaphore(8)
+                async def cover_one(coro):
+                    async with semaphore:
+                        try:
+                            return await coro
+                        except Exception:
+                            return None
+                await asyncio.gather(*(cover_one(c) for c in cover_tasks), return_exceptions=True)
+        await persist_library_index(library)
         with db_connect() as conn:
-            conn.execute("UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",(time.time(),"ok",f"{len(library['songs'])} tracks scanned")); conn.commit()
-        return {"status":"ok","mode":mode,"tracks":len(library["songs"])}
+            conn.execute(
+                "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
+                (time.time(), "ok", f"{len(library['songs'])} tracks scanned"),
+            )
+            conn.commit()
+        return {"status": "ok", "mode": mode, "tracks": len(library["songs"])}
     except Exception as exc:
-        await write_app_error("library_scan",str(exc))
+        await write_app_error("library_scan", str(exc))
         with db_connect() as conn:
-            conn.execute("UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",(time.time(),"error",str(exc))); conn.commit()
+            conn.execute(
+                "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
+                (time.time(), "error", str(exc)),
+            )
+            conn.commit()
         raise
 
 
@@ -5757,6 +5795,36 @@ async def api_song_editor():
         rel=str(s["path"].relative_to(DOWNLOAD_DIR)); enc=urllib.parse.quote(rel,safe="/")
         out.append({"id":s["id"],"title":s["title"],"artist":s["artist"],"album":s["album"],"name":rel,"duration":s.get("duration",0),"cover":"/api/library/cover/"+enc,"stream":"/api/library/stream/"+enc})
     return {"tracks":out,"count":len(out)}
+
+@app.post("/api/song-editor/reset")
+async def api_song_editor_reset():
+    library = await build_library()
+    ids = [s["id"] for s in library["songs"]]
+    with db_connect() as conn:
+        conn.execute("DELETE FROM song_review")
+        if ids:
+            conn.executemany(
+                "INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
+                [(song_id, "pending") for song_id in ids],
+            )
+        conn.commit()
+    return {"status": "ok", "count": len(ids)}
+
+
+@app.post("/api/song-editor/{song_id}/import")
+async def api_song_editor_import(song_id: str):
+    song = await find_song(song_id)
+    if not song:
+        raise HTTPException(404, "Track not found")
+    with db_connect() as conn:
+        conn.execute(
+            "INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'pending',0) "
+            "ON CONFLICT(song_id) DO UPDATE SET state='pending',actioned_at=0",
+            (song_id,),
+        )
+        conn.commit()
+    return {"status": "ok", "count": 1}
+
 
 @app.post("/api/song-editor/{song_id}/skip")
 async def api_song_editor_skip(song_id:str):
