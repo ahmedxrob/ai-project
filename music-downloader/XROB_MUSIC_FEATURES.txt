@@ -1,11 +1,11 @@
-XROB MUSIC 2.9.2
+XROB MUSIC 2.6.0
 Complete verified feature list
 
 HOME
 - Real Tracks / Artists / Albums counters from the scanned library.
 - Recently Added tracks with playback.
 - Download shortcut.
-- Total Plays counter with live updates.
+- Active download status.
 
 SEARCH & DOWNLOAD
 - YouTube search through yt-dlp.
@@ -28,8 +28,7 @@ LIBRARY
 - Album detail pages with tracks.
 - Search across the active library view.
 - Play track, Play all, Play album and Play artist.
-- Library shuffle with queue-synchronized playback order.
-- Up Next queue with drag reorder, Play Next, remove, clear-upcoming and repeat controls.
+- Library shuffle.
 - Previous / Next playback.
 - Delete individual library files.
 - Real library refresh/rescan.
@@ -42,11 +41,10 @@ PLAYER
 - Play / pause.
 - Previous / next.
 - Seek and volume persistence.
-- Shuffle mode with persistent, queue-synchronized order (no per-track random jumps).
+- Shuffle mode.
 - Artwork, title and artist.
 - Automatic next-track playback.
 - Queue-aware library playback.
-- Queue state persists across reloads with a validated current index.
 - Playback state persistence.
 - Visualizer.
 
@@ -93,58 +91,45 @@ NOTES
 - External OpenSubsonic clients need a reachable server address/tunnel.
 - Only download content you are authorized to download.
 
+============================================================
+XROB MUSIC 2.8.1 — QUEUE + ANALYTICS + DAILY MIX
+============================================================
 
-## 2.9.0 UI/performance update
-- Startup renders the cached library immediately and loads library/settings/editor/tasks/stats/home in parallel.
-- Login remembers the username locally, disables the submit button during authentication, focuses the form automatically, and uses the site session cookie.
-- Account credentials can be changed in Settings.
-- Up Next queue remains the source of truth for library playback and guards invalid queue indexes.
-- Artist cards support custom artist cover uploads.
-- Settings Library status reports tracks, albums, artists, total play count and total track size.
+Queue / Up Next
+- Spotify-style Up Next behavior with a stable current-track item.
+- Clear Queue keeps the currently playing track and clears only Up Next.
+- Add to Queue and Add to Play Next actions.
+- Drag-and-drop queue reordering keeps the current track index correct.
+- Removing earlier queue items no longer causes playback to jump to the wrong track.
+- Current track cannot accidentally be removed from active playback.
+- Repeat Queue and Repeat Track continue to work with the enhanced queue.
+- Queue state and current index remain persisted in localStorage.
+- Track-specific playback positions remain keyed by actual track ID.
+- Queue playback uses the same existing player/audio element, preserving older player behavior.
 
+Detailed Library Statistics
+- New Library > Statistics view.
+- Collection totals: tracks, artists, albums, genres.
+- Total library duration and average track duration.
+- Total plays, played tracks and never-played tracks.
+- Average bitrate and sample-rate distribution.
+- Top tracks by listening history.
+- Top artists by listening history.
+- Genre distribution.
+- Last-14-days listening activity chart.
+- Current storage information.
+- Statistics are additive and do not replace the existing Library counters.
 
-## 2.9.2 QUEUE / UI FIXES
-- Global Shuffle and Library Shuffle now use the same playback queue that Up Next displays.
-- Next and automatic ended playback advance by queue index instead of generating a different random track.
-- Shuffle keeps the current track fixed and shuffles the remaining tracks.
-- Turning Shuffle off restores the queue order that existed when shuffle was enabled.
-- Up Next queue editing keeps the current track/index synchronized with playback.
-- Clear Queue keeps the currently playing library track and removes upcoming tracks only.
-- Current queue item cannot be removed while it is playing, preventing invalid playback state.
-- Queue, dialog and mobile-player layering were corrected to avoid controls being hidden behind the player or bottom navigation.
+Daily Mix
+- New Spotify-style Daily Mix section on Home.
+- Up to four personalized mixes generated from local listening history.
+- Mixes use play frequency, recency, artist affinity and genre affinity.
+- Never-played tracks receive a gentle discovery boost.
+- Daily seed keeps mixes stable during the day while allowing daily refresh.
+- Each mix supports Play Mix and Add to Queue.
+- Daily Mix works entirely from the local Xrob Music library/history.
 
-
-## Songs Editor / UI polish update
-
-- Songs Editor review list contains only tracks still in `pending` review state.
-- The existing-track selector now lists only library tracks whose review state is `edited`, allowing a previously edited song to be reopened without showing all pending/new songs.
-- Reopening an edited track returns it to the pending review queue, where it can be edited again normally.
-- Replaced inconsistent emoji/text controls in the enhanced queue, library track actions, playlists, search/close controls, and empty states with the app’s local Lucide-style SVG icon system.
-- Improved queue drawer, modal surfaces, icon buttons, editor search controls, empty states, and mobile spacing while preserving existing functionality.
-
-
-## 2.9.2 CURRENT FIXES
-- Home dashboard uses Total Plays instead of Active Downloads.
-- Live library counters update without transient resets to zero when a response is incomplete or not ready.
-- Play count updates immediately after a track play is recorded.
-- Track, artist, album and storage statistics are shared through one live-stat state in the UI.
-- Newly selected tracks always start from 0:00; previously saved per-track positions are not restored when selecting a track again.
-- Download completion triggers a live statistics/home refresh so library counters update without a full-page reload.
-
-## 2.9.3 FEATURE ROADMAP
-
-20. Detailed library statistics dashboard.
-21. Recommended tracks.
-22. Because You Played recommendations.
-23. Similar artists.
-24. Similar albums.
-25. Trending tracks.
-26. Daily Mix.
-27. Weekly Mix.
-28. Random Mix.
-29. New Releases section.
-30. Genre-based discovery.
-31. Smart playlists.
-32. Automatic playlist generation.
-33. Collaborative playlists.
-50. Full Xrob Music database/settings backup and restore.
+Database compatibility
+- Existing play_history data is preserved.
+- New analytics fields are added automatically when the app starts.
+- No destructive migration is used.
