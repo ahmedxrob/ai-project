@@ -42,7 +42,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=293"
+        href="/static/style.css?v=292"
     >
 
 </head>
@@ -562,6 +562,19 @@
                 </div>
 
 
+                <section class="daily-mix-card" id="dailyMixCard">
+                    <div class="daily-mix-header">
+                        <div>
+                            <div class="daily-mix-kicker"><i data-lucide="sparkles" aria-hidden="true"></i> PERSONALIZED FOR YOU</div>
+                            <h2 id="dailyMixTitle">Daily Mix</h2>
+                            <p id="dailyMixSubtitle">Loading your mix…</p>
+                        </div>
+                        <div class="daily-mix-actions"><button type="button" class="btn-refresh" id="dailyMixRefresh"><i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh</button><button type="button" class="btn-preview" id="dailyMixPlay"><i data-lucide="play" aria-hidden="true"></i> Play mix</button></div>
+                    </div>
+                    <div id="dailyMixTracks" class="daily-mix-track-row"></div>
+                </section>
+
+
                 <!-- RECENTLY ADDED -->
 
                 <div class="home-section-header">
@@ -874,8 +887,6 @@
                         <button type="button" class="library-tab" data-library-view="playlists">Playlists</button>
                         <button type="button" class="library-tab" data-library-view="recent">Recently Played</button>
                         <button type="button" class="library-tab" data-library-view="most">Most Played</button>
-                        <button type="button" class="library-tab" data-library-view="daily-mix">Daily Mix</button>
-                        <button type="button" class="library-tab" data-library-view="statistics">Statistics</button>
                     </div>
                     <div class="library-actions">
                         <label class="library-search">
@@ -901,6 +912,27 @@
                     <span><i data-lucide="user-round" aria-hidden="true"></i><strong id="statArtists">0</strong></span>
                     <span><i data-lucide="disc-3" aria-hidden="true"></i><strong id="statAlbums">0</strong></span>
                     <span><i data-lucide="hard-drive" aria-hidden="true"></i> Size: <strong id="libFolderSize">0 MB</strong></span>
+                </div>
+
+                <div class="library-stats-dashboard" id="libraryStatsDashboard" aria-live="polite">
+                    <div class="library-dashboard-head">
+                        <div><h3><i data-lucide="bar-chart-3" aria-hidden="true"></i> Library statistics</h3><p>Detailed size, listening, format and catalog insights.</p></div>
+                        <button type="button" class="btn-refresh" id="libraryStatsRefresh"><i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh</button>
+                    </div>
+                    <div class="library-dashboard-cards">
+                        <div class="library-dashboard-card"><span>Total duration</span><strong id="detailStatDuration">0h 0m</strong><small>All catalog tracks</small></div>
+                        <div class="library-dashboard-card"><span>Average track</span><strong id="detailStatAvg">0:00</strong><small>Average duration</small></div>
+                        <div class="library-dashboard-card"><span>Tracks played</span><strong id="detailStatPlayed">0</strong><small>Unique tracks heard</small></div>
+                        <div class="library-dashboard-card"><span>Last 7 days</span><strong id="detailStat7d">0</strong><small>Recorded plays</small></div>
+                        <div class="library-dashboard-card"><span>Listening time</span><strong id="detailStatListening">0h</strong><small>Based on play history</small></div>
+                        <div class="library-dashboard-card"><span>Formats</span><strong id="detailStatFormats">0</strong><small>Audio file types</small></div><div class="library-dashboard-card"><span>Library size</span><strong id="detailStatSize">0 MB</strong><small>Audio files only</small></div><div class="library-dashboard-card"><span>Avg bitrate</span><strong id="detailStatBitrate">0 kbps</strong><small>Average encoded bitrate</small></div>
+                    </div>
+                    <div class="library-dashboard-columns">
+                        <div class="library-dashboard-panel"><div class="dashboard-panel-head"><strong>Top artists</strong><span>By plays</span></div><div id="detailTopArtists" class="dashboard-list"></div></div>
+                        <div class="library-dashboard-panel"><div class="dashboard-panel-head"><strong>Genres</strong><span>By tracks</span></div><div id="detailGenres" class="dashboard-list"></div></div>
+                        <div class="library-dashboard-panel"><div class="dashboard-panel-head"><strong>File formats</strong><span>Catalog mix</span></div><div id="detailFormats" class="dashboard-list"></div></div>
+                        <div class="library-dashboard-panel"><div class="dashboard-panel-head"><strong>Bitrate</strong><span>Audio quality</span></div><div id="detailBitrates" class="dashboard-list"></div></div><div class="library-dashboard-panel"><div class="dashboard-panel-head"><strong>Release years</strong><span>Catalog timeline</span></div><div id="detailYears" class="dashboard-list"></div></div><div class="library-dashboard-panel"><div class="dashboard-panel-head"><strong>Sample rates</strong><span>Encoding</span></div><div id="detailSampleRates" class="dashboard-list"></div></div>
+                    </div>
                 </div>
 
                 <div id="libraryLoading" class="xrob-loading" aria-live="polite">
