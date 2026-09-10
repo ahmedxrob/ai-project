@@ -1,1402 +1,1397 @@
 <!DOCTYPE html>
+
 <!DOCTYPE html>
+
 <html lang="en">
- <head>
-  <meta charset="utf-8"/>
-  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-  <meta content="#121212" name="theme-color"/>
-  <meta content="Xrob Music self-hosted music downloader, library and OpenSubsonic server" name="description"/>
-  <title>
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="#121212" name="theme-color"/>
+<meta content="Xrob Music self-hosted music downloader, library and OpenSubsonic server" name="description"/>
+<title>
    Xrob Music
   </title>
-  <link href="https://fonts.googleapis.com" rel="preconnect"/>
-  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="/static/style.css?v=292" rel="stylesheet"/>
- </head>
- <body class="music-app">
-  <div class="login-screen auth-shell" id="login-screen">
-   <div class="login-card auth-panel">
-    <img alt="Xrob Music" class="login-logo" src="/static/logo.png"/>
-    <h1>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="/static/style.css?v=292" rel="stylesheet"/>
+</head>
+<body class="music-app">
+<div class="login-screen auth-shell" id="login-screen">
+<div class="login-card auth-panel">
+<img alt="Xrob Music" class="login-logo" src="/static/logo.png"/>
+<h1>
      Welcome back
     </h1>
-    <p>
+<p>
      Sign in to your Xrob Music library.
     </p>
-    <form id="loginForm">
-     <label>
+<form id="loginForm">
+<label>
       Username
       <input autocomplete="username" id="loginUsername" required=""/>
-     </label>
-     <label>
+</label>
+<label>
       Password
       <input autocomplete="current-password" id="loginPassword" required="" type="password"/>
-     </label>
-     <button class="save-btn login-submit" type="submit">
+</label>
+<button class="save-btn login-submit" type="submit">
       Sign in
      </button>
-     <div class="login-error" id="loginError" role="alert">
-     </div>
-    </form>
-   </div>
-  </div>
-  <!-- ============================================================
+<div class="login-error" id="loginError" role="alert">
+</div>
+</form>
+</div>
+</div>
+<!-- ============================================================
      TOAST
      ============================================================ -->
-  <div aria-atomic="true" aria-live="polite" id="toast-container">
-  </div>
-  <!-- ============================================================
+<div aria-atomic="true" aria-live="polite" id="toast-container">
+</div>
+<!-- ============================================================
      AUDIO
      ============================================================ -->
-  <audio crossorigin="anonymous" id="global-audio-element" preload="auto">
-  </audio>
-  <!-- ============================================================
+<audio crossorigin="anonymous" id="global-audio-element" preload="auto">
+</audio>
+<!-- ============================================================
      APP
      ============================================================ -->
-  <div class="app-shell music-shell" hidden="" id="app-shell">
-   <!-- ========================================================
+<div class="app-shell music-shell" hidden="" id="app-shell">
+<!-- ========================================================
          SIDEBAR
          ======================================================== -->
-   <nav aria-label="Main navigation" class="side-nav">
-    <div class="side-brand">
-     <svg aria-hidden="true" height="38" viewbox="0 0 512 512" width="38">
-      <defs>
-       <lineargradient id="waveGrad" x1="0%" x2="100%" y1="0%" y2="100%">
-        <stop offset="0%" stop-color="#00F2FE">
-        </stop>
-        <stop offset="100%" stop-color="#4FACFE">
-        </stop>
-       </lineargradient>
-      </defs>
-      <rect fill="#0F172A" height="512" rx="112" width="512">
-      </rect>
-      <rect fill="url(#waveGrad)" height="80" opacity=".4" rx="12" width="24" x="112" y="216">
-      </rect>
-      <rect fill="url(#waveGrad)" height="160" opacity=".75" rx="12" width="24" x="160" y="176">
-      </rect>
-      <rect fill="url(#waveGrad)" height="160" opacity=".75" rx="12" width="24" x="328" y="176">
-      </rect>
-      <rect fill="url(#waveGrad)" height="80" opacity=".4" rx="12" width="24" x="376" y="216">
-      </rect>
-      <path d="M256 128V300M196 248L256 312L316 248" fill="none" stroke="url(#waveGrad)" stroke-linecap="round" stroke-linejoin="round" stroke-width="28">
-      </path>
-      <path d="M196 376H316" stroke="url(#waveGrad)" stroke-linecap="round" stroke-width="24">
-      </path>
-     </svg>
-     <h1>
+<aside aria-label="Main sidebar" class="side-nav spotify-sidebar">
+<div class="side-brand brand-lockup">
+<svg aria-hidden="true" height="38" viewbox="0 0 512 512" width="38">
+<defs>
+<lineargradient id="waveGrad" x1="0%" x2="100%" y1="0%" y2="100%">
+<stop offset="0%" stop-color="#00F2FE">
+</stop>
+<stop offset="100%" stop-color="#4FACFE">
+</stop>
+</lineargradient>
+</defs>
+<rect fill="#0F172A" height="512" rx="112" width="512">
+</rect>
+<rect fill="url(#waveGrad)" height="80" opacity=".4" rx="12" width="24" x="112" y="216">
+</rect>
+<rect fill="url(#waveGrad)" height="160" opacity=".75" rx="12" width="24" x="160" y="176">
+</rect>
+<rect fill="url(#waveGrad)" height="160" opacity=".75" rx="12" width="24" x="328" y="176">
+</rect>
+<rect fill="url(#waveGrad)" height="80" opacity=".4" rx="12" width="24" x="376" y="216">
+</rect>
+<path d="M256 128V300M196 248L256 312L316 248" fill="none" stroke="url(#waveGrad)" stroke-linecap="round" stroke-linejoin="round" stroke-width="28">
+</path>
+<path d="M196 376H316" stroke="url(#waveGrad)" stroke-linecap="round" stroke-width="24">
+</path>
+</svg>
+<h1>
       Xrob Music
      </h1>
-    </div>
-    <ul class="nav-list">
-     <li>
-      <button class="nav-link active" id="btn-home" onclick="navigate('home')" type="button">
-       <i aria-hidden="true" data-lucide="house">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
+</div>
+<div class="sidebar-section-label">Menu</div><ul class="nav-list primary-nav">
+<li>
+<button class="nav-link active" id="btn-home" onclick="navigate('home')" type="button">
+<i aria-hidden="true" data-lucide="house">
+</i>
+<span class="nav-label">
+<span class="nav-text">
          Home
         </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-search" onclick="navigate('search')" type="button">
-       <i aria-hidden="true" data-lucide="search">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
+</span>
+</button>
+</li>
+<li>
+<button class="nav-link" id="btn-search" onclick="navigate('search')" type="button">
+<i aria-hidden="true" data-lucide="search">
+</i>
+<span class="nav-label">
+<span class="nav-text">
          Search &amp; Download
         </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-downloads" onclick="navigate('downloads')" type="button">
-       <i aria-hidden="true" data-lucide="download">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
+</span>
+</button>
+</li>
+<li>
+<button class="nav-link" id="btn-downloads" onclick="navigate('downloads')" type="button">
+<i aria-hidden="true" data-lucide="download">
+</i>
+<span class="nav-label">
+<span class="nav-text">
          Downloads
         </span>
-        <span class="nav-count" id="queueCount">
+<span class="nav-count" id="queueCount">
          0
         </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-library" onclick="navigate('library')" type="button">
-       <i aria-hidden="true" data-lucide="library">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
+</span>
+</button>
+</li>
+<li>
+<button class="nav-link" id="btn-library" onclick="navigate('library')" type="button">
+<i aria-hidden="true" data-lucide="library">
+</i>
+<span class="nav-label">
+<span class="nav-text">
          Library
         </span>
-        <span class="nav-count" id="sideLibCount">
+<span class="nav-count" id="sideLibCount">
          0
         </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')" type="button">
-       <i aria-hidden="true" data-lucide="pencil-line">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
+</span>
+</button>
+</li>
+<li>
+<button class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')" type="button">
+<i aria-hidden="true" data-lucide="pencil-line">
+</i>
+<span class="nav-label">
+<span class="nav-text">
          Songs Editor
         </span>
-        <span class="nav-count" id="songEditorBadge">
+<span class="nav-count" id="songEditorBadge">
          0
         </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-settings" onclick="navigate('settings')" type="button">
-       <i aria-hidden="true" data-lucide="sliders-horizontal">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
+</span>
+</button>
+</li>
+<li>
+<button class="nav-link" id="btn-settings" onclick="navigate('settings')" type="button">
+<i aria-hidden="true" data-lucide="sliders-horizontal">
+</i>
+<span class="nav-label">
+<span class="nav-text">
          Settings
         </span>
-       </span>
-      </button>
-     </li>
-    </ul>
-   </nav>
-   <!-- ========================================================
+</span>
+</button>
+</li>
+</ul>
+<div class="sidebar-library-block"><div class="sidebar-library-head"><span>Your library</span><span class="sidebar-library-hint">Browse your music</span></div><div class="sidebar-library-actions"><button class="sidebar-library-action" data-sidebar-target="btn-library" onclick="document.getElementById('btn-library')?.click()" type="button"><i aria-hidden="true" data-lucide="library"></i><span>Library</span></button><button class="sidebar-library-action" data-sidebar-target="btn-library" onclick="document.getElementById('btn-library')?.click()" type="button"><i aria-hidden="true" data-lucide="list-music"></i><span>Playlists</span></button></div></div><div class="sidebar-footer"><div class="sidebar-footer-status"><span class="status-dot"></span><span>Self-hosted library</span></div></div></aside>
+<!-- ========================================================
          APP COLUMN
          ======================================================== -->
-   <div class="app-column">
-    <!-- MOBILE HEADER -->
-    <header class="mobile-header">
-     <div class="side-brand">
-      <svg aria-hidden="true" height="30" viewbox="0 0 512 512" width="30">
-       <rect fill="#0F172A" height="512" rx="112" width="512">
-       </rect>
-       <path d="M256 128V300M196 248L256 312L316 248" fill="none" stroke="#4FACFE" stroke-linecap="round" stroke-linejoin="round" stroke-width="30">
-       </path>
-       <path d="M196 376H316" stroke="#4FACFE" stroke-linecap="round" stroke-width="22">
-       </path>
-      </svg>
-      <h1>
+<div class="app-column">
+<!-- MOBILE HEADER -->
+<header class="mobile-header">
+<div class="side-brand">
+<svg aria-hidden="true" height="30" viewbox="0 0 512 512" width="30">
+<rect fill="#0F172A" height="512" rx="112" width="512">
+</rect>
+<path d="M256 128V300M196 248L256 312L316 248" fill="none" stroke="#4FACFE" stroke-linecap="round" stroke-linejoin="round" stroke-width="30">
+</path>
+<path d="M196 376H316" stroke="#4FACFE" stroke-linecap="round" stroke-width="22">
+</path>
+</svg>
+<h1>
        Xrob Music
       </h1>
-     </div>
-    </header>
-    <main aria-label="Xrob Music workspace" class="main-content workspace-main" role="main">
-     <header class="content-topbar">
-      <div class="content-topbar-copy">
-       <span class="content-topbar-eyebrow">
-        XROB MUSIC
-       </span>
-       <strong class="content-topbar-title">
-        Your music space
-       </strong>
-      </div>
-      <div class="content-topbar-status">
-       <span aria-hidden="true" class="status-dot">
-       </span>
-       <span>
+</div>
+</header>
+<main aria-label="Xrob Music workspace" class="main-content workspace-main" role="main">
+<header class="content-topbar music-topbar">
+<div class="content-topbar-copy page-context"><span class="content-topbar-eyebrow">XROB MUSIC</span><strong class="content-topbar-title">Music</strong></div>
+<div class="content-topbar-status topbar-library-status">
+<span aria-hidden="true" class="status-dot">
+</span>
+<span>
         Personal library
        </span>
-      </div>
-     </header>
-     <!-- ==================================================
+</div>
+<div class="topbar-actions"><span class="topbar-chip">Your library</span></div></header>
+<!-- ==================================================
                  HOME
                  ================================================== -->
-     <section class="tab-content active music-page" id="tab-home">
-      <div class="page-surface">
-       <div class="home-hero page-section">
-        <div>
-         <div class="home-eyebrow">
+<section class="tab-content active tab-content music-page home-page page-route" id="tab-home">
+<div class="page-surface music-page-surface"><div class="page-route-bar"><span class="page-route-kicker">YOUR MUSIC</span><span class="page-route-title">Home</span></div>
+<div class="home-hero page-section">
+<div>
+<div class="home-eyebrow">
           YOUR MUSIC
          </div>
-         <h2 class="home-title">
+<h2 class="home-title">
           Welcome to Xrob Music
          </h2>
-         <p class="home-subtitle">
+<p class="home-subtitle">
           Your self-hosted downloader,
                             library and OpenSubsonic server.
          </p>
-        </div>
-        <button class="home-search-button" onclick="navigate('search')" type="button">
-         <i aria-hidden="true" data-lucide="search">
-         </i>
+</div>
+<button class="home-search-button" onclick="navigate('search')" type="button">
+<i aria-hidden="true" data-lucide="search">
+</i>
          Find Music
         </button>
-       </div>
-       <div class="home-stats-grid page-section">
-        <div class="home-stat-card">
-         <div class="home-stat-icon">
-          <i aria-hidden="true" data-lucide="music-2">
-          </i>
-         </div>
-         <div>
-          <strong id="homeTracks">
+</div>
+<div class="home-stats-grid quick-stat-strip content-shelf">
+<div class="home-stat-card">
+<div class="home-stat-icon">
+<i aria-hidden="true" data-lucide="music-2">
+</i>
+</div>
+<div>
+<strong id="homeTracks">
            0
           </strong>
-          <span>
+<span>
            Tracks
           </span>
-         </div>
-        </div>
-        <div class="home-stat-card">
-         <div class="home-stat-icon">
-          <i aria-hidden="true" data-lucide="user-round">
-          </i>
-         </div>
-         <div>
-          <strong id="homeArtists">
+</div>
+</div>
+<div class="home-stat-card">
+<div class="home-stat-icon">
+<i aria-hidden="true" data-lucide="user-round">
+</i>
+</div>
+<div>
+<strong id="homeArtists">
            0
           </strong>
-          <span>
+<span>
            Artists
           </span>
-         </div>
-        </div>
-        <div class="home-stat-card">
-         <div class="home-stat-icon">
-          <i aria-hidden="true" data-lucide="disc-3">
-          </i>
-         </div>
-         <div>
-          <strong id="homeAlbums">
+</div>
+</div>
+<div class="home-stat-card">
+<div class="home-stat-icon">
+<i aria-hidden="true" data-lucide="disc-3">
+</i>
+</div>
+<div>
+<strong id="homeAlbums">
            0
           </strong>
-          <span>
+<span>
            Albums
           </span>
-         </div>
-        </div>
-        <div class="home-stat-card">
-         <div class="home-stat-icon">
-          <i aria-hidden="true" data-lucide="play">
-          </i>
-         </div>
-         <div>
-          <strong id="homePlays">
+</div>
+</div>
+<div class="home-stat-card">
+<div class="home-stat-icon">
+<i aria-hidden="true" data-lucide="play">
+</i>
+</div>
+<div>
+<strong id="homePlays">
            0
           </strong>
-          <span>
+<span>
            Total Plays
           </span>
-         </div>
-        </div>
-       </div>
-       <section class="daily-mix-card page-section" id="dailyMixCard">
-        <div class="daily-mix-header">
-         <div>
-          <div class="daily-mix-kicker">
-           <i aria-hidden="true" data-lucide="sparkles">
-           </i>
+</div>
+</div>
+</div>
+<section class="daily-mix-card page-section" id="dailyMixCard">
+<div class="daily-mix-header">
+<div>
+<div class="daily-mix-kicker">
+<i aria-hidden="true" data-lucide="sparkles">
+</i>
            PERSONALIZED FOR YOU
           </div>
-          <h2 id="dailyMixTitle">
+<h2 id="dailyMixTitle">
            Daily Mix
           </h2>
-          <p id="dailyMixSubtitle">
-           Loading your mix&hellip;
+<p id="dailyMixSubtitle">
+           Loading your mix…
           </p>
-         </div>
-         <div class="daily-mix-actions">
-          <button class="btn-refresh" id="dailyMixRefresh" type="button">
-           <i aria-hidden="true" data-lucide="refresh-cw">
-           </i>
+</div>
+<div class="daily-mix-actions">
+<button class="btn-refresh" id="dailyMixRefresh" type="button">
+<i aria-hidden="true" data-lucide="refresh-cw">
+</i>
            Refresh
           </button>
-          <button class="btn-preview" id="dailyMixPlay" type="button">
-           <i aria-hidden="true" data-lucide="play">
-           </i>
+<button class="btn-preview" id="dailyMixPlay" type="button">
+<i aria-hidden="true" data-lucide="play">
+</i>
            Play mix
           </button>
-         </div>
-        </div>
-        <div class="daily-mix-track-row" id="dailyMixTracks">
-        </div>
-       </section>
-       <!-- RECENTLY ADDED -->
-       <div class="home-section-header page-section">
-        <div>
-         <h3>
+</div>
+</div>
+<div class="daily-mix-track-row" id="dailyMixTracks">
+</div>
+</section>
+<!-- RECENTLY ADDED -->
+<div class="home-section-header shelf-header content-shelf-header">
+<div>
+<h3>
           Recently Added
          </h3>
-         <p>
+<p>
           Your latest music
          </p>
-        </div>
-        <button class="btn-refresh" onclick="navigate('library')" type="button">
-         <i aria-hidden="true" data-lucide="library">
-         </i>
+</div>
+<button class="btn-refresh" onclick="navigate('library')" type="button">
+<i aria-hidden="true" data-lucide="library">
+</i>
          View Library
         </button>
-       </div>
-       <!-- RECENT LOADING -->
-       <div aria-live="polite" class="xrob-loading" id="recentTracksLoading">
-        <div aria-hidden="true" class="xrob-spinner">
+</div>
+<!-- RECENT LOADING -->
+<div aria-live="polite" class="xrob-loading" id="recentTracksLoading">
+<div aria-hidden="true" class="xrob-spinner">
+</div>
+<div class="xrob-loader-text" id="recentLoadingText">
+         Loading Recently Added…
         </div>
-        <div class="xrob-loader-text" id="recentLoadingText">
-         Loading Recently Added&hellip;
-        </div>
-       </div>
-       <div class="recent-grid page-section" id="recentTracks">
-       </div>
-      </div>
-     </section>
-     <!-- ==================================================
+</div>
+<div class="recent-grid page-section" id="recentTracks">
+</div>
+</div>
+</section>
+<!-- ==================================================
                  SEARCH
                  ================================================== -->
-     <section class="tab-content music-page" id="tab-search">
-      <div class="page-surface">
-       <div class="page-heading">
-        <h2>
+<section class="tab-content tab-content music-page search-page page-route" id="tab-search">
+<div class="page-surface music-page-surface"><div class="page-route-bar"><span class="page-route-kicker">YOUR MUSIC</span><span class="page-route-title">Search</span></div>
+<div class="page-heading">
+<h2>
          Search Music
         </h2>
-        <p>
+<p>
          Find music, preview it, and save it to your library.
         </p>
-       </div>
-       <div class="search-card page-section">
-        <input autocomplete="off" id="query" placeholder="Search track, artist, or album..." spellcheck="false" type="search"/>
-        <button id="searchBtn" type="button">
-         <i aria-hidden="true" data-lucide="search">
-         </i>
+</div>
+<div class="search-card page-section content-surface">
+<input autocomplete="off" id="query" placeholder="Search track, artist, or album..." spellcheck="false" type="search"/>
+<button id="searchBtn" type="button">
+<i aria-hidden="true" data-lucide="search">
+</i>
          Search
         </button>
-       </div>
-       <!-- SEARCH LOADING -->
-       <div aria-live="polite" class="xrob-loading" id="searchLoading" style="display:none;">
-        <div aria-hidden="true" class="xrob-spinner">
+</div>
+<!-- SEARCH LOADING -->
+<div aria-live="polite" class="xrob-loading" id="searchLoading" style="display:none;">
+<div aria-hidden="true" class="xrob-spinner">
+</div>
+<div class="xrob-loader-text" id="searchLoadingText">
+         Searching…
         </div>
-        <div class="xrob-loader-text" id="searchLoadingText">
-         Searching&hellip;
-        </div>
-       </div>
-       <div aria-live="polite" class="status-msg" id="statusMsg">
-       </div>
-       <div class="results-grid page-section" id="results">
-       </div>
-       <div aria-live="polite" class="status-msg" id="infiniteLoader" style="display:none;">
+</div>
+<div aria-live="polite" class="status-msg" id="statusMsg">
+</div>
+<div class="results-grid page-section" id="results">
+</div>
+<div aria-live="polite" class="status-msg" id="infiniteLoader" style="display:none;">
         Loading more...
        </div>
-      </div>
-     </section>
-     <!-- ==================================================
+</div>
+</section>
+<!-- ==================================================
                  DOWNLOADS
                  ================================================== -->
-     <section class="tab-content music-page" id="tab-downloads">
-      <div class="page-surface">
-       <div class="downloads-page-header">
-        <div>
-         <h2 class="downloads-page-title">
+<section class="tab-content tab-content music-page downloads-page page-route" id="tab-downloads">
+<div class="page-surface music-page-surface"><div class="page-route-bar"><span class="page-route-kicker">YOUR MUSIC</span><span class="page-route-title">Downloads</span></div>
+<div class="downloads-page-header">
+<div>
+<h2 class="downloads-page-title">
           Downloads
          </h2>
-         <p class="downloads-page-subtitle">
+<p class="downloads-page-subtitle">
           Manage your active queue and download history.
          </p>
-        </div>
-        <div class="downloads-header-actions">
-         <button class="btn-refresh" onclick="clearDoneTasks()" type="button">
-          <i aria-hidden="true" data-lucide="broom">
-          </i>
+</div>
+<div class="downloads-header-actions">
+<button class="btn-refresh" onclick="clearDoneTasks()" type="button">
+<i aria-hidden="true" data-lucide="broom">
+</i>
           Clear Completed
          </button>
-         <button class="btn-refresh" onclick="loadDownloads()" type="button">
-          <i aria-hidden="true" data-lucide="refresh-cw">
-          </i>
+<button class="btn-refresh" onclick="loadDownloads()" type="button">
+<i aria-hidden="true" data-lucide="refresh-cw">
+</i>
           Refresh
          </button>
-        </div>
-       </div>
-       <div class="downloads-overview page-section">
-        <div class="overview-card">
-         <div class="overview-icon">
-          <i aria-hidden="true" data-lucide="download">
-          </i>
-         </div>
-         <div>
-          <strong class="overview-value" id="downloadQueueCount">
+</div>
+</div>
+<div class="downloads-overview page-section content-surface">
+<div class="overview-card">
+<div class="overview-icon">
+<i aria-hidden="true" data-lucide="download">
+</i>
+</div>
+<div>
+<strong class="overview-value" id="downloadQueueCount">
            0
           </strong>
-          <span class="overview-label">
+<span class="overview-label">
            Active in Queue
           </span>
-         </div>
-        </div>
-        <div class="overview-card">
-         <div class="overview-icon">
-          <i aria-hidden="true" data-lucide="music-2">
-          </i>
-         </div>
-         <div>
-          <strong class="overview-value" id="downloadStatTracks">
+</div>
+</div>
+<div class="overview-card">
+<div class="overview-icon">
+<i aria-hidden="true" data-lucide="music-2">
+</i>
+</div>
+<div>
+<strong class="overview-value" id="downloadStatTracks">
            0
           </strong>
-          <span class="overview-label">
+<span class="overview-label">
            Library Tracks
           </span>
-         </div>
-        </div>
-        <div class="overview-card">
-         <div class="overview-icon">
-          <i aria-hidden="true" data-lucide="disc-3">
-          </i>
-         </div>
-         <div>
-          <strong class="overview-value" id="downloadStatAlbums">
+</div>
+</div>
+<div class="overview-card">
+<div class="overview-icon">
+<i aria-hidden="true" data-lucide="disc-3">
+</i>
+</div>
+<div>
+<strong class="overview-value" id="downloadStatAlbums">
            0
           </strong>
-          <span class="overview-label">
+<span class="overview-label">
            Albums
           </span>
-         </div>
-        </div>
-       </div>
-       <div class="downloads-list page-section" id="downloadsList">
-       </div>
-      </div>
-     </section>
-     <!-- ==================================================
+</div>
+</div>
+</div>
+<div class="downloads-list page-section content-surface" id="downloadsList">
+</div>
+</div>
+</section>
+<!-- ==================================================
                  LIBRARY
                  ================================================== -->
-     <section class="tab-content music-page" id="tab-library">
-      <div class="page-surface">
-       <div class="page-heading">
-        <h2>
-         <i aria-hidden="true" data-lucide="library">
-         </i>
+<section class="tab-content tab-content music-page library-page page-route" id="tab-library">
+<div class="page-surface music-page-surface"><div class="page-route-bar"><span class="page-route-kicker">YOUR MUSIC</span><span class="page-route-title">Your Library</span></div>
+<div class="page-heading">
+<h2>
+<i aria-hidden="true" data-lucide="library">
+</i>
          Library
         </h2>
-        <p>
+<p>
          Browse your music by tracks, artists, or albums.
         </p>
-       </div>
-       <div class="library-toolbar page-section">
-        <div aria-label="Library view" class="library-tabs" role="tablist">
-         <button class="library-tab active" data-library-view="tracks" type="button">
+</div>
+<div class="library-toolbar page-section content-surface">
+<div aria-label="Library view" class="library-tabs" role="tablist">
+<button class="library-tab active" data-library-view="tracks" type="button">
           Tracks
          </button>
-         <button class="library-tab" data-library-view="artists" type="button">
+<button class="library-tab" data-library-view="artists" type="button">
           Artists
          </button>
-         <button class="library-tab" data-library-view="albums" type="button">
+<button class="library-tab" data-library-view="albums" type="button">
           Albums
          </button>
-         <button class="library-tab" data-library-view="playlists" type="button">
+<button class="library-tab" data-library-view="playlists" type="button">
           Playlists
          </button>
-         <button class="library-tab" data-library-view="recent" type="button">
+<button class="library-tab" data-library-view="recent" type="button">
           Recently Played
          </button>
-         <button class="library-tab" data-library-view="most" type="button">
+<button class="library-tab" data-library-view="most" type="button">
           Most Played
          </button>
-        </div>
-        <div class="library-actions">
-         <label class="library-search">
-          <span aria-hidden="true" class="library-search-icon">
-           &telrec;
+</div>
+<div class="library-actions">
+<label class="library-search">
+<span aria-hidden="true" class="library-search-icon">
+           ⌕
           </span>
-          <input aria-label="Search your library" autocomplete="off" id="libSearchQuery" placeholder="Search your library&hellip;" spellcheck="false" type="search"/>
-          <button aria-label="Clear search" class="library-search-clear" hidden="" id="librarySearchClear" title="Clear search" type="button">
-           <i aria-hidden="true" data-lucide="x">
-           </i>
-          </button>
-         </label>
-         <button class="btn-refresh" id="libraryPlayAllButton" title="Play all tracks" type="button">
-          <span aria-hidden="true">
+<input aria-label="Search your library" autocomplete="off" id="libSearchQuery" placeholder="Search your library…" spellcheck="false" type="search"/>
+<button aria-label="Clear search" class="library-search-clear" hidden="" id="librarySearchClear" title="Clear search" type="button">
+<i aria-hidden="true" data-lucide="x">
+</i>
+</button>
+</label>
+<button class="btn-refresh" id="libraryPlayAllButton" title="Play all tracks" type="button">
+<span aria-hidden="true">
            ▶
           </span>
           Play all
          </button>
-         <button class="btn-refresh" id="libraryShuffleButton" title="Shuffle all tracks" type="button">
-          <span aria-hidden="true" class="player-symbol">
-           &toea;
+<button class="btn-refresh" id="libraryShuffleButton" title="Shuffle all tracks" type="button">
+<span aria-hidden="true" class="player-symbol">
+           ⤨
           </span>
           Shuffle
          </button>
-         <button class="btn-refresh" id="libraryRefreshButton" title="Quick rescan" type="button">
-          <i aria-hidden="true" data-lucide="refresh-cw">
-          </i>
+<button class="btn-refresh" id="libraryRefreshButton" title="Quick rescan" type="button">
+<i aria-hidden="true" data-lucide="refresh-cw">
+</i>
           Quick scan
          </button>
-         <button class="btn-refresh" id="libraryFullScanButton" title="Full metadata rebuild" type="button">
+<button class="btn-refresh" id="libraryFullScanButton" title="Full metadata rebuild" type="button">
           Full scan
          </button>
-        </div>
-       </div>
-       <div class="library-stats-bar page-section">
-        <span>
-         <i aria-hidden="true" data-lucide="music-2">
-         </i>
-         <strong id="statTracks">
+</div>
+</div>
+<div class="library-stats-bar page-section content-surface">
+<span>
+<i aria-hidden="true" data-lucide="music-2">
+</i>
+<strong id="statTracks">
           0
          </strong>
-        </span>
-        <span>
-         <i aria-hidden="true" data-lucide="user-round">
-         </i>
-         <strong id="statArtists">
+</span>
+<span>
+<i aria-hidden="true" data-lucide="user-round">
+</i>
+<strong id="statArtists">
           0
          </strong>
-        </span>
-        <span>
-         <i aria-hidden="true" data-lucide="disc-3">
-         </i>
-         <strong id="statAlbums">
+</span>
+<span>
+<i aria-hidden="true" data-lucide="disc-3">
+</i>
+<strong id="statAlbums">
           0
          </strong>
-        </span>
-        <span>
-         <i aria-hidden="true" data-lucide="hard-drive">
-         </i>
+</span>
+<span>
+<i aria-hidden="true" data-lucide="hard-drive">
+</i>
          Size:
          <strong id="libFolderSize">
           0 MB
          </strong>
-        </span>
-       </div>
-       <div aria-live="polite" class="library-stats-dashboard page-section" id="libraryStatsDashboard">
-        <div class="library-dashboard-head">
-         <div>
-          <h3>
-           <i aria-hidden="true" data-lucide="bar-chart-3">
-           </i>
+</span>
+</div>
+<div aria-live="polite" class="library-stats-dashboard page-section content-surface" id="libraryStatsDashboard">
+<div class="library-dashboard-head">
+<div>
+<h3>
+<i aria-hidden="true" data-lucide="bar-chart-3">
+</i>
            Library statistics
           </h3>
-          <p>
+<p>
            Detailed size, listening, format and catalog insights.
           </p>
-         </div>
-         <button class="btn-refresh" id="libraryStatsRefresh" type="button">
-          <i aria-hidden="true" data-lucide="refresh-cw">
-          </i>
+</div>
+<button class="btn-refresh" id="libraryStatsRefresh" type="button">
+<i aria-hidden="true" data-lucide="refresh-cw">
+</i>
           Refresh
          </button>
-        </div>
-        <div class="library-dashboard-cards">
-         <div class="library-dashboard-card">
-          <span>
+</div>
+<div class="library-dashboard-cards">
+<div class="library-dashboard-card">
+<span>
            Total duration
           </span>
-          <strong id="detailStatDuration">
+<strong id="detailStatDuration">
            0h 0m
           </strong>
-          <small>
+<small>
            All catalog tracks
           </small>
-         </div>
-         <div class="library-dashboard-card">
-          <span>
+</div>
+<div class="library-dashboard-card">
+<span>
            Average track
           </span>
-          <strong id="detailStatAvg">
+<strong id="detailStatAvg">
            0:00
           </strong>
-          <small>
+<small>
            Average duration
           </small>
-         </div>
-         <div class="library-dashboard-card">
-          <span>
+</div>
+<div class="library-dashboard-card">
+<span>
            Tracks played
           </span>
-          <strong id="detailStatPlayed">
+<strong id="detailStatPlayed">
            0
           </strong>
-          <small>
+<small>
            Unique tracks heard
           </small>
-         </div>
-         <div class="library-dashboard-card">
-          <span>
+</div>
+<div class="library-dashboard-card">
+<span>
            Last 7 days
           </span>
-          <strong id="detailStat7d">
+<strong id="detailStat7d">
            0
           </strong>
-          <small>
+<small>
            Recorded plays
           </small>
-         </div>
-         <div class="library-dashboard-card">
-          <span>
+</div>
+<div class="library-dashboard-card">
+<span>
            Listening time
           </span>
-          <strong id="detailStatListening">
+<strong id="detailStatListening">
            0h
           </strong>
-          <small>
+<small>
            Based on play history
           </small>
-         </div>
-         <div class="library-dashboard-card">
-          <span>
+</div>
+<div class="library-dashboard-card">
+<span>
            Formats
           </span>
-          <strong id="detailStatFormats">
+<strong id="detailStatFormats">
            0
           </strong>
-          <small>
+<small>
            Audio file types
           </small>
-         </div>
-         <div class="library-dashboard-card">
-          <span>
+</div>
+<div class="library-dashboard-card">
+<span>
            Library size
           </span>
-          <strong id="detailStatSize">
+<strong id="detailStatSize">
            0 MB
           </strong>
-          <small>
+<small>
            Audio files only
           </small>
-         </div>
-         <div class="library-dashboard-card">
-          <span>
+</div>
+<div class="library-dashboard-card">
+<span>
            Avg bitrate
           </span>
-          <strong id="detailStatBitrate">
+<strong id="detailStatBitrate">
            0 kbps
           </strong>
-          <small>
+<small>
            Average encoded bitrate
           </small>
-         </div>
-        </div>
-        <div class="library-dashboard-columns">
-         <div class="library-dashboard-panel">
-          <div class="dashboard-panel-head">
-           <strong>
+</div>
+</div>
+<div class="library-dashboard-columns">
+<div class="library-dashboard-panel">
+<div class="dashboard-panel-head">
+<strong>
             Top artists
            </strong>
-           <span>
+<span>
             By plays
            </span>
-          </div>
-          <div class="dashboard-list" id="detailTopArtists">
-          </div>
-         </div>
-         <div class="library-dashboard-panel">
-          <div class="dashboard-panel-head">
-           <strong>
+</div>
+<div class="dashboard-list" id="detailTopArtists">
+</div>
+</div>
+<div class="library-dashboard-panel">
+<div class="dashboard-panel-head">
+<strong>
             Genres
            </strong>
-           <span>
+<span>
             By tracks
            </span>
-          </div>
-          <div class="dashboard-list" id="detailGenres">
-          </div>
-         </div>
-         <div class="library-dashboard-panel">
-          <div class="dashboard-panel-head">
-           <strong>
+</div>
+<div class="dashboard-list" id="detailGenres">
+</div>
+</div>
+<div class="library-dashboard-panel">
+<div class="dashboard-panel-head">
+<strong>
             File formats
            </strong>
-           <span>
+<span>
             Catalog mix
            </span>
-          </div>
-          <div class="dashboard-list" id="detailFormats">
-          </div>
-         </div>
-         <div class="library-dashboard-panel">
-          <div class="dashboard-panel-head">
-           <strong>
+</div>
+<div class="dashboard-list" id="detailFormats">
+</div>
+</div>
+<div class="library-dashboard-panel">
+<div class="dashboard-panel-head">
+<strong>
             Bitrate
            </strong>
-           <span>
+<span>
             Audio quality
            </span>
-          </div>
-          <div class="dashboard-list" id="detailBitrates">
-          </div>
-         </div>
-         <div class="library-dashboard-panel">
-          <div class="dashboard-panel-head">
-           <strong>
+</div>
+<div class="dashboard-list" id="detailBitrates">
+</div>
+</div>
+<div class="library-dashboard-panel">
+<div class="dashboard-panel-head">
+<strong>
             Release years
            </strong>
-           <span>
+<span>
             Catalog timeline
            </span>
-          </div>
-          <div class="dashboard-list" id="detailYears">
-          </div>
-         </div>
-         <div class="library-dashboard-panel">
-          <div class="dashboard-panel-head">
-           <strong>
+</div>
+<div class="dashboard-list" id="detailYears">
+</div>
+</div>
+<div class="library-dashboard-panel">
+<div class="dashboard-panel-head">
+<strong>
             Sample rates
            </strong>
-           <span>
+<span>
             Encoding
            </span>
-          </div>
-          <div class="dashboard-list" id="detailSampleRates">
-          </div>
-         </div>
+</div>
+<div class="dashboard-list" id="detailSampleRates">
+</div>
+</div>
+</div>
+</div>
+<div aria-live="polite" class="xrob-loading" id="libraryLoading">
+<div aria-hidden="true" class="xrob-spinner">
+</div>
+<div class="xrob-loader-text" id="libraryLoadingText">
+         Loading library…
         </div>
-       </div>
-       <div aria-live="polite" class="xrob-loading" id="libraryLoading">
-        <div aria-hidden="true" class="xrob-spinner">
-        </div>
-        <div class="xrob-loader-text" id="libraryLoadingText">
-         Loading library&hellip;
-        </div>
-       </div>
-       <div class="results-grid page-section" id="libraryList">
-       </div>
-      </div>
-     </section>
-     <!-- ==================================================
+</div>
+<div class="results-grid page-section" id="libraryList">
+</div>
+</div>
+</section>
+<!-- ==================================================
                  SONGS EDITOR
                  ================================================== -->
-     <section class="tab-content music-page" id="tab-songs-editor">
-      <div class="page-surface">
-       <div class="page-heading editor-page-heading">
-        <div>
-         <h2>
-          <i aria-hidden="true" data-lucide="pencil-line">
-          </i>
+<section class="tab-content tab-content music-page editor-page page-route" id="tab-songs-editor">
+<div class="page-surface music-page-surface"><div class="page-route-bar"><span class="page-route-kicker">YOUR MUSIC</span><span class="page-route-title">Songs Editor</span></div>
+<div class="page-heading editor-page-heading">
+<div>
+<h2>
+<i aria-hidden="true" data-lucide="pencil-line">
+</i>
           Songs Editor
          </h2>
-         <p>
+<p>
           Edit tags for tracks that still need review. Reopen a previously edited track from the existing-track selector.
          </p>
-        </div>
-        <button aria-label="Refresh songs editor" class="btn-refresh editor-refresh-btn" id="songEditorRefresh" title="Refresh songs editor" type="button">
-         <i aria-hidden="true" data-lucide="refresh-cw">
-         </i>
-         <span>
+</div>
+<button aria-label="Refresh songs editor" class="btn-refresh editor-refresh-btn" id="songEditorRefresh" title="Refresh songs editor" type="button">
+<i aria-hidden="true" data-lucide="refresh-cw">
+</i>
+<span>
           Refresh
          </span>
-        </button>
-       </div>
-       <div class="editor-overview page-section">
-        <div class="editor-stat-card">
-         <div class="editor-stat-icon">
-          <i aria-hidden="true" data-lucide="pencil-line">
-          </i>
-         </div>
-         <div>
-          <strong id="songEditorCount">
+</button>
+</div>
+<div class="editor-overview page-section">
+<div class="editor-stat-card">
+<div class="editor-stat-icon">
+<i aria-hidden="true" data-lucide="pencil-line">
+</i>
+</div>
+<div>
+<strong id="songEditorCount">
            0
           </strong>
-          <span>
+<span>
            Tracks to review
           </span>
-         </div>
-        </div>
-        <div class="editor-overview-copy">
-         <span class="editor-overview-label">
+</div>
+</div>
+<div class="editor-overview-copy">
+<span class="editor-overview-label">
           Library cleanup
          </span>
-         <strong>
+<strong>
           Review metadata and keep your library tidy.
          </strong>
-        </div>
-       </div>
-       <div class="editor-toolbar page-section">
-        <label class="editor-search">
-         <span aria-hidden="true">
-          <i data-lucide="search">
-          </i>
-         </span>
-         <input autocomplete="off" id="songEditorSearch" placeholder="Search title, artist, album, or filename&hellip;" spellcheck="false" type="search"/>
-         <button class="library-search-clear" hidden="" id="songEditorSearchClear" type="button">
-          <i aria-hidden="true" data-lucide="x">
-          </i>
-         </button>
-        </label>
-        <button class="btn-refresh" id="songEditorReset" title="Put every library track back into the review queue" type="button">
-         <i aria-hidden="true" data-lucide="rotate-ccw">
-         </i>
+</div>
+</div>
+<div class="editor-toolbar page-section">
+<label class="editor-search">
+<span aria-hidden="true">
+<i data-lucide="search">
+</i>
+</span>
+<input autocomplete="off" id="songEditorSearch" placeholder="Search title, artist, album, or filename…" spellcheck="false" type="search"/>
+<button class="library-search-clear" hidden="" id="songEditorSearchClear" type="button">
+<i aria-hidden="true" data-lucide="x">
+</i>
+</button>
+</label>
+<button class="btn-refresh" id="songEditorReset" title="Put every library track back into the review queue" type="button">
+<i aria-hidden="true" data-lucide="rotate-ccw">
+</i>
          Re-add all tracks
         </button>
-        <select aria-label="Select a previously edited library track" class="editor-import-select" id="songEditorImportSelect">
-         <option value="">
-          Choose an edited library track&hellip;
+<select aria-label="Select a previously edited library track" class="editor-import-select" id="songEditorImportSelect">
+<option value="">
+          Choose an edited library track…
          </option>
-        </select>
-        <button class="btn-preview" id="songEditorImport" title="Return the selected edited track to the review queue" type="button">
-         <i aria-hidden="true" data-lucide="plus">
-         </i>
+</select>
+<button class="btn-preview" id="songEditorImport" title="Return the selected edited track to the review queue" type="button">
+<i aria-hidden="true" data-lucide="plus">
+</i>
          Reopen track
         </button>
-       </div>
-       <div class="songs-editor-list page-section" id="songEditorList">
-       </div>
-      </div>
-     </section>
-     <!-- ==================================================
+</div>
+<div class="songs-editor-list page-section content-surface" id="songEditorList">
+</div>
+</div>
+</section>
+<!-- ==================================================
                  SETTINGS
                  ================================================== -->
-     <section class="tab-content music-page" id="tab-settings">
-      <div class="page-surface">
-       <div class="page-heading">
-        <div>
-         <h2>
-          <i aria-hidden="true" data-lucide="settings-2">
-          </i>
+<section class="tab-content tab-content music-page settings-page page-route" id="tab-settings">
+<div class="page-surface music-page-surface"><div class="page-route-bar"><span class="page-route-kicker">YOUR MUSIC</span><span class="page-route-title">Settings</span></div>
+<div class="page-heading">
+<div>
+<h2>
+<i aria-hidden="true" data-lucide="settings-2">
+</i>
           Settings
          </h2>
-         <p>
+<p>
           Only settings that affect new downloads and library organization.
          </p>
-        </div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider">
+</div>
+</div>
+<div class="settings-card page-section content-surface">
+<div class="settings-divider">
          Downloads
         </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Format
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Audio format for new downloads.
           </div>
-         </div>
-         <select id="set_format">
-          <option value="mp3">
+</div>
+<select id="set_format">
+<option value="mp3">
            MP3
           </option>
-          <option value="flac">
+<option value="flac">
            FLAC
           </option>
-          <option value="m4a">
+<option value="m4a">
            M4A
           </option>
-          <option value="opus">
+<option value="opus">
            OPUS
           </option>
-          <option value="ogg">
+<option value="ogg">
            OGG
           </option>
-         </select>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+</select>
+</div>
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Quality
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Bitrate for lossy formats.
           </div>
-         </div>
-         <select id="set_quality">
-          <option value="320K">
+</div>
+<select id="set_quality">
+<option value="320K">
            320 Kbps
           </option>
-          <option value="256K">
+<option value="256K">
            256 Kbps
           </option>
-          <option value="192K">
+<option value="192K">
            192 Kbps
           </option>
-          <option value="160K">
+<option value="160K">
            160 Kbps
           </option>
-          <option value="128K">
+<option value="128K">
            128 Kbps
           </option>
-          <option value="96K">
+<option value="96K">
            96 Kbps
           </option>
-         </select>
-        </div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider">
+</select>
+</div>
+</div>
+<div class="settings-card page-section content-surface">
+<div class="settings-divider">
          Files
         </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Write metadata
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Store title, artist and album tags in downloaded files.
           </div>
-         </div>
-         <label class="switch">
-          <input id="set_meta" type="checkbox"/>
-          <span class="slider">
-          </span>
-         </label>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+</div>
+<label class="switch">
+<input id="set_meta" type="checkbox"/>
+<span class="slider">
+</span>
+</label>
+</div>
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Embed artwork
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Add album artwork to downloaded files.
           </div>
-         </div>
-         <label class="switch">
-          <input id="set_thumb" type="checkbox"/>
-          <span class="slider">
-          </span>
-         </label>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+</div>
+<label class="switch">
+<input id="set_thumb" type="checkbox"/>
+<span class="slider">
+</span>
+</label>
+</div>
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Artist folders
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Save downloads inside an artist folder.
           </div>
-         </div>
-         <label class="switch">
-          <input id="set_organize" type="checkbox"/>
-          <span class="slider">
-          </span>
-         </label>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+</div>
+<label class="switch">
+<input id="set_organize" type="checkbox"/>
+<span class="slider">
+</span>
+</label>
+</div>
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Background library scan
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Periodically refresh library metadata in the background.
           </div>
-         </div>
-         <label class="switch">
-          <input id="set_scan_enabled" type="checkbox"/>
-          <span class="slider">
-          </span>
-         </label>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+</div>
+<label class="switch">
+<input id="set_scan_enabled" type="checkbox"/>
+<span class="slider">
+</span>
+</label>
+</div>
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Scan interval
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Minutes between automatic quick scans (minimum 5).
           </div>
-         </div>
-         <input id="set_scan_interval" min="5" step="5" style="max-width:120px" type="number" value="60"/>
-        </div>
-       </div>
-       <div class="settings-card settings-info-card page-section">
-        <div class="settings-divider">
-         <i aria-hidden="true" data-lucide="folder-open">
-         </i>
+</div>
+<input id="set_scan_interval" min="5" step="5" style="max-width:120px" type="number" value="60"/>
+</div>
+</div>
+<div class="settings-card settings-info-card page-section content-surface">
+<div class="settings-divider">
+<i aria-hidden="true" data-lucide="folder-open">
+</i>
          Library status
         </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Music folder
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            The directory used for your Xrob Music library.
           </div>
-         </div>
-         <code id="storagePath">
-          &mdash;
+</div>
+<code id="storagePath">
+          —
          </code>
-        </div>
-        <div class="library-status-grid">
-         <div class="library-status-item">
-          <span>
+</div>
+<div class="library-status-grid">
+<div class="library-status-item">
+<span>
            Tracks
           </span>
-          <strong id="statusTracks">
+<strong id="statusTracks">
            0
           </strong>
-         </div>
-         <div class="library-status-item">
-          <span>
+</div>
+<div class="library-status-item">
+<span>
            Albums
           </span>
-          <strong id="statusAlbums">
+<strong id="statusAlbums">
            0
           </strong>
-         </div>
-         <div class="library-status-item">
-          <span>
+</div>
+<div class="library-status-item">
+<span>
            Artists
           </span>
-          <strong id="statusArtists">
+<strong id="statusArtists">
            0
           </strong>
-         </div>
-         <div class="library-status-item">
-          <span>
+</div>
+<div class="library-status-item">
+<span>
            Total plays
           </span>
-          <strong id="statusPlays">
+<strong id="statusPlays">
            0
           </strong>
-         </div>
-         <div class="library-status-item wide">
-          <span>
+</div>
+<div class="library-status-item wide">
+<span>
            Track size
           </span>
-          <strong id="statusSize">
+<strong id="statusSize">
            0 MB
           </strong>
-         </div>
-        </div>
-        <div class="storage-capacity" id="storageCapacity">
-         <div class="storage-capacity-head">
-          <span>
+</div>
+</div>
+<div class="storage-capacity" id="storageCapacity">
+<div class="storage-capacity-head">
+<span>
            Storage usage
           </span>
-          <strong id="storageUsedLabel">
-           &mdash;
+<strong id="storageUsedLabel">
+           —
           </strong>
-         </div>
-         <div aria-label="Library storage usage" aria-valuemax="100" aria-valuemin="0" aria-valuenow="0" class="storage-progress" role="progressbar">
-          <span id="storageProgressFill">
+</div>
+<div aria-label="Library storage usage" aria-valuemax="100" aria-valuemin="0" aria-valuenow="0" class="storage-progress" role="progressbar">
+<span id="storageProgressFill">
+</span>
+</div>
+<div class="storage-capacity-meta">
+<span id="storageUsedMeta">
+           — used
           </span>
-         </div>
-         <div class="storage-capacity-meta">
-          <span id="storageUsedMeta">
-           &mdash; used
+<span id="storageFree">
+           — free
           </span>
-          <span id="storageFree">
-           &mdash; free
-          </span>
-         </div>
+</div>
+</div>
+<div aria-live="polite" class="integration-status" id="storageStatus">
+         Checking storage…
         </div>
-        <div aria-live="polite" class="integration-status" id="storageStatus">
-         Checking storage&hellip;
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+<div class="setting-row">
+<div>
+<div class="setting-label">
            OpenSubsonic
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Available to Amperfy and other OpenSubsonic clients.
           </div>
-         </div>
-         <strong>
+</div>
+<strong>
           Ready
          </strong>
-        </div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider settings-divider-account">
-         <span>
+</div>
+</div>
+<div class="settings-card page-section content-surface">
+<div class="settings-divider settings-divider-account">
+<span>
           Account
          </span>
-         <button class="btn-refresh settings-logout-btn" id="logoutButton" type="button">
-          <i aria-hidden="true" data-lucide="log-out">
-          </i>
+<button class="btn-refresh settings-logout-btn" id="logoutButton" type="button">
+<i aria-hidden="true" data-lucide="log-out">
+</i>
           Log out
          </button>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+</div>
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Username
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Username used for the Xrob Music login page.
           </div>
-         </div>
-         <input autocomplete="username" id="set_web_username" maxlength="64" style="max-width:260px" type="text"/>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+</div>
+<input autocomplete="username" id="set_web_username" maxlength="64" style="max-width:260px" type="text"/>
+</div>
+<div class="setting-row">
+<div>
+<div class="setting-label">
            New password
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Leave blank to keep the current password.
           </div>
-         </div>
-         <input autocomplete="new-password" id="set_web_password" maxlength="256" style="max-width:260px" type="password"/>
-        </div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider">
+</div>
+<input autocomplete="new-password" id="set_web_password" maxlength="256" style="max-width:260px" type="password"/>
+</div>
+</div>
+<div class="settings-card page-section content-surface">
+<div class="settings-divider">
          Maintenance
         </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Library health
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            Check unreadable files, missing artwork, bad tags and duplicates.
           </div>
-         </div>
-         <button class="btn-refresh" id="libraryHealthButton" type="button">
+</div>
+<button class="btn-refresh" id="libraryHealthButton" type="button">
           Check library health
          </button>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
+</div>
+<div class="setting-row">
+<div>
+<div class="setting-label">
            Error log
           </div>
-          <div class="setting-desc">
+<div class="setting-desc">
            View failed downloads and media-processing errors.
           </div>
-         </div>
-         <button class="btn-refresh" id="errorsButton" type="button">
+</div>
+<button class="btn-refresh" id="errorsButton" type="button">
           Open error log
          </button>
-        </div>
-       </div>
-       <div class="settings-actions page-section">
-        <button class="save-btn" id="settings-save" type="button">
-         <i aria-hidden="true" data-lucide="save">
-         </i>
+</div>
+</div>
+<div class="settings-actions page-section">
+<button class="save-btn" id="settings-save" type="button">
+<i aria-hidden="true" data-lucide="save">
+</i>
          Save changes
         </button>
-        <button class="btn-refresh" id="settings-reset" type="button">
-         <i aria-hidden="true" data-lucide="rotate-ccw">
-         </i>
+<button class="btn-refresh" id="settings-reset" type="button">
+<i aria-hidden="true" data-lucide="rotate-ccw">
+</i>
          Reset
         </button>
-       </div>
-       <div aria-live="polite" class="status-msg" id="settingsMsg">
-       </div>
-      </div>
-     </section>
-    </main>
-   </div>
-   <div class="global-player-bar music-player" id="global-player-bar" style="display:none;">
-    <div class="gp-track-details">
-     <img alt="" id="gp-art" src="https://via.placeholder.com/60?text=Music"/>
-     <div class="gp-text">
-      <span id="gp-title">
+</div>
+<div aria-live="polite" class="status-msg" id="settingsMsg">
+</div>
+</div>
+</section>
+</main>
+</div>
+<div class="global-player-bar music-player player-dock" id="global-player-bar" style="display:none;">
+<div class="gp-track-details player-track">
+<img alt="" id="gp-art" src="https://via.placeholder.com/60?text=Music"/>
+<div class="gp-text">
+<span id="gp-title">
        Select a track
       </span>
-      <span id="gp-artist">
+<span id="gp-artist">
        Ready
       </span>
-     </div>
-    </div>
-    <div class="gp-controls">
-     <div class="gp-main-controls">
-      <!-- PREVIOUS -->
-      <button aria-label="Shuffle playback" class="gp-skip-btn" id="gp-shuffle-btn" title="Shuffle playback" type="button">
-       <span aria-hidden="true" class="player-symbol">
-        &toea;
+</div>
+</div>
+<div class="gp-controls player-controls">
+<div class="gp-main-controls">
+<!-- PREVIOUS -->
+<button aria-label="Shuffle playback" class="gp-skip-btn" id="gp-shuffle-btn" title="Shuffle playback" type="button">
+<span aria-hidden="true" class="player-symbol">
+        ⤨
        </span>
-      </button>
-      <button aria-label="Previous track" class="gp-skip-btn" id="gp-prev-btn" title="Previous track" type="button">
-       <span aria-hidden="true" class="player-symbol">
+</button>
+<button aria-label="Previous track" class="gp-skip-btn" id="gp-prev-btn" title="Previous track" type="button">
+<span aria-hidden="true" class="player-symbol">
         ⏮
        </span>
-      </button>
-      <!-- PLAY -->
-      <button aria-label="Play or pause" class="gp-play-btn" id="gp-play-btn" title="Play / Pause" type="button">
+</button>
+<!-- PLAY -->
+<button aria-label="Play or pause" class="gp-play-btn" id="gp-play-btn" title="Play / Pause" type="button">
        ▶
       </button>
-      <!-- NEXT -->
-      <button aria-label="Open queue" class="gp-skip-btn" id="gp-queue-btn" title="Up Next" type="button">
+<!-- NEXT -->
+<button aria-label="Open queue" class="gp-skip-btn" id="gp-queue-btn" title="Up Next" type="button">
        ☰
       </button>
-      <button aria-label="Next track" class="gp-skip-btn" id="gp-next-btn" title="Next track" type="button">
-       <span aria-hidden="true" class="player-symbol">
+<button aria-label="Next track" class="gp-skip-btn" id="gp-next-btn" title="Next track" type="button">
+<span aria-hidden="true" class="player-symbol">
         ⏭
        </span>
-      </button>
-     </div>
-     <!-- PROGRESS -->
-     <div class="gp-progress-container">
-      <span id="gp-cur-time">
+</button>
+</div>
+<!-- PROGRESS -->
+<div class="gp-progress-container">
+<span id="gp-cur-time">
        0:00
       </span>
-      <input aria-label="Track progress" id="gp-seek" max="100" min="0" step=".1" type="range" value="0"/>
-      <span id="gp-dur-time">
+<input aria-label="Track progress" id="gp-seek" max="100" min="0" step=".1" type="range" value="0"/>
+<span id="gp-dur-time">
        0:00
       </span>
-     </div>
-    </div>
-    <!-- PLAYER EXTRA -->
-    <div class="gp-extra">
-     <canvas aria-hidden="true" height="30" id="visualizer-canvas" width="90">
-     </canvas>
-     <span aria-hidden="true" class="gp-volume-icon">
-      <i data-lucide="volume-2">
-      </i>
-     </span>
-     <input aria-label="Volume" id="gp-volume" max="1" min="0" step=".01" type="range" value=".8"/>
-    </div>
-   </div>
-  </div>
-  <aside aria-label="Up Next queue" class="queue-drawer overlay-panel" hidden="" id="queue-drawer">
-   <div class="queue-drawer-head">
-    <strong>
+</div>
+</div>
+<!-- PLAYER EXTRA -->
+<div class="gp-extra player-extra">
+<canvas aria-hidden="true" height="30" id="visualizer-canvas" width="90">
+</canvas>
+<span aria-hidden="true" class="gp-volume-icon">
+<i data-lucide="volume-2">
+</i>
+</span>
+<input aria-label="Volume" id="gp-volume" max="1" min="0" step=".01" type="range" value=".8"/>
+</div>
+</div>
+</div>
+<aside aria-label="Up Next queue" class="queue-drawer overlay-panel up-next-rail" hidden="" id="queue-drawer">
+<div class="queue-drawer-head">
+<strong>
      Up Next
     </strong>
-    <button aria-label="Close queue" class="icon-btn" id="queueClose" title="Close queue" type="button">
-     <i aria-hidden="true" data-lucide="x">
-     </i>
-    </button>
-   </div>
-   <div class="queue-actions">
-    <button class="btn-refresh" id="queueClear">
+<button aria-label="Close queue" class="icon-btn" id="queueClose" title="Close queue" type="button">
+<i aria-hidden="true" data-lucide="x">
+</i>
+</button>
+</div>
+<div class="queue-actions">
+<button class="btn-refresh" id="queueClear">
      Clear
     </button>
-    <button class="btn-refresh" id="queueSave">
+<button class="btn-refresh" id="queueSave">
      Save as playlist
     </button>
-   </div>
-   <div class="queue-list" id="queueList">
-   </div>
-   <div class="queue-drawer-foot">
-    <button class="btn-refresh" id="queueRepeat">
+</div>
+<div class="queue-list" id="queueList">
+</div>
+<div class="queue-drawer-foot">
+<button class="btn-refresh" id="queueRepeat">
      Repeat: Off
     </button>
-   </div>
-  </aside>
-  <div class="xrob-modal overlay-region" hidden="" id="metadata-modal">
-   <div class="xrob-modal-card">
-    <div class="xrob-modal-head">
-     <div>
-      <strong>
+</div>
+</aside>
+<div class="xrob-modal overlay-region" hidden="" id="metadata-modal">
+<div class="xrob-modal-card">
+<div class="xrob-modal-head">
+<div>
+<strong>
        Edit song
       </strong>
-      <div class="modal-subtitle" id="metadataFileName">
-      </div>
-     </div>
-     <button aria-label="Close editor" class="icon-btn" id="metadataClose" title="Close editor">
-      <i aria-hidden="true" data-lucide="x">
-      </i>
-     </button>
-    </div>
-    <form id="metadataForm">
-     <input id="metadataId" type="hidden"/>
-     <label>
+<div class="modal-subtitle" id="metadataFileName">
+</div>
+</div>
+<button aria-label="Close editor" class="icon-btn" id="metadataClose" title="Close editor">
+<i aria-hidden="true" data-lucide="x">
+</i>
+</button>
+</div>
+<form id="metadataForm">
+<input id="metadataId" type="hidden"/>
+<label>
       Title
       <input autocomplete="off" id="metadataTitle"/>
-     </label>
-     <label>
+</label>
+<label>
       Artist
       <input autocomplete="off" id="metadataArtist"/>
-     </label>
-     <label>
+</label>
+<label>
       Album
       <input autocomplete="off" id="metadataAlbum"/>
-     </label>
-     <div class="settings-actions">
-      <button class="save-btn" type="submit">
+</label>
+<div class="settings-actions">
+<button class="save-btn" type="submit">
        Save &amp; remove from editor
       </button>
-     </div>
-    </form>
-   </div>
-  </div>
-  <div class="xrob-modal overlay-region" hidden="" id="errors-modal">
-   <div class="xrob-modal-card">
-    <div class="xrob-modal-head">
-     <strong>
+</div>
+</form>
+</div>
+</div>
+<div class="xrob-modal overlay-region" hidden="" id="errors-modal">
+<div class="xrob-modal-card">
+<div class="xrob-modal-head">
+<strong>
       Error log
      </strong>
-     <button aria-label="Close error log" class="icon-btn" id="errorsClose" title="Close error log">
-      <i aria-hidden="true" data-lucide="x">
-      </i>
-     </button>
+<button aria-label="Close error log" class="icon-btn" id="errorsClose" title="Close error log">
+<i aria-hidden="true" data-lucide="x">
+</i>
+</button>
+</div>
+<div id="errorsContent">
+     Loading…
     </div>
-    <div id="errorsContent">
-     Loading&hellip;
-    </div>
-   </div>
-  </div>
-  <div class="xrob-modal overlay-region" hidden="" id="health-modal">
-   <div class="xrob-modal-card xrob-health-card">
-    <div class="xrob-modal-head">
-     <strong>
+</div>
+</div>
+<div class="xrob-modal overlay-region" hidden="" id="health-modal">
+<div class="xrob-modal-card xrob-health-card">
+<div class="xrob-modal-head">
+<strong>
       Library health
      </strong>
-     <button aria-label="Close library health" class="icon-btn" id="healthClose" title="Close library health">
-      <i aria-hidden="true" data-lucide="x">
-      </i>
-     </button>
+<button aria-label="Close library health" class="icon-btn" id="healthClose" title="Close library health">
+<i aria-hidden="true" data-lucide="x">
+</i>
+</button>
+</div>
+<div id="healthContent">
+     Checking…
     </div>
-    <div id="healthContent">
-     Checking&hellip;
-    </div>
-   </div>
-  </div>
-  <!-- ============================================================
+</div>
+</div>
+<!-- ============================================================
      GLOBAL PLAYER
      ============================================================ -->
-  <!-- ============================================================
+<!-- ============================================================
      MOBILE NAVIGATION
      ============================================================ -->
-  <nav aria-label="Mobile navigation" class="bottom-nav mobile-dock">
-   <button class="nav-link active" id="mob-btn-home" onclick="navigate('home')" type="button">
-    <i aria-hidden="true" data-lucide="house">
-    </i>
-    <span class="nav-label">
-     <span class="nav-text">
+<nav aria-label="Mobile navigation" class="bottom-nav mobile-dock">
+<button class="nav-link active" id="mob-btn-home" onclick="navigate('home')" type="button">
+<i aria-hidden="true" data-lucide="house">
+</i>
+<span class="nav-label">
+<span class="nav-text">
       Home
      </span>
-    </span>
-   </button>
-   <button class="nav-link" id="mob-btn-search" onclick="navigate('search')" type="button">
-    <i aria-hidden="true" data-lucide="search">
-    </i>
-    <span class="nav-label">
-     <span class="nav-text">
+</span>
+</button>
+<button class="nav-link" id="mob-btn-search" onclick="navigate('search')" type="button">
+<i aria-hidden="true" data-lucide="search">
+</i>
+<span class="nav-label">
+<span class="nav-text">
       Search
      </span>
-    </span>
-   </button>
-   <button class="nav-link" id="mob-btn-downloads" onclick="navigate('downloads')" type="button">
-    <i aria-hidden="true" data-lucide="download">
-    </i>
-    <span class="nav-label">
-     <span class="nav-text">
+</span>
+</button>
+<button class="nav-link" id="mob-btn-downloads" onclick="navigate('downloads')" type="button">
+<i aria-hidden="true" data-lucide="download">
+</i>
+<span class="nav-label">
+<span class="nav-text">
       Downloads
      </span>
-     <span class="nav-count" id="mobQueueCount">
+<span class="nav-count" id="mobQueueCount">
       0
      </span>
-    </span>
-   </button>
-   <button class="nav-link" id="mob-btn-library" onclick="navigate('library')" type="button">
-    <i aria-hidden="true" data-lucide="library">
-    </i>
-    <span class="nav-label">
-     <span class="nav-text">
+</span>
+</button>
+<button class="nav-link" id="mob-btn-library" onclick="navigate('library')" type="button">
+<i aria-hidden="true" data-lucide="library">
+</i>
+<span class="nav-label">
+<span class="nav-text">
       Library
      </span>
-     <span class="nav-count" id="mobLibCount">
+<span class="nav-count" id="mobLibCount">
       0
      </span>
-    </span>
-   </button>
-   <button class="nav-link" id="mob-btn-songs-editor" onclick="navigate('songs-editor')" type="button">
-    <i aria-hidden="true" data-lucide="pencil-line">
-    </i>
-    <span class="nav-label">
+</span>
+</button>
+<button class="nav-link" id="mob-btn-songs-editor" onclick="navigate('songs-editor')" type="button">
+<i aria-hidden="true" data-lucide="pencil-line">
+</i>
+<span class="nav-label">
      Editor
     </span>
-   </button>
-   <button class="nav-link" id="mob-btn-settings" onclick="navigate('settings')" type="button">
-    <i aria-hidden="true" data-lucide="sliders-horizontal">
-    </i>
-    <span class="nav-label">
-     <span class="nav-text">
+</button>
+<button class="nav-link" id="mob-btn-settings" onclick="navigate('settings')" type="button">
+<i aria-hidden="true" data-lucide="sliders-horizontal">
+</i>
+<span class="nav-label">
+<span class="nav-text">
       Settings
      </span>
-    </span>
-   </button>
-  </nav>
-  <!-- ============================================================
+</span>
+</button>
+</nav>
+<!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="/static/app.js?v=292">
-  </script>
- </body>
+<script src="/static/app.js?v=292">
+</script>
+</body>
 </html>
