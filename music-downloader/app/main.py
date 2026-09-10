@@ -12,7 +12,6 @@ import subprocess
 import time
 import urllib.parse
 import uuid
-import secrets
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
@@ -27,7 +26,6 @@ from fastapi import (
     WebSocketDisconnect,
     UploadFile,
     File,
-    Cookie,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -51,17 +49,6 @@ app = FastAPI(
     title="Xrob Music",
     version="2.6.0",
 )
-
-@app.middleware("http")
-async def web_auth_middleware(request: Request, call_next):
-    path = request.url.path
-    # OpenSubsonic and static assets keep their existing authentication behavior.
-    if path.startswith("/rest/") or path.startswith("/static/") or path == "/api/auth/login" or path == "/api/auth/status" or path == "/api/auth/logout" or path == "/favicon.ico":
-        return await call_next(request)
-    if path.startswith("/api/") and not _is_authenticated(request.cookies.get(AUTH_COOKIE)):
-        return JSONResponse({"detail":"Authentication required"}, status_code=401)
-    return await call_next(request)
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -95,30 +82,6 @@ COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
 DATA_DIR = Path(os.getenv("XROB_DATA_DIR", "/data"))
 DB_FILE = DATA_DIR / "tasks.db"
 SETTINGS_FILE = DATA_DIR / "settings.json"
-AUTH_USER = os.getenv("XROB_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "admin")
-AUTH_COOKIE = "xrob_session"
-AUTH_TTL = 60 * 60 * 24 * 14
-AUTH_SESSIONS = {}
-
-def _auth_token():
-    return secrets.token_urlsafe(32)
-
-def _current_web_credentials():
-    settings = load_settings()
-    return str(settings.get("web_username") or AUTH_USER), str(settings.get("web_password") or AUTH_PASSWORD)
-
-def _is_authenticated(token):
-    if not token:
-        return False
-    created = AUTH_SESSIONS.get(token)
-    if not created:
-        return False
-    if time.time() - created > AUTH_TTL:
-        AUTH_SESSIONS.pop(token, None)
-        return False
-    return True
-
 
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
@@ -126,7 +89,6 @@ SUBSONIC_VERSION = "1.16.1"
 SERVER_VERSION = "2.7.0"
 
 MAX_CONCURRENT_DOWNLOADS = 3
-LIBRARY_METADATA_CONCURRENCY = max(4, min(12, int(os.getenv("XROB_LIBRARY_METADATA_CONCURRENCY", "8"))))
 
 AUDIO_EXTENSIONS = {
     ".mp3",
@@ -160,8 +122,6 @@ DEFAULT_SETTINGS = {
     "scan_interval_minutes": 60,
     "subsonic_user": "admin",
     "subsonic_password": "",
-    "web_username": os.getenv("XROB_USERNAME", "admin"),
-    "web_password": os.getenv("XROB_PASSWORD", "admin"),
 }
 
 AUDIO_FORMATS = {"mp3", "flac", "m4a", "opus", "ogg", "wav", "aac", "alac"}
@@ -196,8 +156,6 @@ LIBRARY_CACHE = None
 LIBRARY_CACHE_TIME = 0.0
 LIBRARY_CACHE_TTL = 10.0
 LIBRARY_CACHE_LOCK = asyncio.Lock()
-LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
-LIBRARY_WARMUP_TASK = None
 
 
 # ============================================================
@@ -252,7 +210,7 @@ def migrate_legacy_db(source: Path, destination: Path):
 
 def configure_storage():
     """Apply the configured library path and prepare its local metadata cache."""
-    global DOWNLOAD_DIR, COVER_CACHE_DIR, SETTINGS_FILE, DB_FILE, LIBRARY_INDEX_FILE
+    global DOWNLOAD_DIR, COVER_CACHE_DIR, SETTINGS_FILE, DB_FILE
 
     addon = load_addon_options()
     configured = str(addon.get("music_path") or "").strip()
@@ -272,27 +230,6 @@ def configure_storage():
     legacy_db = DOWNLOAD_DIR / "tasks.db"
     legacy_settings = DOWNLOAD_DIR / ".settings.json"
     SETTINGS_FILE = DATA_DIR / "settings.json"
-    LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
-AUTH_USER = os.getenv("XROB_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "admin")
-AUTH_COOKIE = "xrob_session"
-AUTH_TTL = 60 * 60 * 24 * 14
-AUTH_SESSIONS = {}
-
-def _auth_token():
-    return secrets.token_urlsafe(32)
-
-def _is_authenticated(token):
-    if not token:
-        return False
-    created = AUTH_SESSIONS.get(token)
-    if not created:
-        return False
-    if time.time() - created > AUTH_TTL:
-        AUTH_SESSIONS.pop(token, None)
-        return False
-    return True
-
     DB_FILE = DATA_DIR / "tasks.db"
 
     if not DB_FILE.exists() and legacy_db.exists():
@@ -404,12 +341,9 @@ def save_settings(data: dict):
     settings = load_settings()
     allowed = {
         "audio_format", "audio_quality", "embed_thumbnail",
-        "embed_metadata", "organize_by_artist", "scan_enabled",
-        "scan_interval_minutes", "web_username", "web_password",
+        "embed_metadata", "organize_by_artist",
     }
 
-    old_user = str(settings.get("web_username") or "")
-    old_password = str(settings.get("web_password") or "")
     for key in allowed & data.keys():
         settings[key] = data[key]
 
@@ -426,16 +360,10 @@ def save_settings(data: dict):
     settings["embed_thumbnail"] = bool(settings.get("embed_thumbnail"))
     settings["embed_metadata"] = bool(settings.get("embed_metadata"))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist"))
-    settings["scan_enabled"] = bool(settings.get("scan_enabled", True))
-    settings["scan_interval_minutes"] = max(5, int(settings.get("scan_interval_minutes", 60) or 60))
-    settings["web_username"] = str(settings.get("web_username") or os.getenv("XROB_USERNAME", "admin"))[:64]
-    settings["web_password"] = str(settings.get("web_password") or os.getenv("XROB_PASSWORD", "admin"))[:256]
 
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
-    if old_user != settings.get("web_username") or ("web_password" in data and old_password != settings.get("web_password")):
-        AUTH_SESSIONS.clear()
 
     return settings
 
@@ -445,9 +373,6 @@ def public_settings():
     # Subsonic credentials are add-on/server configuration, not web UI settings.
     settings.pop("subsonic_user", None)
     settings.pop("subsonic_password", None)
-    settings["web_password_set"] = bool(settings.get("web_password"))
-    settings["web_username"] = str(settings.get("web_username") or "admin")
-    settings.pop("web_password", None)
     settings["storage"] = storage_info_sync()
     return settings
 
@@ -519,10 +444,14 @@ def init_db():
 
         conn.execute("""CREATE TABLE IF NOT EXISTS playback_positions (song_id TEXT PRIMARY KEY, position REAL DEFAULT 0, duration REAL DEFAULT 0, updated_at REAL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS play_history (id INTEGER PRIMARY KEY AUTOINCREMENT, song_id TEXT NOT NULL, played_at REAL NOT NULL, duration REAL DEFAULT 0, position REAL DEFAULT 0)""")
+        # Additive listening analytics columns. Existing history remains compatible.
+        history_cols = {row[1] for row in conn.execute("PRAGMA table_info(play_history)")}
+        if "source" not in history_cols:
+            conn.execute("ALTER TABLE play_history ADD COLUMN source TEXT DEFAULT 'library'")
+        if "completed" not in history_cols:
+            conn.execute("ALTER TABLE play_history ADD COLUMN completed INTEGER DEFAULT 0")
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS song_review (song_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', actioned_at REAL DEFAULT 0)""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS artist_artwork (artist_id TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, updated_at REAL NOT NULL)""")
         # Playlist extensions are additive and preserve the existing schema.
         playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
         if "kind" not in playlist_cols:
@@ -1063,86 +992,6 @@ def make_album_id(
 
 
 # ============================================================
-# FAST LIBRARY INDEX
-# ============================================================
-
-def _load_library_index_sync():
-    if not LIBRARY_INDEX_FILE.exists():
-        return {}
-    try:
-        with open(LIBRARY_INDEX_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _save_library_index_sync(entries):
-    tmp = LIBRARY_INDEX_FILE.with_suffix(".tmp")
-    payload = {"version": 1, "entries": entries}
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-    tmp.replace(LIBRARY_INDEX_FILE)
-
-def _fast_file_library_sync():
-    files = get_audio_files_sync()
-    rows = []
-    for path in files:
-        try:
-            st = path.stat()
-            rel = str(path.relative_to(DOWNLOAD_DIR))
-            rows.append({"path": rel, "size": st.st_size, "mtime_ns": st.st_mtime_ns, "title": path.stem})
-        except OSError:
-            continue
-    rows.sort(key=lambda x: x["path"].lower())
-    return rows
-
-async def fast_library_snapshot():
-    rows = await asyncio.to_thread(_fast_file_library_sync)
-    index = await asyncio.to_thread(_load_library_index_sync)
-    cached = index.get("entries", {}) if isinstance(index, dict) else {}
-    files=[]
-    total=0
-    for row in rows:
-        total += int(row["size"] or 0)
-        cached_row = cached.get(row["path"], {}) if isinstance(cached, dict) else {}
-        title = cached_row.get("title") or row["title"]
-        artist = cached_row.get("artist") or "Unknown Artist"
-        album = cached_row.get("album") or "Unknown Album"
-        enc = urllib.parse.quote(row["path"], safe="/")
-        files.append({"name": row["path"], "title": title, "artist": artist, "album": album, "size": format_size(row["size"]), "bytes": row["size"], "duration": safe_float(cached_row.get("duration"), 0), "play_count": 0, "cover": "/api/library/cover/"+enc, "stream": "/api/library/stream/"+enc})
-    # Cached metadata can provide artist/album counts before the full scan finishes.
-    artists=set(); albums=set()
-    for v in cached.values() if isinstance(cached, dict) else []:
-        if v.get("artist"): artists.add(str(v["artist"]).strip().lower())
-        if v.get("album"):
-            albums.add((str(v.get("artist") or "Unknown Artist").strip().lower(), str(v["album"]).strip().lower()))
-    return {"files": files, "total_size": format_size(total), "total_bytes": total, "artists_count": len(artists), "albums_count": len(albums), "ready": False, "storage": await asyncio.to_thread(storage_info_sync)}
-
-async def persist_library_index(library):
-    entries={}
-    for song in library.get("songs", []):
-        try:
-            st=song["path"].stat()
-            entries[str(song["path"].relative_to(DOWNLOAD_DIR))]={"mtime_ns":st.st_mtime_ns,"size":st.st_size,"title":song.get("title"),"artist":song.get("artist"),"album":song.get("album"),"album_artist":song.get("albumArtist"),"genre":song.get("genre"),"year":song.get("year"),"track":song.get("track"),"disc":song.get("disc"),"duration":song.get("duration"),"bit_rate":song.get("bit_rate"),"sample_rate":song.get("sample_rate"),"channels":song.get("channels"),"bit_depth":song.get("bit_depth")}
-        except Exception:
-            pass
-    try:
-        await asyncio.to_thread(_save_library_index_sync, entries)
-    except Exception as exc:
-        print("Warning: could not save library index:", exc)
-
-async def background_library_warmup():
-    global LIBRARY_WARMUP_TASK
-    try:
-        library = await build_library(force=True)
-        await persist_library_index(library)
-    except Exception as exc:
-        print("Library warmup failed:", exc)
-    finally:
-        LIBRARY_WARMUP_TASK = None
-
-# ============================================================
 # BUILD LIBRARY
 # ============================================================
 
@@ -1160,37 +1009,17 @@ async def build_library(force=False):
 
         files = await get_all_audio_files()
         files.sort(key=lambda path: str(path).lower())
-        disk_index = await asyncio.to_thread(_load_library_index_sync)
-        disk_entries = disk_index.get("entries", {}) if isinstance(disk_index, dict) else {}
 
         songs = []
         artists = {}
         albums = {}
         genres = {}
 
-        metadata_semaphore = asyncio.Semaphore(LIBRARY_METADATA_CONCURRENCY)
-
-        async def prepare_song_input(path):
+        for path in files:
             try:
-                stat = await asyncio.to_thread(path.stat)
-                rel = str(path.relative_to(DOWNLOAD_DIR))
-                cached_disk = disk_entries.get(rel) if isinstance(disk_entries, dict) else None
-                if cached_disk and int(cached_disk.get("mtime_ns", -1)) == int(stat.st_mtime_ns) and int(cached_disk.get("size", -1)) == int(stat.st_size):
-                    metadata = dict(cached_disk)
-                else:
-                    async with metadata_semaphore:
-                        metadata = await read_metadata(path)
-                return path, stat, metadata
+                stat = path.stat()
+                metadata = await read_metadata(path)
             except Exception:
-                return path, None, None
-
-        prepared = await asyncio.gather(
-            *(prepare_song_input(path) for path in files),
-            return_exceptions=False,
-        )
-
-        for path, stat, metadata in prepared:
-            if stat is None or metadata is None:
                 continue
 
             song_id = make_song_id(path)
@@ -1796,15 +1625,6 @@ async def download_worker():
 
             METADATA_CACHE.pop(str(final_path), None)
             invalidate_library_cache()
-            try:
-                with db_connect() as conn:
-                    # New downloads always enter the Songs Editor review queue.
-                    library_now = await build_library(force=True)
-                    matched = next((x for x in library_now.get("songs",[]) if str(x.get("path")) == str(final_path)), None)
-                    if matched:
-                        conn.execute("INSERT OR REPLACE INTO song_review(song_id,state,actioned_at) VALUES(?,'pending',0)", (matched["id"],)); conn.commit()
-            except Exception as review_exc:
-                await write_app_error("song_editor",str(review_exc))
 
             await notify_task_update(
                 task,
@@ -1902,9 +1722,6 @@ async def startup_event():
         )
 
     asyncio.create_task(scheduled_library_scanner())
-    global LIBRARY_WARMUP_TASK
-    if LIBRARY_WARMUP_TASK is None:
-        LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
 
     for task in TASKS.values():
 
@@ -2525,11 +2342,6 @@ async def api_delete_task(
 
 @app.get("/api/library")
 async def api_library():
-    global LIBRARY_WARMUP_TASK
-    if LIBRARY_CACHE is None:
-        if LIBRARY_WARMUP_TASK is None:
-            LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
-        return await fast_library_snapshot()
 
     files = await get_all_audio_files()
 
@@ -2593,7 +2405,6 @@ async def api_library():
             "album_count": len(album_ids),
             "song_ids": sorted(song_ids),
             "album_ids": album_ids,
-            "cover": f"/api/library/artist-artwork/{artist['id']}",
         })
     artists.sort(key=lambda item: item["name"].lower())
 
@@ -2622,7 +2433,6 @@ async def api_library():
         "storage": storage_info_sync(),
         "artists": artists,
         "albums": albums,
-        "ready": True,
     }
 
 
@@ -2636,32 +2446,148 @@ async def api_library_scan():
 
 @app.get("/api/stats")
 async def api_stats():
-    if LIBRARY_CACHE is None:
-        snap = await fast_library_snapshot()
-        with db_connect() as conn:
-            all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
-        return {"tracks": len(snap["files"]), "artists": snap.get("artists_count", 0), "albums": snap.get("albums_count", 0), "total_bytes": snap["total_bytes"], "folder_size": snap["total_size"], "all_play_count": all_play_count, "played_tracks": 0, "ready": False}
-
     library = await build_library()
-
     songs = library["songs"]
-
     artists = library["artists"]
     albums = library["albums"]
-
     total = sum(song["size"] for song in songs)
-    with db_connect() as conn:
-        all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
-        distinct_played = int(conn.execute("SELECT COUNT(DISTINCT song_id) FROM play_history").fetchone()[0])
     return {
         "tracks": len(songs),
         "artists": len(artists),
         "albums": len(albums),
         "total_bytes": total,
         "folder_size": format_size(total),
-        "all_play_count": all_play_count,
-        "played_tracks": distinct_played,
     }
+
+
+def _analytics_song(song, play_count=0):
+    rel = str(song["path"].relative_to(DOWNLOAD_DIR))
+    enc = urllib.parse.quote(rel, safe="/")
+    return {
+        "id": song["id"], "title": song["title"], "artist": song["artist"],
+        "album": song["album"], "album_artist": song.get("albumArtist", song["artist"]),
+        "genre": song.get("genre", ""), "year": song.get("year", ""),
+        "duration": song.get("duration", 0), "size": song.get("size", 0),
+        "bit_rate": song.get("bit_rate", 0), "sample_rate": song.get("sample_rate", 0),
+        "play_count": int(play_count),
+        "cover": "/api/library/cover/" + enc, "stream": "/api/library/stream/" + enc,
+    }
+
+
+@app.get("/api/library/statistics")
+async def api_library_statistics():
+    library = await build_library()
+    songs = library["songs"]
+    by_id = {s["id"]: s for s in songs}
+    now = time.time()
+    with db_connect() as conn:
+        rows = conn.execute("SELECT song_id, COUNT(*) plays, MAX(played_at) last_play FROM play_history GROUP BY song_id").fetchall()
+        recent_rows = conn.execute("SELECT song_id, played_at, position, duration FROM play_history ORDER BY played_at DESC LIMIT 1000").fetchall()
+    counts = {r[0]: int(r[1]) for r in rows}
+    last_play = {r[0]: float(r[2] or 0) for r in rows}
+    total_duration = sum(max(0, int(s.get("duration") or 0)) for s in songs)
+    played_ids = set(counts) & set(by_id)
+    genres = {}
+    years = {}
+    bitrates = []
+    sample_rates = {}
+    for s in songs:
+        g = str(s.get("genre") or "Unknown").strip() or "Unknown"
+        genres[g] = genres.get(g, 0) + 1
+        y = str(s.get("year") or "Unknown").strip() or "Unknown"
+        years[y] = years.get(y, 0) + 1
+        if s.get("bit_rate"):
+            bitrates.append(int(s["bit_rate"]))
+        if s.get("sample_rate"):
+            sr = str(s["sample_rate"])
+            sample_rates[sr] = sample_rates.get(sr, 0) + 1
+    top_tracks = sorted((s for s in songs), key=lambda s: (counts.get(s["id"], 0), last_play.get(s["id"], 0)), reverse=True)[:10]
+    top_artists = []
+    artist_plays = {}
+    artist_tracks = {}
+    for s in songs:
+        aid = s.get("artistId") or make_artist_id(s["artist"])
+        artist_plays[aid] = artist_plays.get(aid, 0) + counts.get(s["id"], 0)
+        artist_tracks[aid] = artist_tracks.get(aid, 0) + 1
+    for aid, data in library["artists"].items():
+        top_artists.append({"id": aid, "name": data["name"], "tracks": len(data["songIds"]), "plays": artist_plays.get(aid, 0)})
+    top_artists.sort(key=lambda x: (x["plays"], x["tracks"], x["name"].lower()), reverse=True)
+    daily_plays = []
+    for days in range(13, -1, -1):
+        start = now - (days + 1) * 86400
+        end = now - days * 86400
+        daily_plays.append({"date": time.strftime("%Y-%m-%d", time.localtime(end)), "plays": sum(1 for r in recent_rows if start < float(r[1]) <= end)})
+    return {
+        "overview": {"tracks": len(songs), "artists": len(artists), "albums": len(albums), "genres": len(genres),
+                      "total_bytes": sum(s["size"] for s in songs), "total_duration": total_duration,
+                      "played_tracks": len(played_ids), "never_played": max(0, len(songs)-len(played_ids)),
+                      "total_plays": sum(counts.values()), "avg_track_duration": round(total_duration / len(songs)) if songs else 0,
+                      "avg_bitrate": round(sum(bitrates)/len(bitrates)) if bitrates else 0},
+        "genres": sorted(({"name":k,"tracks":v} for k,v in genres.items()), key=lambda x:x["tracks"], reverse=True)[:12],
+        "years": sorted(({"year":k,"tracks":v} for k,v in years.items() if k != "Unknown"), key=lambda x:x["year"], reverse=True)[:15],
+        "sample_rates": sorted(({"rate":k,"tracks":v} for k,v in sample_rates.items()), key=lambda x:x["tracks"], reverse=True),
+        "top_tracks": [_analytics_song(s, counts.get(s["id"], 0)) for s in top_tracks],
+        "top_artists": top_artists[:10],
+        "daily_plays": daily_plays,
+        "storage": storage_info_sync(),
+    }
+
+
+@app.get("/api/daily-mixes")
+async def api_daily_mixes(limit: int = Query(4, ge=1, le=6)):
+    library = await build_library()
+    songs = library["songs"]
+    if not songs:
+        return {"mixes": []}
+    by_id = {s["id"]: s for s in songs}
+    now = time.time()
+    with db_connect() as conn:
+        history = conn.execute("SELECT song_id, played_at FROM play_history ORDER BY played_at DESC LIMIT 3000").fetchall()
+    plays = {}
+    last = {}
+    for sid, played_at in history:
+        plays[sid] = plays.get(sid, 0) + 1
+        last[sid] = max(last.get(sid, 0), float(played_at or 0))
+    artist_affinity = {}
+    genre_affinity = {}
+    for s in songs:
+        c = plays.get(s["id"], 0)
+        if c:
+            artist_affinity[s["artist"]] = artist_affinity.get(s["artist"], 0) + c
+            g = str(s.get("genre") or "Unknown")
+            genre_affinity[g] = genre_affinity.get(g, 0) + c
+    top_artists = sorted(artist_affinity, key=lambda a: artist_affinity[a], reverse=True)
+    top_genres = sorted(genre_affinity, key=lambda g: genre_affinity[g], reverse=True)
+    # Spotify-like deterministic daily seed: the mix changes daily, but stays stable during the day.
+    day_seed = time.strftime("%Y-%m-%d")
+    mixes = []
+    for mix_no in range(min(limit, max(1, len(top_artists) or 1))):
+        anchor_artist = top_artists[mix_no] if mix_no < len(top_artists) else None
+        anchor_genre = top_genres[mix_no % len(top_genres)] if top_genres else None
+        scored = []
+        for s in songs:
+            c = plays.get(s["id"], 0)
+            recency = max(0.0, 1.0 - (now - last.get(s["id"], now + 86400*30)) / (86400*30)) if last.get(s["id"]) else 0.0
+            score = c * 8.0 + recency * 3.0
+            if anchor_artist and s["artist"] == anchor_artist: score += 18
+            if anchor_genre and str(s.get("genre") or "Unknown") == anchor_genre: score += 8
+            # Gentle discovery component keeps new/never-played tracks in the mix.
+            if c == 0: score += 4
+            scored.append((score, s))
+        rng = random.Random(f"{day_seed}:mix:{mix_no}")
+        rng.shuffle(scored)
+        scored.sort(key=lambda x: x[0], reverse=True)
+        selected = [s for _, s in scored[:min(25, len(scored))]]
+        # Ensure artist diversity after the first few strongest tracks.
+        selected = selected[:20]
+        mixes.append({
+            "id": f"daily-mix-{mix_no+1}",
+            "name": f"Daily Mix {mix_no+1}",
+            "subtitle": f"{anchor_artist or anchor_genre or 'Your library'} • refreshed daily",
+            "seed": day_seed,
+            "tracks": [_analytics_song(s, plays.get(s["id"], 0)) for s in selected],
+        })
+    return {"mixes": mixes}
 
 
 @app.get("/api/home")
@@ -2753,8 +2679,6 @@ async def api_home():
 
     library = await build_library()
     total_bytes = sum(song.get("size", 0) for song in library["songs"])
-    with db_connect() as conn:
-        all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
     return {
         "stats": {
             "tracks": len(library["songs"]),
@@ -2762,7 +2686,6 @@ async def api_home():
             "albums": len(library["albums"]),
             "total_bytes": total_bytes,
             "folder_size": format_size(total_bytes),
-            "all_play_count": all_play_count,
         },
         "active_downloads": active,
         "recently_added": recent,
@@ -5543,10 +5466,10 @@ async def api_player_history(payload: dict = Body(...)):
     song_id=str(payload.get("song_id") or "").strip()
     if not song_id: raise HTTPException(400, "song_id is required")
     with db_connect() as conn:
-        conn.execute("INSERT INTO play_history(song_id,played_at,duration,position) VALUES(?,?,?,?)", (song_id,time.time(),float(payload.get("duration") or 0),float(payload.get("position") or 0)))
+        conn.execute("INSERT INTO play_history(song_id,played_at,duration,position,source,completed) VALUES(?,?,?,?,?,?)",
+                     (song_id,time.time(),float(payload.get("duration") or 0),float(payload.get("position") or 0),str(payload.get("source") or "library"),1 if payload.get("completed") else 0))
         conn.commit()
-        total_plays = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
-    return {"status":"ok", "all_play_count": total_plays}
+    return {"status":"ok"}
 
 
 @app.get("/api/library/recent-most")
@@ -5554,7 +5477,7 @@ async def api_recent_most():
     library=await build_library()
     by_id={s["id"]:s for s in library["songs"]}
     with db_connect() as conn:
-        recent=conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY t DESC LIMIT 24").fetchall()
+        recent=conn.execute("SELECT song_id, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY t DESC LIMIT 24").fetchall()
         most=conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY c DESC, t DESC LIMIT 24").fetchall()
     def pack(rows):
         out=[]
@@ -5655,48 +5578,24 @@ async def api_library_health():
 
 
 @app.post("/api/library/scan/{mode}")
-async def api_library_scan_mode(mode: str):
-    if mode not in {"quick", "full"}:
-        raise HTTPException(400, "mode must be quick or full")
+async def api_library_scan_mode(mode:str):
+    if mode not in {"quick","full"}: raise HTTPException(400,"mode must be quick or full")
     with db_connect() as conn:
-        conn.execute(
-            "INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?,?,?) "
-            "ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message",
-            (time.time(), mode, "running", "Scanning"),
-        )
-        conn.commit()
+        conn.execute("INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?, ?, ?) ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message",(time.time(),mode,"running","Scanning")); conn.commit()
     try:
         invalidate_library_cache()
-        # build_library already uses the on-disk index and only reads tags for
-        # new/changed files. Metadata reads are performed concurrently.
-        library = await build_library(force=True)
-        if mode == "full":
-            cover_tasks = [ensure_cover(song["path"]) for song in library["songs"]]
-            if cover_tasks:
-                semaphore = asyncio.Semaphore(8)
-                async def cover_one(coro):
-                    async with semaphore:
-                        try:
-                            return await coro
-                        except Exception:
-                            return None
-                await asyncio.gather(*(cover_one(c) for c in cover_tasks), return_exceptions=True)
-        await persist_library_index(library)
+        library=await build_library(force=True)
+        if mode=="full":
+            for song in library["songs"]:
+                try: await ensure_cover(song["path"])
+                except Exception: pass
         with db_connect() as conn:
-            conn.execute(
-                "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
-                (time.time(), "ok", f"{len(library['songs'])} tracks scanned"),
-            )
-            conn.commit()
-        return {"status": "ok", "mode": mode, "tracks": len(library["songs"])}
+            conn.execute("UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",(time.time(),"ok",f"{len(library['songs'])} tracks scanned")); conn.commit()
+        return {"status":"ok","mode":mode,"tracks":len(library["songs"])}
     except Exception as exc:
-        await write_app_error("library_scan", str(exc))
+        await write_app_error("library_scan",str(exc))
         with db_connect() as conn:
-            conn.execute(
-                "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
-                (time.time(), "error", str(exc)),
-            )
-            conn.commit()
+            conn.execute("UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",(time.time(),"error",str(exc))); conn.commit()
         raise
 
 
@@ -5706,30 +5605,6 @@ async def api_library_scan_status():
         row=conn.execute("SELECT started_at,finished_at,mode,status,message FROM scan_state WHERE id=1").fetchone()
     return dict(zip(["started_at","finished_at","mode","status","message"],row)) if row else {"status":"idle"}
 
-
-@app.post("/api/auth/login")
-async def api_auth_login(request: Request, payload: dict = Body(...)):
-    user = str(payload.get("username") or "")
-    password = str(payload.get("password") or "")
-    expected_user, expected_password = _current_web_credentials()
-    if not secrets.compare_digest(user, expected_user) or not secrets.compare_digest(password, expected_password):
-        raise HTTPException(401, "Invalid username or password")
-    token = _auth_token(); AUTH_SESSIONS[token] = time.time()
-    response = JSONResponse({"status":"ok", "username":expected_user})
-    response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_TTL, httponly=True, samesite="lax", secure=request.url.scheme == "https")
-    return response
-
-@app.get("/api/auth/status")
-async def api_auth_status(request: Request):
-    authenticated = _is_authenticated(request.cookies.get(AUTH_COOKIE))
-    expected_user, _ = _current_web_credentials()
-    return {"authenticated": authenticated, "username": expected_user if authenticated else None}
-
-@app.post("/api/auth/logout")
-async def api_auth_logout(request: Request):
-    token=request.cookies.get(AUTH_COOKIE)
-    if token: AUTH_SESSIONS.pop(token, None)
-    response=JSONResponse({"status":"ok"}); response.delete_cookie(AUTH_COOKIE); return response
 
 @app.get("/api/errors")
 async def api_errors(limit:int=Query(200,ge=1,le=1000)):
@@ -5751,7 +5626,7 @@ async def api_library_metadata(payload: dict = Body(...)):
     song_id=str(payload.get("id") or "")
     song=await find_song(song_id)
     if not song: raise HTTPException(404,"Track not found")
-    path=song["path"]; fields={k:payload.get(k) for k in ("title","artist","album") if k in payload}
+    path=song["path"]; fields={k:payload.get(k) for k in ("title","artist","album","year","genre") if k in payload}
     if not fields: return {"status":"ok"}
     if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
     def write_tags():
@@ -5761,107 +5636,27 @@ async def api_library_metadata(payload: dict = Body(...)):
         title=str(fields.get("title",song["title"]))
         artist=str(fields.get("artist",song["artist"]))
         album=str(fields.get("album",song["album"]))
+        year=str(fields.get("year",song.get("year", "")))
+        genre=str(fields.get("genre",song.get("genre", "")))
         if ext==".mp3":
             try: audio.add_tags()
             except Exception: pass
             if audio.tags is None: audio.tags=ID3()
-            audio.tags.delall("TIT2"); audio.tags.delall("TPE1"); audio.tags.delall("TALB")
-            audio.tags.add(TIT2(encoding=3,text=title)); audio.tags.add(TPE1(encoding=3,text=artist)); audio.tags.add(TALB(encoding=3,text=album))
+            audio.tags.delall("TIT2"); audio.tags.delall("TPE1"); audio.tags.delall("TALB"); audio.tags.delall("TDRC"); audio.tags.delall("TCON")
+            audio.tags.add(TIT2(encoding=3,text=title)); audio.tags.add(TPE1(encoding=3,text=artist)); audio.tags.add(TALB(encoding=3,text=album));
+            if year: audio.tags.add(TDRC(encoding=3,text=year))
+            if genre: audio.tags.add(TCON(encoding=3,text=genre))
         else:
             tags=audio.tags or {}
-            for key,val in (("title",title),("artist",artist),("album",album)):
+            for key,val in (("title",title),("artist",artist),("album",album),("date",year),("genre",genre)):
                 if val: tags[key]=[val]
                 else: tags.pop(key,None)
             audio.tags=tags
         audio.save()
     try: await asyncio.to_thread(write_tags)
     except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
-    with db_connect() as conn:
-        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id,time.time())); conn.commit()
     invalidate_library_cache(); return {"status":"ok"}
 
-
-@app.get("/api/song-editor")
-async def api_song_editor():
-    library=await build_library()
-    songs=library["songs"]
-    now=time.time()
-    with db_connect() as conn:
-        conn.execute("DELETE FROM song_review WHERE song_id NOT IN (%s)" % (",".join("?"*len(songs)) if songs else "''"), [s["id"] for s in songs])
-        for s in songs:
-            conn.execute("INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)", (s["id"],"pending"))
-        conn.commit()
-        conn.row_factory=sqlite3.Row
-        states={r["song_id"]:dict(r) for r in conn.execute("SELECT * FROM song_review")}
-    out=[]
-    edited=[]
-    for s in songs:
-        state = states.get(s["id"], {}).get("state", "pending")
-        rel=str(s["path"].relative_to(DOWNLOAD_DIR)); enc=urllib.parse.quote(rel,safe="/")
-        item={"id":s["id"],"title":s["title"],"artist":s["artist"],"album":s["album"],"name":rel,"duration":s.get("duration",0),"cover":"/api/library/cover/"+enc,"stream":"/api/library/stream/"+enc}
-        if state == "pending":
-            out.append(item)
-        elif state == "edited":
-            edited.append(item)
-    return {"tracks":out,"count":len(out),"edited_tracks":edited,"edited_count":len(edited)}
-
-@app.post("/api/song-editor/reset")
-async def api_song_editor_reset():
-    library = await build_library()
-    ids = [s["id"] for s in library["songs"]]
-    with db_connect() as conn:
-        conn.execute("DELETE FROM song_review")
-        if ids:
-            conn.executemany(
-                "INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
-                [(song_id, "pending") for song_id in ids],
-            )
-        conn.commit()
-    return {"status": "ok", "count": len(ids)}
-
-
-@app.post("/api/song-editor/{song_id}/import")
-async def api_song_editor_import(song_id: str):
-    song = await find_song(song_id)
-    if not song:
-        raise HTTPException(404, "Track not found")
-    with db_connect() as conn:
-        conn.execute(
-            "INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'pending',0) "
-            "ON CONFLICT(song_id) DO UPDATE SET state='pending',actioned_at=0",
-            (song_id,),
-        )
-        conn.commit()
-    return {"status": "ok", "count": 1}
-
-
-@app.post("/api/song-editor/{song_id}/skip")
-async def api_song_editor_skip(song_id:str):
-    song=await find_song(song_id)
-    if not song: raise HTTPException(404,"Track not found")
-    with db_connect() as conn:
-        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'skipped',?) ON CONFLICT(song_id) DO UPDATE SET state='skipped',actioned_at=excluded.actioned_at",(song_id,time.time())); conn.commit()
-    return {"status":"ok"}
-
-
-@app.get("/api/library/artist-artwork/{artist_id}")
-async def api_artist_artwork(artist_id: str):
-    with db_connect() as conn:
-        row = conn.execute("SELECT data,mime FROM artist_artwork WHERE artist_id=?", (artist_id,)).fetchone()
-    if not row: raise HTTPException(404, "Artist artwork not found")
-    return Response(content=row[0], media_type=row[1])
-
-@app.post("/api/library/artist-artwork/{artist_id}")
-async def api_artist_artwork_upload(artist_id: str, upload: UploadFile = File(...)):
-    data = await upload.read()
-    if not data or len(data) > 15 * 1024 * 1024: raise HTTPException(400, "Invalid artwork")
-    mime = upload.content_type or "image/jpeg"
-    if mime not in {"image/jpeg","image/png","image/webp"}: raise HTTPException(400, "Use JPEG, PNG or WebP artwork")
-    with db_connect() as conn:
-        conn.execute("INSERT INTO artist_artwork(artist_id,data,mime,updated_at) VALUES(?,?,?,?) ON CONFLICT(artist_id) DO UPDATE SET data=excluded.data,mime=excluded.mime,updated_at=excluded.updated_at", (artist_id,data,mime,time.time()))
-        conn.commit()
-    invalidate_library_cache()
-    return {"status":"ok","artist_id":artist_id}
 
 @app.post("/api/library/artwork/{song_id}")
 async def api_library_artwork(song_id:str, upload:UploadFile=File(...)):
