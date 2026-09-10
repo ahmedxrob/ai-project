@@ -2634,120 +2634,253 @@ async def api_library_scan():
     return {"status": "ok", "tracks": len(library["songs"]), "artists": len(library["artists"]), "albums": len(library["albums"]), "storage": storage}
 
 
-
-
-def _song_payload(song):
-    rel = str(song["path"].relative_to(DOWNLOAD_DIR))
-    enc = urllib.parse.quote(rel, safe="/")
-    return {
-        "id": song["id"], "title": song.get("title") or song["path"].stem,
-        "artist": song.get("artist") or "Unknown Artist", "album": song.get("album") or "Unknown Album",
-        "album_artist": song.get("albumArtist") or song.get("artist") or "Unknown Artist",
-        "genre": song.get("genre") or "Unknown", "year": song.get("year") or 0,
-        "duration": float(song.get("duration") or 0), "plays": 0,
-        "cover": "/api/library/cover/" + enc, "stream": "/api/library/stream/" + enc,
-    }
-
-
 @app.get("/api/library/statistics")
-async def api_library_statistics(days: int = 30):
-    """Detailed, read-only library analytics. Play history remains additive to the existing schema."""
-    days = max(1, min(int(days or 30), 3650))
+async def api_library_statistics():
+    """Detailed, read-only library analytics. Kept separate from /api/stats so the
+    existing fast stats endpoint remains lightweight."""
     library = await build_library()
     songs = library.get("songs", [])
-    by_id = {s["id"]: s for s in songs}
-    since = time.time() - days * 86400
+    artists = library.get("artists", {})
+    albums = library.get("albums", {})
+    genres = library.get("genres", {})
+
+    total_duration = sum(max(0, safe_int(song.get("duration"), 0)) for song in songs)
+    total_bytes = sum(max(0, safe_int(song.get("size"), 0)) for song in songs)
+    format_counts = {}
+    bitrate_buckets = {"≤128 kbps": 0, "129–192 kbps": 0, "193–256 kbps": 0, "257–320 kbps": 0, ">320 kbps": 0}
+    year_counts = {}
+    sample_rates = {}
+    channel_counts = {}
+
+    for song in songs:
+        ext = str(song.get("suffix") or "").lstrip(".").lower() or "unknown"
+        format_counts[ext] = format_counts.get(ext, 0) + 1
+        bitrate = safe_int(song.get("bit_rate"), 0)
+        if bitrate <= 128:
+            bitrate_buckets["≤128 kbps"] += 1
+        elif bitrate <= 192:
+            bitrate_buckets["129–192 kbps"] += 1
+        elif bitrate <= 256:
+            bitrate_buckets["193–256 kbps"] += 1
+        elif bitrate <= 320:
+            bitrate_buckets["257–320 kbps"] += 1
+        else:
+            bitrate_buckets[">320 kbps"] += 1
+        year = str(song.get("year") or "").strip()
+        if year and year[:4].isdigit():
+            year_counts[year[:4]] = year_counts.get(year[:4], 0) + 1
+        sr = safe_int(song.get("sample_rate"), 0)
+        if sr:
+            sample_rates[str(sr)] = sample_rates.get(str(sr), 0) + 1
+        channels = safe_int(song.get("channels"), 0)
+        if channels:
+            channel_counts[str(channels)] = channel_counts.get(str(channels), 0) + 1
+
     with db_connect() as conn:
         total_plays = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
-        period_plays = int(conn.execute("SELECT COUNT(*) FROM play_history WHERE played_at >= ?", (since,)).fetchone()[0])
-        distinct_period = int(conn.execute("SELECT COUNT(DISTINCT song_id) FROM play_history WHERE played_at >= ?", (since,)).fetchone()[0])
-        rows = conn.execute("SELECT song_id, COUNT(*) plays, MAX(played_at) last_played FROM play_history WHERE played_at >= ? GROUP BY song_id ORDER BY plays DESC, last_played DESC", (since,)).fetchall()
-        daily = conn.execute("SELECT date(played_at, 'unixepoch', 'localtime') day, COUNT(*) plays FROM play_history WHERE played_at >= ? GROUP BY day ORDER BY day", (since,)).fetchall()
+        unique_played = int(conn.execute("SELECT COUNT(DISTINCT song_id) FROM play_history").fetchone()[0])
+        first_play = conn.execute("SELECT MIN(played_at) FROM play_history").fetchone()[0]
+        last_play = conn.execute("SELECT MAX(played_at) FROM play_history").fetchone()[0]
+        recent_plays = int(conn.execute("SELECT COUNT(*) FROM play_history WHERE played_at >= ?", (time.time() - 7 * 86400,)).fetchone()[0])
+        play_seconds = float(conn.execute("SELECT COALESCE(SUM(CASE WHEN duration > 0 THEN MIN(position, duration) ELSE position END),0) FROM play_history").fetchone()[0] or 0)
+        top_artists_rows = conn.execute("""
+            SELECT ph.song_id, COUNT(*) AS plays
+            FROM play_history ph
+            GROUP BY ph.song_id
+            ORDER BY plays DESC, MAX(ph.played_at) DESC
+            LIMIT 20
+        """).fetchall()
+        top_recent_rows = conn.execute("""
+            SELECT ph.song_id, COUNT(*) AS plays, MAX(ph.played_at) AS last_play
+            FROM play_history ph
+            WHERE ph.played_at >= ?
+            GROUP BY ph.song_id
+            ORDER BY plays DESC, last_play DESC
+            LIMIT 12
+        """, (time.time() - 30 * 86400,)).fetchall()
 
-    top_tracks=[]; artist_counts={}; album_counts={}; genre_counts={}; listening_seconds=0.0
-    for song_id, plays, last_played in rows:
-        song=by_id.get(song_id)
-        if not song: continue
-        payload=_song_payload(song); payload["plays"]=int(plays); payload["last_played"]=last_played
-        top_tracks.append(payload)
-        artist=str(song.get("artist") or "Unknown Artist").strip() or "Unknown Artist"
-        album=str(song.get("album") or "Unknown Album").strip() or "Unknown Album"
-        genre=str(song.get("genre") or "Unknown").strip() or "Unknown"
-        artist_counts[artist]=artist_counts.get(artist,0)+int(plays)
-        album_key=f"{artist} — {album}"
-        album_counts[album_key]=album_counts.get(album_key,0)+int(plays)
-        genre_counts[genre]=genre_counts.get(genre,0)+int(plays)
-        # Existing history records the song duration; use it as a conservative per-play listening estimate.
-        listening_seconds += max(0.0, min(float(song.get("duration") or 0), 3600.0)) * int(plays)
+    songs_by_id = {song["id"]: song for song in songs}
+    top_artists = {}
+    for row in top_artists_rows:
+        song = songs_by_id.get(row[0])
+        if not song:
+            continue
+        artist = song.get("artist") or "Unknown Artist"
+        top_artists[artist] = top_artists.get(artist, 0) + int(row[1])
+    top_artists_list = [{"name": name, "plays": plays} for name, plays in sorted(top_artists.items(), key=lambda x: (-x[1], x[0].lower()))[:10]]
 
-    formats={}; total_bytes=0; total_duration=0.0; missing_art=0
-    for song in songs:
-        path=song.get("path")
-        ext=path.suffix.lower().lstrip(".") if path else "unknown"
-        formats[ext or "unknown"]=formats.get(ext or "unknown",0)+1
-        total_bytes += int(song.get("size") or 0); total_duration += float(song.get("duration") or 0)
-        if not song.get("cover") and not song.get("has_cover"):
-            missing_art += 1
+    top_recent = []
+    for row in top_recent_rows:
+        song = songs_by_id.get(row[0])
+        if not song:
+            continue
+        top_recent.append({
+            "id": song["id"], "title": song.get("title", song.get("path", "")),
+            "artist": song.get("artist", "Unknown Artist"), "album": song.get("album", "Unknown Album"),
+            "plays": int(row[1]), "last_play": float(row[2] or 0)
+        })
+
+    avg_duration = (total_duration / len(songs)) if songs else 0
+    avg_bitrate = (sum(safe_int(song.get("bit_rate"), 0) for song in songs) / len(songs)) if songs else 0
+    unplayed_tracks = max(0, len(songs) - unique_played)
     return {
-        "days": days, "generated_at": time.time(), "library": {
-            "tracks": len(songs), "artists": len(library.get("artists",{})), "albums": len(library.get("albums",{})),
-            "genres": len(library.get("genres",{})), "total_bytes": total_bytes, "total_duration": total_duration,
-            "missing_artwork": missing_art,
-        }, "plays": {"all_time": total_plays, "period": period_plays, "unique_tracks_period": distinct_period,
-                   "estimated_listening_seconds": listening_seconds},
-        "top_tracks": top_tracks[:20],
-        "top_artists":[{"name":k,"plays":v} for k,v in sorted(artist_counts.items(), key=lambda x:(-x[1],x[0].lower()))[:15]],
-        "top_albums":[{"name":k,"plays":v} for k,v in sorted(album_counts.items(), key=lambda x:(-x[1],x[0].lower()))[:15]],
-        "genres":[{"name":k,"plays":v} for k,v in sorted(genre_counts.items(), key=lambda x:(-x[1],x[0].lower()))[:15]],
-        "formats":[{"name":k,"tracks":v} for k,v in sorted(formats.items(), key=lambda x:(-x[1],x[0]))],
-        "daily":[{"day":r[0],"plays":int(r[1])} for r in daily],
+        "tracks": len(songs), "artists": len(artists), "albums": len(albums),
+        "genres": len(genres), "total_bytes": total_bytes, "total_duration": total_duration,
+        "average_duration": avg_duration, "average_bitrate": avg_bitrate, "unplayed_tracks": unplayed_tracks,
+        "total_plays": total_plays, "unique_played": unique_played,
+        "recent_7d_plays": recent_plays, "listened_seconds": play_seconds,
+        "first_play": first_play, "last_play": last_play,
+        "formats": [{"name": k, "count": v} for k, v in sorted(format_counts.items(), key=lambda x: (-x[1], x[0]))],
+        "genres_breakdown": [{"name": k, "count": v} for k, v in sorted(genres.items(), key=lambda x: (-x[1], x[0].lower()))[:15]],
+        "years": [{"name": k, "count": v} for k, v in sorted(year_counts.items(), key=lambda x: (-x[1], x[0]))[:15]],
+        "bitrates": [{"name": k, "count": v} for k, v in bitrate_buckets.items() if v],
+        "sample_rates": [{"name": k, "count": v} for k, v in sorted(sample_rates.items(), key=lambda x: (-x[1], x[0]))[:10]],
+        "channels": [{"name": k, "count": v} for k, v in sorted(channel_counts.items(), key=lambda x: (-x[1], x[0]))[:10]],
+        "top_artists": top_artists_list, "recent_favorites": top_recent,
     }
 
 
 @app.get("/api/daily-mix")
-async def api_daily_mix(seed: str = ""):
-    """Spotify-inspired Daily Mixes: artist affinity + genre affinity + discovery, deterministic for the day."""
+async def api_daily_mix(limit: int = 30, variant: int = 0):
+    """Local Spotify-style Daily Mix.
+
+    It uses listening history, recency, repeat frequency, completion, stars, and
+    artist/genre affinity. The daily seed keeps the mix coherent for a day while
+    ``variant`` lets Refresh produce a different but still personalized mix.
+    """
+    limit = max(10, min(int(limit or 30), 50))
+    variant = max(0, min(int(variant or 0), 19))
     library = await build_library()
     songs = list(library.get("songs", []))
-    if not songs: return {"mixes": []}
-    now_day = time.strftime("%Y-%m-%d", time.localtime())
+    if not songs:
+        return {"date": time.strftime("%Y-%m-%d"), "title": "Daily Mix", "subtitle": "Your library is empty", "tracks": [], "reason": "empty"}
+
+    now = time.time()
+    day_key = time.strftime("%Y-%m-%d", time.localtime(now))
+    seed_input = f"xrob-daily-mix:{day_key}:{variant}"
+    rng = random.Random(int(hashlib.sha256(seed_input.encode()).hexdigest()[:16], 16))
+
     with db_connect() as conn:
-        history = conn.execute("SELECT song_id, COUNT(*) plays, MAX(played_at) last_played FROM play_history GROUP BY song_id").fetchall()
-    stats={r[0]: (int(r[1]), float(r[2] or 0)) for r in history}
-    by_artist={}; by_genre={}
-    for s in songs:
-        artist=str(s.get("artist") or "Unknown Artist").strip().lower(); genre=str(s.get("genre") or "Unknown").strip().lower()
-        by_artist.setdefault(artist,[]).append(s); by_genre.setdefault(genre,[]).append(s)
-    artist_score={}; genre_score={}
-    for s in songs:
-        plays,last=stats.get(s["id"],(0,0)); recency=max(0.0, 1.0-(time.time()-last)/2592000) if last else 0.0
-        artist=str(s.get("artist") or "Unknown Artist").strip().lower(); genre=str(s.get("genre") or "Unknown").strip().lower()
-        artist_score[artist]=artist_score.get(artist,0)+plays*2+recency
-        genre_score[genre]=genre_score.get(genre,0)+plays+recency*0.5
-    import random
-    mixes=[]
-    ranked_artists=[x[0] for x in sorted(artist_score.items(), key=lambda x:-x[1])]
-    ranked_genres=[x[0] for x in sorted(genre_score.items(), key=lambda x:-x[1])]
-    mix_count=min(3, max(1, len(songs)//8))
-    for i in range(mix_count):
-        rng=random.Random(f"xrob-daily-mix:{now_day}:{seed}:{i}")
-        focus_artist=ranked_artists[i % len(ranked_artists)] if ranked_artists else None
-        focus_genre=ranked_genres[i % len(ranked_genres)] if ranked_genres else None
-        pool=[]
-        for s in songs:
-            plays,last=stats.get(s["id"],(0,0)); a=str(s.get("artist") or "Unknown Artist").strip().lower(); g=str(s.get("genre") or "Unknown").strip().lower()
-            score=plays*4 + (3 if a==focus_artist else 0) + (2 if g==focus_genre else 0) + (1 if last and time.time()-last<604800 else 0)
-            if not plays: score += 1.5  # discovery floor
-            pool.append((score,rng.random(),s))
-        pool.sort(key=lambda x:(-x[0],x[1]))
-        selected=[]; artists_used={}
-        for _,_,s in pool:
-            a=str(s.get("artist") or "Unknown Artist")
-            if artists_used.get(a,0)>=3: continue
-            selected.append(_song_payload(s)); artists_used[a]=artists_used.get(a,0)+1
-            if len(selected)>=25: break
-        mixes.append({"id":f"daily-mix-{i+1}","name":f"Daily Mix {i+1}","subtitle":f"{focus_artist.title() if focus_artist else 'Your library'} · refreshed daily","tracks":selected})
-    return {"date":now_day,"mixes":mixes}
+        rows = conn.execute("""
+            SELECT song_id, COUNT(*) AS plays, MAX(played_at) AS last_play,
+                   COALESCE(SUM(CASE WHEN duration > 0 THEN MIN(position, duration) ELSE position END),0) AS heard,
+                   COALESCE(SUM(duration),0) AS duration_sum
+            FROM play_history GROUP BY song_id
+        """).fetchall()
+        recent_rows = conn.execute(
+            "SELECT song_id, MAX(played_at) FROM play_history WHERE played_at >= ? GROUP BY song_id",
+            (now - 24 * 3600,),
+        ).fetchall()
+        star_rows = conn.execute("SELECT item_id FROM stars").fetchall()
+
+    history = {
+        r[0]: {"plays": int(r[1]), "last": float(r[2] or 0), "heard": float(r[3] or 0), "duration_sum": float(r[4] or 0)}
+        for r in rows
+    }
+    recent_ids = {r[0] for r in recent_rows}
+    starred = {str(r[0]) for r in star_rows}
+
+    artist_affinity, genre_affinity = {}, {}
+    for song in songs:
+        h = history.get(song["id"])
+        if not h:
+            continue
+        days = max(0.0, (now - h["last"]) / 86400.0) if h["last"] else 3650.0
+        recency = 1.0 / (1.0 + days / 14.0)
+        completion = 0.0
+        song_duration = max(1.0, safe_float(song.get("duration"), 0))
+        if h["plays"] and h["heard"] > 0:
+            completion = min(1.0, h["heard"] / max(song_duration * h["plays"], 1.0))
+        weight = min(12.0, 1.0 + h["plays"] * 1.15) * (0.45 + 0.35 * recency + 0.20 * completion)
+        if song["id"] in starred:
+            weight += 4.0
+        artist = str(song.get("artist") or "Unknown Artist").strip().casefold()
+        genre = str(song.get("genre") or "").strip().casefold()
+        artist_affinity[artist] = artist_affinity.get(artist, 0.0) + weight
+        if genre:
+            genre_affinity[genre] = genre_affinity.get(genre, 0.0) + weight
+
+    any_history = bool(history)
+    candidates = []
+    for song in songs:
+        sid = song["id"]
+        h = history.get(sid, {"plays": 0, "last": 0, "heard": 0})
+        plays = int(h.get("plays", 0))
+        last = float(h.get("last", 0) or 0)
+        days_since = (now - last) / 86400.0 if last else 3650.0
+        recency = 1.0 / (1.0 + max(0.0, days_since) / 18.0)
+        artist = str(song.get("artist") or "Unknown Artist").strip().casefold()
+        genre = str(song.get("genre") or "").strip().casefold()
+        artist_score = min(18.0, artist_affinity.get(artist, 0.0) * 0.72)
+        genre_score = min(14.0, genre_affinity.get(genre, 0.0) * 0.30) if genre else 0.0
+        familiarity = min(22.0, plays * 3.4) * (0.45 + 0.55 * recency)
+        discovery = (4.0 if plays == 0 else 0.0) + min(5.0, max(0.0, days_since) / 20.0)
+        freshness = 4.5 * recency
+        star_bonus = 6.0 if sid in starred else 0.0
+        recent_penalty = 18.0 if sid in recent_ids else 0.0
+        # Unheard tracks matter, but known artists/genres still influence discovery.
+        score = familiarity + artist_score + genre_score + discovery + freshness + star_bonus - recent_penalty
+        score += rng.random() * (3.0 if not any_history else 1.35)
+        candidates.append({"song": song, "score": score})
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    pool = candidates[:]
+    selected, used = [], set()
+    artist_counts, album_counts, genre_counts = {}, {}, {}
+
+    while pool and len(selected) < min(limit, len(songs)):
+        best_i, best_score = 0, float("-inf")
+        for i, item in enumerate(pool[:160]):
+            song = item["song"]
+            artist = str(song.get("artist") or "Unknown Artist").strip().casefold()
+            album = str(song.get("album") or "Unknown Album").strip().casefold()
+            genre = str(song.get("genre") or "").strip().casefold()
+            diversity = (
+                -artist_counts.get(artist, 0) * 4.5
+                -album_counts.get(album, 0) * 1.8
+                -genre_counts.get(genre, 0) * 0.65
+            )
+            # Add controlled exploration so a strong artist does not dominate the mix.
+            exploration = rng.random() * 1.6
+            adjusted = item["score"] + diversity + exploration
+            if adjusted > best_score:
+                best_i, best_score = i, adjusted
+        item = pool.pop(best_i)
+        song = item["song"]
+        sid = song["id"]
+        if sid in used:
+            continue
+        used.add(sid)
+        selected.append(song)
+        artist = str(song.get("artist") or "Unknown Artist").strip().casefold()
+        album = str(song.get("album") or "Unknown Album").strip().casefold()
+        genre = str(song.get("genre") or "").strip().casefold()
+        artist_counts[artist] = artist_counts.get(artist, 0) + 1
+        album_counts[album] = album_counts.get(album, 0) + 1
+        if genre:
+            genre_counts[genre] = genre_counts.get(genre, 0) + 1
+
+    def pack(song):
+        enc = urllib.parse.quote(str(song["path"].relative_to(DOWNLOAD_DIR)), safe="/")
+        return {
+            "id": song["id"], "title": song.get("title", song["path"].stem),
+            "artist": song.get("artist", "Unknown Artist"), "album": song.get("album", "Unknown Album"),
+            "genre": song.get("genre", ""), "duration": song.get("duration", 0),
+            "cover": f"/api/library/cover/{enc}", "stream": f"/api/library/stream/{enc}",
+            "play_count": history.get(song["id"], {}).get("plays", 0),
+        }
+
+    listened = sum(1 for song in songs if song["id"] in history)
+    if listened == 0:
+        subtitle = f"A starter mix from your library · {len(selected)} tracks"
+        reason = "starter"
+    else:
+        subtitle = f"Based on what you play · {len(selected)} tracks"
+        if recent_ids:
+            subtitle += " · refreshed for today"
+        reason = "personalized"
+    return {"date": day_key, "title": "Daily Mix", "subtitle": subtitle, "tracks": [pack(s) for s in selected], "reason": reason, "variant": variant}
+
 
 @app.get("/api/stats")
 async def api_stats():
