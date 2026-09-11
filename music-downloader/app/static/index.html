@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="/static/style.css?v=298" rel="stylesheet"/>
+  <link href="/static/style.css?v=299" rel="stylesheet"/>
   <link href="/static/icon.png" rel="icon" type="image/png"/>
   <link href="/static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -1195,6 +1195,33 @@
      SCRIPTS
      ============================================================ -->
   <script src="/static/app.js?v=293">
+  </script>
+  <script>
+   // UI-only drawer separation: each utility drawer owns its own open/close state.
+   // No backend or app.js file is changed.
+   window.openQueueDrawer = function () {
+    const drawer = document.getElementById("queue-drawer");
+    if (!drawer) return;
+    drawer.hidden = false;
+    if (typeof renderEnhancedQueue === "function") renderEnhancedQueue();
+    if (typeof applyRepeatLabel === "function") applyRepeatLabel();
+    if (typeof renderLocalIcons === "function") renderLocalIcons();
+   };
+   window.closeQueueDrawer = function () {
+    const drawer = document.getElementById("queue-drawer");
+    if (drawer) drawer.hidden = true;
+   };
+   window.openDownloadsDrawer = function () {
+    const drawer = document.getElementById("downloads-drawer");
+    if (!drawer) return;
+    drawer.hidden = false;
+    if (typeof loadDownloads === "function") loadDownloads().catch(() => {});
+    if (typeof renderLocalIcons === "function") renderLocalIcons();
+   };
+   window.closeDownloadsDrawer = function () {
+    const drawer = document.getElementById("downloads-drawer");
+    if (drawer) drawer.hidden = true;
+   };
   </script>
  </body>
 </html>
