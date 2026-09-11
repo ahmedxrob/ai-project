@@ -181,31 +181,33 @@
         </div>
        </section>
        <!-- RECENTLY ADDED -->
-       <div class="home-section-header page-section">
-        <div>
-         <h3>
-          Recently Added
-         </h3>
-         <p>
-          Your latest music
-         </p>
+       <section class="recently-added-card page-section" id="recentlyAddedCard">
+        <div class="home-section-header">
+         <div>
+          <h3>
+           Recently Added
+          </h3>
+          <p>
+           Your latest music
+          </p>
+         </div>
+         <button class="btn-refresh" onclick="navigate('library')" type="button">
+          <i aria-hidden="true" data-lucide="library">
+          </i>
+          View Library
+         </button>
         </div>
-        <button class="btn-refresh" onclick="navigate('library')" type="button">
-         <i aria-hidden="true" data-lucide="library">
-         </i>
-         View Library
-        </button>
-       </div>
-       <!-- RECENT LOADING -->
-       <div aria-live="polite" class="xrob-loading" id="recentTracksLoading">
-        <div aria-hidden="true" class="xrob-spinner">
+        <!-- RECENT LOADING -->
+        <div aria-live="polite" class="xrob-loading" id="recentTracksLoading">
+         <div aria-hidden="true" class="xrob-spinner">
+         </div>
+         <div class="xrob-loader-text" id="recentLoadingText">
+          Loading Recently Added&hellip;
+         </div>
         </div>
-        <div class="xrob-loader-text" id="recentLoadingText">
-         Loading Recently Added&hellip;
+        <div class="recent-grid" id="recentTracks">
         </div>
-       </div>
-       <div class="recent-grid page-section" id="recentTracks">
-       </div>
+       </section>
       </div>
      </section>
      <!-- ==================================================
