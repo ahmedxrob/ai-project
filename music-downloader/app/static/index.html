@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<!DOCTYPE html>
 <html lang="en">
  <head>
   <meta charset="utf-8"/>
@@ -12,7 +11,7 @@
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="/static/style.css?v=292" rel="stylesheet"/>
+  <link href="/static/style.css?v=293" rel="stylesheet"/>
  </head>
  <body class="music-app">
   <div class="login-screen auth-shell" id="login-screen">
@@ -59,7 +58,7 @@
          SIDEBAR
          ======================================================== -->
    <nav aria-label="Main navigation" class="side-nav">
-    <div class="side-brand">
+    <div class="side-brand brand-lockup">
      <svg aria-hidden="true" height="38" viewbox="0 0 512 512" width="38">
       <defs>
        <lineargradient id="waveGrad" x1="0%" x2="100%" y1="0%" y2="100%">
@@ -193,7 +192,7 @@
         XROB MUSIC
        </span>
        <strong class="content-topbar-title">
-        Your music space
+        Private music library
        </strong>
       </div>
       <div class="content-topbar-status">
@@ -209,26 +208,25 @@
                  ================================================== -->
      <section class="tab-content active music-page" id="tab-home">
       <div class="page-surface">
-       <div class="home-hero page-section">
+       <div class="home-hero page-section home-hero-premium">
         <div>
          <div class="home-eyebrow">
           YOUR MUSIC
          </div>
          <h2 class="home-title">
-          Welcome to Xrob Music
+          All your music, right here.
          </h2>
          <p class="home-subtitle">
-          Your self-hosted downloader,
-                            library and OpenSubsonic server.
+          Your private, self-hosted music library — search, download, organize and listen in one place.
          </p>
         </div>
         <button class="home-search-button" onclick="navigate('search')" type="button">
          <i aria-hidden="true" data-lucide="search">
          </i>
-         Find Music
+         Find music
         </button>
        </div>
-       <div class="home-stats-grid page-section">
+       <div class="home-stats-grid page-section home-stats-premium">
         <div class="home-stat-card">
          <div class="home-stat-icon">
           <i aria-hidden="true" data-lucide="music-2">
@@ -286,7 +284,7 @@
          </div>
         </div>
        </div>
-       <section class="daily-mix-card page-section" id="dailyMixCard">
+       <section class="daily-mix-card page-section daily-mix-premium" id="dailyMixCard">
         <div class="daily-mix-header">
          <div>
           <div class="daily-mix-kicker">
@@ -358,7 +356,7 @@
          Find music, preview it, and save it to your library.
         </p>
        </div>
-       <div class="search-card page-section">
+       <div class="search-card page-section search-card-premium">
         <input autocomplete="off" id="query" placeholder="Search track, artist, or album..." spellcheck="false" type="search"/>
         <button id="searchBtn" type="button">
          <i aria-hidden="true" data-lucide="search">
@@ -473,7 +471,7 @@
          Browse your music by tracks, artists, or albums.
         </p>
        </div>
-       <div class="library-toolbar page-section">
+       <div class="library-toolbar page-section library-toolbar-premium">
         <div aria-label="Library view" class="library-tabs" role="tablist">
          <button class="library-tab active" data-library-view="tracks" type="button">
           Tracks
@@ -1085,7 +1083,7 @@
            Available to Amperfy and other OpenSubsonic clients.
           </div>
          </div>
-         <strong>
+         <strong id="subsonicStatusValue">
           Ready
          </strong>
         </div>
@@ -1173,7 +1171,7 @@
      </section>
     </main>
    </div>
-   <div class="global-player-bar music-player" id="global-player-bar" style="display:none;">
+   <div class="global-player-bar music-player premium-player" id="global-player-bar" style="display:none;">
     <div class="gp-track-details">
      <img alt="" id="gp-art" src="https://via.placeholder.com/60?text=Music"/>
      <div class="gp-text">
