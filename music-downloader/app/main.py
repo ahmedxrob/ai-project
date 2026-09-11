@@ -771,7 +771,7 @@ def clean_title_with_rules(value, rules_text=""):
     # Clean up brackets/separators left behind by removed labels.
     value = re.sub(r"[\(\[\{]\s*[\)\]\}]", "", value)
     value = re.sub(r"\s*[-–—:|•]+\s*$", "", value).strip()
-    value = re.sub(r"^[\s-–—:|•]+", "", value).strip()
+    value = re.sub(r"^[\s–—:|•\-]+", "", value).strip()
     return value or "Unknown Track"
 
 
