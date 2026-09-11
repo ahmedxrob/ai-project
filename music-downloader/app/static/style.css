@@ -3848,3 +3848,189 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 @media(max-width:700px){.btn-queue-next,.btn-queue-add{padding-left:8px;padding-right:8px}}
 /* Native hidden state must always hide Library views when switching tabs. */
 [hidden]{display:none!important}
+
+/* =====================================================================
+   XROB MUSIC — MUSIC-SERVICE APP SHELL V2
+   Desktop navigation is top-first; the player remains global.
+   ===================================================================== */
+:root {
+    --app-header-height: 72px;
+    --content-gutter: clamp(16px, 3vw, 44px);
+    --content-max: 1700px;
+}
+
+.app-shell.music-shell {
+    display: block;
+    min-height: 100vh;
+    background: var(--bg-main);
+}
+
+.app-column {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+}
+
+.app-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 1100;
+    height: var(--app-header-height);
+    background: color-mix(in srgb, var(--bg-main) 92%, transparent);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+}
+
+.app-topbar-inner {
+    width: min(var(--content-max), calc(100% - (var(--content-gutter) * 2)));
+    height: 100%;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: clamp(18px, 3vw, 44px);
+}
+
+.brand-mark {
+    border: 0;
+    background: transparent;
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -.7px;
+    white-space: nowrap;
+}
+
+.brand-mark svg { width: 34px; height: 34px; flex: 0 0 34px; }
+.brand-mark:hover { opacity: .9; }
+
+.primary-nav {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.primary-nav::-webkit-scrollbar { display: none; }
+
+.primary-nav .nav-link {
+    position: relative;
+    flex: 0 0 auto;
+    min-height: 42px;
+    width: auto;
+    padding: 9px 14px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+}
+.primary-nav .nav-link:hover { color: var(--text-primary); background: var(--bg-hover); }
+.primary-nav .nav-link.active { background: var(--text-primary); color: var(--bg-main); }
+.primary-nav .nav-link.active > i { color: inherit; }
+.primary-nav .nav-link > svg,
+.primary-nav .nav-link > i { width: 17px; height: 17px; flex: 0 0 17px; }
+.primary-nav .nav-label { display: inline-flex; gap: 5px; align-items: center; flex: 0 0 auto; }
+.primary-nav .nav-text { overflow: visible; }
+.primary-nav .nav-count { min-width: 18px; height: 18px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; margin-left: 1px; background: rgba(255,255,255,.1); color: var(--text-secondary); }
+.primary-nav .nav-link.active .nav-count { background: rgba(0,0,0,.12); color: inherit; }
+
+.topbar-actions { display: inline-flex; align-items: center; gap: 7px; }
+.topbar-icon,
+.topbar-avatar {
+    width: 38px;
+    height: 38px;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+}
+.topbar-icon:hover { color: var(--text-primary); background: var(--bg-hover); }
+.topbar-icon svg { width: 18px; height: 18px; }
+.topbar-avatar { border: 0; background: var(--bg-elevated); color: var(--text-primary); font-size: 10px; font-weight: 800; letter-spacing: .4px; }
+
+.main-content.workspace-main {
+    min-height: calc(100vh - var(--app-header-height));
+    padding: 0 var(--content-gutter) calc(var(--player-height) + 40px);
+}
+
+.content-topbar {
+    height: 54px;
+    max-width: var(--content-max);
+    margin: 0 auto;
+    padding: 0;
+    background: linear-gradient(var(--bg-main) 72%, rgba(0,0,0,0));
+}
+.content-topbar-copy { display: none; }
+.content-topbar-status { margin-left: auto; }
+
+.tab-content.active { animation: page-enter .18s ease-out; }
+@keyframes page-enter { from { opacity: .65; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 980px) {
+    .app-topbar-inner { grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; }
+    .brand-mark span { display: none; }
+    .primary-nav { justify-content: flex-start; }
+    .primary-nav .nav-link { padding-inline: 11px; }
+    .primary-nav .nav-link .nav-text { display: none; }
+    .primary-nav .nav-link .nav-label { gap: 0; }
+    .primary-nav .nav-count { margin-left: 2px; }
+}
+
+@media (max-width: 768px) {
+    :root { --app-header-height: 60px; }
+    body.music-app { padding-bottom: var(--bottom-nav-height); }
+    .app-topbar { position: sticky; }
+    .app-topbar-inner { width: calc(100% - 20px); gap: 10px; }
+    .brand-mark svg { width: 30px; height: 30px; flex-basis: 30px; }
+    .primary-nav .nav-link { min-height: 38px; width: 38px; padding: 8px; }
+    .primary-nav .nav-link .nav-count { position: absolute; right: -1px; top: 1px; min-width: 15px; height: 15px; font-size: 8px; }
+    .topbar-actions .topbar-icon:first-child { display: none; }
+    .main-content.workspace-main { padding: 0 12px calc(var(--player-height) + var(--bottom-nav-height) + 26px); }
+    .content-topbar { height: 36px; }
+}
+
+@media (min-width: 769px) {
+    .bottom-nav.mobile-dock { display: none !important; }
+}
+
+@media (max-width: 768px) {
+    .bottom-nav.mobile-dock {
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        width: auto;
+        height: var(--bottom-nav-height);
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        padding: 5px;
+        gap: 3px;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: rgba(24,24,24,.92);
+        box-shadow: 0 14px 40px rgba(0,0,0,.28);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+    }
+    [data-theme="light"] .bottom-nav.mobile-dock { background: rgba(255,255,255,.92); }
+    .bottom-nav .nav-link { min-width: 0; min-height: 46px; padding: 6px 4px; flex-direction: column; justify-content: center; gap: 2px; border-radius: 12px; }
+    .bottom-nav .nav-link.active { background: var(--bg-elevated); color: var(--text-primary); }
+    .bottom-nav .nav-text { font-size: 8px; }
+    .bottom-nav .nav-link > svg { width: 18px; height: 18px; }
+    .bottom-nav .nav-count { position: absolute; top: 1px; right: 8px; font-size: 8px; }
+}
