@@ -69,14 +69,17 @@
        <button class="nav-link active" id="btn-home" onclick="navigate('home')" type="button"><i aria-hidden="true" data-lucide="house"></i><span class="nav-label"><span class="nav-text">Home</span></span></button>
        <button class="nav-link" id="btn-search" onclick="navigate('search')" type="button"><i aria-hidden="true" data-lucide="search"></i><span class="nav-label"><span class="nav-text">Search</span></span></button>
        <button class="nav-link" id="btn-library" onclick="navigate('library')" type="button"><i aria-hidden="true" data-lucide="library"></i><span class="nav-label"><span class="nav-text">Library</span><span class="nav-count" id="sideLibCount">0</span></span></button>
-       <button class="nav-link" id="btn-downloads" onclick="navigate('downloads')" type="button"><i aria-hidden="true" data-lucide="download"></i><span class="nav-label"><span class="nav-text">Downloads</span><span class="nav-count" id="queueCount">0</span></span></button>
        <button class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')" type="button"><i aria-hidden="true" data-lucide="pencil-line"></i><span class="nav-label"><span class="nav-text">Editor</span><span class="nav-count" id="songEditorBadge">0</span></span></button>
        <button class="nav-link" id="btn-settings" onclick="navigate('settings')" type="button"><i aria-hidden="true" data-lucide="sliders-horizontal"></i><span class="nav-label"><span class="nav-text">Settings</span></span></button>
       </nav>
 
       <div class="topbar-actions">
-       <button class="topbar-icon" type="button" onclick="navigate('search')" aria-label="Search"><i aria-hidden="true" data-lucide="search"></i></button>
-       <button class="topbar-icon" type="button" id="topQueueButton" aria-label="Open queue"><i aria-hidden="true" data-lucide="list-music"></i></button>
+       <button class="topbar-icon" type="button" onclick="navigate('search')" aria-label="Search" title="Search"><i aria-hidden="true" data-lucide="search"></i></button>
+       <button class="topbar-downloads" type="button" onclick="navigate('downloads')" aria-label="Open downloads" title="Downloads">
+        <i aria-hidden="true" data-lucide="download"></i>
+        <span>Downloads</span>
+        <span class="topbar-downloads-count" id="queueCount">0</span>
+       </button>
        <button class="topbar-avatar" type="button" onclick="navigate('settings')" aria-label="Open settings">XM</button>
       </div>
      </div>
@@ -125,48 +128,21 @@
         </button>
        </div>
        <div class="home-stats-grid page-section">
-        <div class="home-stat-card">
-         <div class="home-stat-icon">
-          <i aria-hidden="true" data-lucide="music-2">
-          </i>
-         </div>
-         <div>
-          <strong id="homeTracks">
-           0
-          </strong>
-          <span>
-           Tracks
-          </span>
-         </div>
-        </div>
-        <div class="home-stat-card">
-         <div class="home-stat-icon">
-          <i aria-hidden="true" data-lucide="user-round">
-          </i>
-         </div>
-         <div>
-          <strong id="homeArtists">
-           0
-          </strong>
-          <span>
-           Artists
-          </span>
-         </div>
-        </div>
-        <div class="home-stat-card">
-         <div class="home-stat-icon">
-          <i aria-hidden="true" data-lucide="disc-3">
-          </i>
-         </div>
-         <div>
-          <strong id="homeAlbums">
-           0
-          </strong>
-          <span>
-           Albums
-          </span>
-         </div>
-        </div>
+        <button aria-label="Open Tracks in Library" class="home-stat-card home-library-link" onclick="navigate('library')" type="button">
+         <span class="home-stat-icon"><i aria-hidden="true" data-lucide="music-2"></i></span>
+         <span class="home-stat-copy"><strong id="homeTracks">0</strong><span>Tracks</span></span>
+         <i aria-hidden="true" class="home-stat-arrow" data-lucide="arrow-up-right"></i>
+        </button>
+        <button aria-label="Open Artists in Library" class="home-stat-card home-library-link" onclick="navigate('library'); libraryView='artists'; selectedArtistId=null; selectedAlbumId=null; renderLibraryView()" type="button">
+         <span class="home-stat-icon"><i aria-hidden="true" data-lucide="user-round"></i></span>
+         <span class="home-stat-copy"><strong id="homeArtists">0</strong><span>Artists</span></span>
+         <i aria-hidden="true" class="home-stat-arrow" data-lucide="arrow-up-right"></i>
+        </button>
+        <button aria-label="Open Albums in Library" class="home-stat-card home-library-link" onclick="navigate('library'); libraryView='albums'; selectedArtistId=null; selectedAlbumId=null; renderLibraryView()" type="button">
+         <span class="home-stat-icon"><i aria-hidden="true" data-lucide="disc-3"></i></span>
+         <span class="home-stat-copy"><strong id="homeAlbums">0</strong><span>Albums</span></span>
+         <i aria-hidden="true" class="home-stat-arrow" data-lucide="arrow-up-right"></i>
+        </button>
         <div class="home-stat-card">
          <div class="home-stat-icon">
           <i aria-hidden="true" data-lucide="play">
@@ -283,75 +259,34 @@
                  DOWNLOADS
                  ================================================== -->
      <section class="tab-content music-page" id="tab-downloads">
-      <div class="page-surface">
-       <div class="downloads-page-header">
+      <div class="page-surface downloads-workspace">
+       <div class="downloads-compact-header">
         <div>
-         <h2 class="downloads-page-title">
-          Downloads
-         </h2>
-         <p class="downloads-page-subtitle">
-          Manage your active queue and download history.
-         </p>
+         <span class="downloads-kicker">QUEUE & DOWNLOADS</span>
+         <h2 class="downloads-page-title">Downloads</h2>
+         <p class="downloads-page-subtitle">Your active downloads and playback queue, in one quiet workspace.</p>
         </div>
         <div class="downloads-header-actions">
-         <button class="btn-refresh" onclick="clearDoneTasks()" type="button">
-          <i aria-hidden="true" data-lucide="broom">
-          </i>
-          Clear Completed
-         </button>
-         <button class="btn-refresh" onclick="loadDownloads()" type="button">
-          <i aria-hidden="true" data-lucide="refresh-cw">
-          </i>
-          Refresh
-         </button>
+         <button class="btn-refresh" onclick="clearDoneTasks()" type="button"><i aria-hidden="true" data-lucide="broom"></i>Clear Completed</button>
+         <button class="btn-preview" onclick="openQueueDrawer()" type="button"><i aria-hidden="true" data-lucide="list-music"></i>Up Next</button>
         </div>
        </div>
-       <div class="downloads-overview page-section">
-        <div class="overview-card">
-         <div class="overview-icon">
-          <i aria-hidden="true" data-lucide="download">
-          </i>
-         </div>
+
+       <section class="download-queue-card page-section" aria-label="Playback queue">
+        <div class="download-queue-copy">
+         <div class="download-queue-icon"><i aria-hidden="true" data-lucide="list-music"></i></div>
          <div>
-          <strong class="overview-value" id="downloadQueueCount">
-           0
-          </strong>
-          <span class="overview-label">
-           Active in Queue
-          </span>
+          <div class="download-queue-title">Playback queue</div>
+          <div class="download-queue-subtitle">Manage what plays next without leaving Downloads.</div>
          </div>
         </div>
-        <div class="overview-card">
-         <div class="overview-icon">
-          <i aria-hidden="true" data-lucide="music-2">
-          </i>
-         </div>
-         <div>
-          <strong class="overview-value" id="downloadStatTracks">
-           0
-          </strong>
-          <span class="overview-label">
-           Library Tracks
-          </span>
-         </div>
+        <div class="download-queue-actions">
+         <span class="download-queue-count" id="downloadQueueCount">0</span>
+         <button class="btn-refresh" onclick="openQueueDrawer()" type="button">Open queue</button>
         </div>
-        <div class="overview-card">
-         <div class="overview-icon">
-          <i aria-hidden="true" data-lucide="disc-3">
-          </i>
-         </div>
-         <div>
-          <strong class="overview-value" id="downloadStatAlbums">
-           0
-          </strong>
-          <span class="overview-label">
-           Albums
-          </span>
-         </div>
-        </div>
-       </div>
-       <div class="downloads-list page-section" id="downloadsList">
-       </div>
+       </section>
+
+       <div class="downloads-list page-section" id="downloadsList"></div>
       </div>
      </section>
      <!-- ==================================================
