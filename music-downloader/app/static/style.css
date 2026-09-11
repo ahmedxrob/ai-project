@@ -138,3 +138,165 @@ html[data-theme="light"] .download-remove-btn,html[data-theme="light"] .btn-refr
 @media (max-width:900px){:root{--header:66px;--player:136px}.app-header{padding:0 15px}.brand-name{display:none}.main-nav{order:3}.header-left{gap:10px}.header-right .header-search{display:none}.main-nav .nav-link{font-size:11px}.main-nav .nav-link b{display:none}.page-shell{width:min(var(--max),calc(100% - 28px));padding-top:26px}.welcome-banner{min-height:390px;padding:34px 30px}.welcome-visual{width:250px}.vinyl-ring{width:230px}.recent-grid,.results-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.quick-stats{grid-template-columns:repeat(3,1fr)}.quick-stat:nth-child(4),.quick-stat:nth-child(5){grid-column:span 1}.mix-shell{grid-template-columns:245px 1fr}.daily-mix-tracks{grid-template-columns:1fr}.library-toolbar{align-items:stretch;flex-direction:column;top:68px}.library-tools{width:100%}.library-search{flex:1;width:auto}.library-hero{align-items:start;flex-direction:column}.library-hero-meta{width:100%;grid-template-columns:repeat(6,auto);justify-content:start}.detail-metrics{grid-template-columns:repeat(2,1fr)}.dashboard-grid{grid-template-columns:repeat(2,1fr)}.player-main{grid-template-columns:1fr;gap:6px}.global-player-bar{height:auto;min-height:var(--player);align-items:stretch}.player-extra{display:none}.player-track{width:100%}.player-controls{margin-top:-58px;justify-content:flex-end;padding-right:2px}.player-progress{margin-top:2px}.health-summary{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:680px){.auth-shell{padding:0}.auth-layout{min-height:100vh;border-radius:0;border:0;grid-template-columns:1fr}.auth-art-panel{display:none}.auth-login-panel{border:0;padding:34px 25px;justify-content:center}.mobile-auth-logo{display:flex;margin-bottom:80px}.auth-login-panel h2{font-size:40px}.app-header{gap:8px}.header-left{width:100%;justify-content:space-between}.main-nav{display:none}.header-right{margin-left:auto}.circle-action{display:none}.profile-action{width:38px;height:38px}.brand-button{padding:0}.brand-logo{width:33px}.mobile-dock{display:grid;position:fixed;left:10px;right:10px;bottom:10px;z-index:100;height:68px;padding:6px;grid-template-columns:repeat(6,1fr);background:rgba(12,14,17,.94);backdrop-filter:blur(18px);border:1px solid var(--line);border-radius:18px;box-shadow:0 15px 50px rgba(0,0,0,.4)}.mobile-dock .nav-link{position:relative;background:transparent;color:var(--muted);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;font-size:9px;border-radius:12px}.mobile-dock .nav-link.active{color:var(--text);background:rgba(255,255,255,.06)}.mobile-dock .nav-link b{position:absolute;top:5px;right:13px;font-size:8px;background:var(--accent);color:#050608;border-radius:8px;padding:1px 4px}.music-shell{padding-bottom:220px}.page-shell{width:calc(100% - 20px);padding-bottom:40px}.welcome-banner{min-height:525px;padding:27px 24px;display:block}.welcome-copy h1{font-size:53px}.welcome-visual{height:205px;width:100%;margin-top:28px}.vinyl-ring{width:195px}.vinyl-center{width:78px;height:78px}.quick-stats{grid-template-columns:repeat(2,1fr)}.quick-stat{min-height:76px}.download-stat{grid-column:span 2}.section-title{align-items:flex-start}.section-title h2{font-size:24px}.recent-grid,.results-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.mix-shell{grid-template-columns:1fr}.mix-cover{min-height:180px}.discover-intro h1{font-size:54px}.discover-search{height:56px}.library-tabs{width:100%}.library-tools{flex-wrap:wrap}.library-search{width:100%;flex:1 1 100%}.library-hero-meta{grid-template-columns:repeat(3,auto) repeat(3,auto)}.library-hero-meta strong{margin-left:0}.dashboard-grid{grid-template-columns:1fr}.settings-grid-two{grid-template-columns:1fr}.setting-row{align-items:flex-start}.page-top{align-items:flex-start}.page-top-actions .btn-ghost{display:none}.download-overview{grid-template-columns:1fr}.editor-toolbar{flex-wrap:wrap}.editor-import{min-width:100%;order:3}.songs-editor-list .song-editor-card{grid-template-columns:56px 1fr}.song-editor-art{width:56px;height:56px}.song-editor-actions{grid-column:2}.player-controls{margin-top:-50px}.global-player-bar{padding:9px 10px}.queue-drawer{right:10px;bottom:154px;width:calc(100vw - 20px)}}
 @media (max-width:430px){.brand-name{display:block;font-size:14px}.profile-action img{width:26px;height:26px}.welcome-copy h1{font-size:47px}.hero-actions{flex-direction:column}.btn-primary,.btn-ghost{width:100%}.recent-grid,.results-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.catalog-card{padding:9px}.btn-group .btn-refresh,.btn-group .btn-danger{display:none}.library-hero-meta{gap:4px 5px;font-size:9px}.library-hero-meta strong{font-size:23px}.library-status-grid{grid-template-columns:repeat(2,1fr)}.library-status-grid .wide{grid-column:span 2}.detail-metrics{grid-template-columns:1fr}.mobile-dock .nav-link span{font-size:8px}.mobile-dock{left:6px;right:6px}.mobile-dock .nav-link b{right:8px}}
+
+/* ============================================================
+   MUSIC-APP POLISH PASS 2 — focused chrome + compact content
+   ============================================================ */
+
+/* Top bar: no redundant global search; queue becomes the utility action. */
+.app-header{padding-inline:clamp(18px,3vw,42px);height:72px}
+.main-nav{gap:8px}
+.main-nav .nav-link{padding:9px 12px;font-weight:700}
+.main-nav .nav-link.active{background:rgba(255,255,255,.055)}
+.queue-header-action{box-shadow:0 8px 24px rgba(0,0,0,.22)}
+.queue-header-action svg{width:19px;height:19px}
+
+/* Centered player: treat it as the visual centerpiece, not a full-width admin footer. */
+.global-player-bar{left:50%;right:auto;bottom:14px;transform:translateX(-50%);width:min(1120px,calc(100vw - 36px));height:82px;padding:10px 14px;border:1px solid rgba(255,255,255,.10);border-radius:20px;background:rgba(13,15,19,.95);box-shadow:0 20px 65px rgba(0,0,0,.46),0 0 0 1px rgba(255,255,255,.025);display:grid;grid-template-columns:minmax(235px,1fr) minmax(360px,1.45fr) minmax(190px,.8fr);align-items:center;gap:18px}
+.player-main{display:contents}
+.player-track{min-width:0;display:flex;align-items:center;gap:11px}
+.player-art-wrap{width:54px;height:54px;flex:0 0 54px;border-radius:10px;overflow:hidden;background:#11151a;box-shadow:0 8px 22px rgba(0,0,0,.32)}
+.player-art-wrap img{width:100%;height:100%;object-fit:cover}
+.player-track-copy{min-width:0;display:grid;gap:3px}
+.player-track-copy strong,.player-track-copy span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.player-track-copy strong{font-size:13px}
+.player-track-copy span{font-size:11px;color:var(--muted)}
+.player-controls{display:flex;justify-content:center;align-items:center;gap:10px}
+.player-small,.player-play{display:grid;place-items:center;border-radius:50%;border:1px solid transparent;background:transparent;color:var(--muted);transition:.18s}
+.player-small{width:34px;height:34px}
+.player-play{width:44px;height:44px;background:var(--text);color:#07090b;box-shadow:0 8px 24px rgba(0,0,0,.32)}
+.player-small:hover{color:var(--text);background:rgba(255,255,255,.07)}
+.player-small.active{color:var(--accent);background:rgba(37,217,255,.10);border-color:rgba(37,217,255,.20)}
+.player-progress{grid-column:2;grid-row:2;display:flex;align-items:center;gap:8px;margin-top:-5px}
+.player-progress span{font-size:9px;color:var(--muted-2);font-variant-numeric:tabular-nums;min-width:29px}
+.player-progress span:last-child{text-align:right}
+.player-progress input{width:100%;accent-color:var(--accent);height:4px}
+.player-extra{grid-column:3;display:flex;justify-content:flex-end;align-items:center;gap:8px;color:var(--muted)}
+.player-extra input{width:94px;accent-color:var(--accent)}
+#visualizer-canvas{opacity:.65}
+
+/* Home: make the Daily Mix the primary listening module. */
+.daily-mix-section{background:linear-gradient(180deg,rgba(255,255,255,.018),rgba(255,255,255,.008));border:1px solid var(--line);border-radius:22px;padding:22px}
+.daily-mix-section .section-title{margin-bottom:12px}
+.mix-shell{grid-template-columns:minmax(245px,290px) minmax(0,1fr);gap:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#0e1115}
+.mix-cover{min-height:315px;padding:28px;justify-content:flex-end;background:radial-gradient(circle at 65% 28%,rgba(37,217,255,.22),transparent 22%),radial-gradient(circle at 28% 72%,rgba(77,141,255,.18),transparent 31%),linear-gradient(145deg,#172028,#0d1115);border-right:1px solid var(--line);position:relative}
+.mix-cover strong{font-size:29px;letter-spacing:-.04em;position:relative;z-index:2}
+.mix-cover span{font-size:12px;color:#a6adb6;position:relative;z-index:2;max-width:210px}
+.mix-play-orb{z-index:2;width:46px;height:46px}
+.daily-mix-tracks{padding:12px;grid-template-columns:1fr 1fr;gap:4px 10px;max-height:315px;overflow:auto}
+.daily-mix-track{grid-template-columns:50px 1fr 30px;grid-template-rows:1fr;padding:6px 7px;border-radius:10px;align-items:center}
+.daily-mix-track:hover{background:rgba(255,255,255,.05);border-color:transparent}
+.daily-mix-art{position:relative;width:50px;height:50px;display:block;grid-row:auto}
+.daily-mix-art img{width:50px;height:50px;border-radius:7px}
+.daily-mix-index{position:absolute;left:4px;bottom:4px;padding:2px 4px;border-radius:4px;background:rgba(0,0,0,.65);font-size:8px!important;color:#fff!important;font-variant-numeric:tabular-nums}
+.daily-mix-copy{min-width:0;display:grid;gap:3px}
+.daily-mix-copy strong,.daily-mix-copy span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.daily-mix-copy strong{font-size:12px}
+.daily-mix-copy span{font-size:10px;color:var(--muted)}
+.daily-mix-play{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.06);color:var(--muted);opacity:0;transition:.18s}
+.daily-mix-track:hover .daily-mix-play{opacity:1}
+
+/* Recently Added: list-like cards with art, metadata and one obvious play affordance. */
+.recently-added-section .section-title{margin-bottom:13px}
+.recent-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.recent-card{min-height:82px;padding:7px 9px;display:grid;grid-template-columns:66px minmax(0,1fr) auto;gap:11px;align-items:center;text-align:left;background:#101318;border:1px solid rgba(255,255,255,.06);border-radius:12px}
+.recent-card:hover{transform:translateY(-1px);border-color:rgba(37,217,255,.18);background:#14181d}
+.recent-art{width:66px;height:66px;display:block;position:relative;border-radius:9px;overflow:hidden;background:#0b0d10}
+.recent-art img{width:100%;height:100%;object-fit:cover}
+.recent-art-shade{position:absolute;inset:0;background:linear-gradient(180deg,transparent 35%,rgba(0,0,0,.55))}
+.recent-play{position:absolute;inset:auto 6px 6px auto;width:25px;height:25px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.95);color:#060709;opacity:0;transform:translateY(3px);transition:.18s}
+.recent-card:hover .recent-play{opacity:1;transform:none}
+.recent-card-copy{min-width:0;display:grid;gap:3px}
+.recent-card-title,.recent-card-artist,.recent-card-album{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.recent-card-title{font-size:13px;font-weight:800}
+.recent-card-artist{font-size:11px;color:var(--text)}
+.recent-card-album{font-size:10px;color:var(--muted-2)}
+.recent-card-index{font-size:10px;color:var(--muted-2);font-variant-numeric:tabular-nums;align-self:start;padding-top:2px}
+
+/* Library tracks: clean music-row actions rather than text-button clusters. */
+#libraryList .result-card{display:grid;grid-template-columns:60px minmax(0,1fr) auto;align-items:center;gap:12px;padding:8px 10px;border-radius:12px;background:#101318;border:1px solid rgba(255,255,255,.055);box-shadow:none}
+#libraryList .thumb-wrapper{width:60px;height:60px;border-radius:8px;overflow:hidden;position:relative}
+#libraryList .thumb-wrapper img{width:60px;height:60px;object-fit:cover}
+#libraryList .track-play-count{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.68);padding:2px 4px;border-radius:5px;font-size:8px}
+#libraryList .track-info{min-width:0;display:grid;gap:3px}
+#libraryList .track-title,#libraryList .track-artist,#libraryList .track-album{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#libraryList .track-title{font-size:13px;font-weight:800}
+#libraryList .track-artist{font-size:11px;color:var(--text)}
+#libraryList .track-album{font-size:10px;color:var(--muted-2)}
+.track-actions{display:flex;align-items:center;gap:5px}
+.track-action{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:transparent;border:1px solid transparent;color:var(--muted);transition:.18s}
+.track-action:hover{background:rgba(255,255,255,.07);color:var(--text);border-color:var(--line)}
+.track-action.btn-preview{background:rgba(255,255,255,.08);color:var(--text)}
+.track-action.danger:hover{color:var(--danger);border-color:rgba(255,98,124,.2);background:rgba(255,98,124,.08)}
+#libraryShuffleButton.active{color:var(--accent);border-color:rgba(37,217,255,.25);background:rgba(37,217,255,.08);box-shadow:0 0 0 3px rgba(37,217,255,.05)}
+
+/* Downloads: compact active queue at upper-right, history below as a proper library stream. */
+.downloads-top-actions{display:flex;align-items:center;gap:8px}
+.queue-pill{height:42px;padding:0 12px;display:inline-flex;align-items:center;gap:8px;border-radius:12px;background:#14181d;border:1px solid var(--line);color:var(--text);font-weight:800}
+.queue-pill svg{color:var(--accent);width:17px;height:17px}
+.queue-pill b{min-width:20px;height:20px;padding:0 5px;display:grid;place-items:center;border-radius:10px;background:rgba(37,217,255,.13);color:var(--accent);font-size:10px}
+.download-overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-bottom:14px}
+.download-overview article{min-height:76px;border:1px solid var(--line);border-radius:14px;background:#101318;padding:13px 14px;display:grid;grid-template-columns:auto 1fr;grid-template-rows:1fr auto;column-gap:10px;align-items:center}
+.download-overview article>span{grid-row:1 / span 2;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(37,217,255,.08);color:var(--accent)}
+.download-overview article strong{font-size:21px;line-height:1}
+.download-overview article em{font-style:normal;color:var(--muted);font-size:10px}
+.downloads-list{display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:12px;align-items:start}
+.downloads-list>.downloads-section:first-child{grid-column:2;grid-row:1}
+.downloads-list>.downloads-section:nth-child(2){grid-column:1 / -1;grid-row:2}
+.downloads-section{border:1px solid var(--line);border-radius:18px;background:#0e1115;padding:15px}
+.downloads-list>.downloads-section:first-child{position:sticky;top:88px}
+.downloads-section-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+.downloads-section-title{font-size:14px;font-weight:850}
+.downloads-section-subtitle{font-size:10px;color:var(--muted);margin-top:3px}
+.section-count{min-width:25px;height:25px;padding:0 7px;display:grid;place-items:center;border-radius:50%;background:rgba(255,255,255,.06);font-size:10px;color:var(--muted)}
+.download-stack{display:grid;gap:7px}
+.download-card{grid-template-columns:42px minmax(0,1fr) auto;padding:8px;border-radius:11px;background:#13171c;border:1px solid rgba(255,255,255,.045)}
+.download-art{width:42px;height:42px;border-radius:7px}
+.download-title{font-size:11px}
+.download-artist{font-size:10px}
+.download-progress-row{margin-top:7px}
+.download-bottom{margin-top:6px}
+.download-actions .btn-danger,.download-actions .save-btn,.download-actions .download-remove-btn{min-height:30px;padding:0 9px;border-radius:8px;font-size:10px}
+
+/* Queue drawer reads like a music-service Up Next sheet. */
+.queue-drawer{width:min(420px,calc(100vw - 28px));border:1px solid var(--line-strong);background:rgba(12,14,18,.98);border-radius:18px;box-shadow:0 26px 80px rgba(0,0,0,.55);backdrop-filter:blur(24px)}
+.queue-head strong{font-size:21px;letter-spacing:-.03em}
+.queue-row{padding:8px;border-radius:11px}
+.queue-row img{width:42px;height:42px;border-radius:7px;object-fit:cover}
+
+/* Remove the old global-search visual language completely. */
+.header-search{display:none!important}
+
+@media (max-width:1100px){
+  .recent-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .daily-mix-tracks{grid-template-columns:1fr}
+  .global-player-bar{grid-template-columns:minmax(190px,1fr) minmax(300px,1.2fr) minmax(130px,.55fr)}
+}
+@media (max-width:900px){
+  .global-player-bar{left:10px;right:10px;bottom:10px;transform:none;width:auto;grid-template-columns:1fr auto;height:96px;padding:9px 11px;gap:7px}
+  .player-track{grid-column:1 / -1}
+  .player-controls{grid-column:2;grid-row:1;justify-content:flex-end}
+  .player-progress{grid-column:1 / -1;grid-row:3}
+  .player-extra{display:none}
+  .downloads-list{grid-template-columns:1fr}
+  .downloads-list>.downloads-section:first-child{grid-column:1;position:static}
+  .downloads-list>.downloads-section:nth-child(2){grid-column:1}
+  .download-overview{grid-template-columns:1fr 1fr 1fr}
+}
+@media (max-width:680px){
+  .app-header{padding-inline:12px}
+  .recent-grid{grid-template-columns:1fr}
+  .daily-mix-section{padding:12px}
+  .mix-shell{grid-template-columns:1fr}
+  .mix-cover{min-height:220px;border-right:0;border-bottom:1px solid var(--line)}
+  .daily-mix-tracks{max-height:none}
+  #libraryList .result-card{grid-template-columns:52px minmax(0,1fr) auto;padding:7px}
+  #libraryList .thumb-wrapper,#libraryList .thumb-wrapper img{width:52px;height:52px}
+  .track-actions{gap:2px}
+  .track-action{width:29px;height:29px}
+  .track-action.btn-queue-next,.track-action.btn-queue-add{display:none}
+  .download-overview{grid-template-columns:1fr}
+  .downloads-top{align-items:flex-start}
+  .downloads-top-actions .icon-action{width:38px;height:38px}
+  .queue-pill{height:38px}
+}
