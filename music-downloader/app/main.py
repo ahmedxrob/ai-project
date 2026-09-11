@@ -1038,8 +1038,12 @@ def make_artist_id(name):
     )
     name = re.sub(r"\s+", " ", name).strip()
 
+    # Artist identity is case-insensitive so differently cased metadata
+    # such as "Cheb Akil" and "cheb akil" resolves to one artist.
+    identity_name = name.casefold()
+
     digest = hashlib.sha1(
-        name.encode("utf-8")
+        identity_name.encode("utf-8")
     ).hexdigest()[:20]
 
     return f"artist-{digest}"
