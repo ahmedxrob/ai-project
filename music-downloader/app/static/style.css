@@ -3846,3 +3846,5 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 /* Xrob Music queue controls */
 .btn-queue-next svg,.btn-queue-add svg{width:15px;height:15px;vertical-align:-3px}
 @media(max-width:700px){.btn-queue-next,.btn-queue-add{padding-left:8px;padding-right:8px}}
+/* Native hidden state must always hide Library views when switching tabs. */
+[hidden]{display:none!important}
