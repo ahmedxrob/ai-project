@@ -775,11 +775,25 @@ def clean_title_with_rules(value, rules_text=""):
         except re.error:
             continue
     value = re.sub(r"\s+", " ", value).strip()
-    # Clean up brackets/separators left behind by removed labels.
     value = re.sub(r"[\(\[\{]\s*[\)\]\}]", "", value)
     value = re.sub(r"\s*[-–—:|•]+\s*$", "", value).strip()
     value = re.sub(r"^[\s–—:|•\-]+", "", value).strip()
     return value or "Unknown Track"
+
+
+def normalize_catalog_title(value, rules_text=""):
+    """Normalize common upload/video noise before catalog matching."""
+    text = clean_title_with_rules(value, rules_text)
+    # Producer credits commonly appear in download/search titles and are not
+    # part of the canonical recording title.
+    text = re.sub(r"\s*[\(\[]\s*prod(?:uced)?\.?\s*by\b[^\)\]]*[\)\]]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+prod(?:uced)?\.?\s*by\b.*$", "", text, flags=re.IGNORECASE)
+    # Common video/upload suffixes.
+    text = re.sub(r"\s+(?:official\s+)?(?:music\s+)?video(?:\s+clip)?\s*$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+mv\s*$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*[-–—|:]+\s*$", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or "Unknown Track"
 
 
 def clean_filename(value):
@@ -1572,18 +1586,20 @@ async def _itunes_lookup(artist, title):
 
 
 async def resolve_download_metadata(raw_title, artist, album, settings):
-    title = clean_title_with_rules(raw_title or "Unknown Track", settings.get("title_cleanup_rules", ""))
+    rules_text = settings.get("title_cleanup_rules", "")
+    title = clean_title_with_rules(raw_title or "Unknown Track", rules_text)
+    catalog_title = normalize_catalog_title(title, rules_text)
     artist = clean_metadata_text(artist, "Unknown Artist")
     supplied_album = clean_metadata_text(album, "")
-    result = {"title": title, "artist": artist, "album": supplied_album or artist, "confidence": 0.25, "source": "Supplied metadata", "reason": ""}
+    result = {"title": catalog_title, "artist": artist, "album": supplied_album or artist, "confidence": 0.25, "source": "Supplied metadata", "reason": ""}
 
     mode = str(settings.get("metadata_mode") or "auto").lower()
     if mode == "off":
         return result
 
     candidates = []
-    mb = await _musicbrainz_lookup(artist, title)
-    it = await _itunes_lookup(artist, title)
+    mb = await _musicbrainz_lookup(artist, catalog_title)
+    it = await _itunes_lookup(artist, catalog_title)
     for cand in (mb, it):
         if cand and cand.get("score", 0) >= 0.55:
             candidates.append(cand)
@@ -1594,14 +1610,14 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
         # Catalog data is evidence, never a reason to overwrite a clearly supplied album.
         chosen_album = supplied_album or clean_metadata_text(best.get("album"), "")
         result.update({
-            "title": clean_title_with_rules(best.get("title") or title, settings.get("title_cleanup_rules", "")),
+            "title": normalize_catalog_title(best.get("title") or catalog_title, rules_text),
             "artist": clean_metadata_text(best.get("artist"), artist),
             "album": chosen_album or artist,
             "confidence": float(best.get("score", 0.0)),
             "source": best.get("source") or "Catalog",
         })
     else:
-        result["title"] = clean_title_with_rules(title, settings.get("title_cleanup_rules", ""))
+        result["title"] = catalog_title
 
     result["album"] = clean_metadata_text(result.get("album"), "") or result["artist"] or "Unknown Artist"
     return result
@@ -1913,7 +1929,7 @@ async def download_worker():
                 task["metadata_confidence"] = round(float(resolved.get("confidence", 0.0)) * 100)
                 task["metadata_source"] = resolved.get("source", "Fallback")
                 task["metadata_reason"] = resolved.get("reason", "")
-                clean_title = clean_filename(cleaned_title)
+                clean_title = clean_filename(normalize_catalog_title(cleaned_title, settings.get("title_cleanup_rules", "")))
                 clean_file = DOWNLOAD_DIR / f"clean_{task_id}{extension}"
                 clean_command = [
                     *FFMPEG_COMMAND, "-y", "-i", str(audio_file), "-map", "0", "-c", "copy",
@@ -2524,8 +2540,8 @@ async def api_download(
         }
     raw_album = payload.get("album")
     task_album = str(raw_album).strip() if raw_album else ""
-    if not task_album or task_album.casefold() in {"unknown album", "unknown"}:
-        task_album = task_artist or "Unknown Artist"
+    if task_album.casefold() in {"unknown album", "unknown"}:
+        task_album = ""
 
     task = {
         "id": task_id,
@@ -2565,6 +2581,7 @@ async def api_download(
     return {
         "status": "ok",
         "task_id": task_id,
+        "task": task,
     }
 
 
