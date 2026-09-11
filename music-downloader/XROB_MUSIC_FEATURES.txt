@@ -1,70 +1,93 @@
-XROB MUSIC 2.6.0
-Complete verified feature list
+XROB MUSIC 2.9.3
+CURRENT FEATURES + PRODUCT ROADMAP
 
+============================================================
+CURRENT 2.9.3 UPDATE
+============================================================
+- Spotify/Apple Music-inspired top navigation with Xrob logo identity.
+- Search and Settings live in the top utility controls instead of the primary navigation row.
+- Downloads opens as a compact floating activity drawer.
+- Up Next queue opens from the persistent player and closes when clicking outside it or pressing Escape.
+- Downloads drawer closes when clicking outside it or pressing Escape.
+- Recently Added playback now shares the same persisted queue data used by Up Next while preserving its Home ordering.
+- Home Tracks / Artists / Albums statistics open their corresponding Library views.
+- Home metric icons use the centered presentation used by the earlier Xrob design.
+- Browser tab favicon / app icon uses the Xrob icon asset.
+- Play-count threshold is 60 seconds; short tracks retain the existing proportional short-track rule.
+- Global player, queue controls, repeat, shuffle and persisted playback state remain enabled.
+
+============================================================
+CURRENT VERIFIED FEATURE SET
+============================================================
 HOME
-- Real Tracks / Artists / Albums counters from the scanned library.
-- Recently Added tracks with playback.
-- Download shortcut.
-- Active download status.
+- Tracks / Artists / Albums counters from the scanned library.
+- Total Plays counter and listening statistics.
+- Recently Added music shelf with playback.
+- Daily Mix personalization surface.
+- Quick route from dashboard counters into Library sections.
+- Download activity shortcut.
+- Global persistent player.
 
-SEARCH & DOWNLOAD
+SEARCH & DOWNLOADS
 - YouTube search through yt-dlp.
 - Audio-only downloads.
-- MP3, FLAC, M4A, OPUS and supported container formats.
+- MP3, FLAC, M4A, OPUS and other supported formats.
 - Configurable lossy quality.
 - Preview before downloading.
 - Download queue with live progress.
 - Cancel, retry and clear completed tasks.
-- Persistent task state.
+- Persistent download task state.
 - Metadata and artwork options.
 - Optional artist-folder organization.
+- Compact Downloads activity drawer.
 
 LIBRARY
-- Recursive scan of the configured music folder.
+- Recursive library scanning.
 - MP3, FLAC, M4A, OGG, WAV, OPUS, AAC and ALAC cataloging.
-- Metadata from embedded tags with filename/folder fallback.
+- Metadata from tags with filename/folder fallback.
 - Tracks / Artists / Albums views.
-- Artist detail pages with albums and tracks.
-- Album detail pages with tracks.
-- Search across the active library view.
-- Play track, Play all, Play album and Play artist.
-- Library shuffle.
+- Artist detail pages.
+- Album detail pages.
+- Search inside active library views.
+- Play track, album and artist.
+- Queue-aware playback.
+- Up Next queue with reorder, Play Next, remove, clear-upcoming and repeat controls.
 - Previous / Next playback.
+- Library shuffle.
 - Delete individual library files.
-- Real library refresh/rescan.
-- Cached catalog for faster startup and offline resilience.
-- Album artwork from embedded covers.
-- Storage path, free space and writable state.
+- Quick refresh and full rescan.
+- Cached catalog.
+- Artwork from embedded covers.
+- Storage and writable-state reporting.
 
 PLAYER
-- Persistent global player.
+- Persistent global player bar.
 - Play / pause.
 - Previous / next.
 - Seek and volume persistence.
-- Shuffle mode.
+- Shuffle with queue synchronization.
+- Repeat track / repeat queue / off.
 - Artwork, title and artist.
 - Automatic next-track playback.
-- Queue-aware library playback.
-- Playback state persistence.
+- Queue persistence across reloads.
+- Playback-state persistence.
 - Visualizer.
 
 SETTINGS
-Only settings that change download behavior are exposed:
 - Download format.
-- Download quality for lossy formats.
-- Write metadata on/off.
-- Embed artwork on/off.
-- Artist folders on/off.
-- Save changes.
-- Reset to defaults.
-- Read-only library/storage status.
-- Read-only OpenSubsonic availability status.
+- Download quality.
+- Metadata writing toggle.
+- Artwork embedding toggle.
+- Artist-folder toggle.
+- Save and reset settings.
+- Library/storage status.
+- OpenSubsonic status.
 
 OPENSUBSONIC / AMPERFY
 - Subsonic/OpenSubsonic-compatible REST API.
 - JSON and XML responses.
 - Authentication.
-- Music folders, artist indexes, artists, albums and directories.
+- Music folders, artists, albums and directories.
 - Song details and searching.
 - Random songs and genres.
 - Streaming and download endpoints.
@@ -76,60 +99,135 @@ OPENSUBSONIC / AMPERFY
 - Lyrics endpoint.
 - Stable server-side IDs.
 
-RELIABILITY
-- yt-dlp is invoked through the same Python environment as Xrob Music.
-- FFmpeg is resolved from the container PATH.
-- Server validates settings before saving them.
-- Library refresh invalidates metadata caches.
-- Tracks/artists/albums are returned from the same catalog model.
-- Download task state is stored on the local /data volume.
-- Network-library disconnection is detected instead of silently appearing as an empty library.
-- Temporary download files are excluded from the library.
+============================================================
+100 RECOMMENDED FEATURES TO ADD
+============================================================
+This roadmap compares patterns used by current major music apps and adjacent music platforms. Spotify currently emphasizes personalized discovery, DJ-style sessions, Smart Shuffle and more powerful queue/offline behavior; Apple Music emphasizes collaborative listening, AutoMix, Crossfade, lyrics and Sing; YouTube Music emphasizes Samples, Ask Music, Smart Downloads, offline/background listening and audio-only playback; TIDAL emphasizes FLAC and Dolby Atmos; Qobuz emphasizes Hi-Res FLAC, editorial content and offline downloads. Sources: Spotify, Apple Music, YouTube Music, TIDAL and Qobuz official documentation.
 
-NOTES
-- Xrob Music does not create public Internet access by itself.
-- External OpenSubsonic clients need a reachable server address/tunnel.
-- Only download content you are authorized to download.
+A. DISCOVERY & PERSONALIZATION
+1. Smart Mix that adapts to the user's current listening session.
+2. Mood-based mixes such as Focus, Energy, Chill and Sleep.
+3. Activity-based mixes for study, driving, gym and commuting.
+4. A natural-language “What should I play?” music assistant.
+5. AI-generated playlists from a text prompt.
+6. AI radio based on one selected track.
+7. Artist radio based on an artist profile.
+8. Album radio based on one album.
+9. Genre radio with adjustable genre weighting.
+10. Smart Shuffle that inserts discovery tracks into an existing queue.
+11. One-tap queue reshuffle without disabling shuffle.
+12. “Because you played…” recommendation shelves.
+13. “More like this” action on every track.
+14. “Less like this” feedback control.
+15. Discovery history with recently skipped recommendations.
+16. New-release radar for followed artists.
+17. Personalized weekly discovery playlist.
+18. Personalized monthly discovery playlist.
+19. Forgotten favorites resurfacing shelf.
+20. Listening-streak based recommendations.
+
+B. PLAYER & QUEUE
+21. Drag-and-drop Up Next reordering directly from the player.
+22. Queue sections for Current / Next / Added later.
+23. Save current queue as a playlist.
+24. Replace queue with an album or playlist in one action.
+25. Add album to queue.
+26. Add artist to queue.
+27. Play next album / artist actions.
+28. Queue search/filter for large queues.
+29. Duplicate-track detection with optional confirmation.
+30. Queue history showing recently removed or played items.
+31. Per-track queue context menu.
+32. Smooth crossfade between tracks.
+33. Gapless playback for compatible files.
+34. AutoMix-style intelligent transitions.
+35. Silence trimming between files.
+36. ReplayGain / loudness normalization.
+37. Per-track volume offset.
+38. Playback speed control where useful.
+39. Sleep timer with end-of-track and custom-duration modes.
+40. “Keep playing” autonomous radio after queue completion.
+
+C. LYRICS & MUSIC INFORMATION
+41. Synchronized lyrics when available.
+42. Plain-text lyrics fallback.
+43. Lyrics search by track/artist.
+44. Translation and pronunciation assistance.
+45. Song credits panel.
+46. Composer / producer / engineer credits.
+47. Label and release metadata.
+48. Full album notes / liner-note view.
+49. Artist biography panel.
+50. Related artists graph.
+51. Track release date and edition metadata.
+52. ISRC display and metadata tools.
+53. Lyrics copy/export action.
+54. Favorite lyric lines / annotations.
+55. Music trivia and artist facts panel.
+
+D. LIBRARY & COLLECTION MANAGEMENT
+56. Likes / Favorites as a first-class library collection.
+57. Custom playlists with drag reorder.
+58. Smart playlists based on rules.
+59. Playlist folders.
+60. Nested playlist organization.
+61. Recently Played library page.
+62. Most Played library page.
+63. Never Played page.
+64. Recently Added by folder/source.
+65. Duplicate-track finder.
+66. Duplicate-album finder.
+67. Missing-artwork report.
+68. Missing-metadata report.
+69. Album-version / edition grouping.
+70. Multi-disc album grouping.
+71. Compilation / Various Artists handling.
+72. Box-set grouping.
+73. Favorite artists and favorite albums.
+74. Custom artist images and manual artwork management.
+75. Bulk metadata editor.
+
+E. DOWNLOADS & LOCAL-FIRST FEATURES
+76. Download whole album.
+77. Download entire artist discography.
+78. Download playlist.
+79. Bulk download selection.
+80. Download priority ordering.
+81. Pause / resume all downloads.
+82. Retry failed downloads automatically.
+83. Bandwidth limit for downloads.
+84. Scheduled download windows.
+85. Wi-Fi-only style network policy.
+86. Smart Downloads based on recent listening.
+87. Download storage usage breakdown.
+88. Auto-clean old completed downloads.
+89. Download duplicate detection.
+90. Download verification / checksum reporting.
+
+F. AUDIO QUALITY & DEVICE FEATURES
+91. FLAC bit-depth / sample-rate display.
+92. Hi-Res badge for high-resolution files.
+93. Dolby Atmos / spatial-audio metadata indicator when available.
+94. Output-device selector for compatible endpoints.
+95. Cast / AirPlay-style remote playback integration.
+96. External player / DLNA integration.
+97. Audio-device profiles with preferred quality.
+98. Equalizer with presets and custom bands.
+99. ReplayGain scanning and album-vs-track gain modes.
+100. Full listening analytics dashboard with trends, top artists, top albums, top tracks, listening time and exportable reports.
 
 ============================================================
-XROB MUSIC 2.8.1 — QUEUE + ANALYTICS + DAILY MIX
+SUGGESTED PRIORITY
 ============================================================
+P0 — build next: queue drag editing, playlists, favorites, lyrics, crossfade/gapless, Smart Mix, album/artist/playlist bulk download, duplicate detection, richer Recently Played/Most Played views, bulk metadata editor.
 
-Queue / Up Next
-- Spotify-style Up Next behavior with a stable current-track item.
-- Clear Queue keeps the currently playing track and clears only Up Next.
-- Add to Queue and Add to Play Next actions.
-- Drag-and-drop queue reordering keeps the current track index correct.
-- Removing earlier queue items no longer causes playback to jump to the wrong track.
-- Current track cannot accidentally be removed from active playback.
-- Repeat Queue and Repeat Track continue to work with the enhanced queue.
-- Queue state and current index remain persisted in localStorage.
-- Track-specific playback positions remain keyed by actual track ID.
-- Queue playback uses the same existing player/audio element, preserving older player behavior.
+P1 — high value: smart playlists, mood/activity mixes, AI text-to-playlist, equalizer, ReplayGain, download priority, bandwidth controls, device/output selection, song credits, related artists, better analytics.
 
-Detailed Library Statistics
-- New Library > Statistics view.
-- Collection totals: tracks, artists, albums, genres.
-- Total library duration and average track duration.
-- Total plays, played tracks and never-played tracks.
-- Average bitrate and sample-rate distribution.
-- Top tracks by listening history.
-- Top artists by listening history.
-- Genre distribution.
-- Last-14-days listening activity chart.
-- Current storage information.
-- Statistics are additive and do not replace the existing Library counters.
+P2 — advanced: collaborative playlists, remote playback, spatial-audio metadata, editorial/liner-note content, recommendation feedback loops, smart downloads and richer cross-device features.
 
-Daily Mix
-- New Spotify-style Daily Mix section on Home.
-- Up to four personalized mixes generated from local listening history.
-- Mixes use play frequency, recency, artist affinity and genre affinity.
-- Never-played tracks receive a gentle discovery boost.
-- Daily seed keeps mixes stable during the day while allowing daily refresh.
-- Each mix supports Play Mix and Add to Queue.
-- Daily Mix works entirely from the local Xrob Music library/history.
-
-Database compatibility
-- Existing play_history data is preserved.
-- New analytics fields are added automatically when the app starts.
-- No destructive migration is used.
+REFERENCES USED FOR THE ROADMAP
+- Spotify official product/support updates: personalized DJ requests, Smart Shuffle, queue management and offline download improvements.
+- Apple Music official pages/support: Shared Listening, collaborative playlists, AutoMix, Crossfade, lyrics translation/pronunciation and Sing.
+- YouTube Music official help: Samples, Ask Music, Smart Downloads, offline playback, background play and audio-only mode.
+- TIDAL official support: FLAC as the supported stereo lossless path and Dolby Atmos for immersive audio.
+- Qobuz official help: Hi-Res FLAC, editorial recommendations, offline listening and broad download formats.
