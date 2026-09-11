@@ -11,6 +11,8 @@ import sqlite3
 import subprocess
 import time
 import urllib.parse
+import urllib.request
+import difflib
 import uuid
 import secrets
 import xml.etree.ElementTree as ET
@@ -159,6 +161,7 @@ DEFAULT_SETTINGS = {
     "scan_enabled": True,
     "scan_interval_minutes": 60,
     "title_cleanup_rules": "(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",
+    "metadata_mode": "auto",
     "subsonic_user": "admin",
     "subsonic_password": "",
     "web_username": os.getenv("XROB_USERNAME", "admin"),
@@ -394,6 +397,9 @@ def load_settings():
     settings["embed_metadata"] = bool(settings.get("embed_metadata", True))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist", False))
     settings["title_cleanup_rules"] = str(settings.get("title_cleanup_rules") or "")
+    settings["metadata_mode"] = str(settings.get("metadata_mode") or "auto").lower()
+    if settings["metadata_mode"] not in {"off", "musicbrainz", "auto", "ai"}:
+        settings["metadata_mode"] = "auto"
     settings.pop("max_results", None)
 
     return settings
@@ -407,7 +413,7 @@ def save_settings(data: dict):
     allowed = {
         "audio_format", "audio_quality", "embed_thumbnail",
         "embed_metadata", "organize_by_artist", "scan_enabled",
-        "scan_interval_minutes", "title_cleanup_rules", "web_username", "web_password",
+        "scan_interval_minutes", "title_cleanup_rules", "metadata_mode", "web_username", "web_password",
     }
 
     old_user = str(settings.get("web_username") or "")
@@ -1433,6 +1439,231 @@ def cleanup_task_files(task_id):
             pass
 
 
+
+# ============================================================
+# METADATA INTELLIGENCE
+# ============================================================
+
+_METADATA_CACHE = {}
+_METADATA_LAST_MB_CALL = 0.0
+_METADATA_RATE_LOCK = asyncio.Lock()
+
+
+def _compact_identity(value):
+    text = clean_metadata_text(value, "")
+    text = re.sub(r"\b(feat\.?|ft\.?|featuring)\b.*$", "", text, flags=re.I)
+    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _similarity(a, b):
+    a1 = _compact_identity(a)
+    b1 = _compact_identity(b)
+    if not a1 or not b1:
+        return 0.0
+    if a1 == b1:
+        return 1.0
+    return difflib.SequenceMatcher(None, a1, b1).ratio()
+
+
+def _http_json_sync(url, headers=None, timeout=12):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+    return json.loads(raw)
+
+
+async def _musicbrainz_lookup(artist, title):
+    global _METADATA_LAST_MB_CALL
+    artist = clean_metadata_text(artist, "")
+    title = clean_title_with_rules(title, load_settings().get("title_cleanup_rules", ""))
+    cache_key = ("mb", _compact_identity(artist), _compact_identity(title))
+    if cache_key in _METADATA_CACHE:
+        return _METADATA_CACHE[cache_key]
+    if not artist or not title:
+        return None
+    async with _METADATA_RATE_LOCK:
+        wait = 1.05 - (time.monotonic() - _METADATA_LAST_MB_CALL)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _METADATA_LAST_MB_CALL = time.monotonic()
+        query = f'artist:"{artist}" AND recording:"{title}"'
+        url = "https://musicbrainz.org/ws/2/recording?" + urllib.parse.urlencode({
+            "query": query,
+            "fmt": "json",
+            "limit": 8,
+            "inc": "releases+artist-credits",
+        })
+        try:
+            data = await asyncio.to_thread(_http_json_sync, url, {
+                "User-Agent": "Xrob-Music/2.9.3 (metadata lookup)",
+                "Accept": "application/json",
+            })
+        except Exception:
+            return None
+    recordings = data.get("recordings") or []
+    best = None
+    for rec in recordings:
+        rec_title = rec.get("title") or ""
+        credits = rec.get("artist-credit") or []
+        rec_artist = " ".join(str(x.get("name") or x.get("artist", {}).get("name") or "").strip() for x in credits).strip()
+        title_score = _similarity(title, rec_title)
+        artist_score = _similarity(artist, rec_artist)
+        score = title_score * 0.72 + artist_score * 0.28
+        releases = rec.get("releases") or []
+        release = next((r for r in releases if (r.get("title") or "").strip()), None)
+        candidate = {
+            "title": rec_title,
+            "artist": rec_artist or artist,
+            "album": (release or {}).get("title") or "",
+            "score": score,
+            "source": "MusicBrainz",
+            "id": rec.get("id"),
+        }
+        if best is None or candidate["score"] > best["score"]:
+            best = candidate
+    if best:
+        _METADATA_CACHE[cache_key] = best
+    return best
+
+
+async def _itunes_lookup(artist, title):
+    artist = clean_metadata_text(artist, "")
+    title = clean_title_with_rules(title, load_settings().get("title_cleanup_rules", ""))
+    cache_key = ("itunes", _compact_identity(artist), _compact_identity(title))
+    if cache_key in _METADATA_CACHE:
+        return _METADATA_CACHE[cache_key]
+    if not artist or not title:
+        return None
+    term = f"{artist} {title}"
+    url = "https://itunes.apple.com/search?" + urllib.parse.urlencode({
+        "term": term,
+        "media": "music",
+        "entity": "song",
+        "limit": 10,
+    })
+    try:
+        data = await asyncio.to_thread(_http_json_sync, url, {"User-Agent": "Xrob-Music/2.9.3"})
+    except Exception:
+        return None
+    best = None
+    for item in data.get("results") or []:
+        cand_title = str(item.get("trackName") or "")
+        cand_artist = str(item.get("artistName") or "")
+        score = _similarity(title, cand_title) * 0.72 + _similarity(artist, cand_artist) * 0.28
+        candidate = {
+            "title": cand_title,
+            "artist": cand_artist or artist,
+            "album": str(item.get("collectionName") or ""),
+            "score": score,
+            "source": "Apple Music catalog",
+            "id": item.get("trackId"),
+        }
+        if best is None or candidate["score"] > best["score"]:
+            best = candidate
+    if best:
+        _METADATA_CACHE[cache_key] = best
+    return best
+
+
+def _extract_openai_text(payload):
+    if isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
+        return payload["output_text"].strip()
+    chunks = []
+    for item in payload.get("output") or []:
+        for content in item.get("content") or []:
+            if isinstance(content, dict) and isinstance(content.get("text"), str):
+                chunks.append(content["text"])
+    return "\n".join(chunks).strip()
+
+
+async def _ai_metadata_refine(raw_title, artist, candidates):
+    api_key = os.getenv("XROB_AI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    model = os.getenv("XROB_AI_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
+    prompt = {
+        "raw_title": raw_title,
+        "artist": artist,
+        "candidates": candidates,
+        "task": "Normalize music download metadata. Remove platform/video labels from the title, preserve meaningful remix/live/version text when it is part of the actual track identity, and choose the most likely canonical album. Do not invent an album. If no candidate is trustworthy, return an empty album. Return JSON only with title, artist, album, confidence (0 to 1), reason.",
+    }
+    body = json.dumps({
+        "model": model,
+        "input": "You are a conservative music metadata editor. " + json.dumps(prompt, ensure_ascii=False),
+        "max_output_tokens": 300,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=body,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        # Perform the JSON request directly because the generic GET helper does not accept a body.
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+        text = _extract_openai_text(payload)
+        if not text:
+            return None
+        text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.I).strip()
+        result = json.loads(text)
+        if not isinstance(result, dict):
+            return None
+        return {
+            "title": clean_metadata_text(result.get("title"), raw_title),
+            "artist": clean_metadata_text(result.get("artist"), artist),
+            "album": clean_metadata_text(result.get("album"), ""),
+            "score": max(0.0, min(1.0, safe_float(result.get("confidence"), 0.0))),
+            "source": "AI + catalog evidence",
+            "reason": str(result.get("reason") or "").strip(),
+        }
+    except Exception:
+        return None
+
+
+async def resolve_download_metadata(raw_title, artist, album, settings):
+    title = clean_title_with_rules(raw_title or "Unknown Track", settings.get("title_cleanup_rules", ""))
+    artist = clean_metadata_text(artist, "Unknown Artist")
+    album = clean_metadata_text(album, "")
+    mode = str(settings.get("metadata_mode") or "auto").lower()
+    result = {"title": title, "artist": artist, "album": album or artist, "confidence": 0.25, "source": "Fallback", "reason": ""}
+    if mode == "off":
+        return result
+
+    candidates = []
+    mb = await _musicbrainz_lookup(artist, title)
+    it = await _itunes_lookup(artist, title)
+    for cand in (mb, it):
+        if cand and cand.get("score", 0) >= 0.55:
+            candidates.append(cand)
+    if candidates:
+        candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+        best = candidates[0]
+        result.update({
+            "title": clean_title_with_rules(best.get("title") or title, settings.get("title_cleanup_rules", "")),
+            "artist": clean_metadata_text(best.get("artist"), artist),
+            "album": clean_metadata_text(best.get("album"), "") or artist,
+            "confidence": float(best.get("score", 0.0)),
+            "source": best.get("source") or "Catalog",
+        })
+
+    if mode in {"auto", "ai"} and (mode == "ai" or result["confidence"] < 0.90 or not album):
+        ai = await _ai_metadata_refine(title, artist, candidates)
+        if ai and ai.get("score", 0) >= max(0.72, result["confidence"] - 0.03):
+            result.update({
+                "title": clean_title_with_rules(ai.get("title") or result["title"], settings.get("title_cleanup_rules", "")),
+                "artist": clean_metadata_text(ai.get("artist"), result["artist"]),
+                "album": clean_metadata_text(ai.get("album"), "") or result["album"] or artist,
+                "confidence": float(ai.get("score", 0.0)),
+                "source": ai.get("source") or "AI + catalog evidence",
+                "reason": ai.get("reason", ""),
+            })
+
+    result["album"] = clean_metadata_text(result.get("album"), "") or result["artist"] or "Unknown Artist"
+    return result
+
+
 # ============================================================
 # DOWNLOAD WORKER
 # ============================================================
@@ -1726,8 +1957,19 @@ async def download_worker():
                 task["last_updated"] = time.time() * 1000
                 await notify_task_update(task, force_save=True)
 
-                cleaned_title = clean_title_with_rules(task.get("title", "Unknown Track"), settings.get("title_cleanup_rules", ""))
+                resolved = await resolve_download_metadata(
+                    task.get("title", "Unknown Track"),
+                    task.get("artist", "Unknown Artist"),
+                    task.get("album", ""),
+                    settings,
+                )
+                cleaned_title = resolved["title"]
                 task["title"] = cleaned_title
+                task["artist"] = resolved["artist"]
+                task["album"] = resolved["album"] or task["artist"] or "Unknown Artist"
+                task["metadata_confidence"] = round(float(resolved.get("confidence", 0.0)) * 100)
+                task["metadata_source"] = resolved.get("source", "Fallback")
+                task["metadata_reason"] = resolved.get("reason", "")
                 clean_title = clean_filename(cleaned_title)
                 clean_file = DOWNLOAD_DIR / f"clean_{task_id}{extension}"
                 clean_command = [
