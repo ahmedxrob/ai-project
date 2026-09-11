@@ -628,7 +628,8 @@ function switchTab(tab) {
     }
 
     if (tab === "downloads") {
-        loadDownloads();
+        openDownloadsDrawer();
+        return;
     }
 
     if (tab === "library") {
@@ -4558,6 +4559,10 @@ function playHomeTrack(index) {
     const track =
         queue[index];
 
+    // Keep Recently Added and Up Next synchronized with one persisted queue.
+    syncLibraryQueue(queue, index);
+    renderEnhancedQueue();
+
     const streamUrl =
         track.stream ||
         "";
@@ -4885,8 +4890,10 @@ function setEnhancedQueue(queue, index = 0) {
     renderEnhancedQueue();
 }
 
-function openQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d){d.hidden=false;renderEnhancedQueue();applyRepeatLabel();} }
-function closeQueueDrawer(){const d=document.getElementById("queue-drawer"); if(d)d.hidden=true;}
+function openQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d){ d.hidden=false; closeDownloadsDrawer(); renderEnhancedQueue(); applyRepeatLabel(); } }
+function closeQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d)d.hidden=true; }
+function openDownloadsDrawer(){ const d=document.getElementById("downloads-drawer"); if(!d)return; closeQueueDrawer(); d.hidden=false; loadDownloads().catch(()=>{}); renderLocalIcons(); }
+function closeDownloadsDrawer(){ const d=document.getElementById("downloads-drawer"); if(d)d.hidden=true; }
 
 async function saveQueueAsPlaylist(){ if(!enhancedQueue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await fetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:enhancedQueue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
 
@@ -5050,7 +5057,22 @@ function installEnhancedFeatures(){
     document.getElementById("dailyMixPlay")?.addEventListener("click", () => { if (!dailyMixTracks.length) return; setEnhancedQueue(dailyMixTracks, 0); currentPlayerSource="library"; playLibraryTrack(0); });
     loadDetailedLibraryStats();
     loadDailyMix();
-    document.getElementById("gp-queue-btn")?.addEventListener("click",openQueueDrawer); document.getElementById("queueClose")?.addEventListener("click",closeQueueDrawer); document.getElementById("queueClear")?.addEventListener("click",()=>{
+    document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
+    document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
+    document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
+    document.getElementById("topbarDownloadsBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDownloadsDrawer(); });
+    document.addEventListener("click", (event) => {
+        const downloadDrawer = document.getElementById("downloads-drawer");
+        const queueDrawer = document.getElementById("queue-drawer");
+        const downloadButton = event.target.closest("#topbarDownloadsBtn");
+        const queueButton = event.target.closest("#gp-queue-btn");
+        if (downloadDrawer && !downloadDrawer.hidden && !downloadDrawer.contains(event.target) && !downloadButton) closeDownloadsDrawer();
+        if (queueDrawer && !queueDrawer.hidden && !queueDrawer.contains(event.target) && !queueButton) closeQueueDrawer();
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") { closeDownloadsDrawer(); closeQueueDrawer(); }
+    });
+    document.getElementById("queueClear")?.addEventListener("click",()=>{
     if (currentPlayerSource === "library" && enhancedQueue.length && enhancedQueueIndex >= 0) {
         const current = enhancedQueue[enhancedQueueIndex];
         syncLibraryQueue(current ? [current] : [], 0);
@@ -5159,6 +5181,10 @@ window.playLibraryTrack = playLibraryTrack;
 window.shuffleLibrary = shuffleLibrary;
 
 window.toggleTheme = toggleTheme;
+window.openDownloadsDrawer = openDownloadsDrawer;
+window.closeDownloadsDrawer = closeDownloadsDrawer;
+window.openQueueDrawer = openQueueDrawer;
+window.closeQueueDrawer = closeQueueDrawer;
 
 window.searchMusic = searchMusic;
 window.loadMoreResults = loadMoreResults;
