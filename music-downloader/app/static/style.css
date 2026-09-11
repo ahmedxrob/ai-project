@@ -4667,3 +4667,74 @@ body.music-app {
 .library-dashboard-cards { grid-template-columns:repeat(4,minmax(0,1fr)); }
 @media(max-width:980px){ .home-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .library-dashboard-cards{grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media(max-width:640px){ .home-stats-grid{grid-template-columns:1fr 1fr; gap:10px;} .home-stat-card{min-height:102px;padding:16px;} .results-grid,.recent-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;} .download-card{min-height:0;} .download-art{width:62px;height:62px;flex-basis:62px;} .downloads-drawer{width:calc(100vw - 18px);right:9px;} }
+
+
+/* ============================================================
+   XROB 2.9.3+ — LARGE MUSIC-SERVICE SURFACES
+   ============================================================ */
+:root {
+    --content-max: 1880px;
+    --card-gap: 20px;
+}
+
+.main-content.workspace-main { padding-left: 28px; padding-right: 28px; }
+.music-page { max-width: var(--content-max); }
+.home-stats-grid { gap: 18px; }
+.home-stat-card { min-height: 118px; padding: 22px 24px; gap: 16px; border-radius: 18px; }
+.home-stat-icon { width: 52px; height: 52px; flex-basis: 52px; border-radius: 14px; }
+.home-stat-icon svg { width: 23px; height: 23px; }
+.home-stat-card strong { font-size: 28px; }
+.home-stat-card span { font-size: 11px; }
+.recent-grid, .results-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
+.recent-grid > *, .results-grid > * { min-width: 0; }
+.recent-card, .result-card, .track-card, .album-card, .artist-card, .catalog-card, .library-card, .dashboard-card { min-height: 0; }
+.recent-card img, .result-card img, .track-card img, .artist-card img { min-width: 0; }
+.daily-mix-track-row { grid-auto-columns: minmax(190px, 220px); gap: 16px; }
+.daily-mix-track { padding: 10px; border-radius: 16px; }
+.daily-mix-track strong { font-size: .96rem; }
+.daily-mix-track span { font-size: .82rem; }
+.library-dashboard-cards { grid-template-columns: repeat(auto-fit, minmax(300px,1fr)); gap: 18px; }
+.library-tab { min-height: 46px; padding: 0 17px; font-size: 12px; }
+.settings-card { padding: 24px; border-radius: 18px; }
+.setting-row { min-height: 76px; padding: 18px 0; }
+.settings-textarea { min-height: 150px; font-size: 13px; }
+.download-card { min-height: 164px; padding: 18px; border-radius: 16px; }
+.download-art { width: 92px; height: 92px; flex-basis: 92px; }
+.download-title { font-size: 16px; }
+.download-artist { font-size: 13px; }
+.download-actions .save-btn, .download-actions .download-remove-btn { min-width: 108px; min-height: 42px; }
+.downloads-drawer { width: min(720px, calc(100vw - 32px)); }
+.downloads-drawer-list { padding: 8px; }
+.queue-drawer { width: min(720px, calc(100vw - 32px)); }
+.queue-row { min-height: 70px; padding: 10px; }
+.queue-row img { width: 54px; height: 54px; }
+.queue-row .queue-title { font-size: 13px; }
+.page-heading { margin-bottom: 30px; }
+.page-heading h2 { font-size: 34px; }
+.search-card, .search-results-panel, .library-section-card, .editor-toolbar, .editor-stats-banner, .settings-info-card { border-radius: 18px; }
+.editor-stat-card { min-width: 260px; min-height: 92px; padding: 18px 22px; }
+.editor-stat-icon { width: 48px; height: 48px; }
+.song-editor-card { padding: 16px; border-radius: 16px; }
+.song-editor-art { width: 64px; height: 64px; }
+.catalog-detail-header { padding: 10px 0 14px; }
+.album-card { grid-template-columns: 92px minmax(0,1fr); gap: 18px; padding: 16px; border-radius: 16px; }
+.album-card img { width: 92px; height: 92px; }
+
+@media (max-width: 1200px) {
+    .recent-grid, .results-grid { grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); }
+    .main-content.workspace-main { padding-left: 22px; padding-right: 22px; }
+}
+@media (max-width: 760px) {
+    .main-content.workspace-main { padding-left: 14px; padding-right: 14px; }
+    .home-stat-card { min-height: 104px; padding: 17px; }
+    .home-stat-icon { width: 46px; height: 46px; flex-basis: 46px; }
+    .recent-grid, .results-grid { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+    .download-card { padding: 14px; }
+    .download-art { width: 72px; height: 72px; flex-basis: 72px; }
+    .downloads-drawer, .queue-drawer { width: calc(100vw - 18px); right: 9px; }
+}
+@media (max-width: 480px) {
+    .recent-grid, .results-grid { grid-template-columns: 1fr; }
+    .home-stats-grid { gap: 10px; }
+    .home-stat-card { padding: 14px; }
+}
