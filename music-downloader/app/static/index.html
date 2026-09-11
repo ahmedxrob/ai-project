@@ -769,28 +769,17 @@
         <div class="setting-row">
          <div>
           <div class="setting-label">
-           Metadata intelligence
+           Metadata lookup
           </div>
           <div class="setting-desc">
-           Resolve titles and albums using catalog evidence, then optionally ask AI to disambiguate only when confidence is low. Spotify is not used as a metadata source.
+           Improve titles and album names with MusicBrainz and Apple catalog evidence. No AI service is used.
           </div>
          </div>
          <select id="set_metadata_mode">
-          <option value="auto">Auto · catalog first, AI when needed</option>
-          <option value="musicbrainz">Catalog only · MusicBrainz + Apple catalog</option>
-          <option value="ai">AI + catalog evidence</option>
+          <option value="auto">Auto · catalog evidence + safe fallback</option>
+          <option value="musicbrainz">MusicBrainz only</option>
           <option value="off">Off · use supplied metadata</option>
          </select>
-        </div>
-        <div class="setting-row setting-row-stack metadata-ai-note">
-         <div>
-          <div class="setting-label">
-           AI provider
-          </div>
-          <div class="setting-desc">
-           Set <code>XROB_AI_API_KEY</code> in the container/add-on environment to enable AI disambiguation. The key is never stored in Xrob settings. Optional model override: <code>XROB_AI_MODEL</code>.
-          </div>
-         </div>
         </div>
         <div class="setting-row setting-row-stack">
          <div>
