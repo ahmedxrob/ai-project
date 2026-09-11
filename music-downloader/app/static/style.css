@@ -4523,3 +4523,25 @@ body.music-app {
     .download-queue-card { align-items: flex-start; flex-direction: column; }
     .download-queue-actions { width: 100%; justify-content: space-between; }
 }
+
+/* Home metric cards: restore the compact icon + count presentation while keeping the first three as Library shortcuts. */
+.home-stat-card.home-library-link {
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    appearance: none;
+}
+.home-stat-card.home-library-link .home-stat-copy,
+.home-stat-card .home-stat-copy {
+    min-width: 0;
+    display: block;
+}
+.home-stat-card.home-library-link .home-stat-copy strong,
+.home-stat-card .home-stat-copy strong {
+    display: block;
+}
+.home-stat-card.home-library-link .home-stat-copy > span,
+.home-stat-card .home-stat-copy > span {
+    display: block;
+}
