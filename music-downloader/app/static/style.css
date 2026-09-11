@@ -6175,4 +6175,340 @@ body.music-app {
     #tab-home.active .home-hero { padding-inline: 22px; }
     #tab-home.active .recent-grid { grid-auto-columns: minmax(160px, 190px); gap: 12px; }
 }
-\n\n/* ============================================================\n   XROB MUSIC 2.9.3 — UI POLISH PASS v5\n   CSS/HTML only. Queue and Downloads remain independent.\n   ============================================================ */\n\n/* Header: refined 1.5x hierarchy — large enough to feel premium,\n   without the previous oversized 2x treatment. */\n:root { --app-header-height: 108px; }\n.app-topbar-inner {\n    gap: 24px;\n    padding-inline: clamp(18px, 2.2vw, 34px);\n}\n.brand-mark {\n    height: 58px;\n    gap: 14px;\n    font-size: 22px;\n    letter-spacing: -.6px;\n}\n.brand-mark img {\n    width: 50px;\n    height: 50px;\n    border-radius: 14px;\n}\n.primary-nav {\n    min-width: 420px;\n    padding: 6px;\n    gap: 6px;\n    border-radius: 17px;\n}\n.primary-nav .nav-link {\n    min-width: 126px;\n    min-height: 56px;\n    padding: 0 20px;\n    gap: 9px;\n    border-radius: 13px;\n    font-size: 13px;\n}\n.primary-nav .nav-link > svg,\n.primary-nav .nav-link > i {\n    width: 22px;\n    height: 22px;\n    flex-basis: 22px;\n}\n.primary-nav .nav-count {\n    min-width: 22px;\n    height: 22px;\n    padding: 0 6px;\n    font-size: 10px;\n}\n.topbar-actions { gap: 10px; }\n.topbar-icon {\n    width: 56px;\n    height: 56px;\n    border-radius: 16px;\n}\n.topbar-icon svg {\n    width: 25px !important;\n    height: 25px !important;\n}\n.topbar-icon-badge {\n    min-width: 22px;\n    height: 22px;\n    padding: 0 6px;\n    top: -5px;\n    right: -5px;\n    border-width: 2px;\n    font-size: 9px;\n}\n\n/* Recently Added: bigger, richer horizontal cards, visually related to Daily Mix. */\n#tab-home.active .recent-grid {\n    grid-auto-columns: minmax(230px, 255px);\n    gap: 18px;\n    padding: 6px 2px 16px;\n    overscroll-behavior-x: contain;\n}\n#tab-home.active .recent-card {\n    display: grid;\n    grid-template-rows: auto auto auto;\n    gap: 0;\n    padding: 10px;\n    border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);\n    border-radius: 20px;\n    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, transparent), color-mix(in srgb, var(--bg-elevated) 92%, transparent));\n    box-shadow: 0 10px 28px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.035);\n    overflow: hidden;\n}\n#tab-home.active .recent-card img {\n    width: 100%;\n    aspect-ratio: 1 / 1;\n    border-radius: 14px;\n    box-shadow: 0 12px 26px rgba(0,0,0,.16);\n    transform: none;\n}\n#tab-home.active .recent-card:hover {\n    transform: translateY(-4px);\n    border-color: color-mix(in srgb, var(--accent) 46%, var(--border-strong));\n    box-shadow: 0 18px 40px rgba(0,0,0,.14);\n}\n#tab-home.active .recent-card:hover img {\n    transform: scale(1.015);\n}\n#tab-home.active .recent-card-title {\n    margin-top: 11px;\n    padding: 0 3px;\n    font-size: 13px;\n    line-height: 1.25;\n    font-weight: 850;\n}\n#tab-home.active .recent-card-artist {\n    margin-top: 5px;\n    padding: 0 3px 3px;\n    font-size: 10px;\n    line-height: 1.2;\n}\n\n/* Library: one clean toolbar row. Tabs scroll horizontally instead of wrapping;\n   search + Play all + Shuffle + Quick scan + Full scan stay together. */\n#tab-library .library-toolbar {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    min-width: 0;\n    overflow: hidden;\n}\n#tab-library .library-tabs {\n    display: flex;\n    align-items: center;\n    flex: 1 1 auto;\n    min-width: 0;\n    flex-wrap: nowrap;\n    gap: 5px;\n    overflow-x: auto;\n    overflow-y: hidden;\n    scrollbar-width: thin;\n    padding-bottom: 1px;\n}\n#tab-library .library-tab {\n    flex: 0 0 auto;\n    white-space: nowrap;\n}\n#tab-library .library-actions {\n    display: flex;\n    align-items: center;\n    justify-content: flex-end;\n    flex: 0 0 auto;\n    flex-wrap: nowrap;\n    gap: 7px;\n    min-width: 0;\n}\n#tab-library .library-search {\n    flex: 0 1 220px;\n    min-width: 145px;\n}\n#tab-library .library-actions .btn-refresh {\n    flex: 0 0 auto;\n    white-space: nowrap;\n}\n\n/* Drawers occupy distinct horizontal zones instead of stacking on top of one another. */\n.overlay-drawers-stack {\n    display: block;\n    width: min(720px, calc(100vw - (var(--content-gutter) * 2)));\n}\n.overlay-drawers-stack > .downloads-drawer,\n.overlay-drawers-stack > .queue-drawer {\n    position: absolute !important;\n    width: min(360px, 46vw) !important;\n    max-width: none;\n    margin: 0 !important;\n}\n.overlay-drawers-stack > .downloads-drawer {\n    top: 0;\n    right: 0;\n}\n.overlay-drawers-stack > .queue-drawer {\n    top: 0;\n    right: calc(min(360px, 46vw) + 14px);\n}\n.overlay-drawers-stack > .downloads-drawer[hidden],\n.overlay-drawers-stack > .queue-drawer[hidden] {\n    display: none !important;\n}\n\n@media (max-width: 1200px) {\n    #tab-library .library-toolbar {\n        gap: 8px;\n    }\n    #tab-library .library-tabs {\n        flex-basis: 42%;\n    }\n    #tab-library .library-search {\n        flex-basis: 170px;\n    }\n}\n\n@media (max-width: 980px) {\n    :root { --app-header-height: 104px; }\n    .brand-mark { height: 54px; font-size: 20px; }\n    .brand-mark img { width: 46px; height: 46px; }\n    .primary-nav { min-width: 360px; }\n    .primary-nav .nav-link { min-width: 104px; min-height: 52px; padding-inline: 15px; font-size: 12px; }\n    .topbar-icon { width: 52px; height: 52px; }\n    .topbar-icon svg { width: 23px !important; height: 23px !important; }\n    #tab-library .library-toolbar { overflow-x: auto; }\n}\n\n@media (max-width: 768px) {\n    :root { --app-header-height: 92px; }\n    .app-topbar-inner { gap: 8px; padding-inline: 10px; }\n    .brand-mark { height: 50px; }\n    .brand-mark img { width: 42px; height: 42px; }\n    .primary-nav { min-width: 0; flex: 1 1 auto; }\n    .primary-nav .nav-link { min-height: 46px; width: 46px; min-width: 46px; padding: 8px; }\n    .primary-nav .nav-link > svg,\n    .primary-nav .nav-link > i { width: 21px; height: 21px; flex-basis: 21px; }\n    .topbar-icon { width: 46px; height: 46px; border-radius: 14px; }\n    .topbar-icon svg { width: 21px !important; height: 21px !important; }\n    #tab-home.active .recent-grid { grid-auto-columns: minmax(205px, 225px); gap: 12px; }\n    #tab-library .library-toolbar { overflow-x: auto; }\n    #tab-library .library-tabs { flex: 0 0 auto; max-width: 46vw; }\n    #tab-library .library-actions { flex: 0 0 auto; }\n    .overlay-drawers-stack { right: 8px; width: calc(100vw - 16px); }\n    .overlay-drawers-stack > .downloads-drawer,\n    .overlay-drawers-stack > .queue-drawer { width: min(340px, calc(100vw - 24px)) !important; }\n    .overlay-drawers-stack > .queue-drawer { right: 0; top: 0; }\n    .overlay-drawers-stack > .downloads-drawer { top: 12px; right: 0; }\n}\n\n@media (max-width: 520px) {\n    #tab-home.active .recent-grid { grid-auto-columns: minmax(185px, 205px); }\n    #tab-library .library-tabs { max-width: 42vw; }\n    #tab-library .library-search { min-width: 130px; }\n}\n
+
+
+/* ============================================================
+   XROB MUSIC 2.9.3 — UI POLISH PASS v5
+   CSS/HTML only. Queue and Downloads remain independent.
+   ============================================================ */
+
+/* Header: refined 1.5x hierarchy — large enough to feel premium,
+   without the previous oversized 2x treatment. */
+:root { --app-header-height: 108px; }
+.app-topbar-inner {
+    gap: 24px;
+    padding-inline: clamp(18px, 2.2vw, 34px);
+}
+.brand-mark {
+    height: 58px;
+    gap: 14px;
+    font-size: 22px;
+    letter-spacing: -.6px;
+}
+.brand-mark img {
+    width: 50px;
+    height: 50px;
+    border-radius: 14px;
+}
+.primary-nav {
+    min-width: 420px;
+    padding: 6px;
+    gap: 6px;
+    border-radius: 17px;
+}
+.primary-nav .nav-link {
+    min-width: 126px;
+    min-height: 56px;
+    padding: 0 20px;
+    gap: 9px;
+    border-radius: 13px;
+    font-size: 13px;
+}
+.primary-nav .nav-link > svg,
+.primary-nav .nav-link > i {
+    width: 22px;
+    height: 22px;
+    flex-basis: 22px;
+}
+.primary-nav .nav-count {
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    font-size: 10px;
+}
+.topbar-actions { gap: 10px; }
+.topbar-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+}
+.topbar-icon svg {
+    width: 25px !important;
+    height: 25px !important;
+}
+.topbar-icon-badge {
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    top: -5px;
+    right: -5px;
+    border-width: 2px;
+    font-size: 9px;
+}
+
+/* Recently Added: bigger, richer horizontal cards, visually related to Daily Mix. */
+#tab-home.active .recent-grid {
+    grid-auto-columns: minmax(230px, 255px);
+    gap: 18px;
+    padding: 6px 2px 16px;
+    overscroll-behavior-x: contain;
+}
+#tab-home.active .recent-card {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 0;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+    border-radius: 20px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, transparent), color-mix(in srgb, var(--bg-elevated) 92%, transparent));
+    box-shadow: 0 10px 28px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.035);
+    overflow: hidden;
+}
+#tab-home.active .recent-card img {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 14px;
+    box-shadow: 0 12px 26px rgba(0,0,0,.16);
+    transform: none;
+}
+#tab-home.active .recent-card:hover {
+    transform: translateY(-4px);
+    border-color: color-mix(in srgb, var(--accent) 46%, var(--border-strong));
+    box-shadow: 0 18px 40px rgba(0,0,0,.14);
+}
+#tab-home.active .recent-card:hover img {
+    transform: scale(1.015);
+}
+#tab-home.active .recent-card-title {
+    margin-top: 11px;
+    padding: 0 3px;
+    font-size: 13px;
+    line-height: 1.25;
+    font-weight: 850;
+}
+#tab-home.active .recent-card-artist {
+    margin-top: 5px;
+    padding: 0 3px 3px;
+    font-size: 10px;
+    line-height: 1.2;
+}
+
+/* Library: one clean toolbar row. Tabs scroll horizontally instead of wrapping;
+   search + Play all + Shuffle + Quick scan + Full scan stay together. */
+#tab-library .library-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    overflow: hidden;
+}
+#tab-library .library-tabs {
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    gap: 5px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    padding-bottom: 1px;
+}
+#tab-library .library-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+#tab-library .library-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 7px;
+    min-width: 0;
+}
+#tab-library .library-search {
+    flex: 0 1 220px;
+    min-width: 145px;
+}
+#tab-library .library-actions .btn-refresh {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* Drawers occupy distinct horizontal zones instead of stacking on top of one another. */
+.overlay-drawers-stack {
+    display: block;
+    width: min(720px, calc(100vw - (var(--content-gutter) * 2)));
+}
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+    position: absolute !important;
+    width: min(360px, 46vw) !important;
+    max-width: none;
+    margin: 0 !important;
+}
+.overlay-drawers-stack > .downloads-drawer {
+    top: 0;
+    right: 0;
+}
+.overlay-drawers-stack > .queue-drawer {
+    top: 0;
+    right: calc(min(360px, 46vw) + 14px);
+}
+.overlay-drawers-stack > .downloads-drawer[hidden],
+.overlay-drawers-stack > .queue-drawer[hidden] {
+    display: none !important;
+}
+
+@media (max-width: 1200px) {
+    #tab-library .library-toolbar {
+        gap: 8px;
+    }
+    #tab-library .library-tabs {
+        flex-basis: 42%;
+    }
+    #tab-library .library-search {
+        flex-basis: 170px;
+    }
+}
+
+@media (max-width: 980px) {
+    :root { --app-header-height: 104px; }
+    .brand-mark { height: 54px; font-size: 20px; }
+    .brand-mark img { width: 46px; height: 46px; }
+    .primary-nav { min-width: 360px; }
+    .primary-nav .nav-link { min-width: 104px; min-height: 52px; padding-inline: 15px; font-size: 12px; }
+    .topbar-icon { width: 52px; height: 52px; }
+    .topbar-icon svg { width: 23px !important; height: 23px !important; }
+    #tab-library .library-toolbar { overflow-x: auto; }
+}
+
+@media (max-width: 768px) {
+    :root { --app-header-height: 92px; }
+    .app-topbar-inner { gap: 8px; padding-inline: 10px; }
+    .brand-mark { height: 50px; }
+    .brand-mark img { width: 42px; height: 42px; }
+    .primary-nav { min-width: 0; flex: 1 1 auto; }
+    .primary-nav .nav-link { min-height: 46px; width: 46px; min-width: 46px; padding: 8px; }
+    .primary-nav .nav-link > svg,
+    .primary-nav .nav-link > i { width: 21px; height: 21px; flex-basis: 21px; }
+    .topbar-icon { width: 46px; height: 46px; border-radius: 14px; }
+    .topbar-icon svg { width: 21px !important; height: 21px !important; }
+    #tab-home.active .recent-grid { grid-auto-columns: minmax(205px, 225px); gap: 12px; }
+    #tab-library .library-toolbar { overflow-x: auto; }
+    #tab-library .library-tabs { flex: 0 0 auto; max-width: 46vw; }
+    #tab-library .library-actions { flex: 0 0 auto; }
+    .overlay-drawers-stack { right: 8px; width: calc(100vw - 16px); }
+    .overlay-drawers-stack > .downloads-drawer,
+    .overlay-drawers-stack > .queue-drawer { width: min(340px, calc(100vw - 24px)) !important; }
+    .overlay-drawers-stack > .queue-drawer { right: 0; top: 0; }
+    .overlay-drawers-stack > .downloads-drawer { top: 12px; right: 0; }
+}
+
+@media (max-width: 520px) {
+    #tab-home.active .recent-grid { grid-auto-columns: minmax(185px, 205px); }
+    #tab-library .library-tabs { max-width: 42vw; }
+    #tab-library .library-search { min-width: 130px; }
+}
+
+/* ============================================================
+   XROB MUSIC 2.9.3 — FINAL CORRECTION v6
+   ============================================================ */
+:root { --app-header-height: 96px; }
+
+/* Header: 1.5x feel without the previous oversized 2x footprint. */
+.app-topbar-inner { gap: 20px; padding-inline: clamp(16px, 2vw, 30px); }
+.brand-mark { height: 52px; gap: 12px; font-size: 20px; }
+.brand-mark img { width: 46px; height: 46px; border-radius: 13px; }
+.primary-nav { min-width: 390px; padding: 5px; gap: 5px; border-radius: 15px; }
+.primary-nav .nav-link { min-width: 112px; min-height: 48px; padding: 0 16px; gap: 8px; border-radius: 12px; font-size: 12px; }
+.primary-nav .nav-link > svg, .primary-nav .nav-link > i { width: 20px; height: 20px; flex-basis: 20px; }
+.primary-nav .nav-count { min-width: 20px; height: 20px; padding: 0 5px; font-size: 9px; }
+.topbar-actions { gap: 9px; }
+.topbar-icon { width: 48px; height: 48px; flex-basis: 48px; border-radius: 14px; }
+.topbar-icon svg { width: 22px !important; height: 22px !important; }
+.topbar-icon-badge { min-width: 20px; height: 20px; padding: 0 5px; top: -4px; right: -4px; font-size: 8px; }
+
+/* Home: truly consume the full available viewport width. */
+#tab-home.active { width: calc(100% + (2 * var(--content-gutter))) !important; max-width: none !important; margin-left: calc(-1 * var(--content-gutter)) !important; margin-right: 0 !important; }
+#tab-home.active .page-surface { width: 100% !important; max-width: none !important; margin: 0 !important; }
+#tab-home.active .home-hero, #tab-home.active .home-stats-grid, #tab-home.active .daily-mix-card, #tab-home.active .home-section-header, #tab-home.active .recent-grid { width: 100% !important; max-width: none !important; }
+
+/* Recently Added: larger, polished cards in exactly one horizontal row. */
+#tab-home.active .recent-grid {
+  display: grid !important;
+  grid-auto-flow: column !important;
+  grid-template-columns: none !important;
+  grid-auto-columns: minmax(190px, 215px) !important;
+  gap: 14px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  padding: 8px 2px 18px !important;
+}
+#tab-home.active .recent-grid > .recent-card {
+  width: auto !important;
+  min-width: 0 !important;
+  display: block !important;
+  padding: 8px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 16px !important;
+  background: var(--bg-surface) !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,.07) !important;
+  overflow: hidden !important;
+}
+#tab-home.active .recent-card img { display:block; width:100% !important; height:auto !important; aspect-ratio:1/1 !important; border-radius:11px !important; object-fit:cover !important; box-shadow:none !important; transform:none !important; }
+#tab-home.active .recent-card:hover { transform:translateY(-3px) !important; border-color:color-mix(in srgb,var(--accent) 52%,var(--border)) !important; box-shadow:0 14px 30px rgba(0,0,0,.12) !important; }
+#tab-home.active .recent-card-title { margin:9px 2px 0 !important; padding:0 !important; font-size:12px !important; line-height:1.2 !important; font-weight:800 !important; }
+#tab-home.active .recent-card-artist { margin:4px 2px 2px !important; padding:0 !important; font-size:9px !important; line-height:1.2 !important; }
+
+/* Queue and Downloads: separate fixed overlays. Never unhide one because the other is open. */
+.overlay-drawers-stack { position:fixed !important; inset:0 !important; width:0 !important; height:0 !important; margin:0 !important; padding:0 !important; z-index:1450 !important; pointer-events:none !important; }
+.overlay-drawers-stack > .downloads-drawer, .overlay-drawers-stack > .queue-drawer {
+  position:fixed !important;
+  top:calc(var(--app-header-height) + 14px) !important;
+  bottom:auto !important;
+  width:min(390px,calc(100vw - 28px)) !important;
+  max-width:calc(100vw - 28px) !important;
+  margin:0 !important;
+  z-index:1451 !important;
+  pointer-events:auto !important;
+  overflow:hidden !important;
+}
+.overlay-drawers-stack > .downloads-drawer, .overlay-drawers-stack > .queue-drawer { right:var(--content-gutter) !important; left:auto !important; }
+.overlay-drawers-stack > .downloads-drawer[hidden], .overlay-drawers-stack > .queue-drawer[hidden] { display:none !important; }
+/* If Downloads is already open, Queue slides to its left. Downloads remains untouched. */
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])) > .queue-drawer:not([hidden]) { right:calc(var(--content-gutter) + 404px) !important; }
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list, .overlay-drawers-stack > .queue-drawer .queue-list { max-height:min(58vh,560px) !important; overflow:auto !important; }
+
+/* Library: tabs, search, Play all, Shuffle, Quick scan, Full scan are one row. */
+#tab-library .library-toolbar { display:flex !important; flex-wrap:nowrap !important; align-items:center !important; gap:8px !important; overflow-x:auto !important; overflow-y:hidden !important; white-space:nowrap !important; }
+#tab-library .library-tabs { display:flex !important; flex:0 0 auto !important; align-items:center !important; flex-wrap:nowrap !important; gap:3px !important; overflow:visible !important; min-width:max-content !important; white-space:nowrap !important; }
+#tab-library .library-tab { flex:0 0 auto !important; white-space:nowrap !important; padding:8px 10px !important; font-size:10px !important; }
+#tab-library .library-actions { display:flex !important; flex:0 0 auto !important; align-items:center !important; flex-wrap:nowrap !important; gap:6px !important; min-width:max-content !important; margin-left:auto; }
+#tab-library .library-search { flex:0 0 190px !important; min-width:190px !important; }
+#tab-library .library-actions .btn-refresh { flex:0 0 auto !important; width:auto !important; min-width:max-content !important; white-space:nowrap !important; padding:8px 10px !important; font-size:10px !important; }
+#tab-library .library-search input { height:36px !important; min-height:36px !important; font-size:10px !important; }
+
+@media (max-width: 980px) {
+  :root { --app-header-height:88px; }
+  .brand-mark { height:50px; font-size:18px; } .brand-mark img { width:44px; height:44px; }
+  .primary-nav { min-width:350px; }
+  .primary-nav .nav-link { min-width:98px; min-height:46px; padding-inline:13px; font-size:11px; }
+  .topbar-icon { width:46px; height:46px; flex-basis:46px; }
+  #tab-home.active .recent-grid { grid-auto-columns:minmax(180px,200px) !important; }
+}
+@media (max-width: 768px) {
+  :root { --app-header-height:80px; }
+  .app-topbar-inner { gap:8px; padding-inline:10px; }
+  .brand-mark { height:46px; } .brand-mark img { width:40px; height:40px; }
+  .primary-nav { min-width:0; flex:1 1 auto; }
+  .primary-nav .nav-link { min-width:44px; width:44px; min-height:42px; padding:8px; }
+  .primary-nav .nav-link .nav-text { display:none; }
+  .topbar-icon { width:42px; height:42px; flex-basis:42px; }
+  #tab-home.active .recent-grid { grid-auto-columns:minmax(165px,185px) !important; gap:10px !important; }
+  .overlay-drawers-stack > .downloads-drawer, .overlay-drawers-stack > .queue-drawer, .overlay-drawers-stack:has(> .downloads-drawer:not([hidden])) > .queue-drawer:not([hidden]) { right:10px !important; }
+  .overlay-drawers-stack > .downloads-drawer, .overlay-drawers-stack > .queue-drawer { width:min(360px,calc(100vw - 20px)) !important; max-width:calc(100vw - 20px) !important; }
+  #tab-library .library-actions { margin-left:0; }
+  #tab-library .library-search { flex-basis:170px !important; min-width:170px !important; }
+}
