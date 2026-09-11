@@ -4401,3 +4401,125 @@ body.music-app {
     .gp-skip-btn { width:34px; height:34px; }
     .gp-play-btn { width:42px; height:42px; }
 }
+
+/* ============================================================
+   XROB MUSIC — DOWNLOADS / LIBRARY SHORTCUT POLISH
+   ============================================================ */
+.topbar-downloads {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 13px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255,255,255,.035);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .15px;
+    cursor: pointer;
+    transition: transform .18s ease, border-color .18s ease, background .18s ease, color .18s ease;
+}
+.topbar-downloads:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
+    background: rgba(40,214,245,.08);
+    color: var(--text-primary);
+}
+.topbar-downloads svg { width: 16px; height: 16px; color: var(--accent); }
+.topbar-downloads-count {
+    min-width: 19px;
+    height: 19px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(40,214,245,.13);
+    color: var(--accent);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+}
+
+.home-library-link {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0,1fr) auto;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+.home-library-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.home-stat-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.home-stat-copy strong { font-variant-numeric: tabular-nums; }
+.home-stat-arrow { width: 15px; height: 15px; color: var(--text-muted); transition: transform .18s ease, color .18s ease; }
+.home-library-link:hover .home-stat-arrow { color: var(--accent); transform: translate(2px,-2px); }
+
+.downloads-workspace { max-width: 1180px; margin: 0 auto; }
+.downloads-compact-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 18px;
+}
+.downloads-kicker {
+    display: inline-block;
+    margin-bottom: 7px;
+    color: var(--accent);
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+}
+.download-queue-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    min-height: 78px;
+    margin-bottom: 18px;
+    padding: 15px 16px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(22,39,62,.82), rgba(13,24,40,.76));
+}
+.download-queue-copy { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.download-queue-icon {
+    width: 42px; height: 42px; flex: 0 0 42px;
+    display: grid; place-items: center;
+    border-radius: 12px;
+    background: rgba(40,214,245,.10);
+    color: var(--accent);
+}
+.download-queue-icon svg { width: 18px; height: 18px; }
+.download-queue-title { font-size: 11px; font-weight: 900; }
+.download-queue-subtitle { margin-top: 3px; color: var(--text-muted); font-size: 9px; }
+.download-queue-actions { display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.download-queue-count {
+    min-width: 30px; height: 30px; padding: 0 9px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px; background: rgba(255,255,255,.055);
+    color: var(--text-secondary); font-size: 10px; font-weight: 900;
+    font-variant-numeric: tabular-nums;
+}
+.downloads-workspace .downloads-list { gap: 18px; }
+.downloads-workspace .downloads-section { gap: 8px; }
+.downloads-workspace .downloads-section-header { padding-bottom: 8px; }
+.downloads-workspace .download-card { border-radius: 14px; }
+
+@media (max-width: 900px) {
+    .topbar-downloads span:not(.topbar-downloads-count) { display: none; }
+    .topbar-downloads { width: 38px; padding: 0; justify-content: center; gap: 0; position: relative; }
+    .topbar-downloads-count { position: absolute; right: -2px; top: -2px; min-width: 15px; height: 15px; padding: 0 4px; font-size: 8px; }
+    .downloads-compact-header { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 768px) {
+    .download-queue-card { align-items: flex-start; flex-direction: column; }
+    .download-queue-actions { width: 100%; justify-content: space-between; }
+}
