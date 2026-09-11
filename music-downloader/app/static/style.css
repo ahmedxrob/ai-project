@@ -73,9 +73,65 @@ svg{width:18px;height:18px;display:block;flex:0 0 auto}
 /* ---------- QUEUE + MODALS ---------- */
 .queue-drawer{position:fixed;right:18px;bottom:96px;width:min(420px,calc(100vw - 36px));max-height:calc(100vh - 130px);z-index:150;border:1px solid var(--line);border-radius:20px;background:#111419;box-shadow:0 30px 90px rgba(0,0,0,.55);display:flex;flex-direction:column;overflow:hidden}.queue-head{padding:18px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}.queue-head strong{display:block;font-size:22px;margin-top:5px}.queue-actions,.queue-foot{padding:11px 14px;display:flex;gap:7px;border-bottom:1px solid var(--line)}.queue-foot{border-top:1px solid var(--line);border-bottom:0}.queue-list{padding:8px 10px;overflow:auto;display:grid;gap:5px}.queue-row{display:grid;grid-template-columns:18px 46px 1fr auto auto;align-items:center;gap:9px;padding:7px;border-radius:10px}.queue-row:hover{background:#171b20}.queue-row img{width:46px;height:46px;object-fit:cover;border-radius:7px}.queue-row-info{min-width:0}.queue-row-info strong,.queue-row-info span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.queue-row-info strong{font-size:12px}.queue-row-info span{font-size:10px;color:var(--muted);margin-top:2px}.queue-drag{color:var(--muted-2)}.queue-next{min-height:30px}.queue-remove{width:30px;height:30px;border-radius:8px;background:transparent;color:var(--muted)}.icon-btn{width:38px;height:38px;border-radius:10px;background:#171b20;border:1px solid var(--line);display:grid;place-items:center}.xrob-modal{position:fixed;inset:0;background:rgba(0,0,0,.67);backdrop-filter:blur(9px);z-index:250;display:grid;place-items:center;padding:20px}.xrob-modal-card{width:min(640px,100%);max-height:90vh;overflow:auto;background:#111419;border:1px solid var(--line);border-radius:20px;box-shadow:0 35px 100px rgba(0,0,0,.55);padding:20px}.xrob-modal-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--line)}.xrob-modal-head strong{display:block;font-size:22px;margin-top:6px}.modal-subtitle{font-size:11px;color:var(--muted);margin-top:5px;word-break:break-all}.modal-form{display:grid;gap:14px}.modal-form label{display:grid;gap:7px;color:var(--muted);font-size:12px}.modal-form .settings-actions{justify-content:flex-end}.health-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}.health-summary strong{padding:12px;border:1px solid var(--line);border-radius:10px;background:#15191e;font-size:12px}.xrob-modal pre{white-space:pre-wrap;max-height:55vh;overflow:auto;padding:14px;border-radius:12px;background:#0b0e11;color:#cbd2dc;font-size:11px}
 
+/* ---------- DYNAMIC CONTENT / INTERACTION POLISH ---------- */
+.result-card,.catalog-card,.recent-card,.library-card{position:relative;min-width:0;overflow:hidden;transition:transform .18s ease,border-color .18s ease,background .18s ease,box-shadow .18s ease}
+.result-card .thumb-wrapper,.recent-card .thumb-wrapper,.library-card .thumb-wrapper{position:relative}
+.result-card .thumb-wrapper img,.recent-card .thumb-wrapper img,.library-card .thumb-wrapper img{display:block;width:100%;aspect-ratio:1/1;object-fit:cover;background:#0b0d10}
+.result-card:hover,.catalog-card:hover,.recent-card:hover,.library-card:hover{box-shadow:0 18px 45px rgba(0,0,0,.24)}
+.result-card .btn-group,.catalog-card .catalog-actions,.recent-card .btn-group,.library-card .btn-group{padding:0 12px 12px}
+.result-card .btn-group{min-height:38px}
+.button-glyph{font-size:.9em;line-height:1;display:inline-grid;place-items:center}
+.button-spinner{width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+.player-play-glyph,.player-pause-glyph{font-size:14px;line-height:1;display:block;transform:translateX(1px)}
+.player-pause-glyph{font-size:12px;transform:none}
+.btn-download,.download-remove-btn,.save-btn{min-height:36px;padding:0 11px;border-radius:10px;border:1px solid var(--line);display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:12px;font-weight:750;transition:.18s ease}
+.btn-download{background:linear-gradient(180deg,#edf0f3,#d9dde2);color:#08090b;box-shadow:0 8px 20px rgba(0,0,0,.16)}
+.btn-download:hover,.save-btn:hover{transform:translateY(-1px);filter:brightness(1.04)}
+.download-remove-btn{background:#171b20;color:var(--muted)}
+.download-remove-btn:hover{color:var(--text);border-color:var(--line-strong)}
+.save-btn{background:var(--text);color:#08090b}
+.catalog-main-action{width:100%;display:grid;grid-template-rows:auto auto;gap:10px;text-align:left;background:transparent;padding:0;color:inherit}
+.catalog-main-action img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:13px;background:#0b0d10}
+.catalog-main-action img.artist-cover{border-radius:50%;}
+.catalog-main-action div{display:grid;gap:4px}
+.catalog-main-action strong{font-size:15px;line-height:1.25}
+.catalog-main-action span{font-size:12px;color:var(--muted);line-height:1.4}
+.catalog-actions{display:flex;gap:7px;margin-top:10px}
+.catalog-actions>*{flex:1}
+.catalog-card.album-card>img{cursor:pointer}
+.catalog-card.album-card>div{display:grid;gap:7px}
+.catalog-card.album-card strong{cursor:pointer}
+.artist-card{display:flex;flex-direction:column;gap:10px}
+.album-card{display:flex;flex-direction:column;gap:10px}
+.catalog-section-heading{grid-column:1/-1;margin:8px 2px 0;font-size:17px;letter-spacing:-.02em}
+.catalog-detail-header{background:linear-gradient(135deg,#151a21,#101318);border:1px solid var(--line);border-radius:18px;padding:15px;align-items:center!important;gap:15px;flex-wrap:wrap}
+.catalog-detail-header>div{flex:1;min-width:180px}
+.library-back-button{order:-1}
+.daily-mix-track{min-width:0;display:grid;grid-template-columns:54px 1fr;grid-template-rows:auto auto;gap:3px 10px;padding:7px;border-radius:11px;border:1px solid transparent;background:transparent;color:inherit;text-align:left}
+.daily-mix-track:hover{background:#171b20;border-color:var(--line)}
+.daily-mix-track img{grid-row:span 2;width:54px;height:54px;aspect-ratio:1;object-fit:cover;border-radius:8px;background:#0b0d10}
+.daily-mix-track strong,.daily-mix-track span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.daily-mix-track strong{font-size:12px;align-self:end}.daily-mix-track span{font-size:10px;color:var(--muted);align-self:start}
+.daily-mix-empty,.home-empty{min-height:120px;display:grid;place-items:center;text-align:center;color:var(--muted);padding:24px;border:1px dashed var(--line);border-radius:14px}
+.recent-grid .recent-card{background:#111419;padding:0}.recent-card img{width:100%;aspect-ratio:1;object-fit:cover}.recent-card-body{padding:11px 12px 13px;min-width:0}.recent-card-title,.recent-card-artist{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.recent-card-title{font-size:13px;font-weight:800}.recent-card-artist{font-size:11px;color:var(--muted);margin-top:4px}
+.downloads-section{display:grid;gap:9px;margin:0 0 24px}.downloads-section-header{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin:5px 2px 4px}.downloads-section-title{font-size:14px;font-weight:800}.downloads-section-subtitle{font-size:11px;color:var(--muted);margin-top:3px}
+.download-stack{display:grid;gap:9px}.download-card{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px}.download-art{width:56px;height:56px;border-radius:11px;position:relative;overflow:hidden;background:linear-gradient(145deg,#192027,#0e1115);display:grid;place-items:center}.download-art-icon{font-size:21px;opacity:.8}.download-art-overlay{position:absolute;right:5px;bottom:5px;width:21px;height:21px;border-radius:7px;display:grid;place-items:center;background:rgba(8,9,11,.8);color:var(--accent);font-size:10px}.download-main{min-width:0}.download-top{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.download-title,.download-artist{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.download-title{font-size:13px;font-weight:800}.download-artist{font-size:11px;color:var(--muted);margin-top:3px}.download-status-wrap{display:flex;align-items:center;gap:7px;flex:0 0 auto}.download-status,.queue-position{font-size:10px;color:var(--muted);white-space:nowrap}.queue-position{padding:3px 6px;border-radius:6px;background:#1a1e24}.download-progress-row{display:grid;grid-template-columns:1fr auto;gap:9px;align-items:center;margin-top:11px}.download-progress-track{height:5px;background:#242932;border-radius:99px;overflow:hidden}.download-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));border-radius:inherit;transition:width .3s ease}.download-percent{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}.download-bottom{display:flex;justify-content:space-between;gap:10px;margin-top:8px}.download-message,.download-meta{font-size:10px;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.download-actions{display:flex;align-items:center;justify-content:flex-end}
+.editor-empty{min-height:150px;display:grid;place-items:center}.song-editor-card{min-width:0}.song-editor-info{min-width:0}.song-editor-file{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.queue-row.current{background:rgba(37,217,255,.07);border:1px solid rgba(37,217,255,.16)}.queue-row.current .queue-row-info strong{color:var(--accent)}
+.toast{backdrop-filter:blur(14px);box-shadow:0 16px 40px rgba(0,0,0,.3)}
+@media (max-width:760px){.download-card{grid-template-columns:48px minmax(0,1fr)}.download-art{width:48px;height:48px}.download-actions{grid-column:2;justify-content:flex-start}.download-top{flex-direction:column;gap:7px}.catalog-detail-header{align-items:flex-start!important}.catalog-detail-header>.btn-preview{width:100%}.daily-mix-tracks{grid-template-columns:1fr}.downloads-section-header{align-items:flex-start}}
+
 /* ---------- LIGHT THEME COMPATIBILITY ---------- */
 html[data-theme="light"]{color-scheme:light;--bg:#f2f4f7;--bg-2:#fff;--surface:#fff;--surface-2:#f5f7fa;--line:rgba(18,24,32,.09);--line-strong:rgba(18,24,32,.16);--text:#0c1015;--muted:#68717d;--muted-2:#8c95a0;--shadow:0 18px 50px rgba(23,29,38,.12)}
 html[data-theme="light"] .music-shell,html[data-theme="light"] body{background:var(--bg)}html[data-theme="light"] .app-header,html[data-theme="light"] .global-player-bar{background:rgba(250,251,253,.92)}html[data-theme="light"] .header-search,html[data-theme="light"] .circle-action,html[data-theme="light"] .profile-action,html[data-theme="light"] .library-toolbar,html[data-theme="light"] .discover-search,html[data-theme="light"] .quick-stat,html[data-theme="light"] .catalog-card,html[data-theme="light"] .track-card,html[data-theme="light"] .library-card,html[data-theme="light"] .settings-card,html[data-theme="light"] .download-overview article,html[data-theme="light"] .downloads-list>*{background:#fff}html[data-theme="light"] .btn-ghost,html[data-theme="light"] .icon-action,html[data-theme="light"] .library-search,html[data-theme="light"] .player-small{background:#f1f3f6}html[data-theme="light"] .auth-shell{background:#edf0f5}html[data-theme="light"] .auth-layout{background:#fff}html[data-theme="light"] .auth-login-panel{background:#fbfcfd}
+
+html[data-theme="light"] .result-card,html[data-theme="light"] .catalog-card,html[data-theme="light"] .recent-card,html[data-theme="light"] .download-card,html[data-theme="light"] .downloads-section,html[data-theme="light"] .song-editor-card{background:#fff}
+html[data-theme="light"] .daily-mix-track:hover,html[data-theme="light"] .queue-row:hover{background:#f3f5f8}
+html[data-theme="light"] .catalog-detail-header{background:linear-gradient(135deg,#fff,#f3f5f8)}
+html[data-theme="light"] .download-progress-track{background:#e3e6eb}
+html[data-theme="light"] .btn-download{background:#11151a;color:#fff}
+html[data-theme="light"] .btn-preview,html[data-theme="light"] .save-btn{background:#11151a;color:#fff}
+html[data-theme="light"] .download-remove-btn,html[data-theme="light"] .btn-refresh,html[data-theme="light"] .btn-secondary{background:#f0f2f5;color:#303640}
 
 /* ---------- RESPONSIVE ---------- */
 @media (max-width:1200px){.main-nav .nav-link span{display:none}.main-nav .nav-link{padding:10px}.main-nav .nav-link.active:after{left:10px;right:10px}.header-search{min-width:220px}.recent-grid,.results-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.quick-stats{grid-template-columns:repeat(5,minmax(0,1fr))}.welcome-banner{padding:40px}.welcome-visual{width:330px}}
