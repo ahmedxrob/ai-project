@@ -1053,11 +1053,12 @@ def make_album_id(
     artist,
     album,
 ):
-    raw = (
-        str(artist)
-        + "\x00"
-        + str(album)
-    )
+    # Album identity is case-insensitive and whitespace-normalized, just like
+    # artist identity. This prevents metadata such as "SHAW"/"Shaw" or
+    # "cheb akil"/"Cheb Akil" from creating duplicate album cards.
+    artist_identity = re.sub(r"\s+", " ", clean_metadata_text(artist, "Unknown Artist")).strip().casefold()
+    album_identity = re.sub(r"\s+", " ", clean_metadata_text(album, "Unknown Album")).strip().casefold()
+    raw = artist_identity + "\x00" + album_identity
 
     digest = hashlib.sha1(
         raw.encode("utf-8")
