@@ -4552,33 +4552,31 @@ body.music-app {
    ============================================================ */
 .home-stat-card.home-library-link {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 12px;
+    justify-content: center;
+    gap: 10px;
     width: 100%;
     min-width: 0;
-    text-align: left;
+    text-align: center;
     color: inherit;
     font: inherit;
     cursor: pointer;
     appearance: none;
 }
 .home-stat-card .home-stat-icon {
-    margin-top: 0;
-    flex: 0 0 42px;
+    margin: 0;
+    flex: 0 0 auto;
 }
 .home-stat-card .home-stat-copy {
     min-width: 0;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
     justify-content: center;
 }
-.home-stat-card .home-stat-copy strong {
-    margin-top: 0;
-}
-.home-stat-card .home-stat-copy span {
-    margin-top: 6px;
-}
+.home-stat-card .home-stat-copy strong { margin-top: 0; }
+.home-stat-card .home-stat-copy span { margin-top: 5px; }
 
 .downloads-drawer {
     position: fixed;
@@ -4639,3 +4637,8 @@ body.music-app {
     .downloads-drawer-head-actions .btn-refresh span { display: none; }
     .downloads-drawer-head-actions .btn-refresh { width: 34px; padding: 0; justify-content: center; }
 }
+
+
+/* XROB 2.9.3 interaction hardening */
+.topbar-downloads { cursor: pointer; }
+.downloads-drawer, .queue-drawer { isolation: isolate; }
