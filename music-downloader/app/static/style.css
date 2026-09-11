@@ -5656,3 +5656,141 @@ body.music-app {
     #gp-artist { font-size: 8px; }
     .gp-main-controls .gp-skip-btn:first-child { display: none; }
 }
+
+
+/* =====================================================================
+   XROB MUSIC 2.9.3 — UX CORRECTION PASS
+   Visual/layout changes only. Existing feature IDs and JS hooks remain.
+   ===================================================================== */
+
+/* Header hierarchy: utility controls read Settings | Downloads | Edit,
+   with Settings anchored at the extreme right. */
+.topbar-actions { justify-content: flex-end; }
+.topbar-editor-icon { order: 1; }
+.topbar-download-icon { order: 2; }
+.topbar-settings-icon { order: 3; }
+.topbar-icon { position: relative; flex: 0 0 44px; }
+.topbar-settings-icon svg,
+.topbar-download-icon svg,
+.topbar-editor-icon svg { display:block !important; width:20px !important; height:20px !important; stroke-width:2.2; }
+
+/* Do not reveal a blank Downloads tab: Downloads is a utility drawer only. */
+#tab-downloads { display: none !important; }
+
+/* Home gets the whole workspace instead of the small secondary page strip. */
+.main-content.workspace-main:has(#tab-home.active) .content-topbar { display:none; }
+.main-content.workspace-main:has(#tab-home.active) { padding-top: clamp(20px, 2.2vw, 34px); }
+#tab-home.active .page-surface { min-height: calc(100vh - var(--app-header-height) - var(--player-height) - 70px); }
+#tab-home.active .home-hero { min-height: clamp(390px, 54vh, 570px); display:flex; }
+#tab-home.active .recent-grid { padding-bottom: 10px; }
+
+/* Downloads + Queue are one anchored utility stack. The existing JS may set
+   Downloads [hidden] when opening Queue; :has() keeps the first drawer painted
+   while Queue is visible, so Queue truly sits below Downloads. */
+.overlay-drawers-stack {
+    top: calc(var(--app-header-height) + 12px);
+    right: var(--content-gutter);
+    width: min(680px, calc(100vw - (var(--content-gutter) * 2)));
+    gap: 10px;
+    align-items: stretch;
+}
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+    position: relative !important;
+    inset: auto !important;
+    width:100% !important;
+    margin:0 !important;
+    border-radius:18px;
+}
+.overlay-drawers-stack > .downloads-drawer[hidden],
+.overlay-drawers-stack > .downloads-drawer[hidden]:has(~ .queue-drawer:not([hidden])) {
+    display:none !important;
+}
+.overlay-drawers-stack > .downloads-drawer[hidden]:has(~ .queue-drawer:not([hidden])) {
+    display:block !important;
+}
+.overlay-drawers-stack > .queue-drawer {
+    max-height: min(42vh, 520px);
+    overflow:hidden;
+}
+.overlay-drawers-stack > .downloads-drawer {
+    max-height: min(46vh, 560px);
+    overflow:hidden;
+}
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list,
+.overlay-drawers-stack > .queue-drawer .queue-list {
+    overflow:auto;
+}
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list { max-height: min(38vh, 455px); }
+.overlay-drawers-stack > .queue-drawer .queue-list { max-height: min(33vh, 390px); }
+
+/* Restore a lighter, familiar music-player footprint instead of the oversized
+   redesign. Album art, controls and progress are compact and clearly grouped. */
+:root { --player-height: 82px; }
+.global-player-bar.music-player {
+    height: var(--player-height);
+    grid-template-columns: minmax(230px, 1fr) minmax(390px, 1.55fr) minmax(210px, 1fr);
+    gap: 20px;
+    padding: 0 clamp(16px, 2vw, 28px);
+    background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+    border-top: 1px solid var(--border-strong);
+    box-shadow: 0 -10px 34px rgba(0,0,0,.16);
+    backdrop-filter: blur(20px) saturate(125%);
+    -webkit-backdrop-filter: blur(20px) saturate(125%);
+}
+.gp-track-details { gap:11px; }
+.gp-track-details img {
+    width:52px; height:52px; flex-basis:52px; border-radius:9px; box-shadow:0 7px 20px rgba(0,0,0,.22);
+}
+.gp-text { gap:2px; }
+#gp-title { font-size:11px; font-weight:800; }
+#gp-artist { font-size:9px; color:var(--text-secondary); }
+.gp-controls { gap:4px; }
+.gp-main-controls { gap:6px; }
+.gp-skip-btn { width:34px; height:34px; }
+.gp-play-btn { width:42px; height:42px; box-shadow:0 7px 20px rgba(0,0,0,.20); }
+.gp-progress-container { gap:7px; margin-top:5px; }
+.gp-progress-container span { font-size:8px; }
+.gp-extra { gap:8px; }
+#visualizer-canvas { width:86px; height:28px; }
+.gp-volume-icon svg { width:16px; height:16px; }
+.gp-extra input { width:82px; }
+
+/* Cleaner full-width home rhythm. */
+#tab-home .home-hero { margin-bottom:var(--page-gap); }
+#tab-home .home-stats-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+#tab-home .daily-mix-card { padding:24px; }
+#tab-home .recent-grid { grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); }
+
+@media (max-width: 1100px) {
+    .global-player-bar.music-player { grid-template-columns:minmax(190px,1fr) minmax(330px,1.4fr) minmax(150px,.8fr); gap:14px; }
+}
+@media (max-width: 860px) {
+    #tab-home .home-stats-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .global-player-bar.music-player { grid-template-columns:minmax(180px,1fr) auto; }
+    .gp-controls { grid-column:2; }
+    .gp-extra { display:none; }
+}
+@media (max-width: 768px) {
+    .overlay-drawers-stack { top:calc(var(--app-header-height) + 8px); right:9px; width:calc(100vw - 18px); }
+    .overlay-drawers-stack > .downloads-drawer,
+    .overlay-drawers-stack > .queue-drawer { border-radius:17px; }
+    .overlay-drawers-stack > .downloads-drawer { max-height:42vh; }
+    .overlay-drawers-stack > .queue-drawer { max-height:38vh; }
+    .overlay-drawers-stack > .downloads-drawer .downloads-drawer-list { max-height:34vh; }
+    .overlay-drawers-stack > .queue-drawer .queue-list { max-height:29vh; }
+    .global-player-bar.music-player { height:76px; }
+    :root { --player-height:76px; }
+    #tab-home.active .home-hero { min-height:360px; }
+}
+@media (max-width: 520px) {
+    .topbar-icon { flex-basis:35px; width:35px; height:35px; border-radius:11px; }
+    .topbar-icon svg { width:18px !important; height:18px !important; }
+    #tab-home .home-stats-grid { grid-template-columns:1fr 1fr; }
+    .global-player-bar.music-player { grid-template-columns:minmax(0,1fr) auto; padding:0 10px; gap:8px; }
+    .gp-track-details img { width:48px; height:48px; flex-basis:48px; }
+    .gp-skip-btn { width:32px; height:32px; }
+    .gp-play-btn { width:40px; height:40px; }
+    #gp-title { font-size:10px; }
+    #gp-artist { font-size:8px; }
+}
