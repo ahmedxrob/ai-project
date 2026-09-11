@@ -782,17 +782,33 @@ def clean_title_with_rules(value, rules_text=""):
 
 
 def normalize_catalog_title(value, rules_text=""):
-    """Normalize common upload/video noise before catalog matching."""
+    """Return a stable recording title for catalog matching and filenames.
+
+    Download/search titles often contain track numbers, video labels, hashtags,
+    producer credits, and other upload-only noise. Strip those decorations before
+    MusicBrainz/Apple matching so the same song resolves to the same canonical name.
+    """
     text = clean_title_with_rules(value, rules_text)
+
+    # Leading track/disc numbers: ``06 - DELLALI`` / ``06. DELLALI`` / ``[06] DELLALI``.
+    text = re.sub(r"^\s*\[?\d{1,3}\]?\s*(?:[-–—.)_:]+\s*|(?=\S))", "", text, count=1) if re.match(r"^\s*(?:\[\d{1,3}\]|\d{1,3}\s*[-–—.)_:])", text) else text
+
+    # Upload-only album/collection hashtags such as ``#27album``.
+    text = re.sub(r"\s+#\d{1,4}\s*album\b.*$", "", text, flags=re.IGNORECASE)
+
     # Producer credits commonly appear in download/search titles and are not
     # part of the canonical recording title.
     text = re.sub(r"\s*[\(\[]\s*prod(?:uced)?\.?\s*by\b[^\)\]]*[\)\]]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+prod(?:uced)?\.?\s*by\b.*$", "", text, flags=re.IGNORECASE)
-    # Common video/upload suffixes.
+
+    # Common video/upload decorations, including parenthesized forms.
+    text = re.sub(r"\s*[\(\[]\s*(?:official\s+)?(?:lyric|lyrics|music\s+video|video|mv|visualizer|audio)\s*(?:video|clip)?\s*[\)\]]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+(?:official\s+)?(?:music\s+)?video(?:\s+clip)?\s*$", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+mv\s*$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+(?:lyric|lyrics)\s*(?:video|clip)?\s*$", "", text, flags=re.IGNORECASE)
+
     text = re.sub(r"\s*[-–—|:]+\s*$", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip(" ._-–—|:")
     return text or "Unknown Track"
 
 
@@ -1666,6 +1682,22 @@ async def download_worker():
 
             settings = load_settings()
 
+            # Re-check the lightweight library index at worker time as well. This
+            # prevents a duplicate when the library changed after Save was clicked.
+            existing = await find_existing_track(
+                task.get("title", "Unknown Track"),
+                task.get("artist", "Unknown Artist"),
+            )
+            if existing:
+                task["status"] = "completed"
+                task["percent"] = 100
+                task["speed"] = ""
+                task["step"] = "Already in library"
+                task["final_name"] = existing
+                task["last_updated"] = time.time() * 1000
+                await notify_task_update(task, force_save=True)
+                continue
+
             fmt = settings.get(
                 "audio_format",
                 "mp3",
@@ -2477,23 +2509,37 @@ async def api_preview(
 # DOWNLOAD API
 # ============================================================
 
-async def find_existing_track(title, artist):
+def find_existing_track_fast_sync(title, artist):
+    """Check the persisted library index without reading every audio tag.
+
+    The download endpoint is latency-sensitive: a full metadata scan here made
+    clicking Save wait on the size of the whole library. The index is already
+    maintained by library scans, so use it as an O(n) lightweight duplicate check.
+    """
     target_key = normalize_duplicate_key(title, artist)
     if not target_key:
         return None
+
     try:
-        files = await get_all_audio_files()
+        index = _load_library_index_sync()
+        entries = index.get("entries", {}) if isinstance(index, dict) else {}
+        for rel, cached in entries.items():
+            if not isinstance(cached, dict):
+                cached = {}
+            cached_title = cached.get("title") or Path(str(rel)).stem
+            cached_artist = cached.get("artist") or "Unknown Artist"
+            key = normalize_duplicate_key(cached_title, cached_artist)
+            if key == target_key:
+                path = DOWNLOAD_DIR / str(rel)
+                if path.is_file():
+                    return str(rel)
     except Exception:
-        return None
-    for path in files:
-        try:
-            md = await read_metadata(path)
-        except Exception:
-            continue
-        key = normalize_duplicate_key(md.get("title") or path.stem, md.get("artist") or "Unknown Artist")
-        if key == target_key:
-            return str(path.relative_to(DOWNLOAD_DIR))
+        pass
     return None
+
+
+async def find_existing_track(title, artist):
+    return await asyncio.to_thread(find_existing_track_fast_sync, title, artist)
 
 
 @app.post("/api/download")
@@ -2528,8 +2574,16 @@ async def api_download(
     task_id = uuid.uuid4().hex[:12]
 
     settings = load_settings()
-    task_title = clean_title_with_rules(str(payload.get("title", "Unknown Track") or "Unknown Track"), settings.get("title_cleanup_rules", ""))
-    task_artist = clean_metadata_text(str(payload.get("artist", "Unknown Artist") or "Unknown Artist"), "Unknown Artist")
+    task_title = normalize_catalog_title(
+        str(payload.get("title", "Unknown Track") or "Unknown Track"),
+        settings.get("title_cleanup_rules", ""),
+    )
+    task_artist = clean_metadata_text(
+        str(payload.get("artist", "Unknown Artist") or "Unknown Artist"),
+        "Unknown Artist",
+    )
+    # Fast duplicate check only. The persisted library index avoids reading every
+    # audio file's tags before the request can enqueue the download.
     existing = await find_existing_track(task_title, task_artist)
     if existing:
         return {
