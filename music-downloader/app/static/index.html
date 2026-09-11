@@ -1196,6 +1196,40 @@
      ============================================================ -->
   <script src="/static/app.js?v=293">
   </script>
+
+  <script>
+   // UI-only separation pass: intercept drawer controls before the legacy app.js
+   // click handlers run, so Queue and Downloads maintain independent state.
+   document.addEventListener("click", function (event) {
+    const target = event.target.closest && event.target.closest("#gp-queue-btn, #queueClose, #topbarDownloadsBtn, #downloadsClose");
+    if (!target) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    if (target.id === "gp-queue-btn") {
+     const d = document.getElementById("queue-drawer");
+     if (!d) return;
+     d.hidden = false;
+     if (typeof renderEnhancedQueue === "function") renderEnhancedQueue();
+     if (typeof applyRepeatLabel === "function") applyRepeatLabel();
+     if (typeof renderLocalIcons === "function") renderLocalIcons();
+    } else if (target.id === "queueClose") {
+     const d = document.getElementById("queue-drawer");
+     if (d) d.hidden = true;
+    } else if (target.id === "topbarDownloadsBtn") {
+     const d = document.getElementById("downloads-drawer");
+     if (!d) return;
+     d.hidden = false;
+     if (typeof loadDownloads === "function") loadDownloads().catch(() => {});
+     if (typeof renderLocalIcons === "function") renderLocalIcons();
+    } else if (target.id === "downloadsClose") {
+     const d = document.getElementById("downloads-drawer");
+     if (d) d.hidden = true;
+    }
+   }, true);
+  </script>
   <script>
    // UI-only drawer separation: each utility drawer owns its own open/close state.
    // No backend or app.js file is changed.
