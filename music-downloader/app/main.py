@@ -158,6 +158,7 @@ DEFAULT_SETTINGS = {
     "organize_by_artist": False,
     "scan_enabled": True,
     "scan_interval_minutes": 60,
+    "title_cleanup_rules": "(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",
     "subsonic_user": "admin",
     "subsonic_password": "",
     "web_username": os.getenv("XROB_USERNAME", "admin"),
@@ -392,6 +393,7 @@ def load_settings():
     settings["embed_thumbnail"] = bool(settings.get("embed_thumbnail", True))
     settings["embed_metadata"] = bool(settings.get("embed_metadata", True))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist", False))
+    settings["title_cleanup_rules"] = str(settings.get("title_cleanup_rules") or "")
     settings.pop("max_results", None)
 
     return settings
@@ -405,7 +407,7 @@ def save_settings(data: dict):
     allowed = {
         "audio_format", "audio_quality", "embed_thumbnail",
         "embed_metadata", "organize_by_artist", "scan_enabled",
-        "scan_interval_minutes", "web_username", "web_password",
+        "scan_interval_minutes", "title_cleanup_rules", "web_username", "web_password",
     }
 
     old_user = str(settings.get("web_username") or "")
@@ -751,6 +753,26 @@ def clean_metadata_text(
         return fallback
 
     return value
+
+
+def clean_title_with_rules(value, rules_text=""):
+    value = clean_metadata_text(value, "Unknown Track")
+    rules = [
+        line.strip()
+        for line in str(rules_text or "").splitlines()
+        if line.strip()
+    ]
+    for rule in rules:
+        try:
+            value = re.sub(re.escape(rule), "", value, flags=re.IGNORECASE)
+        except re.error:
+            continue
+    value = re.sub(r"\s+", " ", value).strip()
+    # Clean up brackets/separators left behind by removed labels.
+    value = re.sub(r"[\(\[\{]\s*[\)\]\}]", "", value)
+    value = re.sub(r"\s*[-–—:|•]+\s*$", "", value).strip()
+    value = re.sub(r"^[\s-–—:|•]+", "", value).strip()
+    return value or "Unknown Track"
 
 
 def clean_filename(value):
@@ -1704,13 +1726,15 @@ async def download_worker():
                 task["last_updated"] = time.time() * 1000
                 await notify_task_update(task, force_save=True)
 
-                clean_title = clean_filename(task.get("title", "Unknown Track"))
+                cleaned_title = clean_title_with_rules(task.get("title", "Unknown Track"), settings.get("title_cleanup_rules", ""))
+                task["title"] = cleaned_title
+                clean_title = clean_filename(cleaned_title)
                 clean_file = DOWNLOAD_DIR / f"clean_{task_id}{extension}"
                 clean_command = [
                     *FFMPEG_COMMAND, "-y", "-i", str(audio_file), "-map", "0", "-c", "copy",
                     "-metadata", f"title={clean_title}",
                     "-metadata", f"artist={task.get('artist', 'Unknown Artist')}",
-                    "-metadata", f"album={task.get('album') or clean_title}",
+                    "-metadata", f"album={task.get('album') or task.get('artist') or "Unknown Artist"}",
                     str(clean_file),
                 ]
                 clean_process = await asyncio.create_subprocess_exec(
@@ -2283,26 +2307,18 @@ async def api_download(
 
     task_id = uuid.uuid4().hex[:12]
 
+    task_title = str(payload.get("title", "Unknown Track") or "Unknown Track")
+    task_artist = str(payload.get("artist", "Unknown Artist") or "Unknown Artist")
+    raw_album = payload.get("album")
+    task_album = str(raw_album).strip() if raw_album else ""
+    if not task_album or task_album.casefold() in {"unknown album", "unknown"}:
+        task_album = task_artist or "Unknown Artist"
+
     task = {
         "id": task_id,
-        "title": str(
-            payload.get(
-                "title",
-                "Unknown Track",
-            )
-        ),
-        "artist": str(
-            payload.get(
-                "artist",
-                "Unknown Artist",
-            )
-        ),
-        "album": str(
-            payload.get(
-                "album",
-                payload.get("title", "Unknown Track"),
-            )
-        ),
+        "title": task_title,
+        "artist": task_artist,
+        "album": task_album,
         "url": url,
         "elementId": str(
             payload.get(
