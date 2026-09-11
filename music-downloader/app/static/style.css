@@ -5794,3 +5794,237 @@ body.music-app {
     #gp-title { font-size:10px; }
     #gp-artist { font-size:8px; }
 }
+
+
+/* ============================================================
+   XROB 2.9.3 UI FINAL POLISH — HTML/CSS ONLY
+   ============================================================ */
+
+/* 1) Larger service header: approximately 2x the previous 72px bar. */
+:root {
+    --app-header-height: 144px;
+}
+
+.app-topbar {
+    height: var(--app-header-height);
+}
+
+.app-topbar-inner {
+    gap: clamp(22px, 3vw, 48px);
+}
+
+.brand-mark {
+    gap: 14px;
+    font-size: 21px;
+}
+
+.brand-mark img {
+    width: 46px;
+    height: 46px;
+    object-fit: contain;
+}
+
+.primary-nav {
+    gap: 8px;
+}
+
+.primary-nav .nav-link {
+    min-height: 52px;
+    padding: 12px 18px;
+    gap: 9px;
+    font-size: 13px;
+}
+
+.primary-nav .nav-link > svg,
+.primary-nav .nav-link > i {
+    width: 20px;
+    height: 20px;
+    flex-basis: 20px;
+}
+
+.topbar-actions {
+    gap: 10px;
+}
+
+.topbar-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+    background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+    box-shadow: 0 6px 18px rgba(0,0,0,.12);
+}
+
+.topbar-icon svg {
+    width: 23px;
+    height: 23px;
+}
+
+.topbar-icon:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
+    box-shadow: 0 9px 24px rgba(0,0,0,.18);
+}
+
+.topbar-icon:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
+/* Settings gets the cleaner sliders-style icon treatment. */
+.topbar-settings-icon {
+    color: var(--text-primary);
+}
+
+/* 2) Home is an edge-to-edge music-service surface, not a narrow card. */
+#tab-home {
+    width: 100%;
+    max-width: none;
+}
+
+#tab-home .page-surface {
+    width: calc(100% + var(--content-gutter) + var(--content-gutter));
+    margin-left: calc(-1 * var(--content-gutter));
+}
+
+#tab-home .home-hero {
+    min-height: 300px;
+    margin-bottom: 28px;
+    padding: 42px clamp(28px, 4vw, 64px);
+    border-radius: 0 0 26px 26px;
+}
+
+#tab-home .home-stats-grid,
+#tab-home .home-section-header,
+#tab-home .recent-grid,
+#tab-home .home-connect-card,
+#tab-home .daily-mix-card {
+    margin-left: var(--content-gutter);
+    margin-right: var(--content-gutter);
+}
+
+#tab-home .home-stats-grid {
+    margin-bottom: 36px;
+}
+
+#tab-home .recent-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 22px;
+    margin-bottom: 36px;
+}
+
+#tab-home .recent-card img {
+    border-radius: 14px;
+}
+
+#tab-home .recent-card-title {
+    font-size: 11px;
+}
+
+#tab-home .recent-card-artist {
+    font-size: 9px;
+}
+
+/* Keep drawers as true overlays over whatever page is currently visible. */
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+    z-index: 1450;
+}
+
+/* 3) Responsive header keeps the same larger visual hierarchy. */
+@media (max-width: 980px) {
+    :root {
+        --app-header-height: 128px;
+    }
+
+    .brand-mark {
+        font-size: 19px;
+    }
+
+    .brand-mark img {
+        width: 42px;
+        height: 42px;
+    }
+
+    .primary-nav .nav-link {
+        min-height: 48px;
+        padding-inline: 15px;
+    }
+}
+
+@media (max-width: 768px) {
+    :root {
+        --app-header-height: 120px;
+    }
+
+    .app-topbar-inner {
+        width: calc(100% - 20px);
+        gap: 8px;
+    }
+
+    .brand-mark span {
+        display: none;
+    }
+
+    .brand-mark img {
+        width: 38px;
+        height: 38px;
+    }
+
+    .primary-nav .nav-link {
+        min-height: 44px;
+        width: 44px;
+        padding: 9px;
+    }
+
+    .topbar-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+    }
+
+    .topbar-icon svg {
+        width: 21px;
+        height: 21px;
+    }
+
+    #tab-home .page-surface {
+        width: calc(100% + 24px);
+        margin-left: -12px;
+    }
+
+    #tab-home .home-hero {
+        min-height: 330px;
+        padding: 34px 22px;
+        border-radius: 0 0 22px 22px;
+    }
+
+    #tab-home .home-stats-grid,
+    #tab-home .home-section-header,
+    #tab-home .recent-grid,
+    #tab-home .home-connect-card,
+    #tab-home .daily-mix-card {
+        margin-left: 12px;
+        margin-right: 12px;
+    }
+
+    #tab-home .recent-grid {
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 14px;
+    }
+}
+
+@media (max-width: 520px) {
+    .topbar-icon {
+        width: 42px;
+        height: 42px;
+    }
+
+    .topbar-icon svg {
+        width: 20px !important;
+        height: 20px !important;
+    }
+
+    #tab-home .recent-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
