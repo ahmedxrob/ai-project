@@ -4642,3 +4642,28 @@ body.music-app {
 /* XROB 2.9.3 interaction hardening */
 .topbar-downloads { cursor: pointer; }
 .downloads-drawer, .queue-drawer { isolation: isolate; }
+
+/* 2.9.3 layout sizing pass */
+.page-surface { width:100%; }
+.home-stats-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap:14px; }
+.home-stat-card { min-height:112px; padding:18px 20px; }
+.home-stat-icon { width:50px; height:50px; flex:0 0 50px; }
+.home-stat-icon svg { width:22px; height:22px; }
+.results-grid, .recent-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:16px; }
+.daily-mix-track-row { grid-auto-columns:minmax(178px, 205px); gap:14px; }
+.catalog-card { min-height:92px; padding:14px; }
+.settings-card { padding:0 30px 28px; }
+.setting-row-stack { display:grid; gap:12px; }
+.settings-textarea { width:100%; min-height:132px; resize:vertical; padding:13px 14px; border:1px solid var(--border); border-radius:12px; background:var(--bg-input); color:var(--text-primary); font:inherit; line-height:1.5; box-sizing:border-box; }
+.settings-textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
+.downloads-drawer { width:min(620px, calc(100vw - 28px)); max-height:min(76vh, calc(100vh - var(--player-height) - 28px)); }
+.downloads-drawer-list { max-height:min(66vh, calc(100vh - var(--player-height) - 110px)); overflow:auto; padding:4px; }
+.download-card { min-height:142px; padding:14px; }
+.download-art { width:76px; height:76px; flex:0 0 76px; }
+.download-title { font-size:14px; line-height:1.25; }
+.download-artist { font-size:12px; }
+.download-actions .save-btn, .download-actions .download-remove-btn { min-width:92px; min-height:38px; }
+.queue-drawer { width:min(500px, calc(100vw - 28px)); }
+.library-dashboard-cards { grid-template-columns:repeat(4,minmax(0,1fr)); }
+@media(max-width:980px){ .home-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .library-dashboard-cards{grid-template-columns:repeat(2,minmax(0,1fr));} }
+@media(max-width:640px){ .home-stats-grid{grid-template-columns:1fr 1fr; gap:10px;} .home-stat-card{min-height:102px;padding:16px;} .results-grid,.recent-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;} .download-card{min-height:0;} .download-art{width:62px;height:62px;flex-basis:62px;} .downloads-drawer{width:calc(100vw - 18px);right:9px;} }
