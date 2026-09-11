@@ -3757,7 +3757,9 @@ async function startDownload(
 
 
         openDownloadsDrawer();
-        await pollTasks(true);
+        // The API has already enqueued the task. Refresh the drawer in the
+        // background so the Save button never waits on a second round-trip.
+        pollTasks(true).catch(() => {});
 
     } catch (error) {
 
