@@ -11,7 +11,9 @@
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="/static/style.css?v=294" rel="stylesheet"/>
+  <link href="/static/style.css?v=295" rel="stylesheet"/>
+  <link href="/static/icon.png" rel="icon" type="image/png"/>
+  <link href="/static/logo.png" rel="apple-touch-icon"/>
  </head>
  <body class="music-app">
   <div class="login-screen auth-shell" id="login-screen">
@@ -73,7 +75,7 @@
 
       <div class="topbar-actions">
        <button class="topbar-icon" type="button" onclick="navigate('search')" aria-label="Search" title="Search"><i aria-hidden="true" data-lucide="search"></i></button>
-       <button class="topbar-downloads" type="button" onclick="openDownloadsDrawer()" aria-label="Open downloads" title="Downloads">
+       <button class="topbar-downloads" id="topbarDownloadsBtn" type="button" aria-label="Open downloads" title="Downloads">
         <i aria-hidden="true" data-lucide="download"></i>
         <span>Downloads</span>
         <span class="topbar-downloads-count" id="queueCount">0</span>
