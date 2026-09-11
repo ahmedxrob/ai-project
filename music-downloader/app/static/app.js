@@ -2115,7 +2115,18 @@ async function loadLibrary() {
 
 function renderLibraryView() {
     const list = document.getElementById("libraryList");
+    const dashboard = document.getElementById("libraryStatsDashboard");
     if (!list) return;
+
+    const showStatistics = libraryView === "statistics";
+    if (dashboard) dashboard.hidden = !showStatistics;
+    list.hidden = showStatistics;
+
+    if (showStatistics) {
+        loadDetailedLibraryStats();
+        return;
+    }
+
     const query = String(document.getElementById("libSearchQuery")?.value || "").trim().toLowerCase();
     if (libraryView === "artists") return renderArtists(list, query);
     if (libraryView === "albums") return renderAlbums(list, query);
@@ -4741,7 +4752,15 @@ async function startAppAfterAuth() {
         selectedArtistId = null;
         selectedAlbumId = null;
         document.querySelectorAll(".library-tab").forEach(item => item.classList.toggle("active", item === button));
-        filterLibrary();
+
+        // Statistics is a dedicated Library view: never leave the catalog list visible.
+        const list = document.getElementById("libraryList");
+        const dashboard = document.getElementById("libraryStatsDashboard");
+        const isStatistics = libraryView === "statistics";
+        if (dashboard) dashboard.hidden = !isStatistics;
+        if (list) list.hidden = isStatistics;
+
+        renderLibraryView();
     }));
 
     const cached = loadLibraryCache();
