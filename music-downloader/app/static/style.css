@@ -5794,3 +5794,86 @@ body.music-app {
     #gp-title { font-size:10px; }
     #gp-artist { font-size:8px; }
 }
+
+
+/* ============================================================
+   XROB 2.9.3 FINAL VISUAL/OVERLAY PATCH
+   HTML/CSS-only surface correction; no app.js changes.
+   ============================================================ */
+
+/* Keep the current page visible while Downloads is open. */
+.main-content.workspace-main:has(#tab-downloads.active) #tab-home,
+.main-content.workspace-main:has(#tab-downloads.active) #tab-home[hidden] {
+    display: block !important;
+    visibility: visible !important;
+}
+.main-content.workspace-main:has(#tab-downloads.active) #tab-downloads {
+    display: none !important;
+}
+
+/* Home fills the same full-width workspace as the other primary pages. */
+#tab-home.music-page,
+#tab-home .page-surface,
+#tab-home .page-section,
+#tab-home .home-hero,
+#tab-home .home-stats-grid,
+#tab-home .home-section-header {
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+}
+#tab-home.music-page { max-width: none; }
+#tab-home .page-surface { margin: 0; }
+#tab-home .home-hero { margin-left: 0; margin-right: 0; }
+
+/* Utility drawers are mutually exclusive: one overlay at a time. */
+.overlay-drawers-stack { pointer-events: none; }
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer { pointer-events: auto; }
+
+/* Queue stays as its own drawer below the header when opened. */
+.overlay-drawers-stack > .queue-drawer {
+    position: fixed !important;
+    top: calc(var(--app-header-height) + 12px) !important;
+    right: var(--content-gutter) !important;
+    bottom: auto !important;
+    width: min(500px, calc(100vw - (var(--content-gutter) * 2))) !important;
+    margin: 0 !important;
+}
+
+/* Downloads uses the exact same overlay anchor and never creates a page background. */
+.overlay-drawers-stack > .downloads-drawer {
+    position: fixed !important;
+    top: calc(var(--app-header-height) + 12px) !important;
+    right: var(--content-gutter) !important;
+    bottom: auto !important;
+    width: min(620px, calc(100vw - (var(--content-gutter) * 2))) !important;
+    margin: 0 !important;
+}
+
+/* Ensure the settings control always looks like a real settings button. */
+.topbar-settings-icon {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: var(--text-secondary) !important;
+}
+.topbar-settings-icon svg,
+.topbar-settings-icon i {
+    display: block !important;
+    width: 20px !important;
+    height: 20px !important;
+    opacity: 1 !important;
+}
+.topbar-settings-icon:hover {
+    color: var(--text-primary) !important;
+}
+
+@media (max-width: 768px) {
+    .overlay-drawers-stack > .downloads-drawer,
+    .overlay-drawers-stack > .queue-drawer {
+        top: calc(var(--app-header-height) + 8px) !important;
+        right: 9px !important;
+        width: calc(100vw - 18px) !important;
+    }
+}
