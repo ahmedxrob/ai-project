@@ -1534,6 +1534,7 @@ function applySettingsToForm(settings) {
     setChecked("set_scan_enabled", settings.scan_enabled !== false);
     setValue("set_scan_interval", settings.scan_interval_minutes || 60);
     setValue("set_title_cleanup_rules", settings.title_cleanup_rules || "");
+    setValue("set_metadata_mode", settings.metadata_mode || "auto");
     setValue("set_web_username", settings.web_username || "admin");
     setValue("set_web_password", "");
     renderStorage(settings.storage);
@@ -1588,6 +1589,7 @@ async function saveSettings() {
         scan_enabled: getChecked("set_scan_enabled"),
         scan_interval_minutes: Math.max(5, Number(getValue("set_scan_interval") || 60)),
         title_cleanup_rules: getValue("set_title_cleanup_rules"),
+        metadata_mode: getValue("set_metadata_mode") || "auto",
         web_username: getValue("set_web_username") || "admin",
         ...(getValue("set_web_password") ? {web_password:getValue("set_web_password")} : {}),
     };
