@@ -6028,3 +6028,150 @@ body.music-app {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
+
+/* ============================================================
+   XROB 2.9.3 — FINAL UI CORRECTION PASS
+   ============================================================ */
+
+/* Header: scale the complete control system, not just the bar. */
+:root { --app-header-height: 144px; }
+.app-topbar-inner {
+    min-height: var(--app-header-height);
+    gap: 32px;
+}
+.brand-mark {
+    height: 76px;
+    gap: 18px;
+    font-size: 28px;
+    font-weight: 800;
+}
+.brand-mark img {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+}
+.primary-nav {
+    gap: 10px;
+    padding: 8px;
+    border-radius: 20px;
+}
+.primary-nav .nav-link {
+    min-height: 76px;
+    padding: 14px 26px;
+    gap: 12px;
+    border-radius: 16px;
+    font-size: 17px;
+    font-weight: 800;
+}
+.primary-nav .nav-link > svg,
+.primary-nav .nav-link > i {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+}
+.primary-nav .nav-count {
+    min-width: 28px;
+    height: 28px;
+    padding: 0 8px;
+    font-size: 12px;
+}
+.topbar-actions { gap: 14px; }
+.topbar-icon {
+    width: 76px;
+    height: 76px;
+    border-radius: 20px;
+}
+.topbar-icon svg {
+    width: 32px !important;
+    height: 32px !important;
+    stroke-width: 2.1;
+}
+.topbar-icon-badge {
+    min-width: 28px;
+    height: 28px;
+    padding: 0 7px;
+    top: -6px;
+    right: -6px;
+    border-width: 3px;
+    font-size: 11px;
+}
+
+/* Home: truly full bleed. Every home section uses the available viewport width. */
+#tab-home.active {
+    width: calc(100% + (var(--content-gutter) * 2));
+    max-width: none;
+    margin-left: calc(-1 * var(--content-gutter));
+    margin-right: calc(-1 * var(--content-gutter));
+}
+#tab-home.active .page-surface {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+}
+#tab-home.active .home-hero {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+    border-radius: 0 0 28px 28px;
+}
+#tab-home.active .home-stats-grid,
+#tab-home.active .home-section-header,
+#tab-home.active .recent-grid,
+#tab-home.active .home-connect-card,
+#tab-home.active .daily-mix-card {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+}
+
+/* Recently Added: same horizontal one-row treatment as Daily Mix. */
+#tab-home.active .recent-grid {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(190px, 220px);
+    grid-template-columns: none;
+    gap: 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 0 14px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+}
+#tab-home.active .recent-grid > * {
+    width: auto;
+    min-width: 0;
+    scroll-snap-align: start;
+}
+
+/* Keep the enlarged desktop hierarchy coherent at medium widths. */
+@media (max-width: 980px) {
+    :root { --app-header-height: 128px; }
+    .app-topbar-inner { gap: 20px; }
+    .brand-mark { height: 64px; font-size: 22px; }
+    .brand-mark img { width: 52px; height: 52px; }
+    .primary-nav .nav-link { min-height: 64px; padding: 12px 18px; font-size: 15px; }
+    .primary-nav .nav-link > svg,
+    .primary-nav .nav-link > i { width: 26px; height: 26px; flex-basis: 26px; }
+    .topbar-icon { width: 64px; height: 64px; border-radius: 17px; }
+    .topbar-icon svg { width: 28px !important; height: 28px !important; }
+}
+
+@media (max-width: 768px) {
+    :root { --app-header-height: 96px; }
+    .app-topbar-inner { min-height: var(--app-header-height); gap: 8px; padding-inline: 10px; }
+    .brand-mark { height: 56px; }
+    .brand-mark img { width: 48px; height: 48px; }
+    .primary-nav { padding: 5px; gap: 3px; }
+    .primary-nav .nav-link { min-height: 52px; width: 52px; padding: 10px; }
+    .primary-nav .nav-link > svg,
+    .primary-nav .nav-link > i { width: 24px; height: 24px; }
+    .topbar-icon { width: 52px; height: 52px; border-radius: 15px; }
+    .topbar-icon svg { width: 24px !important; height: 24px !important; }
+    #tab-home.active {
+        width: calc(100% + 24px);
+        margin-left: -12px;
+        margin-right: -12px;
+    }
+    #tab-home.active .home-hero { padding-inline: 22px; }
+    #tab-home.active .recent-grid { grid-auto-columns: minmax(160px, 190px); gap: 12px; }
+}
