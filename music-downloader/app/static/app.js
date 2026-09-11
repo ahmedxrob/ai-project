@@ -1505,7 +1505,8 @@ async function resetSettings() {
         embed_metadata: true,
         organize_by_artist: false,
         scan_enabled: true,
-        scan_interval_minutes: 60
+        scan_interval_minutes: 60,
+        title_cleanup_rules: "(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip"
     };
     try {
         const response = await fetch("api/settings", {
@@ -1532,6 +1533,7 @@ function applySettingsToForm(settings) {
     setChecked("set_organize", settings.organize_by_artist);
     setChecked("set_scan_enabled", settings.scan_enabled !== false);
     setValue("set_scan_interval", settings.scan_interval_minutes || 60);
+    setValue("set_title_cleanup_rules", settings.title_cleanup_rules || "");
     setValue("set_web_username", settings.web_username || "admin");
     setValue("set_web_password", "");
     renderStorage(settings.storage);
@@ -1585,6 +1587,7 @@ async function saveSettings() {
             getChecked("set_organize"),
         scan_enabled: getChecked("set_scan_enabled"),
         scan_interval_minutes: Math.max(5, Number(getValue("set_scan_interval") || 60)),
+        title_cleanup_rules: getValue("set_title_cleanup_rules"),
         web_username: getValue("set_web_username") || "admin",
         ...(getValue("set_web_password") ? {web_password:getValue("set_web_password")} : {}),
     };
@@ -3742,10 +3745,14 @@ async function startDownload(
         );
 
 
-        navigate("downloads");
-
-
-        await pollTasks(true);
+        const downloadsDrawer = document.getElementById("downloads-drawer");
+        if (downloadsDrawer && !downloadsDrawer.hidden) {
+            await pollTasks(true);
+            openDownloadsDrawer();
+        } else {
+            openDownloadsDrawer();
+            await pollTasks(true);
+        }
 
     } catch (error) {
 
@@ -4544,7 +4551,7 @@ function bindInfiniteScroll() {
 
 function playHomeTrack(index) {
 
-    currentPlayerSource = "home";
+    currentPlayerSource = "library";
 
     const queue =
         window.xrobHomeQueue || [];
@@ -4560,7 +4567,7 @@ function playHomeTrack(index) {
         queue[index];
 
     // Keep Recently Added and Up Next synchronized with one persisted queue.
-    syncLibraryQueue(queue, index);
+    setEnhancedQueue(queue, index);
     renderEnhancedQueue();
 
     const streamUrl =
@@ -5066,7 +5073,8 @@ function installEnhancedFeatures(){
         const queueDrawer = document.getElementById("queue-drawer");
         const downloadButton = event.target.closest("#topbarDownloadsBtn");
         const queueButton = event.target.closest("#gp-queue-btn");
-        if (downloadDrawer && !downloadDrawer.hidden && !downloadDrawer.contains(event.target) && !downloadButton) closeDownloadsDrawer();
+        const downloadAction = event.target.closest(".btn-download, .download-card");
+        if (downloadDrawer && !downloadDrawer.hidden && !downloadDrawer.contains(event.target) && !downloadButton && !downloadAction) closeDownloadsDrawer();
         if (queueDrawer && !queueDrawer.hidden && !queueDrawer.contains(event.target) && !queueButton) closeQueueDrawer();
     });
     document.addEventListener("keydown", (event) => {
