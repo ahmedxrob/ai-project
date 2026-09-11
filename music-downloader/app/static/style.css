@@ -4545,3 +4545,97 @@ body.music-app {
 .home-stat-card .home-stat-copy > span {
     display: block;
 }
+
+
+/* ============================================================
+   XROB — COMPACT DOWNLOAD DRAWER + HOME METRIC ALIGNMENT
+   ============================================================ */
+.home-stat-card.home-library-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    appearance: none;
+}
+.home-stat-card .home-stat-icon {
+    margin-top: 0;
+    flex: 0 0 42px;
+}
+.home-stat-card .home-stat-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+}
+.home-stat-card .home-stat-copy strong {
+    margin-top: 0;
+}
+.home-stat-card .home-stat-copy span {
+    margin-top: 6px;
+}
+
+.downloads-drawer {
+    position: fixed;
+    right: 18px;
+    bottom: calc(var(--player-height) + 10px);
+    width: min(460px, calc(100vw - 28px));
+    max-height: min(72vh, calc(100vh - var(--player-height) - 28px));
+    z-index: 1360;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--bg-surface) 95%, transparent);
+    box-shadow: 0 24px 70px rgba(0,0,0,.42);
+    backdrop-filter: blur(20px);
+}
+.downloads-drawer[hidden] { display: none; }
+.downloads-drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 3px 4px 11px;
+}
+.downloads-drawer-head strong {
+    display: block;
+    font-size: 15px;
+    letter-spacing: -.2px;
+}
+.downloads-drawer-kicker {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--accent);
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+}
+.downloads-drawer-head-actions { display: inline-flex; align-items: center; gap: 6px; }
+.downloads-drawer-head-actions .btn-refresh { min-height: 32px; padding: 0 10px; }
+.downloads-drawer-head-actions .btn-refresh svg { width: 13px; height: 13px; }
+.downloads-drawer-list {
+    min-height: 0;
+    overflow: auto;
+    padding: 1px 1px 2px;
+}
+.downloads-drawer-list .downloads-section { margin: 0; }
+.downloads-drawer-list .download-card { border-radius: 12px; }
+.downloads-drawer-list .downloads-section-header { padding: 4px 2px 8px; }
+@media (max-width: 700px) {
+    .downloads-drawer {
+        right: 8px;
+        bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px);
+        width: calc(100vw - 16px);
+        max-height: calc(100vh - var(--player-height) - var(--bottom-nav-height) - 24px);
+    }
+    .downloads-drawer-head-actions .btn-refresh span { display: none; }
+    .downloads-drawer-head-actions .btn-refresh { width: 34px; padding: 0; justify-content: center; }
+}
