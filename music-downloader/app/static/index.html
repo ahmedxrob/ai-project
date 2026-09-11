@@ -73,7 +73,7 @@
 
       <div class="topbar-actions">
        <button class="topbar-icon" type="button" onclick="navigate('search')" aria-label="Search" title="Search"><i aria-hidden="true" data-lucide="search"></i></button>
-       <button class="topbar-downloads" type="button" onclick="navigate('downloads')" aria-label="Open downloads" title="Downloads">
+       <button class="topbar-downloads" type="button" onclick="openDownloadsDrawer()" aria-label="Open downloads" title="Downloads">
         <i aria-hidden="true" data-lucide="download"></i>
         <span>Downloads</span>
         <span class="topbar-downloads-count" id="queueCount">0</span>
@@ -127,20 +127,20 @@
        </div>
        <div class="home-stats-grid page-section">
         <button aria-label="Open Tracks in Library" class="home-stat-card home-library-link" onclick="navigate('library'); libraryView='tracks'; selectedArtistId=null; selectedAlbumId=null; renderLibraryView()" type="button">
-         <span class="home-stat-icon"><i aria-hidden="true" data-lucide="music-2"></i></span>
-         <span class="home-stat-copy"><strong id="homeTracks">0</strong><span>Tracks</span></span>
+         <div class="home-stat-icon"><i aria-hidden="true" data-lucide="music-2"></i></div>
+         <div class="home-stat-copy"><strong id="homeTracks">0</strong><span>Tracks</span></div>
         </button>
         <button aria-label="Open Artists in Library" class="home-stat-card home-library-link" onclick="navigate('library'); libraryView='artists'; selectedArtistId=null; selectedAlbumId=null; renderLibraryView()" type="button">
-         <span class="home-stat-icon"><i aria-hidden="true" data-lucide="user-round"></i></span>
-         <span class="home-stat-copy"><strong id="homeArtists">0</strong><span>Artists</span></span>
+         <div class="home-stat-icon"><i aria-hidden="true" data-lucide="user-round"></i></div>
+         <div class="home-stat-copy"><strong id="homeArtists">0</strong><span>Artists</span></div>
         </button>
         <button aria-label="Open Albums in Library" class="home-stat-card home-library-link" onclick="navigate('library'); libraryView='albums'; selectedArtistId=null; selectedAlbumId=null; renderLibraryView()" type="button">
-         <span class="home-stat-icon"><i aria-hidden="true" data-lucide="disc-3"></i></span>
-         <span class="home-stat-copy"><strong id="homeAlbums">0</strong><span>Albums</span></span>
+         <div class="home-stat-icon"><i aria-hidden="true" data-lucide="disc-3"></i></div>
+         <div class="home-stat-copy"><strong id="homeAlbums">0</strong><span>Albums</span></div>
         </button>
         <div class="home-stat-card">
-         <span class="home-stat-icon"><i aria-hidden="true" data-lucide="play"></i></span>
-         <span class="home-stat-copy"><strong id="homePlays">0</strong><span>Total Plays</span></span>
+         <div class="home-stat-icon"><i aria-hidden="true" data-lucide="play"></i></div>
+         <div class="home-stat-copy"><strong id="homePlays">0</strong><span>Total Plays</span></div>
         </div>
        </div>
        <section class="daily-mix-card page-section" id="dailyMixCard">
@@ -243,37 +243,7 @@
      <!-- ==================================================
                  DOWNLOADS
                  ================================================== -->
-     <section class="tab-content music-page" id="tab-downloads">
-      <div class="page-surface downloads-workspace">
-       <div class="downloads-compact-header">
-        <div>
-         <span class="downloads-kicker">QUEUE & DOWNLOADS</span>
-         <h2 class="downloads-page-title">Downloads</h2>
-         <p class="downloads-page-subtitle">Your active downloads and playback queue, in one quiet workspace.</p>
-        </div>
-        <div class="downloads-header-actions">
-         <button class="btn-refresh" onclick="clearDoneTasks()" type="button"><i aria-hidden="true" data-lucide="broom"></i>Clear Completed</button>
-         <button class="btn-preview" onclick="openQueueDrawer()" type="button"><i aria-hidden="true" data-lucide="list-music"></i>Up Next</button>
-        </div>
-       </div>
-
-       <section class="download-queue-card page-section" aria-label="Playback queue">
-        <div class="download-queue-copy">
-         <div class="download-queue-icon"><i aria-hidden="true" data-lucide="list-music"></i></div>
-         <div>
-          <div class="download-queue-title">Playback queue</div>
-          <div class="download-queue-subtitle">Manage what plays next without leaving Downloads.</div>
-         </div>
-        </div>
-        <div class="download-queue-actions">
-         <span class="download-queue-count" id="downloadQueueCount">0</span>
-         <button class="btn-refresh" onclick="openQueueDrawer()" type="button">Open queue</button>
-        </div>
-       </section>
-
-       <div class="downloads-list page-section" id="downloadsList"></div>
-      </div>
-     </section>
+     <section class="tab-content music-page" id="tab-downloads" hidden></section>
      <!-- ==================================================
                  LIBRARY
                  ================================================== -->
@@ -1051,6 +1021,19 @@
     </div>
    </div>
   </div>
+  <aside aria-label="Downloads" class="downloads-drawer overlay-panel" hidden="" id="downloads-drawer">
+   <div class="downloads-drawer-head">
+    <div>
+     <span class="downloads-drawer-kicker">DOWNLOADS</span>
+     <strong>Activity</strong>
+    </div>
+    <div class="downloads-drawer-head-actions">
+     <button class="btn-refresh" onclick="clearDoneTasks()" type="button" title="Clear completed downloads"><i aria-hidden="true" data-lucide="broom"></i><span>Clear</span></button>
+     <button aria-label="Close downloads" class="icon-btn" id="downloadsClose" title="Close downloads" type="button"><i aria-hidden="true" data-lucide="x"></i></button>
+    </div>
+   </div>
+   <div class="downloads-drawer-list downloads-list" id="downloadsList"></div>
+  </aside>
   <aside aria-label="Up Next queue" class="queue-drawer overlay-panel" hidden="" id="queue-drawer">
    <div class="queue-drawer-head">
     <strong>
