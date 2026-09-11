@@ -76,7 +76,7 @@ let enhancedQueueIndex = -1;
 let enhancedSongPositions = {};
 let playSessionTrackId = null;
 let playSessionRecorded = false;
-const PLAY_COUNT_THRESHOLD_SECONDS = 30;
+const PLAY_COUNT_THRESHOLD_SECONDS = 60;
 const ENHANCED_QUEUE_KEY = "xrob_music_up_next_queue";
 const ENHANCED_REPEAT_KEY = "xrob_music_repeat";
 
