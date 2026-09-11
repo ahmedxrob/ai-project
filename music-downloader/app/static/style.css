@@ -6512,3 +6512,178 @@ body.music-app {
   #tab-library .library-actions { margin-left:0; }
   #tab-library .library-search { flex-basis:170px !important; min-width:170px !important; }
 }
+
+/* ============================================================
+   XROB MUSIC 2.9.3 — CONNECTED DRAWERS + RECENTLY ADDED V3
+   Queue and Downloads behave as one bottom utility stack.
+   ============================================================ */
+
+/* One shared bottom anchor: whichever drawer is open occupies the
+   bottom slot; when both are open they form one connected stack. */
+.overlay-drawers-stack {
+    position: fixed !important;
+    top: auto !important;
+    right: var(--content-gutter) !important;
+    bottom: calc(var(--player-height) + 10px) !important;
+    width: min(440px, calc(100vw - (var(--content-gutter) * 2))) !important;
+    height: auto !important;
+    display: flex !important;
+    flex-direction: column-reverse !important;
+    align-items: stretch !important;
+    justify-content: flex-end !important;
+    gap: 0 !important;
+    pointer-events: none !important;
+    overflow: visible !important;
+    z-index: 1450 !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+    position: relative !important;
+    inset: auto !important;
+    top: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+    pointer-events: auto !important;
+    flex: 0 1 auto !important;
+    border-radius: 0 !important;
+}
+
+/* Downloads is the bottom drawer. Queue naturally sits directly above it. */
+.overlay-drawers-stack > .downloads-drawer {
+    order: 1 !important;
+    border-radius: 18px 18px 0 0 !important;
+    border-bottom-left-radius: 18px !important;
+    border-bottom-right-radius: 18px !important;
+}
+.overlay-drawers-stack > .queue-drawer {
+    order: 2 !important;
+    border-radius: 18px 18px 0 0 !important;
+}
+
+/* When both are visible, visually join the two panels like one utility drawer. */
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .queue-drawer {
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-top-left-radius: 18px !important;
+    border-top-right-radius: 18px !important;
+    border-bottom-color: color-mix(in srgb, var(--border-strong) 55%, transparent) !important;
+}
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .downloads-drawer {
+    border-top-left-radius: 0 !important;
+    border-top-right-radius: 0 !important;
+}
+
+.overlay-drawers-stack > .queue-drawer[hidden],
+.overlay-drawers-stack > .downloads-drawer[hidden] {
+    display: none !important;
+}
+
+.overlay-drawers-stack > .queue-drawer {
+    max-height: min(46vh, 520px) !important;
+    overflow: hidden !important;
+    z-index: 2 !important;
+}
+.overlay-drawers-stack > .downloads-drawer {
+    max-height: min(42vh, 500px) !important;
+    overflow: hidden !important;
+    z-index: 1 !important;
+}
+.overlay-drawers-stack > .queue-drawer .queue-list,
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list {
+    overflow: auto !important;
+}
+.overlay-drawers-stack > .queue-drawer .queue-list {
+    max-height: min(35vh, 390px) !important;
+}
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list {
+    max-height: min(31vh, 350px) !important;
+}
+
+/* Recently Added gets the same visual weight as Daily Mix instead of looking
+   like a loose row of cards floating on the page. */
+.recently-added-card {
+    margin: 26px 0 30px !important;
+    padding: 22px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 22px !important;
+    background: linear-gradient(135deg, var(--bg-surface), var(--bg-elevated)) !important;
+    box-shadow: 0 10px 30px rgba(0,0,0,.12) !important;
+    min-width: 0 !important;
+}
+.recently-added-card .home-section-header {
+    margin: 0 0 15px !important;
+    padding: 0 !important;
+}
+.recently-added-card .recent-grid {
+    display: grid !important;
+    grid-auto-flow: column !important;
+    grid-auto-columns: minmax(170px, 190px) !important;
+    grid-template-columns: none !important;
+    gap: 15px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    padding: 0 2px 5px !important;
+    margin: 0 !important;
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+}
+.recently-added-card .recent-grid > * {
+    width: auto !important;
+    min-width: 0 !important;
+    border-radius: 16px !important;
+}
+.recently-added-card .recent-card {
+    padding: 8px !important;
+    border: 1px solid var(--border) !important;
+    background: var(--bg-surface) !important;
+    border-radius: 16px !important;
+    overflow: hidden !important;
+    transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.recently-added-card .recent-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent) !important;
+    background: var(--bg-elevated) !important;
+    box-shadow: 0 12px 26px rgba(0,0,0,.18);
+}
+.recently-added-card .recent-card img {
+    display: block;
+    width: 100% !important;
+    aspect-ratio: 1 / 1 !important;
+    border-radius: 11px !important;
+}
+.recently-added-card .recent-card-title {
+    margin: 9px 2px 0 !important;
+    font-size: 12px !important;
+    line-height: 1.25 !important;
+    font-weight: 750 !important;
+}
+.recently-added-card .recent-card-artist {
+    margin: 4px 2px 2px !important;
+    font-size: 10px !important;
+    line-height: 1.2 !important;
+}
+
+@media (max-width: 700px) {
+    .overlay-drawers-stack {
+        right: 8px !important;
+        bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
+        width: calc(100vw - 16px) !important;
+    }
+    .recently-added-card {
+        padding: 16px !important;
+        border-radius: 18px !important;
+    }
+    .recently-added-card .recent-grid {
+        grid-auto-columns: minmax(155px, 175px) !important;
+        gap: 10px !important;
+    }
+    .recently-added-card .recent-card-title { font-size: 11px !important; }
+    .recently-added-card .recent-card-artist { font-size: 9px !important; }
+}
