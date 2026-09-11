@@ -1,392 +1,95 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#09090b">
-  <meta name="description" content="Xrob Music self-hosted music library, downloader and OpenSubsonic player">
+  <meta name="theme-color" content="#08090b">
+  <meta name="description" content="Xrob Music — private music library, downloader and player">
   <title>Xrob Music</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=294">
+  <link rel="stylesheet" href="/static/style.css?v=300">
 </head>
 <body class="music-app">
-
-  <!-- ============================ AUTH ============================ -->
   <div class="login-screen auth-shell" id="login-screen">
-    <div class="auth-orb auth-orb-a"></div>
-    <div class="auth-orb auth-orb-b"></div>
-    <div class="login-card auth-panel">
-      <div class="login-brand">
-        <img class="login-logo" src="/static/logo.png" alt="Xrob Music">
-        <div>
-          <div class="login-badge">PRIVATE MUSIC SERVER</div>
-          <div class="login-brand-name">Xrob Music</div>
-        </div>
-      </div>
-      <div class="login-copy">
-        <div class="login-kicker">WELCOME BACK</div>
-        <h1>Your music.<br><span>Your way.</span></h1>
-        <p>Sign in to your private library and continue listening, discovering and organizing your collection.</p>
-      </div>
-      <form id="loginForm" class="auth-form">
-        <label>
-          <span>Username</span>
-          <input id="loginUsername" autocomplete="username" required>
-        </label>
-        <label>
-          <span>Password</span>
-          <input id="loginPassword" type="password" autocomplete="current-password" required>
-        </label>
-        <button class="save-btn login-submit" type="submit"><span>Sign in</span><i data-lucide="play"></i></button>
-        <div class="login-error" id="loginError" role="alert"></div>
-      </form>
-      <div class="login-foot"><span class="status-dot"></span> Self-hosted • private • yours</div>
+    <div class="auth-noise"></div><div class="auth-glow auth-glow-one"></div><div class="auth-glow auth-glow-two"></div>
+    <div class="auth-layout">
+      <section class="auth-art-panel">
+        <div class="auth-brand"><img src="/static/logo.png" class="auth-logo" alt="Xrob Music"><span>Xrob Music</span></div>
+        <div class="auth-art-copy"><span>YOUR PRIVATE MUSIC CLOUD</span><h1>All your music.<br><em>One beautiful home.</em></h1><p>Listen to your collection, discover new releases and keep every track under your control.</p></div>
+        <div class="auth-cards"><div class="mini-record"><i data-lucide="disc-3"></i><span>Local library</span><strong>Private by design</strong></div><div class="mini-record"><i data-lucide="music-2"></i><span>OpenSubsonic</span><strong>Play anywhere</strong></div></div>
+      </section>
+      <section class="login-card auth-login-panel">
+        <div class="mobile-auth-logo"><img src="/static/logo.png" alt="Xrob Music"><strong>Xrob Music</strong></div>
+        <span class="auth-kicker">WELCOME BACK</span><h2>Sign in</h2><p>Continue to your personal music library.</p>
+        <form id="loginForm" class="auth-form">
+          <label><span>Username</span><input id="loginUsername" autocomplete="username" required></label>
+          <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password" required></label>
+          <button class="save-btn login-submit" type="submit"><span>Continue</span><i data-lucide="play"></i></button>
+          <div class="login-error" id="loginError" role="alert"></div>
+        </form>
+        <div class="auth-foot"><span class="status-dot"></span> Self-hosted · private · yours</div>
+      </section>
     </div>
   </div>
 
   <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
   <audio id="global-audio-element" preload="auto" crossorigin="anonymous"></audio>
 
-  <!-- ============================ APP ============================ -->
   <div class="app-shell music-shell" id="app-shell" hidden>
-
-    <!-- SIDEBAR -->
-    <aside class="side-nav" aria-label="Main navigation">
-      <div class="side-nav-inner">
-        <div class="side-brand">
-          <img src="/static/logo.png" class="brand-icon" alt="Xrob Music">
-          <div class="brand-wordmark">
-            <strong>Xrob Music</strong>
-            <span>Personal music</span>
-          </div>
-        </div>
-
-        <div class="nav-section">
-          <span class="nav-section-label">Browse</span>
-          <button class="nav-link active" id="btn-home" onclick="navigate('home')" type="button">
-            <i data-lucide="house"></i><span class="nav-text">Home</span>
-          </button>
-          <button class="nav-link" id="btn-search" onclick="navigate('search')" type="button">
-            <i data-lucide="search"></i><span class="nav-text">Search &amp; Download</span>
-          </button>
-          <button class="nav-link" id="btn-library" onclick="navigate('library')" type="button">
-            <i data-lucide="library"></i><span class="nav-text">Your Library</span><span class="nav-count" id="sideLibCount">0</span>
-          </button>
-        </div>
-
-        <div class="nav-section">
-          <span class="nav-section-label">Manage</span>
-          <button class="nav-link" id="btn-downloads" onclick="navigate('downloads')" type="button">
-            <i data-lucide="download"></i><span class="nav-text">Downloads</span><span class="nav-count" id="queueCount">0</span>
-          </button>
-          <button class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')" type="button">
-            <i data-lucide="pencil-line"></i><span class="nav-text">Songs Editor</span><span class="nav-count" id="songEditorBadge">0</span>
-          </button>
-        </div>
-
-        <div class="side-nav-spacer"></div>
-
-        <div class="side-now-playing" aria-label="Now playing">
-          <div class="side-now-art"><img id="sideNowArt" src="/static/logo.png" alt=""></div>
-          <div class="side-now-copy">
-            <span>NOW PLAYING</span>
-            <strong>Ready when you are</strong>
-            <em>Open the player below</em>
-          </div>
-        </div>
-
-        <button class="nav-link side-settings" id="btn-settings" onclick="navigate('settings')" type="button">
-          <i data-lucide="settings"></i><span class="nav-text">Settings</span>
-        </button>
-        <div class="side-footer"><span class="status-dot"></span><span>Local server</span></div>
+    <header class="app-header">
+      <div class="header-left">
+        <button class="brand-button" onclick="navigate('home')" type="button" aria-label="Go home"><img src="/static/logo.png" class="brand-logo" alt=""><span class="brand-name">Xrob Music</span></button>
+        <nav class="main-nav" aria-label="Primary navigation">
+          <button class="nav-link active" id="btn-home" onclick="navigate('home')" type="button"><i data-lucide="house"></i><span>Home</span></button>
+          <button class="nav-link" id="btn-search" onclick="navigate('search')" type="button"><i data-lucide="search"></i><span>Discover</span></button>
+          <button class="nav-link" id="btn-library" onclick="navigate('library')" type="button"><i data-lucide="library"></i><span>Library</span><b id="sideLibCount">0</b></button>
+          <button class="nav-link" id="btn-downloads" onclick="navigate('downloads')" type="button"><i data-lucide="download"></i><span>Downloads</span><b id="queueCount">0</b></button>
+          <button class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')" type="button"><i data-lucide="pencil-line"></i><span>Editor</span><b id="songEditorBadge">0</b></button>
+        </nav>
       </div>
-    </aside>
+      <div class="header-right">
+        <button class="header-search" onclick="navigate('search')" type="button"><i data-lucide="search"></i><span>Search your music</span><kbd>/</kbd></button>
+        <button class="circle-action" onclick="document.getElementById('gp-queue-btn')?.click()" type="button" aria-label="Queue"><i data-lucide="library"></i></button>
+        <button class="profile-action" onclick="navigate('settings')" type="button" aria-label="Settings"><img src="/static/logo.png" alt=""><i data-lucide="settings"></i></button>
+      </div>
+    </header>
 
-    <!-- MAIN COLUMN -->
-    <div class="app-column">
-      <header class="mobile-header">
-        <div class="mobile-brand"><img src="/static/logo.png" alt="Xrob Music"><strong>Xrob Music</strong></div>
-        <button class="mobile-profile" type="button" onclick="navigate('settings')" aria-label="Open settings"><i data-lucide="settings"></i></button>
-      </header>
+    <main class="main-content" role="main">
+      <section class="tab-content active" id="tab-home">
+        <div class="home-page page-shell">
+          <section class="welcome-banner">
+            <div class="welcome-copy"><span class="overline">YOUR LIBRARY · XROB MUSIC</span><h1>Make your<br><em>music space yours.</em></h1><p>Jump back into your collection, build a Daily Mix, or find something new.</p><div class="hero-actions"><button class="btn-primary" onclick="navigate('library')" type="button"><i data-lucide="play"></i> Explore Library</button><button class="btn-ghost" onclick="navigate('search')" type="button"><i data-lucide="search"></i> Discover music</button></div></div>
+            <div class="welcome-visual"><div class="vinyl-ring"><div class="vinyl-center"><img src="/static/logo.png" alt=""></div></div><div class="floating-note note-one"><i data-lucide="music-2"></i></div><div class="floating-note note-two"><i data-lucide="music-2"></i></div></div>
+          </section>
 
-      <header class="topbar">
-        <div class="topbar-nav-controls">
-          <button class="round-icon-btn" type="button" aria-label="Back" onclick="history.back()"><i data-lucide="arrow-left"></i></button>
+          <section class="quick-stats"><button class="quick-stat" onclick="navigate('library')" type="button"><span class="stat-symbol"><i data-lucide="music-2"></i></span><span><strong id="homeTracks">0</strong><em>Tracks</em></span></button><button class="quick-stat" onclick="navigate('library')" type="button"><span class="stat-symbol"><i data-lucide="user-round"></i></span><span><strong id="homeArtists">0</strong><em>Artists</em></span></button><button class="quick-stat" onclick="navigate('library')" type="button"><span class="stat-symbol"><i data-lucide="disc-3"></i></span><span><strong id="homeAlbums">0</strong><em>Albums</em></span></button><button class="quick-stat" onclick="navigate('library')" type="button"><span class="stat-symbol"><i data-lucide="play"></i></span><span><strong id="homePlays">0</strong><em>Total plays</em></span></button><button class="quick-stat download-stat" onclick="navigate('downloads')" type="button"><span class="stat-symbol"><i data-lucide="download"></i></span><span><strong id="homeDownloads">0</strong><em>Downloads</em></span></button></section>
+
+          <section class="content-section daily-mix-section" id="dailyMixCard"><div class="section-title"><div><span class="overline">MADE FOR YOU</span><h2>Daily Mix</h2><p>Your listening habits, turned into one endless session.</p></div><div class="section-actions"><button class="icon-action" id="dailyMixRefresh" type="button" title="Refresh Daily Mix"><i data-lucide="refresh-cw"></i></button><button class="btn-primary compact" id="dailyMixPlay" type="button"><i data-lucide="play"></i> Play mix</button></div></div><div class="mix-shell"><div class="mix-cover"><div class="mix-art-lines"></div><strong id="dailyMixTitle">Daily Mix</strong><span id="dailyMixSubtitle">Loading your mix…</span><div class="mix-play-orb"><i data-lucide="play"></i></div></div><div class="daily-mix-tracks" id="dailyMixTracks"></div></div></section>
+
+          <section class="content-section"><div class="section-title"><div><span class="overline">YOUR COLLECTION</span><h2>Recently Added</h2><p>The newest music in your library.</p></div><button class="text-button" onclick="navigate('library')" type="button">See all <i data-lucide="play"></i></button></div><div class="xrob-loading" id="recentTracksLoading"><div class="xrob-spinner"></div><div id="recentLoadingText" class="xrob-loader-text">Loading Recently Added…</div></div><div class="recent-grid" id="recentTracks"></div></section>
         </div>
-        <div class="topbar-context">
-          <span class="topbar-breadcrumb">XROB MUSIC</span>
-          <strong id="topbarTitle">Home</strong>
-        </div>
-        <div class="topbar-actions">
-          <button class="top-search-trigger" type="button" onclick="navigate('search')"><i data-lucide="search"></i><span>Search your music</span><kbd>/</kbd></button>
-          <button class="topbar-icon-btn" type="button" onclick="navigate('downloads')" aria-label="Downloads"><i data-lucide="download"></i><span id="homeDownloads" class="topbar-count">0</span></button>
-          <button class="topbar-icon-btn" type="button" onclick="document.getElementById('gp-queue-btn')?.click()" aria-label="Queue"><i data-lucide="library"></i></button>
-        </div>
-      </header>
+      </section>
 
-      <main class="main-content workspace-main" role="main" aria-label="Xrob Music workspace">
+      <section class="tab-content" id="tab-search"><div class="discover-page page-shell"><section class="discover-intro"><span class="overline">DISCOVER</span><h1>Find something<br><em>worth replaying.</em></h1><p>Search artists, albums and tracks. Preview them, then send the ones you love straight to your library.</p><div class="discover-search"><i data-lucide="search"></i><input id="query" type="search" autocomplete="off" spellcheck="false" placeholder="What do you want to play?"><button id="searchBtn" type="button"><i data-lucide="play"></i></button></div></section><div class="discover-toolbar"><div id="statusMsg" class="status-msg"></div><div class="search-loading" id="searchLoading" style="display:none"><div class="xrob-spinner"></div><span id="searchLoadingText">Searching…</span></div></div><div id="results" class="results-grid"></div><div class="status-msg infinite-loader" id="infiniteLoader" style="display:none">Loading more…</div></div></section>
 
-        <!-- ========================== HOME ========================== -->
-        <section class="tab-content active music-page" id="tab-home">
-          <div class="page-shell">
-            <section class="home-hero">
-              <div class="hero-backdrop hero-backdrop-a"></div>
-              <div class="hero-backdrop hero-backdrop-b"></div>
-              <div class="hero-content">
-                <span class="eyebrow-pill"><i data-lucide="play"></i> YOUR PERSONAL MUSIC SPACE</span>
-                <h1>Good music,<br><span>right at home.</span></h1>
-                <p>Discover your library, pick up where you left off, or download something new.</p>
-                <div class="hero-actions">
-                  <button class="hero-primary" type="button" onclick="navigate('library')"><i data-lucide="play"></i> Explore Library</button>
-                  <button class="hero-secondary" type="button" onclick="navigate('search')"><i data-lucide="search"></i> Find Music</button>
-                </div>
-              </div>
-              <div class="hero-art-stack" aria-hidden="true">
-                <div class="hero-disc hero-disc-back"></div>
-                <div class="hero-disc hero-disc-front"><span></span></div>
-                <img src="/static/logo.png" alt="" class="hero-logo-art">
-              </div>
-            </section>
+      <section class="tab-content" id="tab-library"><div class="library-page page-shell"><section class="library-hero"><div><span class="overline">YOUR COLLECTION</span><h1>Library</h1><p>Everything you own, organized around how you listen.</p></div><div class="library-hero-meta"><strong id="statTracks">0</strong><span>tracks</span><strong id="statArtists">0</strong><span>artists</span><strong id="statAlbums">0</strong><span>albums</span></div></section><section class="library-toolbar"><div class="library-tabs" role="tablist"><button class="library-tab active" data-library-view="tracks" type="button">Songs</button><button class="library-tab" data-library-view="artists" type="button">Artists</button><button class="library-tab" data-library-view="albums" type="button">Albums</button><button class="library-tab" data-library-view="playlists" type="button">Playlists</button><button class="library-tab" data-library-view="recent" type="button">Recently Played</button><button class="library-tab" data-library-view="most" type="button">Most Played</button><button class="library-tab" data-library-view="statistics" type="button">Statistics</button></div><div class="library-tools"><label class="library-search"><i data-lucide="search"></i><input id="libSearchQuery" type="search" autocomplete="off" placeholder="Search library"><button class="library-search-clear" id="librarySearchClear" hidden type="button"><i data-lucide="x"></i></button></label><button class="icon-action" id="libraryPlayAllButton" type="button" title="Play all"><i data-lucide="play"></i></button><button class="icon-action" id="libraryShuffleButton" type="button" title="Shuffle"><i data-lucide="shuffle"></i></button><button class="icon-action" id="libraryRefreshButton" type="button" title="Quick scan"><i data-lucide="refresh-cw"></i></button><button class="icon-action" id="libraryFullScanButton" type="button" title="Full scan"><i data-lucide="hard-drive"></i></button></div></section><div class="library-meta-row"><span><i data-lucide="hard-drive"></i><strong id="libFolderSize">0 MB</strong> in library</span><span>Local collection</span></div><div class="library-stats-dashboard" id="libraryStatsDashboard" hidden><div class="stats-head"><div><span class="overline">LISTENING INSIGHTS</span><h2>Library statistics</h2><p>Catalog depth and listening behavior at a glance.</p></div><button class="btn-ghost" id="libraryStatsRefresh" type="button"><i data-lucide="refresh-cw"></i> Refresh</button></div><div class="detail-metrics"><div><span>Total duration</span><strong id="detailStatDuration">0h 0m</strong></div><div><span>Average track</span><strong id="detailStatAvg">0m</strong></div><div><span>Tracks played</span><strong id="detailStatPlayed">0</strong></div><div><span>Plays last 7d</span><strong id="detailStat7d">0</strong></div><div><span>Listening time</span><strong id="detailStatListening">0m</strong></div><div><span>Formats</span><strong id="detailStatFormats">0</strong></div><div><span>Library size</span><strong id="detailStatSize">0 MB</strong></div><div><span>Average bitrate</span><strong id="detailStatBitrate">0 kbps</strong></div></div><div class="dashboard-grid"><article><header><h3>Top artists</h3><span>Plays</span></header><div class="dashboard-list" id="detailTopArtists"></div></article><article><header><h3>Genres</h3><span>Tracks</span></header><div class="dashboard-list" id="detailGenres"></div></article><article><header><h3>Formats</h3><span>Tracks</span></header><div class="dashboard-list" id="detailFormats"></div></article><article><header><h3>Bitrates</h3><span>Tracks</span></header><div class="dashboard-list" id="detailBitrates"></div></article><article><header><h3>Release years</h3><span>Tracks</span></header><div class="dashboard-list" id="detailYears"></div></article><article><header><h3>Sample rates</h3><span>Tracks</span></header><div class="dashboard-list" id="detailSampleRates"></div></article></div></div><div id="libraryLoading" class="xrob-loading"><div class="xrob-spinner"></div><div id="libraryLoadingText" class="xrob-loader-text">Loading library…</div></div><div id="libraryList" class="library-list results-grid"></div></div></section>
 
-            <section class="stats-strip" aria-label="Library summary">
-              <div class="stat-tile"><span class="stat-icon"><i data-lucide="music-2"></i></span><div><strong id="homeTracks">0</strong><span>Tracks</span></div></div>
-              <div class="stat-tile"><span class="stat-icon"><i data-lucide="user-round"></i></span><div><strong id="homeArtists">0</strong><span>Artists</span></div></div>
-              <div class="stat-tile"><span class="stat-icon"><i data-lucide="disc-3"></i></span><div><strong id="homeAlbums">0</strong><span>Albums</span></div></div>
-              <div class="stat-tile"><span class="stat-icon"><i data-lucide="play"></i></span><div><strong id="homePlays">0</strong><span>Total Plays</span></div></div>
-            </section>
+      <section class="tab-content" id="tab-downloads"><div class="downloads-page page-shell"><section class="page-top"><div><span class="overline">DOWNLOADS</span><h1>Download center</h1><p>See what is queued, what is processing and what has reached your library.</p></div><div class="page-top-actions"><button class="btn-ghost" onclick="clearDoneTasks()" type="button"><i data-lucide="broom"></i> Clear completed</button><button class="icon-action" onclick="loadDownloads()" type="button" title="Refresh"><i data-lucide="refresh-cw"></i></button></div></section><div class="download-overview"><article><span><i data-lucide="download"></i></span><strong id="downloadQueueCount">0</strong><em>In queue</em></article><article><span><i data-lucide="music-2"></i></span><strong id="downloadStatTracks">0</strong><em>Library tracks</em></article><article><span><i data-lucide="disc-3"></i></span><strong id="downloadStatAlbums">0</strong><em>Albums</em></article></div><div id="downloadsList" class="downloads-list"></div></div></section>
 
-            <section class="daily-mix-card" id="dailyMixCard">
-              <div class="daily-mix-visual"><div class="mix-gradient"></div><div class="mix-orbit mix-orbit-a"></div><div class="mix-orbit mix-orbit-b"></div><i data-lucide="play"></i></div>
-              <div class="daily-mix-body">
-                <div class="daily-mix-kicker">PERSONALIZED MIX</div>
-                <h2 id="dailyMixTitle">Daily Mix</h2>
-                <p id="dailyMixSubtitle">Loading your mix…</p>
-                <div class="daily-mix-actions">
-                  <button class="btn-preview" id="dailyMixPlay" type="button"><i data-lucide="play"></i> Play mix</button>
-                  <button class="btn-refresh" id="dailyMixRefresh" type="button"><i data-lucide="refresh-cw"></i> Refresh</button>
-                </div>
-              </div>
-              <div class="daily-mix-track-row" id="dailyMixTracks"></div>
-            </section>
+      <section class="tab-content" id="tab-songs-editor"><div class="editor-page page-shell"><section class="page-top"><div><span class="overline">LIBRARY TOOLS</span><h1>Songs Editor</h1><p>Polish title, artist and album metadata before it becomes part of your permanent library.</p></div><button class="icon-action" id="songEditorRefresh" type="button" title="Refresh"><i data-lucide="refresh-cw"></i></button></section><div class="editor-summary"><div class="editor-summary-icon"><i data-lucide="pencil-line"></i></div><div><strong id="songEditorCount">0</strong><span>tracks waiting for review</span></div></div><section class="editor-toolbar"><label class="library-search editor-search"><i data-lucide="search"></i><input id="songEditorSearch" type="search" autocomplete="off" placeholder="Search title, artist, album or filename"><button class="library-search-clear" id="songEditorSearchClear" hidden type="button"><i data-lucide="x"></i></button></label><button class="btn-ghost" id="songEditorReset" type="button"><i data-lucide="rotate-ccw"></i> Reset</button><div class="editor-import"><select id="songEditorImportSelect" class="editor-import-select"><option value="">Choose an edited library track…</option></select><button class="btn-primary" id="songEditorImport" type="button"><i data-lucide="plus"></i> Reopen</button></div></section><div class="songs-editor-list" id="songEditorList"></div></div></section>
 
-            <section class="home-section">
-              <div class="section-heading">
-                <div><span class="eyebrow-text">KEEP LISTENING</span><h2>Recently Added</h2><p>Fresh music from your library</p></div>
-                <button class="text-action" type="button" onclick="navigate('library')">View library <i data-lucide="play"></i></button>
-              </div>
-              <div class="xrob-loading" id="recentTracksLoading" aria-live="polite"><div class="xrob-spinner"></div><div id="recentLoadingText" class="xrob-loader-text">Loading Recently Added…</div></div>
-              <div class="recent-grid" id="recentTracks"></div>
-            </section>
-          </div>
-        </section>
+      <section class="tab-content" id="tab-settings"><div class="settings-page page-shell"><section class="page-top"><div><span class="overline">PREFERENCES</span><h1>Settings</h1><p>Shape how Xrob Music downloads, scans and serves your collection.</p></div><button class="btn-ghost" id="logoutButton" type="button"><i data-lucide="log-out"></i> Log out</button></section><section class="settings-card feature-settings"><div class="settings-card-head"><div><span class="overline">AUDIO</span><h2>Download quality</h2><p>Choose the format and quality used for new downloads.</p></div><div class="settings-card-icon"><i data-lucide="music-2"></i></div></div><div class="settings-grid-two"><label class="setting-control"><span>Format</span><select id="set_format"><option value="mp3">MP3</option><option value="flac">FLAC</option><option value="m4a">M4A</option><option value="opus">OPUS</option><option value="ogg">OGG</option></select></label><label class="setting-control"><span>Quality</span><select id="set_quality"><option value="320K">320 Kbps</option><option value="256K">256 Kbps</option><option value="192K">192 Kbps</option><option value="160K">160 Kbps</option><option value="128K">128 Kbps</option><option value="96K">96 Kbps</option></select></label></div></section><section class="settings-card"><div class="settings-card-head"><div><h2>Library behavior</h2><p>Automate metadata, artwork and scanning.</p></div></div><div class="settings-list"><div class="setting-row"><div><strong>Write metadata</strong><span>Store title, artist and album tags in downloaded files.</span></div><label class="switch"><input id="set_meta" type="checkbox"><span class="slider"></span></label></div><div class="setting-row"><div><strong>Embed artwork</strong><span>Add album artwork to downloaded files.</span></div><label class="switch"><input id="set_thumb" type="checkbox"><span class="slider"></span></label></div><div class="setting-row"><div><strong>Artist folders</strong><span>Save downloads inside an artist folder.</span></div><label class="switch"><input id="set_organize" type="checkbox"><span class="slider"></span></label></div><div class="setting-row"><div><strong>Background library scan</strong><span>Periodically refresh library metadata.</span></div><label class="switch"><input id="set_scan_enabled" type="checkbox"><span class="slider"></span></label></div><div class="setting-row"><div><strong>Scan interval</strong><span>Minutes between automatic quick scans (minimum 5).</span></div><input id="set_scan_interval" type="number" min="5" step="5" value="60"></div></div></section><section class="settings-card storage-card"><div class="settings-card-head"><div><h2>Library status</h2><p>Storage, local library and OpenSubsonic service.</p></div><span class="ready-badge"><span class="status-dot"></span> Local</span></div><div class="storage-path-row"><span>Music folder</span><code id="storagePath">—</code></div><div class="library-status-grid"><div><span>Tracks</span><strong id="statusTracks">0</strong></div><div><span>Albums</span><strong id="statusAlbums">0</strong></div><div><span>Artists</span><strong id="statusArtists">0</strong></div><div><span>Total plays</span><strong id="statusPlays">0</strong></div><div class="wide"><span>Track size</span><strong id="statusSize">0 MB</strong></div></div><div class="storage-capacity" id="storageCapacity"><div class="storage-capacity-head"><span>Storage usage</span><strong id="storageUsedLabel">—</strong></div><div class="storage-progress"><span id="storageProgressFill"></span></div><div class="storage-capacity-meta"><span id="storageUsedMeta">— used</span><span id="storageFree">— free</span></div></div><div class="integration-status" id="storageStatus">Checking storage…</div><div class="integration-row"><div><strong>OpenSubsonic</strong><span>Compatible with Amperfy and other OpenSubsonic clients.</span></div><strong id="subsonicStatusValue">Checking…</strong></div></section><section class="settings-card"><div class="settings-card-head"><div><h2>Account</h2><p>Change the credentials used for the web interface.</p></div></div><div class="settings-grid-two account-fields"><label class="setting-control"><span>Username</span><input id="set_web_username" autocomplete="username" maxlength="64" type="text"></label><label class="setting-control"><span>New password</span><input id="set_web_password" autocomplete="new-password" maxlength="256" type="password" placeholder="Leave blank to keep current"></label></div></section><section class="settings-card"><div class="settings-card-head"><div><h2>Maintenance</h2><p>Inspect the library and review application errors.</p></div></div><div class="settings-list"><div class="setting-row"><div><strong>Library health</strong><span>Check unreadable files, missing artwork, bad tags and duplicates.</span></div><button class="btn-ghost" id="libraryHealthButton" type="button">Check health</button></div><div class="setting-row"><div><strong>Error log</strong><span>View failed downloads and media-processing errors.</span></div><button class="btn-ghost" id="errorsButton" type="button">Open log</button></div></div></section><div class="settings-actions"><button class="save-btn" id="settings-save" type="button"><i data-lucide="save"></i> Save changes</button><button class="btn-ghost" id="settings-reset" type="button"><i data-lucide="rotate-ccw"></i> Reset</button></div><div id="settingsMsg" class="status-msg"></div></div></section>
+    </main>
 
-        <!-- ========================== SEARCH ========================== -->
-        <section class="tab-content music-page" id="tab-search">
-          <div class="page-shell">
-            <section class="search-hero">
-              <span class="eyebrow-text">DISCOVER</span>
-              <h1>Find your next track.</h1>
-              <p>Search the catalog, preview releases and add the music you want to your library.</p>
-              <div class="search-box-large">
-                <i data-lucide="search"></i>
-                <input id="query" type="search" autocomplete="off" spellcheck="false" placeholder="Artists, albums, songs…">
-                <kbd>Enter</kbd>
-                <button id="searchBtn" type="button">Search</button>
-              </div>
-            </section>
-            <div class="search-status-row">
-              <div id="statusMsg" class="status-msg" aria-live="polite"></div>
-              <div class="search-loading" id="searchLoading" style="display:none" aria-live="polite"><div class="xrob-spinner"></div><span id="searchLoadingText">Searching…</span></div>
-            </div>
-            <div class="results-grid" id="results"></div>
-            <div class="status-msg infinite-loader" id="infiniteLoader" style="display:none" aria-live="polite">Loading more…</div>
-          </div>
-        </section>
-
-        <!-- ========================== DOWNLOADS ========================== -->
-        <section class="tab-content music-page" id="tab-downloads">
-          <div class="page-shell">
-            <section class="page-intro with-actions">
-              <div><span class="eyebrow-text">DOWNLOADS</span><h1>Download center</h1><p>Watch your queue, inspect progress and review completed downloads.</p></div>
-              <div class="header-actions"><button class="btn-refresh" type="button" onclick="clearDoneTasks()"><i data-lucide="broom"></i> Clear Completed</button><button class="btn-refresh" type="button" onclick="loadDownloads()"><i data-lucide="refresh-cw"></i> Refresh</button></div>
-            </section>
-            <section class="download-overview">
-              <div class="metric-card metric-accent"><span class="metric-icon"><i data-lucide="download"></i></span><strong id="downloadQueueCount">0</strong><span>Active in Queue</span></div>
-              <div class="metric-card"><span class="metric-icon"><i data-lucide="music-2"></i></span><strong id="downloadStatTracks">0</strong><span>Library Tracks</span></div>
-              <div class="metric-card"><span class="metric-icon"><i data-lucide="disc-3"></i></span><strong id="downloadStatAlbums">0</strong><span>Albums</span></div>
-            </section>
-            <div id="downloadsList" class="downloads-list"></div>
-          </div>
-        </section>
-
-        <!-- ========================== LIBRARY ========================== -->
-        <section class="tab-content music-page" id="tab-library">
-          <div class="page-shell">
-            <section class="library-header">
-              <div><span class="eyebrow-text">YOUR COLLECTION</span><h1>Your Library</h1><p>Browse tracks, artists, albums and listening insights.</p></div>
-              <div class="library-header-stats"><span><b id="statTracks">0</b> tracks</span><span><b id="statArtists">0</b> artists</span><span><b id="statAlbums">0</b> albums</span></div>
-            </section>
-
-            <section class="library-toolbar">
-              <div class="library-tabs" role="tablist" aria-label="Library view">
-                <button class="library-tab active" data-library-view="tracks" type="button">Tracks</button>
-                <button class="library-tab" data-library-view="artists" type="button">Artists</button>
-                <button class="library-tab" data-library-view="albums" type="button">Albums</button>
-                <button class="library-tab" data-library-view="playlists" type="button">Playlists</button>
-                <button class="library-tab" data-library-view="recent" type="button">Recently Played</button>
-                <button class="library-tab" data-library-view="most" type="button">Most Played</button>
-                <button class="library-tab" data-library-view="statistics" type="button">Statistics</button>
-              </div>
-              <div class="library-actions">
-                <label class="library-search"><i data-lucide="search"></i><input id="libSearchQuery" type="search" autocomplete="off" spellcheck="false" placeholder="Search library…"><button class="library-search-clear" id="librarySearchClear" hidden type="button" aria-label="Clear search"><i data-lucide="x"></i></button></label>
-                <button class="btn-preview compact" id="libraryPlayAllButton" type="button" title="Play all tracks"><i data-lucide="play"></i> Play all</button>
-                <button class="btn-refresh compact" id="libraryShuffleButton" type="button" title="Shuffle all tracks"><i data-lucide="shuffle"></i> Shuffle</button>
-                <button class="icon-text-button" id="libraryRefreshButton" type="button" title="Quick rescan"><i data-lucide="refresh-cw"></i><span>Scan</span></button>
-                <button class="icon-text-button" id="libraryFullScanButton" type="button" title="Full metadata rebuild"><i data-lucide="hard-drive"></i><span>Full scan</span></button>
-              </div>
-            </section>
-
-            <div class="library-meta-row"><span><i data-lucide="hard-drive"></i> <strong id="libFolderSize">0 MB</strong> in library</span><span class="library-meta-dot"></span><span>Local collection</span></div>
-
-            <div class="library-stats-dashboard" id="libraryStatsDashboard" hidden aria-live="polite">
-              <div class="dashboard-head"><div><span class="eyebrow-text">INSIGHTS</span><h2>Library statistics</h2><p>Listening, catalog and storage details from your collection.</p></div><button class="btn-refresh" id="libraryStatsRefresh" type="button"><i data-lucide="refresh-cw"></i> Refresh</button></div>
-              <div class="detail-metrics">
-                <div><span>Total duration</span><strong id="detailStatDuration">0h 0m</strong></div>
-                <div><span>Average track</span><strong id="detailStatAvg">0m</strong></div>
-                <div><span>Tracks played</span><strong id="detailStatPlayed">0</strong></div>
-                <div><span>Plays last 7d</span><strong id="detailStat7d">0</strong></div>
-                <div><span>Listening time</span><strong id="detailStatListening">0m</strong></div>
-                <div><span>Formats</span><strong id="detailStatFormats">0</strong></div>
-                <div><span>Library size</span><strong id="detailStatSize">0 MB</strong></div>
-                <div><span>Average bitrate</span><strong id="detailStatBitrate">0 kbps</strong></div>
-              </div>
-              <div class="dashboard-grid">
-                <article><header><h3>Top artists</h3><span>Plays</span></header><div class="dashboard-list" id="detailTopArtists"></div></article>
-                <article><header><h3>Genres</h3><span>Tracks</span></header><div class="dashboard-list" id="detailGenres"></div></article>
-                <article><header><h3>Formats</h3><span>Tracks</span></header><div class="dashboard-list" id="detailFormats"></div></article>
-                <article><header><h3>Bitrates</h3><span>Tracks</span></header><div class="dashboard-list" id="detailBitrates"></div></article>
-                <article><header><h3>Release years</h3><span>Tracks</span></header><div class="dashboard-list" id="detailYears"></div></article>
-                <article><header><h3>Sample rates</h3><span>Tracks</span></header><div class="dashboard-list" id="detailSampleRates"></div></article>
-              </div>
-            </div>
-
-            <div id="libraryLoading" class="xrob-loading" aria-live="polite"><div class="xrob-spinner"></div><div id="libraryLoadingText" class="xrob-loader-text">Loading library…</div></div>
-            <div id="libraryList" class="library-list results-grid"></div>
-          </div>
-        </section>
-
-        <!-- ========================== EDITOR ========================== -->
-        <section class="tab-content music-page" id="tab-songs-editor">
-          <div class="page-shell">
-            <section class="page-intro with-actions">
-              <div><span class="eyebrow-text">LIBRARY TOOLS</span><h1>Songs Editor</h1><p>Clean up tags and artwork before tracks settle into your library.</p></div>
-              <button class="btn-refresh" id="songEditorRefresh" type="button"><i data-lucide="refresh-cw"></i> Refresh queue</button>
-            </section>
-            <section class="editor-summary"><div class="editor-summary-icon"><i data-lucide="pencil-line"></i></div><div><strong id="songEditorCount">0</strong><span>tracks waiting for review</span></div></section>
-            <section class="editor-toolbar">
-              <label class="library-search editor-search"><i data-lucide="search"></i><input id="songEditorSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search title, artist, album or filename…"><button class="library-search-clear" id="songEditorSearchClear" hidden type="button"><i data-lucide="x"></i></button></label>
-              <button class="btn-refresh" id="songEditorReset" type="button" title="Put every library track back into the review queue"><i data-lucide="rotate-ccw"></i> Reset</button>
-              <div class="editor-import"><select class="editor-import-select" id="songEditorImportSelect" aria-label="Select a previously edited library track"><option value="">Choose an edited library track…</option></select><button class="btn-preview" id="songEditorImport" type="button"><i data-lucide="plus"></i> Reopen</button></div>
-            </section>
-            <div class="songs-editor-list" id="songEditorList"></div>
-          </div>
-        </section>
-
-        <!-- ========================== SETTINGS ========================== -->
-        <section class="tab-content music-page" id="tab-settings">
-          <div class="page-shell settings-page">
-            <section class="page-intro"><span class="eyebrow-text">PREFERENCES</span><h1>Settings</h1><p>Control downloads, storage, account access and library maintenance.</p></section>
-            <section class="settings-card settings-card-featured">
-              <div class="settings-card-head"><div><span class="eyebrow-text">AUDIO</span><h2>Download quality</h2><p>Choose the format and quality used for new downloads.</p></div><div class="settings-card-icon"><i data-lucide="music-2"></i></div></div>
-              <div class="settings-grid-two">
-                <label class="setting-control"><span>Format</span><select id="set_format"><option value="mp3">MP3</option><option value="flac">FLAC</option><option value="m4a">M4A</option><option value="opus">OPUS</option><option value="ogg">OGG</option></select></label>
-                <label class="setting-control"><span>Quality</span><select id="set_quality"><option value="320K">320 Kbps</option><option value="256K">256 Kbps</option><option value="192K">192 Kbps</option><option value="160K">160 Kbps</option><option value="128K">128 Kbps</option><option value="96K">96 Kbps</option></select></label>
-              </div>
-            </section>
-
-            <section class="settings-card"><div class="settings-card-head compact-head"><div><h2>Library behavior</h2><p>Automate metadata, artwork and scanning.</p></div></div>
-              <div class="settings-list">
-                <div class="setting-row"><div><strong>Write metadata</strong><span>Store title, artist and album tags in downloaded files.</span></div><label class="switch"><input id="set_meta" type="checkbox"><span class="slider"></span></label></div>
-                <div class="setting-row"><div><strong>Embed artwork</strong><span>Add album artwork to downloaded files.</span></div><label class="switch"><input id="set_thumb" type="checkbox"><span class="slider"></span></label></div>
-                <div class="setting-row"><div><strong>Artist folders</strong><span>Save downloads inside an artist folder.</span></div><label class="switch"><input id="set_organize" type="checkbox"><span class="slider"></span></label></div>
-                <div class="setting-row"><div><strong>Background library scan</strong><span>Periodically refresh library metadata.</span></div><label class="switch"><input id="set_scan_enabled" type="checkbox"><span class="slider"></span></label></div>
-                <div class="setting-row"><div><strong>Scan interval</strong><span>Minutes between automatic quick scans (minimum 5).</span></div><input id="set_scan_interval" type="number" min="5" step="5" value="60"></div>
-              </div>
-            </section>
-
-            <section class="settings-card storage-card"><div class="settings-card-head compact-head"><div><h2>Library status</h2><p>Your music files, storage usage and OpenSubsonic service.</p></div><span class="ready-badge"><span class="status-dot"></span> Local</span></div>
-              <div class="storage-path-row"><div><span>Music folder</span><code id="storagePath">—</code></div></div>
-              <div class="library-status-grid">
-                <div><span>Tracks</span><strong id="statusTracks">0</strong></div><div><span>Albums</span><strong id="statusAlbums">0</strong></div><div><span>Artists</span><strong id="statusArtists">0</strong></div><div><span>Total plays</span><strong id="statusPlays">0</strong></div><div class="wide"><span>Track size</span><strong id="statusSize">0 MB</strong></div>
-              </div>
-              <div class="storage-capacity" id="storageCapacity"><div class="storage-capacity-head"><span>Storage usage</span><strong id="storageUsedLabel">—</strong></div><div class="storage-progress" role="progressbar" aria-label="Library storage usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="storageProgressFill"></span></div><div class="storage-capacity-meta"><span id="storageUsedMeta">— used</span><span id="storageFree">— free</span></div></div>
-              <div class="integration-status" id="storageStatus" aria-live="polite">Checking storage…</div>
-              <div class="integration-row"><div><strong>OpenSubsonic</strong><span>Compatible with Amperfy and other OpenSubsonic clients.</span></div><strong id="subsonicStatusValue">Checking…</strong></div>
-            </section>
-
-            <section class="settings-card"><div class="settings-card-head compact-head"><div><h2>Account</h2><p>Change the credentials used for the web interface.</p></div><button class="btn-refresh" id="logoutButton" type="button"><i data-lucide="log-out"></i> Log out</button></div>
-              <div class="settings-grid-two account-fields"><label class="setting-control"><span>Username</span><input id="set_web_username" autocomplete="username" maxlength="64" type="text"></label><label class="setting-control"><span>New password</span><input id="set_web_password" autocomplete="new-password" maxlength="256" type="password" placeholder="Leave blank to keep current"></label></div>
-            </section>
-
-            <section class="settings-card"><div class="settings-card-head compact-head"><div><h2>Maintenance</h2><p>Inspect the library and review application errors.</p></div></div>
-              <div class="settings-list"><div class="setting-row"><div><strong>Library health</strong><span>Check unreadable files, missing artwork, bad tags and duplicates.</span></div><button class="btn-refresh" id="libraryHealthButton" type="button">Check library health</button></div><div class="setting-row"><div><strong>Error log</strong><span>View failed downloads and media-processing errors.</span></div><button class="btn-refresh" id="errorsButton" type="button">Open error log</button></div></div>
-            </section>
-
-            <div class="settings-actions settings-actions-sticky"><button class="save-btn" id="settings-save" type="button"><i data-lucide="save"></i> Save changes</button><button class="btn-refresh" id="settings-reset" type="button"><i data-lucide="rotate-ccw"></i> Reset</button></div>
-            <div id="settingsMsg" class="status-msg" aria-live="polite"></div>
-          </div>
-        </section>
-      </main>
-
-      <!-- ========================== PLAYER ========================== -->
-      <footer class="global-player-bar music-player" id="global-player-bar" style="display:none" aria-label="Music player">
-        <div class="player-track">
-          <div class="player-art-wrap"><img id="gp-art" src="/static/logo.png" alt="Now playing"><div class="player-art-glow"></div></div>
-          <div class="player-track-copy"><strong id="gp-title">Nothing playing</strong><span id="gp-artist">Choose a track from your library</span></div>
-          <button class="player-like" type="button" aria-label="Now playing"><i data-lucide="music-2"></i></button>
-        </div>
-        <div class="player-center">
-          <div class="player-controls">
-            <button class="gp-skip-btn" id="gp-shuffle-btn" type="button" aria-label="Shuffle playback"><i data-lucide="shuffle"></i></button>
-            <button class="gp-skip-btn" id="gp-prev-btn" type="button" aria-label="Previous track"><i data-lucide="skip-back"></i></button>
-            <button class="gp-play-btn" id="gp-play-btn" type="button" aria-label="Play or pause"><i data-lucide="play"></i></button>
-            <button class="gp-skip-btn" id="gp-next-btn" type="button" aria-label="Next track"><i data-lucide="skip-forward"></i></button>
-            <button class="gp-skip-btn" id="gp-queue-btn" type="button" aria-label="Open queue"><i data-lucide="library"></i></button>
-          </div>
-          <div class="player-progress"><span id="gp-cur-time">0:00</span><input id="gp-seek" type="range" min="0" max="100" step=".1" value="0" aria-label="Track progress"><span id="gp-dur-time">0:00</span></div>
-        </div>
-        <div class="player-extra"><canvas id="visualizer-canvas" width="90" height="30" aria-hidden="true"></canvas><i data-lucide="volume-2"></i><input id="gp-volume" type="range" min="0" max="1" step=".01" value=".8" aria-label="Volume"></div>
-      </footer>
-
-    </div>
-
-    <!-- QUEUE -->
-    <aside class="queue-drawer" id="queue-drawer" hidden aria-label="Up Next queue">
-      <div class="queue-drawer-head"><div><span class="eyebrow-text">PLAYBACK</span><strong>Up Next</strong></div><button class="icon-btn" id="queueClose" type="button" aria-label="Close queue"><i data-lucide="x"></i></button></div>
-      <div class="queue-actions"><button class="btn-refresh" id="queueClear" type="button">Clear</button><button class="btn-refresh" id="queueSave" type="button">Save as playlist</button></div>
-      <div class="queue-list" id="queueList"></div>
-      <div class="queue-drawer-foot"><button class="btn-refresh" id="queueRepeat" type="button">Repeat: Off</button></div>
-    </aside>
-
-    <!-- MODALS -->
-    <div class="xrob-modal" id="metadata-modal" hidden>
-      <div class="xrob-modal-card"><div class="xrob-modal-head"><div><span class="eyebrow-text">EDIT TRACK</span><strong>Edit song</strong><div class="modal-subtitle" id="metadataFileName"></div></div><button class="icon-btn" id="metadataClose" type="button" aria-label="Close editor"><i data-lucide="x"></i></button></div><form id="metadataForm" class="modal-form"><input id="metadataId" type="hidden"><label>Title<input id="metadataTitle" autocomplete="off"></label><label>Artist<input id="metadataArtist" autocomplete="off"></label><label>Album<input id="metadataAlbum" autocomplete="off"></label><div class="settings-actions"><button class="save-btn" type="submit">Save &amp; remove from editor</button></div></form></div>
-    </div>
-    <div class="xrob-modal" id="errors-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><div><span class="eyebrow-text">DIAGNOSTICS</span><strong>Error log</strong></div><button class="icon-btn" id="errorsClose" type="button" aria-label="Close error log"><i data-lucide="x"></i></button></div><div id="errorsContent">Loading…</div></div></div>
-    <div class="xrob-modal" id="health-modal" hidden><div class="xrob-modal-card xrob-health-card"><div class="xrob-modal-head"><div><span class="eyebrow-text">LIBRARY CHECK</span><strong>Library health</strong></div><button class="icon-btn" id="healthClose" type="button" aria-label="Close library health"><i data-lucide="x"></i></button></div><div id="healthContent">Checking…</div></div></div>
-
-    <!-- MOBILE NAV -->
-    <nav class="bottom-nav mobile-dock" aria-label="Mobile navigation">
-      <button class="nav-link active" id="mob-btn-home" onclick="navigate('home')" type="button"><i data-lucide="house"></i><span class="nav-text">Home</span></button>
-      <button class="nav-link" id="mob-btn-search" onclick="navigate('search')" type="button"><i data-lucide="search"></i><span class="nav-text">Search</span></button>
-      <button class="nav-link" id="mob-btn-downloads" onclick="navigate('downloads')" type="button"><i data-lucide="download"></i><span class="nav-text">Downloads</span><span class="nav-count" id="mobQueueCount">0</span></button>
-      <button class="nav-link" id="mob-btn-library" onclick="navigate('library')" type="button"><i data-lucide="library"></i><span class="nav-text">Library</span><span class="nav-count" id="mobLibCount">0</span></button>
-      <button class="nav-link" id="mob-btn-songs-editor" onclick="navigate('songs-editor')" type="button"><i data-lucide="pencil-line"></i><span class="nav-text">Editor</span></button>
-      <button class="nav-link" id="mob-btn-settings" onclick="navigate('settings')" type="button"><i data-lucide="settings"></i><span class="nav-text">Settings</span></button>
-    </nav>
+    <footer class="global-player-bar music-player" id="global-player-bar" style="display:none" aria-label="Music player"><div class="player-main"><div class="player-track"><div class="player-art-wrap"><img id="gp-art" src="/static/logo.png" alt="Now playing"></div><div class="player-track-copy"><strong id="gp-title">Nothing playing</strong><span id="gp-artist">Choose a track from your library</span></div></div><div class="player-controls"><button class="player-small" id="gp-shuffle-btn" type="button" aria-label="Shuffle"><i data-lucide="shuffle"></i></button><button class="player-small" id="gp-prev-btn" type="button" aria-label="Previous"><i data-lucide="skip-back"></i></button><button class="player-play" id="gp-play-btn" type="button" aria-label="Play or pause"><i data-lucide="play"></i></button><button class="player-small" id="gp-next-btn" type="button" aria-label="Next"><i data-lucide="skip-forward"></i></button><button class="player-small" id="gp-queue-btn" type="button" aria-label="Queue"><i data-lucide="library"></i></button></div><div class="player-progress"><span id="gp-cur-time">0:00</span><input id="gp-seek" type="range" min="0" max="100" step=".1" value="0" aria-label="Track progress"><span id="gp-dur-time">0:00</span></div></div><div class="player-extra"><canvas id="visualizer-canvas" width="90" height="30"></canvas><i data-lucide="volume-2"></i><input id="gp-volume" type="range" min="0" max="1" step=".01" value=".8" aria-label="Volume"></div></footer>
   </div>
+
+  <aside class="queue-drawer" id="queue-drawer" hidden aria-label="Up Next"><div class="queue-head"><div><span class="overline">PLAYBACK</span><strong>Up Next</strong></div><button class="icon-btn" id="queueClose" type="button"><i data-lucide="x"></i></button></div><div class="queue-actions"><button class="btn-ghost" id="queueClear" type="button">Clear</button><button class="btn-primary" id="queueSave" type="button">Save playlist</button></div><div class="queue-list" id="queueList"></div><div class="queue-foot"><button class="btn-ghost" id="queueRepeat" type="button">Repeat: Off</button></div></aside>
+
+  <div class="xrob-modal" id="metadata-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><div><span class="overline">EDIT TRACK</span><strong>Edit song</strong><div class="modal-subtitle" id="metadataFileName"></div></div><button class="icon-btn" id="metadataClose" type="button"><i data-lucide="x"></i></button></div><form id="metadataForm" class="modal-form"><input id="metadataId" type="hidden"><label>Title<input id="metadataTitle" autocomplete="off"></label><label>Artist<input id="metadataArtist" autocomplete="off"></label><label>Album<input id="metadataAlbum" autocomplete="off"></label><div class="settings-actions"><button class="save-btn" type="submit">Save &amp; remove from editor</button></div></form></div></div>
+  <div class="xrob-modal" id="errors-modal" hidden><div class="xrob-modal-card"><div class="xrob-modal-head"><div><span class="overline">DIAGNOSTICS</span><strong>Error log</strong></div><button class="icon-btn" id="errorsClose" type="button"><i data-lucide="x"></i></button></div><div id="errorsContent">Loading…</div></div></div>
+  <div class="xrob-modal" id="health-modal" hidden><div class="xrob-modal-card xrob-health-card"><div class="xrob-modal-head"><div><span class="overline">LIBRARY CHECK</span><strong>Library health</strong></div><button class="icon-btn" id="healthClose" type="button"><i data-lucide="x"></i></button></div><div id="healthContent">Checking…</div></div></div>
+
+  <nav class="bottom-nav mobile-dock" aria-label="Mobile navigation"><button class="nav-link active" id="mob-btn-home" onclick="navigate('home')" type="button"><i data-lucide="house"></i><span>Home</span></button><button class="nav-link" id="mob-btn-search" onclick="navigate('search')" type="button"><i data-lucide="search"></i><span>Search</span></button><button class="nav-link" id="mob-btn-downloads" onclick="navigate('downloads')" type="button"><i data-lucide="download"></i><span>Downloads</span><b id="mobQueueCount">0</b></button><button class="nav-link" id="mob-btn-library" onclick="navigate('library')" type="button"><i data-lucide="library"></i><span>Library</span><b id="mobLibCount">0</b></button><button class="nav-link" id="mob-btn-songs-editor" onclick="navigate('songs-editor')" type="button"><i data-lucide="pencil-line"></i><span>Editor</span></button><button class="nav-link" id="mob-btn-settings" onclick="navigate('settings')" type="button"><i data-lucide="settings"></i><span>Settings</span></button></nav>
 
   <script src="/static/app.js?v=293"></script>
 </body>
