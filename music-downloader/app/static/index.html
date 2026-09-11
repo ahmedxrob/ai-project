@@ -67,10 +67,8 @@
 
       <nav aria-label="Primary" class="primary-nav">
        <button class="nav-link active" id="btn-home" onclick="navigate('home')" type="button"><i aria-hidden="true" data-lucide="house"></i><span class="nav-label"><span class="nav-text">Home</span></span></button>
-       <button class="nav-link" id="btn-search" onclick="navigate('search')" type="button"><i aria-hidden="true" data-lucide="search"></i><span class="nav-label"><span class="nav-text">Search</span></span></button>
        <button class="nav-link" id="btn-library" onclick="navigate('library')" type="button"><i aria-hidden="true" data-lucide="library"></i><span class="nav-label"><span class="nav-text">Library</span><span class="nav-count" id="sideLibCount">0</span></span></button>
        <button class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')" type="button"><i aria-hidden="true" data-lucide="pencil-line"></i><span class="nav-label"><span class="nav-text">Editor</span><span class="nav-count" id="songEditorBadge">0</span></span></button>
-       <button class="nav-link" id="btn-settings" onclick="navigate('settings')" type="button"><i aria-hidden="true" data-lucide="sliders-horizontal"></i><span class="nav-label"><span class="nav-text">Settings</span></span></button>
       </nav>
 
       <div class="topbar-actions">
@@ -128,34 +126,21 @@
         </button>
        </div>
        <div class="home-stats-grid page-section">
-        <button aria-label="Open Tracks in Library" class="home-stat-card home-library-link" onclick="navigate('library')" type="button">
+        <button aria-label="Open Tracks in Library" class="home-stat-card home-library-link" onclick="navigate('library'); libraryView='tracks'; selectedArtistId=null; selectedAlbumId=null; renderLibraryView()" type="button">
          <span class="home-stat-icon"><i aria-hidden="true" data-lucide="music-2"></i></span>
          <span class="home-stat-copy"><strong id="homeTracks">0</strong><span>Tracks</span></span>
-         <i aria-hidden="true" class="home-stat-arrow" data-lucide="arrow-up-right"></i>
         </button>
         <button aria-label="Open Artists in Library" class="home-stat-card home-library-link" onclick="navigate('library'); libraryView='artists'; selectedArtistId=null; selectedAlbumId=null; renderLibraryView()" type="button">
          <span class="home-stat-icon"><i aria-hidden="true" data-lucide="user-round"></i></span>
          <span class="home-stat-copy"><strong id="homeArtists">0</strong><span>Artists</span></span>
-         <i aria-hidden="true" class="home-stat-arrow" data-lucide="arrow-up-right"></i>
         </button>
         <button aria-label="Open Albums in Library" class="home-stat-card home-library-link" onclick="navigate('library'); libraryView='albums'; selectedArtistId=null; selectedAlbumId=null; renderLibraryView()" type="button">
          <span class="home-stat-icon"><i aria-hidden="true" data-lucide="disc-3"></i></span>
          <span class="home-stat-copy"><strong id="homeAlbums">0</strong><span>Albums</span></span>
-         <i aria-hidden="true" class="home-stat-arrow" data-lucide="arrow-up-right"></i>
         </button>
         <div class="home-stat-card">
-         <div class="home-stat-icon">
-          <i aria-hidden="true" data-lucide="play">
-          </i>
-         </div>
-         <div>
-          <strong id="homePlays">
-           0
-          </strong>
-          <span>
-           Total Plays
-          </span>
-         </div>
+         <span class="home-stat-icon"><i aria-hidden="true" data-lucide="play"></i></span>
+         <span class="home-stat-copy"><strong id="homePlays">0</strong><span>Total Plays</span></span>
         </div>
        </div>
        <section class="daily-mix-card page-section" id="dailyMixCard">
@@ -1230,7 +1215,7 @@
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="/static/app.js?v=292">
+  <script src="/static/app.js?v=293">
   </script>
  </body>
 </html>
