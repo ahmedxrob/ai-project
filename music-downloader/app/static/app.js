@@ -2038,7 +2038,7 @@ async function loadStats() {
 
         const response =
             await fetch(
-                "api/stats",
+                "/api/stats",
                 {
                     cache:
                         "no-store",
@@ -3575,7 +3575,7 @@ async function pollTasks(force = false) {
 
         const response =
             await fetch(
-                "api/tasks",
+                "/api/tasks",
                 {
                     cache: "no-store"
                 }
@@ -3702,7 +3702,7 @@ async function startDownload(
 
         const response =
             await fetch(
-                "api/download",
+                "/api/download",
                 {
                     method: "POST",
 
@@ -3738,6 +3738,15 @@ async function startDownload(
         }
 
 
+        if (data.task) {
+            const existingIndex = latestTasks.findIndex(t => String(t.id) === String(data.task.id));
+            if (existingIndex >= 0) latestTasks[existingIndex] = data.task;
+            else latestTasks.unshift(data.task);
+            lastTaskSignature = taskSignature(latestTasks);
+            updateQueueCounters(latestTasks);
+            renderDownloads(latestTasks);
+        }
+
         showToast(
             data.status === "already_queued"
                 ? "⏳ Already in queue"
@@ -3747,14 +3756,8 @@ async function startDownload(
         );
 
 
-        const downloadsDrawer = document.getElementById("downloads-drawer");
-        if (downloadsDrawer && !downloadsDrawer.hidden) {
-            await pollTasks(true);
-            openDownloadsDrawer();
-        } else {
-            openDownloadsDrawer();
-            await pollTasks(true);
-        }
+        openDownloadsDrawer();
+        await pollTasks(true);
 
     } catch (error) {
 
