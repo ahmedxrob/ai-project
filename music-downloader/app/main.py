@@ -398,7 +398,7 @@ def load_settings():
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist", False))
     settings["title_cleanup_rules"] = str(settings.get("title_cleanup_rules") or "")
     settings["metadata_mode"] = str(settings.get("metadata_mode") or "auto").lower()
-    if settings["metadata_mode"] not in {"off", "musicbrainz", "auto", "ai"}:
+    if settings["metadata_mode"] not in {"off", "musicbrainz", "auto"}:
         settings["metadata_mode"] = "auto"
     settings.pop("max_results", None)
 
@@ -802,23 +802,27 @@ def clean_filename(value):
     return value[:180] if value else "Unknown"
 
 
-def normalize_duplicate_key(value):
-    value = Path(
-        value or ""
-    ).stem.lower()
+def normalize_identity_text(value):
+    text = clean_metadata_text(value, "").casefold()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(?:ed)?|audio|visualizer|video clip)\b", " ", text, flags=re.I)
+    text = re.sub(r"[\[\]\(\)\{\}]+", " ", text)
+    text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
 
-    value = re.sub(
-        r"\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(ed)?|audio)\b",
-        " ",
-        value,
-        flags=re.I,
-    )
 
-    return re.sub(
-        r"[^a-z0-9]+",
-        "",
-        value,
-    )
+def normalize_duplicate_key(value, artist=None):
+    # Duplicate identity intentionally uses only normalized artist + title.
+    if artist is not None:
+        title = value
+        return f"{normalize_identity_text(artist)}\x00{normalize_identity_text(title)}"
+    text = str(value or "")
+    parts = text.split("|", 2)
+    if len(parts) >= 2:
+        title, artist = parts[0], parts[1]
+        return f"{normalize_identity_text(artist)}\x00{normalize_identity_text(title)}"
+    return normalize_identity_text(Path(text).stem)
 
 
 # ============================================================
@@ -1566,68 +1570,13 @@ async def _itunes_lookup(artist, title):
     return best
 
 
-def _extract_openai_text(payload):
-    if isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
-        return payload["output_text"].strip()
-    chunks = []
-    for item in payload.get("output") or []:
-        for content in item.get("content") or []:
-            if isinstance(content, dict) and isinstance(content.get("text"), str):
-                chunks.append(content["text"])
-    return "\n".join(chunks).strip()
-
-
-async def _ai_metadata_refine(raw_title, artist, candidates):
-    api_key = os.getenv("XROB_AI_API_KEY", "").strip()
-    if not api_key:
-        return None
-    model = os.getenv("XROB_AI_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
-    prompt = {
-        "raw_title": raw_title,
-        "artist": artist,
-        "candidates": candidates,
-        "task": "Normalize music download metadata. Remove platform/video labels from the title, preserve meaningful remix/live/version text when it is part of the actual track identity, and choose the most likely canonical album. Do not invent an album. If no candidate is trustworthy, return an empty album. Return JSON only with title, artist, album, confidence (0 to 1), reason.",
-    }
-    body = json.dumps({
-        "model": model,
-        "input": "You are a conservative music metadata editor. " + json.dumps(prompt, ensure_ascii=False),
-        "max_output_tokens": 300,
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=body,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        # Perform the JSON request directly because the generic GET helper does not accept a body.
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-        text = _extract_openai_text(payload)
-        if not text:
-            return None
-        text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.I).strip()
-        result = json.loads(text)
-        if not isinstance(result, dict):
-            return None
-        return {
-            "title": clean_metadata_text(result.get("title"), raw_title),
-            "artist": clean_metadata_text(result.get("artist"), artist),
-            "album": clean_metadata_text(result.get("album"), ""),
-            "score": max(0.0, min(1.0, safe_float(result.get("confidence"), 0.0))),
-            "source": "AI + catalog evidence",
-            "reason": str(result.get("reason") or "").strip(),
-        }
-    except Exception:
-        return None
-
-
 async def resolve_download_metadata(raw_title, artist, album, settings):
     title = clean_title_with_rules(raw_title or "Unknown Track", settings.get("title_cleanup_rules", ""))
     artist = clean_metadata_text(artist, "Unknown Artist")
-    album = clean_metadata_text(album, "")
+    supplied_album = clean_metadata_text(album, "")
+    result = {"title": title, "artist": artist, "album": supplied_album or artist, "confidence": 0.25, "source": "Supplied metadata", "reason": ""}
+
     mode = str(settings.get("metadata_mode") or "auto").lower()
-    result = {"title": title, "artist": artist, "album": album or artist, "confidence": 0.25, "source": "Fallback", "reason": ""}
     if mode == "off":
         return result
 
@@ -1637,28 +1586,21 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
     for cand in (mb, it):
         if cand and cand.get("score", 0) >= 0.55:
             candidates.append(cand)
+
     if candidates:
         candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
         best = candidates[0]
+        # Catalog data is evidence, never a reason to overwrite a clearly supplied album.
+        chosen_album = supplied_album or clean_metadata_text(best.get("album"), "")
         result.update({
             "title": clean_title_with_rules(best.get("title") or title, settings.get("title_cleanup_rules", "")),
             "artist": clean_metadata_text(best.get("artist"), artist),
-            "album": clean_metadata_text(best.get("album"), "") or artist,
+            "album": chosen_album or artist,
             "confidence": float(best.get("score", 0.0)),
             "source": best.get("source") or "Catalog",
         })
-
-    if mode in {"auto", "ai"} and (mode == "ai" or result["confidence"] < 0.90 or not album):
-        ai = await _ai_metadata_refine(title, artist, candidates)
-        if ai and ai.get("score", 0) >= max(0.72, result["confidence"] - 0.03):
-            result.update({
-                "title": clean_title_with_rules(ai.get("title") or result["title"], settings.get("title_cleanup_rules", "")),
-                "artist": clean_metadata_text(ai.get("artist"), result["artist"]),
-                "album": clean_metadata_text(ai.get("album"), "") or result["album"] or artist,
-                "confidence": float(ai.get("score", 0.0)),
-                "source": ai.get("source") or "AI + catalog evidence",
-                "reason": ai.get("reason", ""),
-            })
+    else:
+        result["title"] = clean_title_with_rules(title, settings.get("title_cleanup_rules", ""))
 
     result["album"] = clean_metadata_text(result.get("album"), "") or result["artist"] or "Unknown Artist"
     return result
@@ -2518,6 +2460,25 @@ async def api_preview(
 # DOWNLOAD API
 # ============================================================
 
+async def find_existing_track(title, artist):
+    target_key = normalize_duplicate_key(title, artist)
+    if not target_key:
+        return None
+    try:
+        files = await get_all_audio_files()
+    except Exception:
+        return None
+    for path in files:
+        try:
+            md = await read_metadata(path)
+        except Exception:
+            continue
+        key = normalize_duplicate_key(md.get("title") or path.stem, md.get("artist") or "Unknown Artist")
+        if key == target_key:
+            return str(path.relative_to(DOWNLOAD_DIR))
+    return None
+
+
 @app.post("/api/download")
 async def api_download(
     payload: dict = Body(...),
@@ -2549,8 +2510,17 @@ async def api_download(
 
     task_id = uuid.uuid4().hex[:12]
 
-    task_title = str(payload.get("title", "Unknown Track") or "Unknown Track")
-    task_artist = str(payload.get("artist", "Unknown Artist") or "Unknown Artist")
+    settings = load_settings()
+    task_title = clean_title_with_rules(str(payload.get("title", "Unknown Track") or "Unknown Track"), settings.get("title_cleanup_rules", ""))
+    task_artist = clean_metadata_text(str(payload.get("artist", "Unknown Artist") or "Unknown Artist"), "Unknown Artist")
+    existing = await find_existing_track(task_title, task_artist)
+    if existing:
+        return {
+            "status": "already_downloaded",
+            "file": existing,
+            "title": task_title,
+            "artist": task_artist,
+        }
     raw_album = payload.get("album")
     task_album = str(raw_album).strip() if raw_album else ""
     if not task_album or task_album.casefold() in {"unknown album", "unknown"}:
@@ -6159,7 +6129,7 @@ async def api_library_health():
         title=str(md.get("title") or "").strip(); artist=str(md.get("artist") or "").strip(); album=str(md.get("album") or "").strip()
         if not title or not artist or not album: bad_tags.append({"path":str(path.relative_to(DOWNLOAD_DIR)),"title":title,"artist":artist,"album":album})
         if not await ensure_cover(path): missing_art.append(str(path.relative_to(DOWNLOAD_DIR)))
-        key=normalize_duplicate_key(f"{title}|{artist}|{album}")
+        key=normalize_duplicate_key(title, artist)
         groups.setdefault(key,[]).append(str(path.relative_to(DOWNLOAD_DIR)))
     duplicates=[{"key":k,"files":v} for k,v in groups.items() if k and len(v)>1]
     return {"unreadable":unreadable,"bad_tags":bad_tags,"missing_artwork":missing_art,"duplicates":duplicates,"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":len(duplicates)}}
