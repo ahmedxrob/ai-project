@@ -13,6 +13,7 @@ import time
 import urllib.parse
 import urllib.request
 import difflib
+import unicodedata
 import uuid
 import secrets
 import xml.etree.ElementTree as ET
