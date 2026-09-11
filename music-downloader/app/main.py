@@ -197,6 +197,7 @@ TASK_QUEUE = asyncio.Queue()
 ACTIVE_PROCESSES = {}
 LAST_SAVED_TIME = {}
 METADATA_CACHE = {}
+DOWNLOAD_GUARD = asyncio.Lock()
 LIBRARY_CACHE = None
 LIBRARY_CACHE_TIME = 0.0
 LIBRARY_CACHE_TTL = 10.0
@@ -278,26 +279,6 @@ def configure_storage():
     legacy_settings = DOWNLOAD_DIR / ".settings.json"
     SETTINGS_FILE = DATA_DIR / "settings.json"
     LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
-AUTH_USER = os.getenv("XROB_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "admin")
-AUTH_COOKIE = "xrob_session"
-AUTH_TTL = 60 * 60 * 24 * 14
-AUTH_SESSIONS = {}
-
-def _auth_token():
-    return secrets.token_urlsafe(32)
-
-def _is_authenticated(token):
-    if not token:
-        return False
-    created = AUTH_SESSIONS.get(token)
-    if not created:
-        return False
-    if time.time() - created > AUTH_TTL:
-        AUTH_SESSIONS.pop(token, None)
-        return False
-    return True
-
     DB_FILE = DATA_DIR / "tasks.db"
 
     if not DB_FILE.exists() and legacy_db.exists():
@@ -319,6 +300,7 @@ def _is_authenticated(token):
 
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 
 
 def storage_info_sync():
@@ -833,8 +815,15 @@ def clean_filename(value):
     return value[:180] if value else "Unknown"
 
 
-def normalize_identity_text(value):
-    text = clean_metadata_text(value, "").casefold()
+def normalize_identity_text(value, title=False):
+    """Normalize values used for stable library/download identity matching."""
+    text = clean_metadata_text(value, "")
+    if title:
+        # Use the same catalog cleanup rules for both search results and files in
+        # the library. This prevents e.g. ``06 - DELLALI (lyric video) #27album``
+        # from becoming a different identity than the canonical ``DELLALI``.
+        text = normalize_catalog_title(text)
+    text = text.casefold()
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = re.sub(r"\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(?:ed)?|audio|visualizer|video clip)\b", " ", text, flags=re.I)
@@ -844,16 +833,15 @@ def normalize_identity_text(value):
 
 
 def normalize_duplicate_key(value, artist=None):
-    # Duplicate identity intentionally uses only normalized artist + title.
+    # Duplicate identity intentionally uses normalized artist + canonical title.
     if artist is not None:
-        title = value
-        return f"{normalize_identity_text(artist)}\x00{normalize_identity_text(title)}"
+        return f"{normalize_identity_text(artist)}\x00{normalize_identity_text(value, title=True)}"
     text = str(value or "")
     parts = text.split("|", 2)
     if len(parts) >= 2:
         title, artist = parts[0], parts[1]
-        return f"{normalize_identity_text(artist)}\x00{normalize_identity_text(title)}"
-    return normalize_identity_text(Path(text).stem)
+        return f"{normalize_identity_text(artist)}\x00{normalize_identity_text(title, title=True)}"
+    return normalize_identity_text(Path(text).stem, title=True)
 
 
 # ============================================================
@@ -1639,6 +1627,25 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
     return result
 
 
+async def refresh_after_download(final_path):
+    try:
+        library_now = await build_library(force=True)
+        await persist_library_index(library_now)
+        matched = next(
+            (x for x in library_now.get("songs", []) if str(x.get("path")) == str(final_path)),
+            None,
+        )
+        if matched:
+            with db_connect() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO song_review(song_id,state,actioned_at) VALUES(?,'pending',0)",
+                    (matched["id"],),
+                )
+                conn.commit()
+    except Exception as exc:
+        await write_app_error("library_refresh_after_download", str(exc))
+
+
 # ============================================================
 # DOWNLOAD WORKER
 # ============================================================
@@ -2058,15 +2065,10 @@ async def download_worker():
 
             METADATA_CACHE.pop(str(final_path), None)
             invalidate_library_cache()
-            try:
-                with db_connect() as conn:
-                    # New downloads always enter the Songs Editor review queue.
-                    library_now = await build_library(force=True)
-                    matched = next((x for x in library_now.get("songs",[]) if str(x.get("path")) == str(final_path)), None)
-                    if matched:
-                        conn.execute("INSERT OR REPLACE INTO song_review(song_id,state,actioned_at) VALUES(?,'pending',0)", (matched["id"],)); conn.commit()
-            except Exception as review_exc:
-                await write_app_error("song_editor",str(review_exc))
+            # Do not block completion on a full-library metadata rebuild. The file
+            # is already safely in the library; queue a background refresh that also
+            # persists the duplicate-detection index and adds the song to the editor.
+            asyncio.create_task(refresh_after_download(final_path))
 
             await notify_task_update(
                 task,
@@ -2369,6 +2371,22 @@ async def youtube_search(
     return results
 
 
+def _library_duplicate_keys_sync():
+    keys = set()
+    try:
+        index = _load_library_index_sync()
+        entries = index.get("entries", {}) if isinstance(index, dict) else {}
+        for rel, cached in entries.items():
+            if not isinstance(cached, dict):
+                cached = {}
+            title = cached.get("title") or Path(str(rel)).stem
+            artist = cached.get("artist") or "Unknown Artist"
+            keys.add(normalize_duplicate_key(title, artist))
+    except Exception:
+        pass
+    return keys
+
+
 @app.get("/api/search")
 async def api_search(
     q: str = Query(...),
@@ -2381,12 +2399,22 @@ async def api_search(
     max_results = 20
 
     try:
-
-        return await youtube_search(
+        results = await youtube_search(
             q,
             max_results,
             max(1, page),
         )
+        library_keys = await asyncio.to_thread(_library_duplicate_keys_sync)
+        active_keys = {
+            normalize_duplicate_key(task.get("title", ""), task.get("artist", ""))
+            for task in TASKS.values()
+            if task.get("status") in {"queued", "downloading", "processing"}
+        }
+        for item in results:
+            key = normalize_duplicate_key(item.get("title", ""), item.get("channel", "Unknown Artist"))
+            item["already_downloaded"] = bool(key and key in library_keys)
+            item["already_queued"] = bool(key and key in active_keys)
+        return results
 
     except Exception as error:
 
@@ -2510,12 +2538,7 @@ async def api_preview(
 # ============================================================
 
 def find_existing_track_fast_sync(title, artist):
-    """Check the persisted library index without reading every audio tag.
-
-    The download endpoint is latency-sensitive: a full metadata scan here made
-    clicking Save wait on the size of the whole library. The index is already
-    maintained by library scans, so use it as an O(n) lightweight duplicate check.
-    """
+    """Check the persisted library index without reading every audio tag."""
     target_key = normalize_duplicate_key(title, artist)
     if not target_key:
         return None
@@ -2548,30 +2571,8 @@ async def api_download(
 ):
 
     url = payload.get("url")
-
     if not url:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing URL",
-        )
-
-    for task in TASKS.values():
-
-        if (
-            task.get("url") == url
-            and task.get("status") in {
-                "queued",
-                "downloading",
-                "processing",
-            }
-        ):
-
-            return {
-                "status": "already_queued",
-                "task_id": task["id"],
-            }
-
-    task_id = uuid.uuid4().hex[:12]
+        raise HTTPException(status_code=400, detail="Missing URL")
 
     settings = load_settings()
     task_title = normalize_catalog_title(
@@ -2582,55 +2583,55 @@ async def api_download(
         str(payload.get("artist", "Unknown Artist") or "Unknown Artist"),
         "Unknown Artist",
     )
-    # Fast duplicate check only. The persisted library index avoids reading every
-    # audio file's tags before the request can enqueue the download.
-    existing = await find_existing_track(task_title, task_artist)
-    if existing:
-        return {
-            "status": "already_downloaded",
-            "file": existing,
-            "title": task_title,
-            "artist": task_artist,
-        }
     raw_album = payload.get("album")
     task_album = str(raw_album).strip() if raw_album else ""
     if task_album.casefold() in {"unknown album", "unknown"}:
         task_album = ""
 
-    task = {
-        "id": task_id,
-        "title": task_title,
-        "artist": task_artist,
-        "album": task_album,
-        "url": url,
-        "elementId": str(
-            payload.get(
-                "elementId",
-                "",
-            )
-        ),
-        "status": "queued",
-        "percent": 0,
-        "speed": "",
-        "step": "Queued...",
-        "error": "",
-        "last_updated": (
-            time.time() * 1000
-        ),
-        "final_name": "",
-        "cancel_requested": False,
-        "created_at": time.time() * 1000,
-        "queue_token": uuid.uuid4().hex,
-    }
+    # Make the Save operation idempotent. The lock prevents two rapid/concurrent
+    # clicks from both passing the duplicate check before either task is registered.
+    async with DOWNLOAD_GUARD:
+        target_key = normalize_duplicate_key(task_title, task_artist)
+        for task in TASKS.values():
+            task_key = normalize_duplicate_key(task.get("title", ""), task.get("artist", ""))
+            if task_key == target_key and task.get("status") in {"queued", "downloading", "processing"}:
+                return {"status": "already_queued", "task_id": task["id"]}
+            if task.get("url") == url and task.get("status") in {"queued", "downloading", "processing"}:
+                return {"status": "already_queued", "task_id": task["id"]}
 
-    TASKS[task_id] = task
+        existing = await find_existing_track(task_title, task_artist)
+        if existing:
+            return {
+                "status": "already_downloaded",
+                "file": existing,
+                "title": task_title,
+                "artist": task_artist,
+            }
 
-    await notify_task_update(
-        task,
-        force_save=True,
-    )
+        task_id = uuid.uuid4().hex[:12]
+        task = {
+            "id": task_id,
+            "title": task_title,
+            "artist": task_artist,
+            "album": task_album,
+            "url": url,
+            "elementId": str(payload.get("elementId", "")),
+            "status": "queued",
+            "percent": 0,
+            "speed": "",
+            "step": "Queued...",
+            "error": "",
+            "last_updated": time.time() * 1000,
+            "final_name": "",
+            "cancel_requested": False,
+            "created_at": time.time() * 1000,
+            "queue_token": uuid.uuid4().hex,
+        }
+        TASKS[task_id] = task
+        queue_token = task["queue_token"]
 
-    await TASK_QUEUE.put((task_id, task["queue_token"]))
+    await notify_task_update(task, force_save=True)
+    await TASK_QUEUE.put((task_id, queue_token))
 
     return {
         "status": "ok",
