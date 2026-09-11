@@ -6687,3 +6687,124 @@ body.music-app {
     .recently-added-card .recent-card-title { font-size: 11px !important; }
     .recently-added-card .recent-card-artist { font-size: 9px !important; }
 }
+
+/* ============================================================
+   FINAL DRAWER BEHAVIOR — DOWNLOADS TOP / QUEUE BOTTOM / CONNECTED
+   Downloads alone: top-right.
+   Queue alone: bottom-right.
+   Both open: one connected panel, Downloads directly above Queue.
+   ============================================================ */
+.overlay-drawers-stack {
+  position: fixed !important;
+  right: var(--content-gutter) !important;
+  bottom: calc(var(--player-height) + 10px) !important;
+  top: auto !important;
+  left: auto !important;
+  width: min(440px, calc(100vw - (var(--content-gutter) * 2))) !important;
+  height: auto !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  justify-content: flex-end !important;
+  gap: 0 !important;
+  pointer-events: none !important;
+  overflow: visible !important;
+  z-index: 1450 !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  flex: 0 0 auto !important;
+  pointer-events: auto !important;
+  overflow: hidden !important;
+  border-radius: 18px !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer[hidden],
+.overlay-drawers-stack > .queue-drawer[hidden] {
+  display: none !important;
+}
+
+/* Queue-only: bottom-right. */
+.overlay-drawers-stack:not(:has(> .downloads-drawer:not([hidden]))) {
+  top: auto !important;
+  bottom: calc(var(--player-height) + 10px) !important;
+}
+
+/* Downloads-only: top-right. */
+.overlay-drawers-stack:not(:has(> .queue-drawer:not([hidden]))) {
+  top: calc(var(--app-header-height) + 14px) !important;
+  bottom: auto !important;
+}
+
+/* Both open: stay bottom anchored and become one connected panel. */
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) {
+  top: auto !important;
+  bottom: calc(var(--player-height) + 10px) !important;
+}
+
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .downloads-drawer {
+  order: 1 !important;
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-bottom-color: color-mix(in srgb, var(--border-strong) 50%, transparent) !important;
+}
+
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .queue-drawer {
+  order: 2 !important;
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+}
+
+/* Solo drawers retain their own rounded container. */
+.overlay-drawers-stack:not(:has(> .downloads-drawer:not([hidden]))) > .queue-drawer,
+.overlay-drawers-stack:not(:has(> .queue-drawer:not([hidden]))) > .downloads-drawer {
+  border-radius: 18px !important;
+}
+
+/* Content scrolling and sensible combined heights. */
+.overlay-drawers-stack > .downloads-drawer {
+  max-height: min(58vh, 560px) !important;
+}
+.overlay-drawers-stack > .queue-drawer {
+  max-height: min(58vh, 560px) !important;
+}
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list,
+.overlay-drawers-stack > .queue-drawer .queue-list {
+  overflow: auto !important;
+}
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list {
+  max-height: min(47vh, 440px) !important;
+}
+.overlay-drawers-stack > .queue-drawer .queue-list {
+  max-height: min(43vh, 400px) !important;
+}
+
+@media (max-width: 700px) {
+  .overlay-drawers-stack {
+    right: 8px !important;
+    width: calc(100vw - 16px) !important;
+  }
+
+  .overlay-drawers-stack:not(:has(> .queue-drawer:not([hidden]))) {
+    top: calc(var(--app-header-height) + 10px) !important;
+    bottom: auto !important;
+  }
+
+  .overlay-drawers-stack:not(:has(> .downloads-drawer:not([hidden]))) {
+    top: auto !important;
+    bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
+  }
+
+  .overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) {
+    top: auto !important;
+    bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
+  }
+}
