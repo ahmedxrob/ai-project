@@ -476,16 +476,20 @@ function escapeHtml(value) {
 
 function normalizeKey(value) {
 
-    return String(value || "")
-        .toLowerCase()
-        .replace(
-            /\b(official\s*(video|audio|music video)|lyrics?|hd|4k|remaster(ed)?|audio)\b/gi,
-            " "
-        )
-        .replace(
-            /[^a-z0-9]+/g,
-            ""
-        );
+    let text = String(value || "").trim().toLowerCase();
+
+    // Keep search-side duplicate detection in sync with the server/catalog
+    // title normalization: strip track numbers and upload-only decorations.
+    text = text.replace(/^\s*\[?\d{1,3}\]?\s*[-–—.)_:]+\s*/i, "");
+    text = text.replace(/\s+#\d{1,4}\s*album\b.*$/i, "");
+    text = text.replace(/\s*[\(\[]\s*(?:official\s+)?(?:lyric|lyrics|music\s+video|video|mv|visualizer|audio)(?:\s+video|\s+clip)?\s*[\)\]]/gi, " ");
+    text = text.replace(/\s+(?:official\s+)?(?:music\s+)?video(?:\s+clip)?\s*$/i, "");
+    text = text.replace(/\s+mv\s*$/i, "");
+    text = text.replace(/\s+(?:lyric|lyrics)\s*(?:video|clip)?\s*$/i, "");
+    text = text.replace(/\s+prod(?:uced)?\.?\s*by\b.*$/i, "");
+    text = text.replace(/[^a-z0-9]+/g, "");
+
+    return text;
 }
 
 
@@ -2463,23 +2467,17 @@ async function searchMusic() {
     try {
 
         /*
-         * STEP 1
-         * Synchronize library
+         * Search the external catalog immediately. Duplicate status is supplied
+         * by the server's lightweight persisted library index, so a full library
+         * metadata sync never blocks the search request.
          */
         smoothSearchLoading(
             5,
-            20,
-            "Synchronizing library...",
-            300
+            25,
+            "Searching for music...",
+            250
         );
 
-        await refreshLibraryCache();
-
-
-        /*
-         * STEP 2
-         * Search server
-         */
         smoothSearchLoading(
             20,
             45,
@@ -2557,6 +2555,9 @@ async function searchMusic() {
         );
 
         renderItems(data);
+        // Refresh the local library cache in the background for the Library view,
+        // without delaying the search results themselves.
+        refreshLibraryCache().catch(() => {});
 
 
         /*
@@ -2715,15 +2716,19 @@ function renderItems(items) {
                 );
 
 
-            if (
-                libraryFilesSet.has(
-                    titleKey
-                )
-            ) {
+            if (item.already_downloaded || libraryFilesSet.has(titleKey)) {
 
                 group.innerHTML = `
                     <div class="badge-library">
                         ✅ In Library
+                    </div>
+                `;
+
+            } else if (item.already_queued) {
+
+                group.innerHTML = `
+                    <div class="badge-library">
+                        ⏳ In Download Queue
                     </div>
                 `;
 
@@ -3745,6 +3750,12 @@ async function startDownload(
             lastTaskSignature = taskSignature(latestTasks);
             updateQueueCounters(latestTasks);
             renderDownloads(latestTasks);
+        }
+
+        if (data.status === "already_downloaded" && button) {
+            button.disabled = true;
+            button.textContent = "✅ In Library";
+            button.className = "btn-refresh";
         }
 
         showToast(
@@ -5141,9 +5152,9 @@ function installEnhancedFeatures(){
         audio.addEventListener('loadedmetadata',()=>{
             const id=currentSongId();
             if (id && playSessionTrackId !== id) beginPlaySession(id);
-            // Every newly selected track starts from the beginning.
-            // Keep position persistence for existing data, but never restore it on track selection.
-            if (audio) audio.currentTime = 0;
+            // Every newly selected track always starts at 0:00.
+            // A → B → A must restart A from the beginning rather than resume A's old position.
+            audio.currentTime = 0;
             recordPlay(id);
         });
         audio.addEventListener('timeupdate',()=>{
