@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<!DOCTYPE html>
 <html lang="en">
  <head>
   <meta charset="utf-8"/>
@@ -12,7 +11,7 @@
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="/static/style.css?v=292" rel="stylesheet"/>
+  <link href="/static/style.css?v=294" rel="stylesheet"/>
  </head>
  <body class="music-app">
   <div class="login-screen auth-shell" id="login-screen">
@@ -56,136 +55,33 @@
      ============================================================ -->
   <div class="app-shell music-shell" hidden="" id="app-shell">
    <!-- ========================================================
-         TOP NAVIGATION
-         ======================================================== -->
-   <nav aria-label="Main navigation" class="side-nav">
-    <div class="side-brand">
-     <svg aria-hidden="true" height="38" viewbox="0 0 512 512" width="38">
-      <defs>
-       <lineargradient id="waveGrad" x1="0%" x2="100%" y1="0%" y2="100%">
-        <stop offset="0%" stop-color="#00F2FE">
-        </stop>
-        <stop offset="100%" stop-color="#4FACFE">
-        </stop>
-       </lineargradient>
-      </defs>
-      <rect fill="#0F172A" height="512" rx="112" width="512">
-      </rect>
-      <rect fill="url(#waveGrad)" height="80" opacity=".4" rx="12" width="24" x="112" y="216">
-      </rect>
-      <rect fill="url(#waveGrad)" height="160" opacity=".75" rx="12" width="24" x="160" y="176">
-      </rect>
-      <rect fill="url(#waveGrad)" height="160" opacity=".75" rx="12" width="24" x="328" y="176">
-      </rect>
-      <rect fill="url(#waveGrad)" height="80" opacity=".4" rx="12" width="24" x="376" y="216">
-      </rect>
-      <path d="M256 128V300M196 248L256 312L316 248" fill="none" stroke="url(#waveGrad)" stroke-linecap="round" stroke-linejoin="round" stroke-width="28">
-      </path>
-      <path d="M196 376H316" stroke="url(#waveGrad)" stroke-linecap="round" stroke-width="24">
-      </path>
-     </svg>
-     <h1>
-      Xrob Music
-     </h1>
-    </div>
-    <ul class="nav-list">
-     <li>
-      <button class="nav-link active" id="btn-home" onclick="navigate('home')" type="button">
-       <i aria-hidden="true" data-lucide="house">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
-         Home
-        </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-search" onclick="navigate('search')" type="button">
-       <i aria-hidden="true" data-lucide="search">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
-         Search
-        </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-downloads" onclick="navigate('downloads')" type="button">
-       <i aria-hidden="true" data-lucide="download">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
-         Downloads
-        </span>
-        <span class="nav-count" id="queueCount">
-         0
-        </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-library" onclick="navigate('library')" type="button">
-       <i aria-hidden="true" data-lucide="library">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
-         Library
-        </span>
-        <span class="nav-count" id="sideLibCount">
-         0
-        </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')" type="button">
-       <i aria-hidden="true" data-lucide="pencil-line">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
-         Editor
-        </span>
-        <span class="nav-count" id="songEditorBadge">
-         0
-        </span>
-       </span>
-      </button>
-     </li>
-     <li>
-      <button class="nav-link" id="btn-settings" onclick="navigate('settings')" type="button">
-       <i aria-hidden="true" data-lucide="sliders-horizontal">
-       </i>
-       <span class="nav-label">
-        <span class="nav-text">
-         Settings
-        </span>
-       </span>
-      </button>
-     </li>
-    </ul>
-   </nav>
-   <!-- ========================================================
-         APP WORKSPACE
-         ======================================================== -->
+        APP COLUMN / MUSIC-SERVICE SHELL
+        ======================================================== -->
    <div class="app-column">
-    <!-- MOBILE HEADER -->
-    <header class="mobile-header">
-     <div class="side-brand">
-      <svg aria-hidden="true" height="30" viewbox="0 0 512 512" width="30">
-       <rect fill="#0F172A" height="512" rx="112" width="512">
-       </rect>
-       <path d="M256 128V300M196 248L256 312L316 248" fill="none" stroke="#4FACFE" stroke-linecap="round" stroke-linejoin="round" stroke-width="30">
-       </path>
-       <path d="M196 376H316" stroke="#4FACFE" stroke-linecap="round" stroke-width="22">
-       </path>
-      </svg>
-      <h1>
-       Xrob Music
-      </h1>
+    <header aria-label="Xrob Music navigation" class="app-topbar">
+     <div class="app-topbar-inner">
+      <button class="brand-mark" type="button" onclick="navigate('home')" aria-label="Xrob Music home">
+       <img src="/static/logo.png" alt="" aria-hidden="true">
+       <span>Xrob Music</span>
+      </button>
+
+      <nav aria-label="Primary" class="primary-nav">
+       <button class="nav-link active" id="btn-home" onclick="navigate('home')" type="button"><i aria-hidden="true" data-lucide="house"></i><span class="nav-label"><span class="nav-text">Home</span></span></button>
+       <button class="nav-link" id="btn-search" onclick="navigate('search')" type="button"><i aria-hidden="true" data-lucide="search"></i><span class="nav-label"><span class="nav-text">Search</span></span></button>
+       <button class="nav-link" id="btn-library" onclick="navigate('library')" type="button"><i aria-hidden="true" data-lucide="library"></i><span class="nav-label"><span class="nav-text">Library</span><span class="nav-count" id="sideLibCount">0</span></span></button>
+       <button class="nav-link" id="btn-downloads" onclick="navigate('downloads')" type="button"><i aria-hidden="true" data-lucide="download"></i><span class="nav-label"><span class="nav-text">Downloads</span><span class="nav-count" id="queueCount">0</span></span></button>
+       <button class="nav-link" id="btn-songs-editor" onclick="navigate('songs-editor')" type="button"><i aria-hidden="true" data-lucide="pencil-line"></i><span class="nav-label"><span class="nav-text">Editor</span><span class="nav-count" id="songEditorBadge">0</span></span></button>
+       <button class="nav-link" id="btn-settings" onclick="navigate('settings')" type="button"><i aria-hidden="true" data-lucide="sliders-horizontal"></i><span class="nav-label"><span class="nav-text">Settings</span></span></button>
+      </nav>
+
+      <div class="topbar-actions">
+       <button class="topbar-icon" type="button" onclick="navigate('search')" aria-label="Search"><i aria-hidden="true" data-lucide="search"></i></button>
+       <button class="topbar-icon" type="button" id="topQueueButton" aria-label="Open queue"><i aria-hidden="true" data-lucide="list-music"></i></button>
+       <button class="topbar-avatar" type="button" onclick="navigate('settings')" aria-label="Open settings">XM</button>
+      </div>
      </div>
     </header>
+
     <main aria-label="Xrob Music workspace" class="main-content workspace-main" role="main">
      <header class="content-topbar">
       <div class="content-topbar-copy">
@@ -765,7 +661,7 @@
          <h2>
           <i aria-hidden="true" data-lucide="pencil-line">
           </i>
-          Editor
+          Songs Editor
          </h2>
          <p>
           Edit tags for tracks that still need review. Reopen a previously edited track from the existing-track selector.
