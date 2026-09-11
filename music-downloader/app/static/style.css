@@ -5262,3 +5262,397 @@ body.music-app {
     .page-heading h2 { font-size: 26px; }
     .home-hero { padding: 21px; }
 }
+
+/* =====================================================================
+   XROB MUSIC — OFFICIAL MUSIC APP VISUAL REFRESH
+   HTML/CSS only: composition, sizing, hierarchy and polish.
+   No feature/behavior rules are changed here.
+   ===================================================================== */
+
+:root {
+    --app-header-height: 86px;
+    --player-height: 108px;
+    --content-gutter: clamp(18px, 2vw, 38px);
+    --page-gap: clamp(20px, 2vw, 32px);
+}
+
+/* Top bar: brand / primary pages / utilities */
+.app-topbar {
+    height: var(--app-header-height);
+    background: color-mix(in srgb, var(--bg-main) 78%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--border-strong) 82%, transparent);
+    box-shadow: 0 12px 40px rgba(0,0,0,.13);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+}
+
+.app-topbar-inner {
+    width: 100%;
+    height: 100%;
+    padding-inline: var(--content-gutter);
+    grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
+    gap: 28px;
+}
+
+.brand-mark {
+    justify-self: start;
+    height: 52px;
+    gap: 12px;
+    padding: 0;
+}
+.brand-mark img {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+    box-shadow: 0 9px 24px rgba(0,0,0,.24);
+}
+.brand-mark span {
+    font-size: 18px;
+    font-weight: 850;
+    letter-spacing: -.55px;
+}
+
+.primary-nav {
+    justify-self: center;
+    width: auto;
+    min-width: 390px;
+    padding: 6px;
+    gap: 4px;
+    border-radius: 17px;
+    background: color-mix(in srgb, var(--bg-surface) 84%, transparent);
+    border: 1px solid var(--border);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 10px 30px rgba(0,0,0,.08);
+}
+.primary-nav .nav-link {
+    min-width: 112px;
+    min-height: 44px;
+    padding: 0 18px;
+    gap: 8px;
+    border-radius: 12px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: -.05px;
+}
+.primary-nav .nav-link:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+.primary-nav .nav-link.active {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.055), 0 6px 18px rgba(0,0,0,.10);
+}
+.primary-nav .nav-link > svg,
+.primary-nav .nav-link > i {
+    width: 17px;
+    height: 17px;
+}
+.primary-nav .nav-count { display: inline-flex; }
+
+.topbar-actions {
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+}
+.topbar-icon {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 13px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+    color: var(--text-secondary);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 6px 18px rgba(0,0,0,.07);
+    transition: transform .16s ease, color .16s ease, background .16s ease, border-color .16s ease;
+}
+.topbar-icon:hover {
+    transform: translateY(-1px);
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    border-color: var(--border-strong);
+}
+.topbar-icon svg { width: 19px; height: 19px; }
+.topbar-settings-icon:hover svg,
+.topbar-download-icon:hover svg,
+.topbar-editor-icon:hover svg { color: var(--accent); }
+.topbar-download-badge { top: -5px; right: -5px; }
+
+/* Workspace gets a little more breathing room under the taller header. */
+.main-content.workspace-main {
+    min-height: calc(100vh - var(--app-header-height));
+    padding: 0 var(--content-gutter) calc(var(--player-height) + 46px);
+}
+.content-topbar {
+    height: 52px;
+    padding: 0 2px;
+}
+.content-topbar-status {
+    font-size: 10px;
+    gap: 8px;
+}
+
+/* Home: spacious, premium streaming-service hierarchy */
+#tab-home .page-surface {
+    max-width: 1840px;
+    margin: 0 auto;
+}
+.home-hero {
+    position: relative;
+    overflow: hidden;
+    min-height: 370px;
+    padding: clamp(34px, 5vw, 68px);
+    margin-bottom: var(--page-gap);
+    border-radius: 30px;
+    isolation: isolate;
+    background:
+        radial-gradient(circle at 78% 16%, rgba(30,215,96,.24), transparent 24%),
+        radial-gradient(circle at 92% 82%, rgba(75,145,255,.16), transparent 25%),
+        radial-gradient(circle at 48% 112%, rgba(30,215,96,.08), transparent 34%),
+        linear-gradient(135deg, color-mix(in srgb, var(--bg-elevated) 84%, #07140d), var(--bg-surface));
+    border: 1px solid color-mix(in srgb, var(--border-strong) 86%, transparent);
+    box-shadow: 0 34px 90px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.045);
+}
+.home-hero::before {
+    content: "";
+    position: absolute;
+    width: 420px;
+    height: 420px;
+    right: -120px;
+    top: -150px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,.10), transparent 66%);
+    filter: blur(1px);
+    pointer-events: none;
+    z-index: -1;
+}
+.home-hero::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    height: 36%;
+    background: linear-gradient(180deg, transparent, rgba(0,0,0,.15));
+    pointer-events: none;
+    z-index: -1;
+}
+.home-eyebrow {
+    font-size: 11px;
+    letter-spacing: 2px;
+    font-weight: 900;
+}
+.home-title {
+    max-width: 980px;
+    margin-top: 12px;
+    font-size: clamp(42px, 6vw, 78px);
+    line-height: .98;
+    letter-spacing: -3px;
+}
+.home-subtitle {
+    max-width: 760px;
+    margin-top: 18px;
+    font-size: 13px;
+    line-height: 1.65;
+    color: color-mix(in srgb, var(--text-secondary) 92%, white);
+}
+.home-search-button {
+    min-height: 52px;
+    margin-top: 26px;
+    padding: 0 22px;
+    border-radius: 15px;
+    font-size: 11px;
+    font-weight: 900;
+    box-shadow: 0 14px 30px rgba(30,215,96,.16);
+}
+.home-stats-grid {
+    gap: 16px;
+    margin-bottom: var(--page-gap);
+}
+.home-stat-card {
+    min-height: 124px;
+    padding: 22px;
+    border-radius: 20px;
+    background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+    border: 1px solid var(--border);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 18px 42px rgba(0,0,0,.08);
+}
+.home-stat-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--border-strong);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 24px 50px rgba(0,0,0,.12);
+}
+.home-stat-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+}
+.home-stat-copy strong { font-size: 25px; }
+.home-stat-copy span { font-size: 10px; }
+.home-section-header { margin: calc(var(--page-gap) + 4px) 0 15px; }
+.home-section-header h3 { font-size: 20px; letter-spacing: -.55px; }
+.home-section-header p { font-size: 11px; }
+
+.daily-mix-card {
+    padding: 22px;
+    border-radius: 22px;
+}
+.daily-mix-track-row { gap: 15px; }
+.daily-mix-track { border-radius: 16px; }
+.recent-grid { gap: 16px; }
+.recent-grid > * { border-radius: 18px; }
+
+/* Drawers: one unified stack below the top-right utility area. */
+.overlay-drawers-stack {
+    position: fixed;
+    top: calc(var(--app-header-height) + 10px);
+    right: var(--content-gutter);
+    z-index: 1450;
+    width: min(720px, calc(100vw - (var(--content-gutter) * 2)));
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    max-height: min(70vh, calc(100vh - var(--app-header-height) - var(--player-height) - 26px));
+    margin: 0;
+    pointer-events: auto;
+    border-radius: 20px;
+    border-color: var(--border-strong);
+    box-shadow: 0 28px 80px rgba(0,0,0,.42), 0 0 0 1px rgba(255,255,255,.025);
+}
+.overlay-drawers-stack > .queue-drawer { max-height: min(68vh, calc(100vh - var(--app-header-height) - var(--player-height) - 26px)); }
+.overlay-drawers-stack > .downloads-drawer[hidden],
+.overlay-drawers-stack > .queue-drawer[hidden] { display: none !important; }
+.downloads-drawer-head,
+.queue-drawer-head { min-height: 52px; }
+.downloads-drawer-list { max-height: min(58vh, 620px); }
+.queue-list { max-height: min(52vh, 560px); }
+
+/* Global player: larger, clearer and closer to Spotify/Apple proportions. */
+.global-player-bar.music-player {
+    height: var(--player-height);
+    grid-template-columns: minmax(240px, 1fr) minmax(440px, 1.8fr) minmax(240px, 1fr);
+    gap: 26px;
+    padding: 0 clamp(18px, 2.2vw, 34px);
+    background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+    border-top: 1px solid var(--border-strong);
+    box-shadow: 0 -18px 50px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.035);
+    backdrop-filter: blur(24px) saturate(145%);
+    -webkit-backdrop-filter: blur(24px) saturate(145%);
+}
+.gp-track-details { gap: 13px; }
+.gp-track-details img {
+    width: 72px;
+    height: 72px;
+    flex-basis: 72px;
+    border-radius: 13px;
+    box-shadow: 0 10px 24px rgba(0,0,0,.20);
+}
+.gp-text { gap: 4px; }
+#gp-title { font-size: 12px; font-weight: 850; }
+#gp-artist { font-size: 10px; color: var(--text-muted); }
+.gp-controls { min-width: 0; }
+.gp-main-controls { gap: 10px; }
+.gp-skip-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+}
+.gp-play-btn {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    box-shadow: 0 10px 28px rgba(0,0,0,.20);
+}
+.gp-progress-container { gap: 9px; margin-top: 9px; }
+.gp-progress-container span { font-size: 9px; }
+.gp-extra { gap: 11px; }
+#visualizer-canvas { width: 120px; height: 34px; }
+.gp-volume-icon svg { width: 18px; height: 18px; }
+
+/* Shared card polish across non-home pages so the redesign feels consistent. */
+.page-heading h2 { font-size: clamp(30px, 3vw, 42px); }
+.search-card,
+.library-toolbar,
+.editor-toolbar,
+.settings-card,
+.downloads-overview,
+.songs-editor-list,
+.library-stats-dashboard {
+    border-radius: 21px;
+    border-color: var(--border);
+    background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
+    box-shadow: 0 18px 48px rgba(0,0,0,.065), inset 0 1px 0 rgba(255,255,255,.025);
+}
+.search-card { padding: 12px; }
+.search-card input { min-height: 50px; border-radius: 14px; font-size: 12px; }
+.search-card button { min-height: 50px; min-width: 116px; border-radius: 14px; }
+
+@media (max-width: 980px) {
+    :root { --app-header-height: 78px; --player-height: 96px; }
+    .app-topbar-inner { grid-template-columns: auto minmax(0,1fr) auto; gap: 14px; }
+    .brand-mark { justify-self: start; }
+    .brand-mark span { display: none; }
+    .primary-nav { min-width: 0; width: min(100%, 430px); }
+    .primary-nav .nav-link { min-width: 0; flex: 1 1 0; padding-inline: 12px; }
+    .topbar-actions { gap: 7px; }
+    .topbar-icon { width: 40px; height: 40px; border-radius: 12px; }
+    .home-hero { min-height: 320px; }
+    .global-player-bar.music-player { grid-template-columns: minmax(190px, 1fr) minmax(320px, 1.55fr) minmax(150px, .8fr); gap: 16px; }
+    .gp-track-details img { width: 62px; height: 62px; flex-basis: 62px; }
+    #visualizer-canvas { width: 88px; }
+}
+
+@media (max-width: 768px) {
+    :root { --app-header-height: 64px; --player-height: 92px; --content-gutter: 12px; }
+    .app-topbar-inner { padding-inline: 10px; gap: 9px; }
+    .brand-mark img { width: 36px; height: 36px; border-radius: 11px; }
+    .primary-nav { padding: 3px; border-radius: 14px; }
+    .primary-nav .nav-link { min-height: 38px; width: auto; padding: 7px 9px; }
+    .primary-nav .nav-link .nav-text { display: none; }
+    .primary-nav .nav-link > svg,
+    .primary-nav .nav-link > i { width: 17px; height: 17px; }
+    .topbar-icon { width: 38px; height: 38px; border-radius: 11px; }
+    .topbar-icon svg { width: 18px; height: 18px; }
+    .main-content.workspace-main { padding-bottom: calc(var(--player-height) + var(--bottom-nav-height) + 30px); }
+    .content-topbar { height: 38px; }
+    .home-hero { min-height: 285px; padding: 27px; border-radius: 24px; }
+    .home-title { font-size: clamp(37px, 11vw, 54px); letter-spacing: -1.8px; }
+    .home-subtitle { font-size: 11px; }
+    .home-search-button { min-height: 48px; }
+    .home-stats-grid { gap: 10px; }
+    .home-stat-card { min-height: 108px; padding: 17px; border-radius: 17px; }
+    .overlay-drawers-stack { top: calc(var(--app-header-height) + 8px); right: 9px; width: calc(100vw - 18px); }
+    .overlay-drawers-stack > .downloads-drawer,
+    .overlay-drawers-stack > .queue-drawer { max-height: calc(100vh - var(--app-header-height) - var(--player-height) - var(--bottom-nav-height) - 24px); border-radius: 17px; }
+    .global-player-bar.music-player { grid-template-columns: minmax(0,1fr) auto; height: var(--player-height); padding: 0 12px; gap: 10px; }
+    .gp-controls { order: 2; }
+    .gp-extra { display: none; }
+    .gp-track-details img { width: 56px; height: 56px; flex-basis: 56px; }
+    .gp-main-controls { gap: 5px; }
+    .gp-skip-btn { width: 34px; height: 34px; }
+    .gp-play-btn { width: 46px; height: 46px; }
+    .gp-progress-container { margin-top: 7px; }
+}
+
+@media (max-width: 520px) {
+    .app-topbar-inner { padding-inline: 7px; }
+    .primary-nav { gap: 2px; }
+    .primary-nav .nav-link { width: 35px; min-width: 35px; padding: 7px; }
+    .topbar-actions { gap: 5px; }
+    .topbar-icon { width: 35px; height: 35px; }
+    .topbar-icon-badge { top: -4px; right: -4px; min-width: 14px; height: 14px; font-size: 6px; }
+    .home-hero { padding: 22px; }
+    .home-stats-grid { grid-template-columns: 1fr 1fr; }
+    .gp-track-details img { width: 48px; height: 48px; flex-basis: 48px; border-radius: 10px; }
+    #gp-title { font-size: 10px; }
+    #gp-artist { font-size: 8px; }
+    .gp-main-controls .gp-skip-btn:first-child { display: none; }
+}
