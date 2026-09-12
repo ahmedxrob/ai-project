@@ -5813,3 +5813,125 @@ body.music-app {
     bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
   }
 }
+
+
+/* =====================================================================
+   XROB MUSIC — FINAL CONSISTENCY PASS
+   Presentation-only corrections. Existing IDs, API hooks and behaviors
+   remain unchanged.
+   ===================================================================== */
+
+/* Interactive surfaces should feel like one design system. */
+.home-stat-card,
+.result-card,
+.catalog-card,
+.album-card,
+.daily-mix-track,
+.download-card,
+.song-editor-card,
+.settings-card,
+.search-card,
+.library-toolbar,
+.library-stats-bar,
+.library-stats-dashboard,
+.songs-editor-list,
+.downloads-overview {
+    transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.home-stat-card:focus-visible,
+.result-card:focus-visible,
+.catalog-card:focus-visible,
+.album-card:focus-visible,
+.daily-mix-track:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 78%, white);
+    outline-offset: 2px;
+}
+
+/* Consistent media framing prevents card heights from jumping when artwork is missing. */
+.result-card .thumb-wrapper,
+.download-card .download-art,
+.album-card img,
+.daily-mix-track img,
+.song-editor-card img,
+.gp-track-details img {
+    background: var(--bg-input);
+}
+.result-card .thumb-wrapper img,
+.album-card img,
+.song-editor-card img {
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+}
+
+/* Utility controls are compact and predictable, closer to native music-app chrome. */
+.btn-refresh,
+.btn-preview,
+.save-btn,
+.btn-secondary {
+    min-height: 40px;
+    border-radius: 11px;
+    font-weight: 750;
+}
+.btn-refresh svg,
+.btn-preview svg,
+.save-btn svg,
+.btn-secondary svg,
+.library-search-icon svg,
+.topbar-icon svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+}
+
+/* Keep the top navigation visually stable when labels collapse on smaller screens. */
+.primary-nav .nav-link,
+.topbar-icon {
+    -webkit-tap-highlight-color: transparent;
+}
+.primary-nav .nav-link > i,
+.topbar-icon > i,
+.brand-mark > img {
+    flex: 0 0 auto;
+}
+
+.library-search-icon {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+}
+
+/* Statistics panels should collapse before becoming cramped rather than overflowing. */
+@media (max-width: 1100px) {
+    .library-dashboard-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .library-dashboard-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+    .library-dashboard-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .library-dashboard-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .library-actions { width: 100%; }
+    .library-actions .library-search { flex: 1 1 100%; min-width: 0; }
+    .library-actions .btn-refresh { flex: 1 1 auto; }
+}
+
+@media (max-width: 560px) {
+    .library-dashboard-columns { grid-template-columns: 1fr; }
+    .library-dashboard-cards { grid-template-columns: 1fr 1fr; }
+    .library-actions .btn-refresh { min-width: 0; padding-inline: 11px; }
+    .library-actions .btn-refresh span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}
