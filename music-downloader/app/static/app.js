@@ -1065,7 +1065,7 @@ function updatePlayerInfo(
 
         playerArt.src =
             art ||
-            "/static/logo.png";
+            "https://via.placeholder.com/60?text=Music";
     }
 }
 
@@ -2003,16 +2003,10 @@ function setLiveCounter(id, value) {
 function applyLiveStats(stats) {
     if (!stats || stats.ready === false) return;
 
-    ["tracks", "artists", "albums", "total_bytes"].forEach(key => {
+    ["tracks", "artists", "albums", "all_play_count", "total_bytes"].forEach(key => {
         const value = Number(stats[key]);
         if (Number.isFinite(value) && value >= 0) liveStats[key] = value;
     });
-    const playCount = Number(stats.all_play_count);
-    if (Number.isFinite(playCount) && playCount >= 0) {
-        liveStats.all_play_count = liveStats.all_play_count === null
-            ? playCount
-            : Math.max(liveStats.all_play_count, playCount);
-    }
     if (typeof stats.folder_size === "string" && stats.folder_size.trim()) liveStats.folder_size = stats.folder_size;
 
     if (liveStats.tracks !== null) ["statTracks", "downloadStatTracks", "homeTracks", "statusTracks", "subsonicTracks"].forEach(id => setLiveCounter(id, liveStats.tracks));
@@ -2696,7 +2690,7 @@ function renderItems(items) {
                 () => {
 
                     image.src =
-                        "/static/logo.png";
+                        "https://via.placeholder.com/100?text=Music";
 
                 },
                 {
@@ -4110,7 +4104,7 @@ function renderRecentlyAdded(
 
             img.src =
                 track.cover ||
-                "/static/logo.png";
+                "https://via.placeholder.com/100?text=Music";
 
             img.alt = "";
 
@@ -4123,7 +4117,7 @@ function renderRecentlyAdded(
                 () => {
 
                     img.src =
-                        "/static/logo.png";
+                        "https://via.placeholder.com/100?text=Music";
 
                 },
                 {
@@ -4824,7 +4818,6 @@ async function startAppAfterAuth() {
                 renderLibraryView();
                 loadStats();
                 loadSongEditor();
-                loadDetailedLibraryStats();
             }
         } catch (_) {}
     }, 1000);
@@ -4835,21 +4828,7 @@ async function startAppAfterAuth() {
 
 
     installEnhancedFeatures();
-    document.getElementById("errorsButton")?.addEventListener("click",async()=>{
-        const modal=document.getElementById("errors-modal");
-        const content=document.getElementById("errorsContent");
-        if(!modal||!content) return;
-        content.innerHTML='<div class="queue-empty">Loading…</div>';
-        modal.hidden=false;
-        try {
-            const r=await fetch("api/errors",{cache:"no-store"});
-            const d=await r.json().catch(()=>({}));
-            if(!r.ok) throw new Error(d.detail||`HTTP ${r.status}`);
-            content.innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';
-        } catch(err) {
-            content.innerHTML=`<div class="queue-empty">Could not load the error log.<br><span>${escapeHtml(err.message||"Request failed")}</span></div>`;
-        }
-    });
+    document.getElementById("errorsButton")?.addEventListener("click",async()=>{const r=await fetch("api/errors");const d=await r.json();document.getElementById("errorsContent").innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';document.getElementById("errors-modal").hidden=false;});
     document.getElementById("errorsClose")?.addEventListener("click",()=>document.getElementById("errors-modal").hidden=true);
     restorePlayerState();
 
@@ -4936,10 +4915,29 @@ function setEnhancedQueue(queue, index = 0) {
     renderEnhancedQueue();
 }
 
-function openQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d){ d.hidden=false; closeDownloadsDrawer(); renderEnhancedQueue(); applyRepeatLabel(); } }
-function closeQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d)d.hidden=true; }
-function openDownloadsDrawer(){ const d=document.getElementById("downloads-drawer"); if(!d)return; closeQueueDrawer(); d.hidden=false; loadDownloads().catch(()=>{}); renderLocalIcons(); }
-function closeDownloadsDrawer(){ const d=document.getElementById("downloads-drawer"); if(d)d.hidden=true; }
+function openQueueDrawer(){
+    const d=document.getElementById("queue-drawer");
+    if(!d) return;
+    d.hidden=false;
+    renderEnhancedQueue();
+    applyRepeatLabel();
+    renderLocalIcons();
+}
+function closeQueueDrawer(){
+    const d=document.getElementById("queue-drawer");
+    if(d) d.hidden=true;
+}
+function openDownloadsDrawer(){
+    const d=document.getElementById("downloads-drawer");
+    if(!d) return;
+    d.hidden=false;
+    loadDownloads().catch(()=>{});
+    renderLocalIcons();
+}
+function closeDownloadsDrawer(){
+    const d=document.getElementById("downloads-drawer");
+    if(d) d.hidden=true;
+}
 
 async function saveQueueAsPlaylist(){ if(!enhancedQueue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await fetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:enhancedQueue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
 
@@ -5167,22 +5165,7 @@ function installEnhancedFeatures(){
         if(r.ok){ const label=pick.options[pick.selectedIndex]?.text||'Track'; showToast(`✅ ${label} added to editor`); await loadSongEditor(); }
         else { const d=await r.json().catch(()=>({})); showToast('❌ '+(d.detail||'Could not import track')); }
     });
-    document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{
-        const modal=document.getElementById("health-modal");
-        const content=document.getElementById("healthContent");
-        if(!modal||!content) return;
-        content.innerHTML='<div class="queue-empty">Checking library health…</div>';
-        modal.hidden=false;
-        try {
-            const r=await fetch('api/library/health',{cache:'no-store'});
-            const d=await r.json().catch(()=>({}));
-            if(!r.ok) throw new Error(d.detail||`HTTP ${r.status}`);
-            const counts=d.counts||{};
-            content.innerHTML=`<div class="health-summary"><strong>Unreadable: ${Number(counts.unreadable)||0}</strong><strong>Bad tags: ${Number(counts.bad_tags)||0}</strong><strong>Missing artwork: ${Number(counts.missing_artwork)||0}</strong><strong>Duplicate groups: ${Number(counts.duplicates)||0}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;
-        } catch(err) {
-            content.innerHTML=`<div class="queue-empty">Could not check the library.<br><span>${escapeHtml(err.message||"Request failed")}</span></div>`;
-        }
-    });
+    document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{const r=await fetch('api/library/health');const d=await r.json();document.getElementById('healthContent').innerHTML=`<div class="health-summary"><strong>Unreadable: ${d.counts.unreadable}</strong><strong>Bad tags: ${d.counts.bad_tags}</strong><strong>Missing artwork: ${d.counts.missing_artwork}</strong><strong>Duplicate groups: ${d.counts.duplicates}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;document.getElementById('health-modal').hidden=false;});
 
     if(audio){
         audio.addEventListener('loadedmetadata',()=>{
