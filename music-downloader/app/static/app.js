@@ -4966,51 +4966,6 @@ async function loadPlaylistsView(){
 }
 
 let songEditorTracks = [];
-let songEditorLoadGeneration = 0;
-const SONG_EDITOR_EDITED_HISTORY_KEY = "xrob_music_song_editor_edited_history_v1";
-
-function getSongEditorEditedHistory() {
-    try {
-        const raw = localStorage.getItem(SONG_EDITOR_EDITED_HISTORY_KEY);
-        const value = raw ? JSON.parse(raw) : [];
-        return Array.isArray(value) ? value.filter(t => t && t.id) : [];
-    } catch (_) {
-        return [];
-    }
-}
-
-function rememberSongEditorEditedTrack(track) {
-    if (!track || !track.id) return;
-    const item = {
-        id: String(track.id),
-        title: track.title || track.name || "Unknown Track",
-        artist: track.artist || "Unknown Artist",
-        album: track.album || "Unknown Album",
-        name: track.name || track.path || "",
-        cover: track.cover || "",
-        stream: track.stream || "",
-        edited_at: Date.now() / 1000
-    };
-    const history = getSongEditorEditedHistory().filter(t => String(t.id) !== item.id);
-    history.unshift(item);
-    try { localStorage.setItem(SONG_EDITOR_EDITED_HISTORY_KEY, JSON.stringify(history.slice(0, 500))); } catch (_) {}
-}
-
-function mergeSongEditorEditedTracks(serverTracks) {
-    const server = Array.isArray(serverTracks) ? serverTracks.filter(t => t && t.id) : [];
-    const local = getSongEditorEditedHistory();
-    const merged = new Map();
-    local.forEach(t => merged.set(String(t.id), t));
-    server.forEach(t => {
-        const key = String(t.id);
-        const old = merged.get(key);
-        merged.set(key, {...old, ...t, edited_at: Math.max(Number(old?.edited_at || 0), Number(t.edited_at || 0))});
-    });
-    const result = [...merged.values()].sort((a,b) => Number(b.edited_at || 0) - Number(a.edited_at || 0));
-    try { localStorage.setItem(SONG_EDITOR_EDITED_HISTORY_KEY, JSON.stringify(result.slice(0, 500))); } catch (_) {}
-    return result;
-}
-
 
 function renderSongEditorTracks(query = "") {
     const list = document.getElementById("songEditorList");
@@ -5049,58 +5004,37 @@ function renderSongEditorTracks(query = "") {
 }
 
 async function loadSongEditor(){
-    const list = document.getElementById("songEditorList");
-    if (!list) return;
-    const generation = ++songEditorLoadGeneration;
+    const list = document.getElementById("songEditorList"); if (!list) return;
     if (!songEditorTracks.length) list.innerHTML = '<div class="editor-empty">Loading tracks waiting for review…</div>';
     try {
         const r = await fetch("api/song-editor", {cache:"no-store"});
         if (!r.ok) throw new Error("Could not load Songs Editor");
         const d = await r.json();
-        // Several startup/navigation paths can request the editor at once.
-        // Never let an older response replace a newer, populated selector.
-        if (generation !== songEditorLoadGeneration) return;
-
         songEditorTracks = Array.isArray(d.tracks) ? d.tracks : [];
         document.getElementById("songEditorCount")?.replaceChildren(String(songEditorTracks.length));
         document.getElementById("songEditorBadge")?.replaceChildren(String(songEditorTracks.length));
-
         const select = document.getElementById("songEditorImportSelect");
         if (select) {
             const existing = select.value;
-            const serverEditedTracks = Array.isArray(d.recently_edited_tracks)
+            select.innerHTML = '<option value="">Choose an edited library track…</option>';
+            const editedTracks = Array.isArray(d.recently_edited_tracks)
                 ? d.recently_edited_tracks
                 : (Array.isArray(d.edited_tracks) ? d.edited_tracks : []);
-            // The server is authoritative when available, but keep a local copy as a
-            // recovery path. This is important because the editor can be loaded while
-            // the library metadata cache is warming; that response can legitimately
-            // contain the active queue without the just-saved history yet.
-            const editedTracks = mergeSongEditorEditedTracks(serverEditedTracks);
-
-            // Build the options in a detached fragment so the native select never
-            // sits in a half-cleared state during a refresh.
-            const fragment = document.createDocumentFragment();
-            const placeholder = document.createElement("option");
-            placeholder.value = "";
-            placeholder.textContent = "Choose an edited library track…";
-            fragment.appendChild(placeholder);
             editedTracks.forEach(t => {
-                if (!t || !t.id) return;
-                const o = document.createElement("option");
-                o.value = String(t.id);
-                o.textContent = `${t.title || t.name || "Unknown Track"} — ${t.artist || "Unknown Artist"}`;
-                fragment.appendChild(o);
+                const o=document.createElement('option');
+                o.value=t.id||'';
+                o.textContent=`${t.title||t.name||'Unknown Track'} — ${t.artist||'Unknown Artist'}`;
+                select.appendChild(o);
             });
-            select.replaceChildren(fragment);
-            if (existing && [...select.options].some(o => o.value === existing)) select.value = existing;
+            if(existing && [...select.options].some(o=>o.value===existing)) select.value=existing;
+            // Keep the selector interactive even when there are currently no edited tracks.
+            // The previous disabled state made the control look broken and prevented the native
+            // dropdown from opening during startup/warmup refreshes.
             select.disabled = false;
-            select.title = editedTracks.length
-                ? "Choose a previously edited library track to reopen it"
-                : "No previously edited tracks yet";
+            select.title = editedTracks.length ? 'Choose a previously edited library track to reopen it' : 'No previously edited tracks yet';
         }
         renderSongEditorTracks(document.getElementById("songEditorSearch")?.value || "");
     } catch (err) {
-        if (generation !== songEditorLoadGeneration) return;
         list.innerHTML = `<div class="editor-empty">${escapeHtml(err.message || "Could not load editor")}</div>`;
     }
 }
@@ -5215,7 +5149,7 @@ function installEnhancedFeatures(){
     renderEnhancedQueue();
 }); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
-    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const sourceTrack=songEditorTracks.find(t=>String(t.id)===String(id));const editedSnapshot={...(sourceTrack||{}),id,title:body.title,artist:body.artist,album:body.album};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){rememberSongEditorEditedTrack(editedSnapshot);showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();await loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
+    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();await loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
     document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{
         const btn=document.getElementById("libraryFullScanButton"); if(btn) btn.disabled=true;
         showToast('⏳ Full metadata rebuild…');
@@ -5246,7 +5180,7 @@ function installEnhancedFeatures(){
         if(!pick){ showToast('❌ Import selector unavailable'); return; }
         const id=pick.value; if(!id){ showToast('Select a track to import'); return; }
         const r=await fetch(`api/song-editor/${encodeURIComponent(id)}/import`,{method:'POST'});
-        if(r.ok){ const label=pick.options[pick.selectedIndex]?.text||'Track'; const remembered=getSongEditorEditedHistory().find(t=>String(t.id)===String(id)); if(remembered) rememberSongEditorEditedTrack(remembered); showToast(`✅ ${label} added to editor`); await loadSongEditor(); }
+        if(r.ok){ const label=pick.options[pick.selectedIndex]?.text||'Track'; showToast(`✅ ${label} added to editor`); await loadSongEditor(); }
         else { const d=await r.json().catch(()=>({})); showToast('❌ '+(d.detail||'Could not import track')); }
     });
     document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{const r=await fetch('api/library/health');const d=await r.json();document.getElementById('healthContent').innerHTML=`<div class="health-summary"><strong>Unreadable: ${d.counts.unreadable}</strong><strong>Bad tags: ${d.counts.bad_tags}</strong><strong>Missing artwork: ${d.counts.missing_artwork}</strong><strong>Duplicate groups: ${d.counts.duplicates}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;document.getElementById('health-modal').hidden=false;});
