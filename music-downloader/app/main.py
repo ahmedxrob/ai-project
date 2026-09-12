@@ -514,6 +514,15 @@ def init_db():
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS song_review (song_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', actioned_at REAL DEFAULT 0)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS song_edit_history (song_id TEXT PRIMARY KEY, edited_at REAL NOT NULL DEFAULT 0)""")
+        # Backfill history created by older versions that stored edited tracks
+        # only in song_review. This keeps previously edited tracks available
+        # in the Songs Editor reopen selector after upgrading.
+        conn.execute(
+            """INSERT OR IGNORE INTO song_edit_history(song_id, edited_at)
+               SELECT song_id, actioned_at
+               FROM song_review
+               WHERE state = 'edited'"""
+        )
         conn.execute("""CREATE TABLE IF NOT EXISTS artist_artwork (artist_id TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, updated_at REAL NOT NULL)""")
         # Playlist extensions are additive and preserve the existing schema.
         playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
@@ -6364,6 +6373,15 @@ async def api_song_editor():
         review_rows = conn.execute(
             "SELECT song_id,state,actioned_at FROM song_review ORDER BY actioned_at DESC, song_id"
         ).fetchall()
+        # Keep legacy edited rows recoverable even if the app was upgraded
+        # before the dedicated history table was introduced.
+        conn.execute(
+            """INSERT OR IGNORE INTO song_edit_history(song_id, edited_at)
+               SELECT song_id, actioned_at
+               FROM song_review
+               WHERE state = 'edited'"""
+        )
+        conn.commit()
         history_rows = conn.execute(
             "SELECT song_id,edited_at FROM song_edit_history ORDER BY edited_at DESC, song_id"
         ).fetchall()
