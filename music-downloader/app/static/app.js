@@ -4966,7 +4966,7 @@ async function loadPlaylistsView(){
 }
 
 let songEditorTracks = [];
-let songEditorLoadSerial = 0;
+let songEditorLoadGeneration = 0;
 
 function renderSongEditorTracks(query = "") {
     const list = document.getElementById("songEditorList");
@@ -5007,85 +5007,55 @@ function renderSongEditorTracks(query = "") {
 async function loadSongEditor(){
     const list = document.getElementById("songEditorList");
     if (!list) return;
-
-    const requestSerial = ++songEditorLoadSerial;
-    if (!songEditorTracks.length) {
-        list.innerHTML = '<div class="editor-empty">Loading tracks waiting for review…</div>';
-    }
-
+    const generation = ++songEditorLoadGeneration;
+    if (!songEditorTracks.length) list.innerHTML = '<div class="editor-empty">Loading tracks waiting for review…</div>';
     try {
         const r = await fetch("api/song-editor", {cache:"no-store"});
-        if (!r.ok) {
-            const d = await r.json().catch(() => ({}));
-            throw new Error(d.detail || `Could not load Songs Editor (${r.status})`);
-        }
-
+        if (!r.ok) throw new Error("Could not load Songs Editor");
         const d = await r.json();
-
-        // Startup, warmup and manual refresh can overlap. Never let an older
-        // response replace a newer selector/list state.
-        if (requestSerial !== songEditorLoadSerial) return;
+        // Several startup/navigation paths can request the editor at once.
+        // Never let an older response replace a newer, populated selector.
+        if (generation !== songEditorLoadGeneration) return;
 
         songEditorTracks = Array.isArray(d.tracks) ? d.tracks : [];
         document.getElementById("songEditorCount")?.replaceChildren(String(songEditorTracks.length));
         document.getElementById("songEditorBadge")?.replaceChildren(String(songEditorTracks.length));
 
         const select = document.getElementById("songEditorImportSelect");
-        const importButton = document.getElementById("songEditorImport");
-
         if (select) {
+            const existing = select.value;
             const editedTracks = Array.isArray(d.recently_edited_tracks)
                 ? d.recently_edited_tracks
                 : (Array.isArray(d.edited_tracks) ? d.edited_tracks : []);
 
-            // Rebuild the native select from the durable server-side edit
-            // history. Do not use the pending editor list for this control.
-            const previousValue = select.value;
+            // Build the options in a detached fragment so the native select never
+            // sits in a half-cleared state during a refresh.
             const fragment = document.createDocumentFragment();
             const placeholder = document.createElement("option");
             placeholder.value = "";
-            placeholder.textContent = editedTracks.length
-                ? "Choose a recently edited track…"
-                : "No edited tracks yet";
+            placeholder.textContent = "Choose an edited library track…";
             fragment.appendChild(placeholder);
-
             editedTracks.forEach(t => {
                 if (!t || !t.id) return;
-                const option = document.createElement("option");
-                option.value = String(t.id);
-                option.textContent = `${t.title || t.name || "Unknown Track"} — ${t.artist || "Unknown Artist"}`;
-                fragment.appendChild(option);
+                const o = document.createElement("option");
+                o.value = String(t.id);
+                o.textContent = `${t.title || t.name || "Unknown Track"} — ${t.artist || "Unknown Artist"}`;
+                fragment.appendChild(o);
             });
-
             select.replaceChildren(fragment);
-            if (previousValue && [...select.options].some(o => o.value === previousValue)) {
-                select.value = previousValue;
-            } else {
-                select.value = "";
-            }
-
-            // A native select should remain usable even when the history is
-            // empty; the action button itself is disabled until a real track
-            // is selected.
+            if (existing && [...select.options].some(o => o.value === existing)) select.value = existing;
             select.disabled = false;
             select.title = editedTracks.length
                 ? "Choose a previously edited library track to reopen it"
                 : "No previously edited tracks yet";
-
-            if (importButton) importButton.disabled = !select.value;
         }
-
         renderSongEditorTracks(document.getElementById("songEditorSearch")?.value || "");
     } catch (err) {
-        if (requestSerial !== songEditorLoadSerial) return;
+        if (generation !== songEditorLoadGeneration) return;
         list.innerHTML = `<div class="editor-empty">${escapeHtml(err.message || "Could not load editor")}</div>`;
-        const select = document.getElementById("songEditorImportSelect");
-        if (select) {
-            select.disabled = false;
-            select.title = "Could not load edit history — use Refresh to try again";
-        }
     }
 }
+
 function updateSongEditorCount(delta=0){const el=document.getElementById("songEditorCount"),badge=document.getElementById("songEditorBadge"); const cur=Math.max(0,(parseInt(el?.textContent||"0",10)||0)+delta); if(el)el.textContent=String(cur); if(badge)badge.textContent=String(cur);}
 
 
@@ -5222,30 +5192,13 @@ function installEnhancedFeatures(){
         catch(err){ showToast('❌ '+(err.message||'Reset failed')); }
         finally{ if(btn) btn.disabled=false; }
     });
-    document.getElementById("songEditorImportSelect")?.addEventListener("change", e => {
-        const button = document.getElementById("songEditorImport");
-        if (button) button.disabled = !e.target.value;
-    });
     document.getElementById("songEditorImport")?.addEventListener("click", async()=>{
         const pick=document.getElementById('songEditorImportSelect');
-        const button=document.getElementById('songEditorImport');
         if(!pick){ showToast('❌ Import selector unavailable'); return; }
-        const id=pick.value;
-        if(!id){ showToast('Select a recently edited track'); return; }
-
-        if (button) button.disabled = true;
-        try {
-            const r=await fetch(`api/song-editor/${encodeURIComponent(id)}/import`,{method:'POST'});
-            const d=await r.json().catch(()=>({}));
-            if(!r.ok) throw new Error(d.detail||'Could not import track');
-
-            const label=pick.options[pick.selectedIndex]?.text||'Track';
-            showToast(`✅ ${label} added to editor`);
-            await loadSongEditor();
-        } catch (err) {
-            showToast('❌ '+(err.message||'Could not import track'));
-            if (button) button.disabled = false;
-        }
+        const id=pick.value; if(!id){ showToast('Select a track to import'); return; }
+        const r=await fetch(`api/song-editor/${encodeURIComponent(id)}/import`,{method:'POST'});
+        if(r.ok){ const label=pick.options[pick.selectedIndex]?.text||'Track'; showToast(`✅ ${label} added to editor`); await loadSongEditor(); }
+        else { const d=await r.json().catch(()=>({})); showToast('❌ '+(d.detail||'Could not import track')); }
     });
     document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{const r=await fetch('api/library/health');const d=await r.json();document.getElementById('healthContent').innerHTML=`<div class="health-summary"><strong>Unreadable: ${d.counts.unreadable}</strong><strong>Bad tags: ${d.counts.bad_tags}</strong><strong>Missing artwork: ${d.counts.missing_artwork}</strong><strong>Duplicate groups: ${d.counts.duplicates}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;document.getElementById('health-modal').hidden=false;});
 
