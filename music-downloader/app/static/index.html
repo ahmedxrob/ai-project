@@ -293,7 +293,9 @@
         </div>
         <div class="library-actions">
          <label class="library-search">
-          <span aria-hidden="true" class="library-search-icon"><i data-lucide="search"></i></span>
+          <span aria-hidden="true" class="library-search-icon">
+           &telrec;
+          </span>
           <input aria-label="Search your library" autocomplete="off" id="libSearchQuery" placeholder="Search your library&hellip;" spellcheck="false" type="search"/>
           <button aria-label="Clear search" class="library-search-clear" hidden="" id="librarySearchClear" title="Clear search" type="button">
            <i aria-hidden="true" data-lucide="x">
@@ -307,7 +309,9 @@
           Play all
          </button>
          <button class="btn-refresh" id="libraryShuffleButton" title="Shuffle all tracks" type="button">
-          <i aria-hidden="true" data-lucide="shuffle"></i>
+          <span aria-hidden="true" class="player-symbol">
+           &toea;
+          </span>
           Shuffle
          </button>
          <button class="btn-refresh" id="libraryRefreshButton" title="Quick rescan" type="button">
@@ -991,7 +995,7 @@
    </div>
    <div class="global-player-bar music-player" id="global-player-bar" style="display:none;">
     <div class="gp-track-details">
-     <img alt="" id="gp-art" src="/static/logo.png"/>
+     <img alt="" id="gp-art" src="https://via.placeholder.com/60?text=Music"/>
      <div class="gp-text">
       <span id="gp-title">
        Select a track
@@ -1005,7 +1009,9 @@
      <div class="gp-main-controls">
       <!-- PREVIOUS -->
       <button aria-label="Shuffle playback" class="gp-skip-btn" id="gp-shuffle-btn" title="Shuffle playback" type="button">
-       <i aria-hidden="true" data-lucide="shuffle"></i>
+       <span aria-hidden="true" class="player-symbol">
+        &toea;
+       </span>
       </button>
       <button aria-label="Previous track" class="gp-skip-btn" id="gp-prev-btn" title="Previous track" type="button">
        <span aria-hidden="true" class="player-symbol">
@@ -1074,17 +1080,17 @@
     </button>
    </div>
    <div class="queue-actions">
-    <button class="btn-refresh" id="queueClear" type="button">
+    <button class="btn-refresh" id="queueClear">
      Clear
     </button>
-    <button class="btn-refresh" id="queueSave" type="button">
+    <button class="btn-refresh" id="queueSave">
      Save as playlist
     </button>
    </div>
    <div class="queue-list" id="queueList">
    </div>
    <div class="queue-drawer-foot">
-    <button class="btn-refresh" id="queueRepeat" type="button">
+    <button class="btn-refresh" id="queueRepeat">
      Repeat: Off
     </button>
    </div>
@@ -1192,101 +1198,7 @@
      ============================================================ -->
   <script src="/static/app.js?v=293">
   </script>
-  <script>
-    /* ==================================================================
-       XROB 2.9.3 — INDEPENDENT DRAWER CONTROLLER
-       Queue and Downloads are separate states. A click on one can never
-       intentionally toggle the other. CSS is driven by the real [hidden]
-       state, so the two panels can be visually joined without sharing state.
-       ================================================================== */
-    (() => {
-      const $ = id => document.getElementById(id);
-      const stack = $('overlay-drawers-stack');
-      const downloads = $('downloads-drawer');
-      const queue = $('queue-drawer');
-      if (!stack || !downloads || !queue) return;
 
-      const isOpen = el => !!el && !el.hidden;
-      const sync = () => {
-        const d = isOpen(downloads);
-        const q = isOpen(queue);
-        stack.classList.toggle('downloads-only', d && !q);
-        stack.classList.toggle('queue-only', q && !d);
-        stack.classList.toggle('both-open', d && q);
-        stack.classList.toggle('downloads-open', d);
-        stack.classList.toggle('queue-open', q);
-      };
-      const open = el => { if (el) el.hidden = false; sync(); };
-      const close = el => { if (el) el.hidden = true; sync(); };
-
-      const renderQueueSafe = () => {
-        try { if (typeof renderEnhancedQueue === 'function') renderEnhancedQueue(); } catch (_) {}
-        try { if (typeof applyRepeatLabel === 'function') applyRepeatLabel(); } catch (_) {}
-        try { if (typeof renderLocalIcons === 'function') renderLocalIcons(); } catch (_) {}
-      };
-      const refreshDownloadsSafe = () => {
-        try { if (typeof loadDownloads === 'function') loadDownloads().catch(() => {}); } catch (_) {}
-        try { if (typeof renderLocalIcons === 'function') renderLocalIcons(); } catch (_) {}
-      };
-
-      /* Replace direct listeners on the four controls. */
-      const replace = id => {
-        const el = $(id);
-        if (!el || !el.parentNode) return null;
-        const fresh = el.cloneNode(true);
-        el.replaceWith(fresh);
-        return fresh;
-      };
-
-      const qBtn = replace('gp-queue-btn');
-      const qClose = replace('queueClose');
-      const dBtn = replace('topbarDownloadsBtn');
-      const dClose = replace('downloadsClose');
-
-      /* Remember the opposite drawer's state for each explicit click.
-         This protects against legacy app.js handlers that may also run. */
-      if (qBtn) qBtn.addEventListener('click', e => {
-        e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
-        const downloadsBefore = isOpen(downloads);
-        queue.hidden = !isOpen(queue);
-        if (isOpen(queue)) renderQueueSafe();
-        if (isOpen(downloads) !== downloadsBefore) downloads.hidden = downloadsBefore ? false : true;
-        sync();
-      }, true);
-
-      if (qClose) qClose.addEventListener('click', e => {
-        e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
-        close(queue);
-      }, true);
-
-      if (dBtn) dBtn.addEventListener('click', e => {
-        e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
-        const queueBefore = isOpen(queue);
-        downloads.hidden = !isOpen(downloads);
-        if (isOpen(downloads)) refreshDownloadsSafe();
-        if (isOpen(queue) !== queueBefore) queue.hidden = queueBefore ? false : true;
-        sync();
-      }, true);
-
-      if (dClose) dClose.addEventListener('click', e => {
-        e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
-        close(downloads);
-      }, true);
-
-      /* Keep classes synchronized with any legitimate state change made by
-         the application itself. */
-      const observer = new MutationObserver(sync);
-      observer.observe(downloads, { attributes: true, attributeFilter: ['hidden'] });
-      observer.observe(queue, { attributes: true, attributeFilter: ['hidden'] });
-
-      window.openQueueDrawer = () => { open(queue); renderQueueSafe(); };
-      window.closeQueueDrawer = () => close(queue);
-      window.openDownloadsDrawer = () => { open(downloads); refreshDownloadsSafe(); };
-      window.closeDownloadsDrawer = () => close(downloads);
-
-      sync();
-    })();
-  </script>
 
  </body>
 </html>
