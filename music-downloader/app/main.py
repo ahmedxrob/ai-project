@@ -513,19 +513,9 @@ def init_db():
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS song_review (song_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', actioned_at REAL DEFAULT 0)""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS song_edit_history (song_id TEXT PRIMARY KEY, edited_at REAL NOT NULL DEFAULT 0)""")
-        history_cols = {row[1] for row in conn.execute("PRAGMA table_info(song_edit_history)")}
-        for col, ddl in (("title", "TEXT DEFAULT ''"), ("artist", "TEXT DEFAULT ''"), ("album", "TEXT DEFAULT ''"), ("name", "TEXT DEFAULT ''")):
-            if col not in history_cols:
-                conn.execute(f"ALTER TABLE song_edit_history ADD COLUMN {col} {ddl}")
-        # Backfill history created by older versions that stored edited tracks
-        # only in song_review.
-        conn.execute(
-            """INSERT OR IGNORE INTO song_edit_history(song_id, edited_at)
-               SELECT song_id, actioned_at
-               FROM song_review
-               WHERE state = 'edited'"""
-        )
+        # Durable reopen history is separate from the current review state so a
+        # track can be reopened, edited again, and remain discoverable each time.
+        conn.execute("""CREATE TABLE IF NOT EXISTS song_editor_history (song_id TEXT PRIMARY KEY, edited_at REAL NOT NULL DEFAULT 0)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS artist_artwork (artist_id TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, updated_at REAL NOT NULL)""")
         # Playlist extensions are additive and preserve the existing schema.
         playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
@@ -6320,9 +6310,6 @@ async def api_library_metadata(payload: dict = Body(...)):
     if not song: raise HTTPException(404,"Track not found")
     path=song["path"]; fields={k:payload.get(k) for k in ("title","artist","album") if k in payload}
     if not fields: return {"status":"ok"}
-    title = str(fields.get("title", song["title"]))
-    artist = str(fields.get("artist", song["artist"]))
-    album = str(fields.get("album", song["album"]))
     if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
     def write_tags():
         audio=MutagenFile(path, easy=False)
@@ -6347,123 +6334,102 @@ async def api_library_metadata(payload: dict = Body(...)):
     try: await asyncio.to_thread(write_tags)
     except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
     edited_at = time.time()
-    rel_name = str(path.relative_to(DOWNLOAD_DIR))
     with db_connect() as conn:
-        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id, edited_at))
         conn.execute(
-            """INSERT INTO song_edit_history(song_id,edited_at,title,artist,album,name)
-               VALUES(?,?,?,?,?,?)
-               ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at,title=excluded.title,artist=excluded.artist,album=excluded.album,name=excluded.name""",
-            (song_id, edited_at, title, artist, album, rel_name),
+            "INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) "
+            "ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at",
+            (song_id, edited_at),
+        )
+        conn.execute(
+            "INSERT INTO song_editor_history(song_id,edited_at) VALUES(?,?) "
+            "ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at",
+            (song_id, edited_at),
         )
         conn.commit()
-    invalidate_library_cache()
-    return {
-        "status": "ok",
-        "edited_at": edited_at,
-        "track": {
-            "id": song_id,
-            "title": str(fields.get("title", song["title"])),
-            "artist": str(fields.get("artist", song["artist"])),
-            "album": str(fields.get("album", song["album"])),
-            "name": str(song["path"].relative_to(DOWNLOAD_DIR)),
-        },
-    }
-
-
-@app.get("/api/song-editor/history")
-async def api_song_editor_history():
-    library = await build_library()
-    songs_by_id = {s["id"]: s for s in library["songs"]}
-    with db_connect() as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT song_id,edited_at,title,artist,album,name FROM song_edit_history ORDER BY edited_at DESC, song_id"
-        ).fetchall()
-        # Legacy recovery: edited review rows that predate the dedicated table.
-        conn.execute(
-            """INSERT OR IGNORE INTO song_edit_history(song_id, edited_at)
-               SELECT song_id, actioned_at FROM song_review WHERE state='edited'"""
-        )
-        conn.commit()
-        rows = conn.execute(
-            "SELECT song_id,edited_at,title,artist,album,name FROM song_edit_history ORDER BY edited_at DESC, song_id"
-        ).fetchall()
-
-    def item_from_row(row):
-        song = songs_by_id.get(row["song_id"])
-        if song:
-            rel = str(song["path"].relative_to(DOWNLOAD_DIR))
-            enc = urllib.parse.quote(rel, safe="/")
-            return {
-                "id": song["id"], "title": song["title"], "artist": song["artist"], "album": song["album"],
-                "name": rel, "duration": song.get("duration", 0),
-                "cover": "/api/library/cover/" + enc, "stream": "/api/library/stream/" + enc,
-                "edited_at": float(row["edited_at"] or 0),
-            }
-        name = str(row["name"] or row["song_id"] or "")
-        if not name:
-            return None
-        enc = urllib.parse.quote(name, safe="/")
-        return {
-            "id": str(row["song_id"]), "title": row["title"] or Path(name).stem,
-            "artist": row["artist"] or "Unknown Artist", "album": row["album"] or "Unknown Album",
-            "name": name, "duration": 0, "cover": "/api/library/cover/" + enc,
-            "stream": "/api/library/stream/" + enc, "edited_at": float(row["edited_at"] or 0),
-        }
-
-    return {"tracks": [x for r in rows if (x := item_from_row(r))], "count": len(rows)}
+    invalidate_library_cache(); return {"status":"ok"}
 
 
 @app.get("/api/song-editor")
 async def api_song_editor():
+    # The live library is the source of truth for track metadata/path. The
+    # review table stores the current queue state; the history table stores
+    # which edited tracks are available to reopen.
     library = await build_library()
     songs = library["songs"]
     songs_by_id = {s["id"]: s for s in songs}
+    song_ids = [s["id"] for s in songs]
 
     with db_connect() as conn:
-        conn.execute(
-            "DELETE FROM song_review WHERE song_id NOT IN (%s)"
-            % (",".join("?" * len(songs)) if songs else "''"),
-            [s["id"] for s in songs],
-        )
-        for s in songs:
+        # SQLite has a bound-parameter limit on some builds. Delete stale rows
+        # in chunks rather than generating one huge NOT IN (...) expression.
+        if song_ids:
+            current_ids = set(song_ids)
+            stale_review = [row[0] for row in conn.execute("SELECT song_id FROM song_review") if row[0] not in current_ids]
+            stale_history = [row[0] for row in conn.execute("SELECT song_id FROM song_editor_history") if row[0] not in current_ids]
+            for stale in (stale_review, stale_history):
+                for offset in range(0, len(stale), 500):
+                    chunk = stale[offset:offset + 500]
+                    if chunk:
+                        placeholders = ",".join("?" * len(chunk))
+                        table = "song_review" if stale is stale_review else "song_editor_history"
+                        conn.execute(f"DELETE FROM {table} WHERE song_id IN ({placeholders})", chunk)
+        else:
+            conn.execute("DELETE FROM song_review")
+            conn.execute("DELETE FROM song_editor_history")
+
+        for song_id in song_ids:
             conn.execute(
                 "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
-                (s["id"], "pending"),
+                (song_id, "pending"),
             )
-        conn.row_factory = sqlite3.Row
-        review_rows = conn.execute(
-            "SELECT song_id,state,actioned_at FROM song_review ORDER BY actioned_at DESC, song_id"
-        ).fetchall()
+
+        # Upgrade/backfill: older versions stored edited timestamps only in
+        # song_review. Copy those rows into the durable reopen history.
         conn.execute(
-            """INSERT OR IGNORE INTO song_edit_history(song_id, edited_at)
-               SELECT song_id, actioned_at FROM song_review WHERE state='edited'"""
+            "INSERT INTO song_editor_history(song_id,edited_at) "
+            "SELECT song_id, actioned_at FROM song_review "
+            "WHERE state='edited' AND actioned_at > 0 "
+            "ON CONFLICT(song_id) DO UPDATE SET edited_at=MAX(song_editor_history.edited_at, excluded.edited_at)"
         )
         conn.commit()
+        conn.row_factory = sqlite3.Row
+        pending_rows = conn.execute(
+            "SELECT song_id FROM song_review WHERE state='pending' ORDER BY song_id"
+        ).fetchall()
         history_rows = conn.execute(
-            "SELECT song_id,edited_at,title,artist,album,name FROM song_edit_history ORDER BY edited_at DESC, song_id"
+            "SELECT song_id,edited_at FROM song_editor_history ORDER BY edited_at DESC,song_id"
         ).fetchall()
 
     def make_item(s):
         rel = str(s["path"].relative_to(DOWNLOAD_DIR))
         enc = urllib.parse.quote(rel, safe="/")
-        return {"id": s["id"], "title": s["title"], "artist": s["artist"], "album": s["album"], "name": rel, "duration": s.get("duration", 0), "cover": "/api/library/cover/" + enc, "stream": "/api/library/stream/" + enc}
+        return {
+            "id": s["id"],
+            "title": s["title"],
+            "artist": s["artist"],
+            "album": s["album"],
+            "name": rel,
+            "duration": s.get("duration", 0),
+            "cover": "/api/library/cover/" + enc,
+            "stream": "/api/library/stream/" + enc,
+        }
 
-    out = [make_item(songs_by_id[row["song_id"]]) for row in review_rows if row["state"] == "pending" and row["song_id"] in songs_by_id]
+    out = [make_item(songs_by_id[row["song_id"]]) for row in pending_rows if row["song_id"] in songs_by_id]
     edited = []
     for row in history_rows:
         song = songs_by_id.get(row["song_id"])
         if song:
             item = make_item(song)
-        elif row["name"]:
-            item = {"id": row["song_id"], "title": row["title"] or Path(row["name"]).stem, "artist": row["artist"] or "Unknown Artist", "album": row["album"] or "Unknown Album", "name": row["name"]}
-        else:
-            continue
-        item["edited_at"] = float(row["edited_at"] or 0)
-        edited.append(item)
+            item["edited_at"] = float(row["edited_at"] or 0)
+            edited.append(item)
 
-    return {"tracks": out, "count": len(out), "edited_tracks": edited, "recently_edited_tracks": edited, "edited_count": len(edited)}
+    return {
+        "tracks": out,
+        "count": len(out),
+        "edited_tracks": edited,
+        "recently_edited_tracks": edited,
+        "edited_count": len(edited),
+    }
 
 
 @app.post("/api/song-editor/reset")
