@@ -5705,9 +5705,6 @@ body.music-app {
 .overlay-drawers-stack > .downloads-drawer[hidden]:has(~ .queue-drawer:not([hidden])) {
     display:none !important;
 }
-.overlay-drawers-stack > .downloads-drawer[hidden]:has(~ .queue-drawer:not([hidden])) {
-    display:block !important;
-}
 .overlay-drawers-stack > .queue-drawer {
     max-height: min(42vh, 520px);
     overflow:hidden;
