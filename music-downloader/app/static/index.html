@@ -293,9 +293,7 @@
         </div>
         <div class="library-actions">
          <label class="library-search">
-          <span aria-hidden="true" class="library-search-icon">
-           &telrec;
-          </span>
+          <span aria-hidden="true" class="library-search-icon"><i data-lucide="search"></i></span>
           <input aria-label="Search your library" autocomplete="off" id="libSearchQuery" placeholder="Search your library&hellip;" spellcheck="false" type="search"/>
           <button aria-label="Clear search" class="library-search-clear" hidden="" id="librarySearchClear" title="Clear search" type="button">
            <i aria-hidden="true" data-lucide="x">
@@ -309,9 +307,7 @@
           Play all
          </button>
          <button class="btn-refresh" id="libraryShuffleButton" title="Shuffle all tracks" type="button">
-          <span aria-hidden="true" class="player-symbol">
-           &toea;
-          </span>
+          <i aria-hidden="true" data-lucide="shuffle"></i>
           Shuffle
          </button>
          <button class="btn-refresh" id="libraryRefreshButton" title="Quick rescan" type="button">
@@ -995,7 +991,7 @@
    </div>
    <div class="global-player-bar music-player" id="global-player-bar" style="display:none;">
     <div class="gp-track-details">
-     <img alt="" id="gp-art" src="https://via.placeholder.com/60?text=Music"/>
+     <img alt="" id="gp-art" src="/static/logo.png"/>
      <div class="gp-text">
       <span id="gp-title">
        Select a track
@@ -1009,9 +1005,7 @@
      <div class="gp-main-controls">
       <!-- PREVIOUS -->
       <button aria-label="Shuffle playback" class="gp-skip-btn" id="gp-shuffle-btn" title="Shuffle playback" type="button">
-       <span aria-hidden="true" class="player-symbol">
-        &toea;
-       </span>
+       <i aria-hidden="true" data-lucide="shuffle"></i>
       </button>
       <button aria-label="Previous track" class="gp-skip-btn" id="gp-prev-btn" title="Previous track" type="button">
        <span aria-hidden="true" class="player-symbol">
@@ -1080,17 +1074,17 @@
     </button>
    </div>
    <div class="queue-actions">
-    <button class="btn-refresh" id="queueClear">
+    <button class="btn-refresh" id="queueClear" type="button">
      Clear
     </button>
-    <button class="btn-refresh" id="queueSave">
+    <button class="btn-refresh" id="queueSave" type="button">
      Save as playlist
     </button>
    </div>
    <div class="queue-list" id="queueList">
    </div>
    <div class="queue-drawer-foot">
-    <button class="btn-refresh" id="queueRepeat">
+    <button class="btn-refresh" id="queueRepeat" type="button">
      Repeat: Off
     </button>
    </div>
