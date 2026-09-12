@@ -1198,109 +1198,101 @@
      ============================================================ -->
   <script src="/static/app.js?v=293">
   </script>
-
   <script>
-   /* FINAL UI-ONLY DRAWER CONTROLLER
-      Downloads and Queue are independent toggles.
-      - Downloads only -> downloads drawer
-      - Queue only -> queue drawer
-      - both -> CSS connects them into one stacked panel
-      Clone the trigger/close buttons so older app.js click handlers cannot
-      accidentally toggle the other drawer.
-   */
-   (function () {
-     const byId = (id) => document.getElementById(id);
+    /* ==================================================================
+       XROB 2.9.3 — INDEPENDENT DRAWER CONTROLLER
+       Queue and Downloads are separate states. A click on one can never
+       intentionally toggle the other. CSS is driven by the real [hidden]
+       state, so the two panels can be visually joined without sharing state.
+       ================================================================== */
+    (() => {
+      const $ = id => document.getElementById(id);
+      const stack = $('overlay-drawers-stack');
+      const downloads = $('downloads-drawer');
+      const queue = $('queue-drawer');
+      if (!stack || !downloads || !queue) return;
 
-     function cloneButton(id) {
-       const old = byId(id);
-       if (!old || !old.parentNode) return null;
-       const fresh = old.cloneNode(true);
-       old.replaceWith(fresh);
-       return fresh;
-     }
+      const isOpen = el => !!el && !el.hidden;
+      const sync = () => {
+        const d = isOpen(downloads);
+        const q = isOpen(queue);
+        stack.classList.toggle('downloads-only', d && !q);
+        stack.classList.toggle('queue-only', q && !d);
+        stack.classList.toggle('both-open', d && q);
+        stack.classList.toggle('downloads-open', d);
+        stack.classList.toggle('queue-open', q);
+      };
+      const open = el => { if (el) el.hidden = false; sync(); };
+      const close = el => { if (el) el.hidden = true; sync(); };
 
-     const stack = byId("overlay-drawers-stack") || document.querySelector(".overlay-drawers-stack");
+      const renderQueueSafe = () => {
+        try { if (typeof renderEnhancedQueue === 'function') renderEnhancedQueue(); } catch (_) {}
+        try { if (typeof applyRepeatLabel === 'function') applyRepeatLabel(); } catch (_) {}
+        try { if (typeof renderLocalIcons === 'function') renderLocalIcons(); } catch (_) {}
+      };
+      const refreshDownloadsSafe = () => {
+        try { if (typeof loadDownloads === 'function') loadDownloads().catch(() => {}); } catch (_) {}
+        try { if (typeof renderLocalIcons === 'function') renderLocalIcons(); } catch (_) {}
+      };
 
-     function syncDrawerState() {
-       if (!stack) return;
-       const downloadsOpen = !!byId("downloads-drawer") && !byId("downloads-drawer").hidden;
-       const queueOpen = !!byId("queue-drawer") && !byId("queue-drawer").hidden;
-       stack.classList.toggle("downloads-open", downloadsOpen);
-       stack.classList.toggle("queue-open", queueOpen);
-       stack.classList.toggle("both-open", downloadsOpen && queueOpen);
-       stack.classList.toggle("downloads-only", downloadsOpen && !queueOpen);
-       stack.classList.toggle("queue-only", queueOpen && !downloadsOpen);
-     }
+      /* Replace direct listeners on the four controls. */
+      const replace = id => {
+        const el = $(id);
+        if (!el || !el.parentNode) return null;
+        const fresh = el.cloneNode(true);
+        el.replaceWith(fresh);
+        return fresh;
+      };
 
-     const renderQueue = () => {
-       if (typeof renderEnhancedQueue === "function") renderEnhancedQueue();
-       if (typeof applyRepeatLabel === "function") applyRepeatLabel();
-       if (typeof renderLocalIcons === "function") renderLocalIcons();
-     };
+      const qBtn = replace('gp-queue-btn');
+      const qClose = replace('queueClose');
+      const dBtn = replace('topbarDownloadsBtn');
+      const dClose = replace('downloadsClose');
 
-     function show(el) { if (el) { el.hidden = false; syncDrawerState(); } }
-     function hide(el) { if (el) { el.hidden = true; syncDrawerState(); } }
+      /* Remember the opposite drawer's state for each explicit click.
+         This protects against legacy app.js handlers that may also run. */
+      if (qBtn) qBtn.addEventListener('click', e => {
+        e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
+        const downloadsBefore = isOpen(downloads);
+        queue.hidden = !isOpen(queue);
+        if (isOpen(queue)) renderQueueSafe();
+        if (isOpen(downloads) !== downloadsBefore) downloads.hidden = downloadsBefore ? false : true;
+        sync();
+      }, true);
 
-     function toggleQueue() {
-       const d = byId("queue-drawer");
-       if (!d) return;
-       d.hidden = !d.hidden;
-       if (!d.hidden) renderQueue();
-     }
+      if (qClose) qClose.addEventListener('click', e => {
+        e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
+        close(queue);
+      }, true);
 
-     function toggleDownloads() {
-       const d = byId("downloads-drawer");
-       if (!d) return;
-       d.hidden = !d.hidden;
-       if (!d.hidden && typeof loadDownloads === "function") loadDownloads().catch(() => {});
-       if (!d.hidden && typeof renderLocalIcons === "function") renderLocalIcons();
-     }
+      if (dBtn) dBtn.addEventListener('click', e => {
+        e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
+        const queueBefore = isOpen(queue);
+        downloads.hidden = !isOpen(downloads);
+        if (isOpen(downloads)) refreshDownloadsSafe();
+        if (isOpen(queue) !== queueBefore) queue.hidden = queueBefore ? false : true;
+        sync();
+      }, true);
 
-     // Remove previously attached target listeners from app.js while keeping the
-     // same DOM ids/classes expected elsewhere in the application.
-     const queueBtn = cloneButton("gp-queue-btn");
-     const queueClose = cloneButton("queueClose");
-     const downloadsBtn = cloneButton("topbarDownloadsBtn");
-     const downloadsClose = cloneButton("downloadsClose");
+      if (dClose) dClose.addEventListener('click', e => {
+        e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
+        close(downloads);
+      }, true);
 
-     if (queueBtn) queueBtn.addEventListener("click", (e) => {
-       e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
-       toggleQueue();
-     }, true);
+      /* Keep classes synchronized with any legitimate state change made by
+         the application itself. */
+      const observer = new MutationObserver(sync);
+      observer.observe(downloads, { attributes: true, attributeFilter: ['hidden'] });
+      observer.observe(queue, { attributes: true, attributeFilter: ['hidden'] });
 
-     if (queueClose) queueClose.addEventListener("click", (e) => {
-       e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
-       hide(byId("queue-drawer"));
-     }, true);
+      window.openQueueDrawer = () => { open(queue); renderQueueSafe(); };
+      window.closeQueueDrawer = () => close(queue);
+      window.openDownloadsDrawer = () => { open(downloads); refreshDownloadsSafe(); };
+      window.closeDownloadsDrawer = () => close(downloads);
 
-     if (downloadsBtn) downloadsBtn.addEventListener("click", (e) => {
-       e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
-       toggleDownloads();
-     }, true);
-
-     if (downloadsClose) downloadsClose.addEventListener("click", (e) => {
-       e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
-       hide(byId("downloads-drawer"));
-     }, true);
-
-     window.openQueueDrawer = function () { show(byId("queue-drawer")); renderQueue(); };
-     window.closeQueueDrawer = function () { hide(byId("queue-drawer")); };
-     window.openDownloadsDrawer = function () {
-       show(byId("downloads-drawer"));
-       if (typeof loadDownloads === "function") loadDownloads().catch(() => {});
-       if (typeof renderLocalIcons === "function") renderLocalIcons();
-     };
-     window.closeDownloadsDrawer = function () { hide(byId("downloads-drawer")); };
-
-     // Keep the combined drawer layout synchronized even when another part of
-     // the app changes the native [hidden] state directly.
-     if (byId("downloads-drawer") && byId("queue-drawer")) {
-       const observer = new MutationObserver(syncDrawerState);
-       observer.observe(byId("downloads-drawer"), { attributes: true, attributeFilter: ["hidden"] });
-       observer.observe(byId("queue-drawer"), { attributes: true, attributeFilter: ["hidden"] });
-     }
-     syncDrawerState();
-   })();
+      sync();
+    })();
   </script>
+
  </body>
 </html>
