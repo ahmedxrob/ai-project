@@ -513,7 +513,8 @@ def init_db():
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS song_review (song_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', actioned_at REAL DEFAULT 0)""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS song_editor_history (song_id TEXT PRIMARY KEY, edited_at REAL NOT NULL, path TEXT NOT NULL DEFAULT '')""")
+        # Permanent history of successfully edited tracks; independent from the current review queue.
+        conn.execute("""CREATE TABLE IF NOT EXISTS song_editor_history (song_id TEXT PRIMARY KEY, edited_at REAL NOT NULL DEFAULT 0)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS artist_artwork (artist_id TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, updated_at REAL NOT NULL)""")
         # Playlist extensions are additive and preserve the existing schema.
         playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
@@ -6331,23 +6332,44 @@ async def api_library_metadata(payload: dict = Body(...)):
         audio.save()
     try: await asyncio.to_thread(write_tags)
     except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
-    edited_at = time.time()
     with db_connect() as conn:
-        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id, edited_at))
-        conn.execute(
-            "INSERT INTO song_editor_history(song_id,edited_at,path) VALUES(?,?,?) "
-            "ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at,path=excluded.path",
-            (song_id, edited_at, str(path.relative_to(DOWNLOAD_DIR))),
-        )
+        edited_at = time.time()
+        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id,edited_at))
+        conn.execute("INSERT INTO song_editor_history(song_id,edited_at) VALUES(?,?) ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at", (song_id,edited_at))
         conn.commit()
-    invalidate_library_cache(); return {"status":"ok","edited_at":edited_at}
+    invalidate_library_cache(); return {"status":"ok"}
 
 
 @app.get("/api/song-editor")
 async def api_song_editor():
     library = await build_library()
     songs = library["songs"]
-    songs_by_id = {str(s["id"]): s for s in songs}
+    songs_by_id = {s["id"]: s for s in songs}
+
+    # song_review is only the CURRENT review queue. song_editor_history is the
+    # permanent list of tracks that have been edited and can therefore be reopened.
+    with db_connect() as conn:
+        # Recover edits made before the history table existed.
+        conn.execute(
+            "INSERT OR IGNORE INTO song_editor_history(song_id,edited_at) "
+            "SELECT song_id, actioned_at FROM song_review "
+            "WHERE state='edited'"
+        )
+        # New library files enter the current review queue automatically.
+        # Do not delete old review rows here: history is independent of the queue.
+        for s in songs:
+            conn.execute(
+                "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
+                (s["id"], "pending"),
+            )
+        conn.commit()
+        conn.row_factory = sqlite3.Row
+        review_rows = conn.execute(
+            "SELECT song_id,state,actioned_at FROM song_review"
+        ).fetchall()
+        history_rows = conn.execute(
+            "SELECT song_id,edited_at FROM song_editor_history ORDER BY edited_at DESC, song_id"
+        ).fetchall()
 
     def make_item(s):
         rel = str(s["path"].relative_to(DOWNLOAD_DIR))
@@ -6363,61 +6385,19 @@ async def api_song_editor():
             "stream": "/api/library/stream/" + enc,
         }
 
-    with db_connect() as conn:
-        conn.row_factory = sqlite3.Row
-
-        # Never build a giant SQL IN/NOT IN expression from the library. Large
-        # libraries can exceed SQLite's host-parameter limit and make this API
-        # fail completely, which is why both editor lists could appear empty.
-        current_ids = set(songs_by_id)
-        existing_ids = {str(r[0]) for r in conn.execute("SELECT song_id FROM song_review").fetchall()}
-        stale_ids = existing_ids - current_ids
-        if stale_ids:
-            conn.executemany("DELETE FROM song_review WHERE song_id=?", ((sid,) for sid in stale_ids))
-        missing_ids = current_ids - existing_ids
-        if missing_ids:
-            conn.executemany(
-                "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
-                ((sid, "pending") for sid in missing_ids),
-            )
-
-        # Migrate/restore edits recorded by older versions. The history table is
-        # separate from the active review queue so reset/reopen/skip cannot erase
-        # the list of tracks available in the Reopen selector.
-        edited_rows = conn.execute(
-            "SELECT song_id, actioned_at FROM song_review WHERE state='edited' AND actioned_at>0"
-        ).fetchall()
-        if edited_rows:
-            conn.executemany(
-                "INSERT INTO song_editor_history(song_id,edited_at,path) VALUES(?,?,?) "
-                "ON CONFLICT(song_id) DO UPDATE SET edited_at=CASE "
-                "WHEN excluded.edited_at > song_editor_history.edited_at THEN excluded.edited_at "
-                "ELSE song_editor_history.edited_at END",
-                ((str(r["song_id"]), float(r["actioned_at"] or 0), "") for r in edited_rows),
-            )
-
-        review_rows = conn.execute(
-            "SELECT song_id,state FROM song_review"
-        ).fetchall()
-        history_rows = conn.execute(
-            "SELECT song_id,edited_at FROM song_editor_history WHERE edited_at>0 ORDER BY edited_at DESC,song_id"
-        ).fetchall()
-        conn.commit()
-
     out = []
     for row in review_rows:
-        song = songs_by_id.get(str(row["song_id"]))
+        song = songs_by_id.get(row["song_id"])
         if song and row["state"] == "pending":
             out.append(make_item(song))
 
     edited = []
     for row in history_rows:
-        song = songs_by_id.get(str(row["song_id"]))
-        if not song:
-            continue
-        item = make_item(song)
-        item["edited_at"] = float(row["edited_at"] or 0)
-        edited.append(item)
+        song = songs_by_id.get(row["song_id"])
+        if song:
+            item = make_item(song)
+            item["edited_at"] = float(row["edited_at"] or 0)
+            edited.append(item)
 
     return {
         "tracks": out,
@@ -6432,8 +6412,8 @@ async def api_song_editor_reset():
     library = await build_library()
     ids = [s["id"] for s in library["songs"]]
     with db_connect() as conn:
-        # Reset only the active review queue. Previously edited-track history is
-        # intentionally preserved so the Reopen selector remains useful.
+        # Reset ONLY the current review queue. Never erase song_editor_history:
+        # previously edited tracks must remain available in the Reopen selector.
         conn.execute("DELETE FROM song_review")
         if ids:
             conn.executemany(
