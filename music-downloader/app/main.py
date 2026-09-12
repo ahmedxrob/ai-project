@@ -6345,7 +6345,18 @@ async def api_library_metadata(payload: dict = Body(...)):
         conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id, edited_at))
         conn.execute("INSERT INTO song_edit_history(song_id,edited_at) VALUES(?,?) ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at", (song_id, edited_at))
         conn.commit()
-    invalidate_library_cache(); return {"status":"ok"}
+    invalidate_library_cache()
+    return {
+        "status": "ok",
+        "edited_at": edited_at,
+        "track": {
+            "id": song_id,
+            "title": str(fields.get("title", song["title"])),
+            "artist": str(fields.get("artist", song["artist"])),
+            "album": str(fields.get("album", song["album"])),
+            "name": str(song["path"].relative_to(DOWNLOAD_DIR)),
+        },
+    }
 
 
 @app.get("/api/song-editor")
