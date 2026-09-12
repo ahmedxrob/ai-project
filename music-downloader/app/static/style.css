@@ -6911,3 +6911,103 @@ body.music-app {
     bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
   }
 }
+
+
+/* =====================================================================
+   XROB MUSIC — FINAL DRAWER BEHAVIOR
+   Downloads and Queue are independent states. The shared stack changes
+   position only according to which drawer(s) are actually open.
+   ===================================================================== */
+
+/* Native hidden state always wins. This prevents Queue from visually
+   resurrecting Downloads through older :has() rules. */
+#downloads-drawer[hidden],
+#queue-drawer[hidden] {
+    display: none !important;
+}
+
+/* One shared footprint and one right edge. */
+.overlay-drawers-stack {
+    position: fixed !important;
+    z-index: 1450 !important;
+    right: var(--content-gutter) !important;
+    left: auto !important;
+    width: min(680px, calc(100vw - (var(--content-gutter) * 2))) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0 !important;
+    pointer-events: none;
+}
+
+.overlay-drawers-stack > #downloads-drawer,
+.overlay-drawers-stack > #queue-drawer {
+    position: relative !important;
+    inset: auto !important;
+    right: auto !important;
+    left: auto !important;
+    bottom: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    margin: 0 !important;
+    pointer-events: auto !important;
+    box-sizing: border-box !important;
+    border-radius: 18px !important;
+}
+
+/* Downloads by itself: top-right. */
+.overlay-drawers-stack.downloads-only {
+    top: calc(var(--app-header-height) + 12px) !important;
+    bottom: auto !important;
+}
+
+/* Queue by itself: bottom-right, directly above the player. */
+.overlay-drawers-stack.queue-only,
+.overlay-drawers-stack.both-open {
+    top: auto !important;
+    bottom: calc(var(--player-height) + 12px) !important;
+}
+
+/* When connected, Downloads is the upper half and Queue the lower half.
+   Same width, same edge, no gap, visually one panel. */
+.overlay-drawers-stack.both-open > #downloads-drawer {
+    order: 1;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-bottom: 0 !important;
+}
+.overlay-drawers-stack.both-open > #queue-drawer {
+    order: 2;
+    border-top-left-radius: 0 !important;
+    border-top-right-radius: 0 !important;
+    margin-top: -1px !important;
+    box-shadow: 0 28px 80px rgba(0,0,0,.42) !important;
+}
+
+/* Single drawers keep their normal rounded shape. */
+.overlay-drawers-stack.downloads-only > #downloads-drawer,
+.overlay-drawers-stack.queue-only > #queue-drawer {
+    border-radius: 18px !important;
+}
+
+/* Make the two halves feel like one surface without forcing either drawer
+   to open the other. */
+.overlay-drawers-stack.both-open > #downloads-drawer,
+.overlay-drawers-stack.both-open > #queue-drawer {
+    box-shadow: 0 28px 80px rgba(0,0,0,.42), 0 0 0 1px rgba(255,255,255,.025) !important;
+}
+
+@media (max-width: 768px) {
+    .overlay-drawers-stack {
+        left: 9px !important;
+        right: 9px !important;
+        width: calc(100vw - 18px) !important;
+    }
+    .overlay-drawers-stack.downloads-only {
+        top: calc(var(--app-header-height) + 8px) !important;
+    }
+    .overlay-drawers-stack.queue-only,
+    .overlay-drawers-stack.both-open {
+        bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
+    }
+}
