@@ -4915,10 +4915,31 @@ function setEnhancedQueue(queue, index = 0) {
     renderEnhancedQueue();
 }
 
-function openQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d){ d.hidden=false; closeDownloadsDrawer(); renderEnhancedQueue(); applyRepeatLabel(); } }
-function closeQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d)d.hidden=true; }
-function openDownloadsDrawer(){ const d=document.getElementById("downloads-drawer"); if(!d)return; closeQueueDrawer(); d.hidden=false; loadDownloads().catch(()=>{}); renderLocalIcons(); }
-function closeDownloadsDrawer(){ const d=document.getElementById("downloads-drawer"); if(d)d.hidden=true; }
+function openQueueDrawer(){
+    const drawer = document.getElementById("queue-drawer");
+    if (!drawer) return;
+    drawer.hidden = false;
+    renderEnhancedQueue();
+    applyRepeatLabel();
+}
+
+function closeQueueDrawer(){
+    const drawer = document.getElementById("queue-drawer");
+    if (drawer) drawer.hidden = true;
+}
+
+function openDownloadsDrawer(){
+    const drawer = document.getElementById("downloads-drawer");
+    if (!drawer) return;
+    drawer.hidden = false;
+    loadDownloads().catch(() => {});
+    renderLocalIcons();
+}
+
+function closeDownloadsDrawer(){
+    const drawer = document.getElementById("downloads-drawer");
+    if (drawer) drawer.hidden = true;
+}
 
 async function saveQueueAsPlaylist(){ if(!enhancedQueue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await fetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:enhancedQueue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
 
@@ -5086,15 +5107,9 @@ function installEnhancedFeatures(){
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
     document.getElementById("topbarDownloadsBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDownloadsDrawer(); });
-    document.addEventListener("click", (event) => {
-        const downloadDrawer = document.getElementById("downloads-drawer");
-        const queueDrawer = document.getElementById("queue-drawer");
-        const downloadButton = event.target.closest("#topbarDownloadsBtn");
-        const queueButton = event.target.closest("#gp-queue-btn");
-        const downloadAction = event.target.closest(".btn-download, .download-card");
-        if (downloadDrawer && !downloadDrawer.hidden && !downloadDrawer.contains(event.target) && !downloadButton && !downloadAction) closeDownloadsDrawer();
-        if (queueDrawer && !queueDrawer.hidden && !queueDrawer.contains(event.target) && !queueButton) closeQueueDrawer();
-    });
+    // Drawers are independent surfaces. Do not let opening or interacting with
+    // one drawer implicitly close the other. They each have their own close
+    // control; Escape remains a global convenience action.
     document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") { closeDownloadsDrawer(); closeQueueDrawer(); }
     });
