@@ -6808,3 +6808,106 @@ body.music-app {
     bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
   }
 }
+
+/* ============================================================
+   FINAL CONNECTED DRAWER LAYOUT — v8
+   Logic is handled by index.html. CSS only controls position.
+   Downloads alone = top-right.
+   Queue alone = bottom-right.
+   Both = a single flush vertical panel, Downloads above Queue.
+   ============================================================ */
+.overlay-drawers-stack {
+  position: fixed !important;
+  right: var(--content-gutter) !important;
+  left: auto !important;
+  width: min(440px, calc(100vw - 24px)) !important;
+  pointer-events: none !important;
+  z-index: 1450 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 0 !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+  position: relative !important;
+  inset: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  top: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  flex: 0 0 auto !important;
+  pointer-events: auto !important;
+  overflow: hidden !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer[hidden],
+.overlay-drawers-stack > .queue-drawer[hidden] { display: none !important; }
+
+/* Downloads only: top-right. */
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):not(:has(> .queue-drawer:not([hidden]))) {
+  top: calc(var(--app-header-height) + 14px) !important;
+  bottom: auto !important;
+}
+
+/* Queue only: bottom-right. */
+.overlay-drawers-stack:has(> .queue-drawer:not([hidden])):not(:has(> .downloads-drawer:not([hidden]))) {
+  top: auto !important;
+  bottom: calc(var(--player-height) + 10px) !important;
+}
+
+/* Both: one connected bottom-right panel, Downloads above Queue. */
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) {
+  top: auto !important;
+  bottom: calc(var(--player-height) + 10px) !important;
+}
+
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .downloads-drawer {
+  order: 1 !important;
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .queue-drawer {
+  order: 2 !important;
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+  margin-top: 0 !important;
+}
+
+/* Keep each drawer independently usable and visually polished. */
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+  border-radius: 18px !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list,
+.overlay-drawers-stack > .queue-drawer .queue-list {
+  overflow: auto !important;
+}
+
+@media (max-width: 700px) {
+  .overlay-drawers-stack {
+    right: 8px !important;
+    width: calc(100vw - 16px) !important;
+  }
+
+  .overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):not(:has(> .queue-drawer:not([hidden]))) {
+    top: calc(var(--app-header-height) + 10px) !important;
+    bottom: auto !important;
+  }
+
+  .overlay-drawers-stack:has(> .queue-drawer:not([hidden])):not(:has(> .downloads-drawer:not([hidden]))),
+  .overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) {
+    top: auto !important;
+    bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
+  }
+}
