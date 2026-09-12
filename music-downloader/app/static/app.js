@@ -5017,7 +5017,9 @@ async function loadSongEditor(){
         if (select) {
             const existing = select.value;
             select.innerHTML = '<option value="">Choose an edited library track…</option>';
-            const editedTracks = Array.isArray(d.edited_tracks) ? d.edited_tracks : [];
+            const editedTracks = Array.isArray(d.recently_edited_tracks)
+                ? d.recently_edited_tracks
+                : (Array.isArray(d.edited_tracks) ? d.edited_tracks : []);
             editedTracks.forEach(t => {
                 const o=document.createElement('option');
                 o.value=t.id||'';
@@ -5114,9 +5116,22 @@ function installEnhancedFeatures(){
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
     document.getElementById("topbarDownloadsBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDownloadsDrawer(); });
-    // Drawers are independent surfaces. Do not let opening or interacting with
-    // one drawer implicitly close the other. They each have their own close
-    // control; Escape remains a global convenience action.
+    // Drawers remain independent, but retain the familiar click-outside behavior.
+    // Clicking inside one drawer never closes it; clicking outside a drawer closes
+    // that drawer only, so Queue and Downloads never become coupled again.
+    document.addEventListener("pointerdown", (event) => {
+        const target = event.target;
+        const queue = document.getElementById("queue-drawer");
+        const downloads = document.getElementById("downloads-drawer");
+        const queueButton = document.getElementById("gp-queue-btn");
+        const downloadsButton = document.getElementById("topbarDownloadsBtn");
+        if (queue && !queue.hidden && !queue.contains(target) && !queueButton?.contains(target)) {
+            closeQueueDrawer();
+        }
+        if (downloads && !downloads.hidden && !downloads.contains(target) && !downloadsButton?.contains(target)) {
+            closeDownloadsDrawer();
+        }
+    });
     document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") { closeDownloadsDrawer(); closeQueueDrawer(); }
     });
@@ -5134,7 +5149,7 @@ function installEnhancedFeatures(){
     renderEnhancedQueue();
 }); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
-    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
+    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();await loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
     document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{
         const btn=document.getElementById("libraryFullScanButton"); if(btn) btn.disabled=true;
         showToast('⏳ Full metadata rebuild…');
