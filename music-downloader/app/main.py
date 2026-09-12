@@ -6334,9 +6334,6 @@ async def api_library_metadata(payload: dict = Body(...)):
     edited_at = time.time()
     with db_connect() as conn:
         conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id, edited_at))
-        # Keep a dedicated, durable reopen history.  This is intentionally separate
-        # from the review queue so rebuilding/resetting the queue cannot erase the
-        # list used by the editor's "Reopen track" selector.
         conn.execute(
             "INSERT INTO song_editor_history(song_id,edited_at,path) VALUES(?,?,?) "
             "ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at,path=excluded.path",
@@ -6350,7 +6347,7 @@ async def api_library_metadata(payload: dict = Body(...)):
 async def api_song_editor():
     library = await build_library()
     songs = library["songs"]
-    songs_by_id = {s["id"]: s for s in songs}
+    songs_by_id = {str(s["id"]): s for s in songs}
 
     def make_item(s):
         rel = str(s["path"].relative_to(DOWNLOAD_DIR))
@@ -6368,52 +6365,59 @@ async def api_song_editor():
 
     with db_connect() as conn:
         conn.row_factory = sqlite3.Row
-        # Queue state: tracks are pending unless explicitly edited/skipped.
-        # Do not let this maintenance step delete reopen-history records.
-        if songs:
-            placeholders = ",".join("?" for _ in songs)
-            conn.execute(
-                f"DELETE FROM song_review WHERE song_id NOT IN ({placeholders})",
-                [s["id"] for s in songs],
-            )
-        else:
-            conn.execute("DELETE FROM song_review")
-        for s in songs:
-            conn.execute(
+
+        # Never build a giant SQL IN/NOT IN expression from the library. Large
+        # libraries can exceed SQLite's host-parameter limit and make this API
+        # fail completely, which is why both editor lists could appear empty.
+        current_ids = set(songs_by_id)
+        existing_ids = {str(r[0]) for r in conn.execute("SELECT song_id FROM song_review").fetchall()}
+        stale_ids = existing_ids - current_ids
+        if stale_ids:
+            conn.executemany("DELETE FROM song_review WHERE song_id=?", ((sid,) for sid in stale_ids))
+        missing_ids = current_ids - existing_ids
+        if missing_ids:
+            conn.executemany(
                 "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
-                (s["id"], "pending"),
+                ((sid, "pending") for sid in missing_ids),
             )
-        # Backfill history from the existing review table once, and then use the
-        # dedicated history as the source of truth for the selector.
-        conn.execute(
-            "INSERT INTO song_editor_history(song_id,edited_at,path) "
-            "SELECT sr.song_id, sr.actioned_at, '' FROM song_review sr "
-            "WHERE sr.state='edited' AND sr.actioned_at>0 "
-            "ON CONFLICT(song_id) DO UPDATE SET edited_at=MAX(song_editor_history.edited_at, excluded.edited_at)"
-        )
+
+        # Migrate/restore edits recorded by older versions. The history table is
+        # separate from the active review queue so reset/reopen/skip cannot erase
+        # the list of tracks available in the Reopen selector.
+        edited_rows = conn.execute(
+            "SELECT song_id, actioned_at FROM song_review WHERE state='edited' AND actioned_at>0"
+        ).fetchall()
+        if edited_rows:
+            conn.executemany(
+                "INSERT INTO song_editor_history(song_id,edited_at,path) VALUES(?,?,?) "
+                "ON CONFLICT(song_id) DO UPDATE SET edited_at=CASE "
+                "WHEN excluded.edited_at > song_editor_history.edited_at THEN excluded.edited_at "
+                "ELSE song_editor_history.edited_at END",
+                ((str(r["song_id"]), float(r["actioned_at"] or 0), "") for r in edited_rows),
+            )
+
         review_rows = conn.execute(
-            "SELECT song_id,state,actioned_at FROM song_review"
+            "SELECT song_id,state FROM song_review"
         ).fetchall()
         history_rows = conn.execute(
-            "SELECT song_id,edited_at,path FROM song_editor_history ORDER BY edited_at DESC"
+            "SELECT song_id,edited_at FROM song_editor_history WHERE edited_at>0 ORDER BY edited_at DESC,song_id"
         ).fetchall()
         conn.commit()
 
     out = []
     for row in review_rows:
-        if row["state"] == "pending" and row["song_id"] in songs_by_id:
-            out.append(make_item(songs_by_id[row["song_id"]]))
+        song = songs_by_id.get(str(row["song_id"]))
+        if song and row["state"] == "pending":
+            out.append(make_item(song))
 
     edited = []
-    seen = set()
     for row in history_rows:
-        song = songs_by_id.get(row["song_id"])
-        if not song or row["song_id"] in seen:
+        song = songs_by_id.get(str(row["song_id"]))
+        if not song:
             continue
         item = make_item(song)
         item["edited_at"] = float(row["edited_at"] or 0)
         edited.append(item)
-        seen.add(row["song_id"])
 
     return {
         "tracks": out,
@@ -6428,6 +6432,8 @@ async def api_song_editor_reset():
     library = await build_library()
     ids = [s["id"] for s in library["songs"]]
     with db_connect() as conn:
+        # Reset only the active review queue. Previously edited-track history is
+        # intentionally preserved so the Reopen selector remains useful.
         conn.execute("DELETE FROM song_review")
         if ids:
             conn.executemany(
