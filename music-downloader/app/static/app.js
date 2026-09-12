@@ -4967,6 +4967,75 @@ async function loadPlaylistsView(){
 
 let songEditorTracks = [];
 
+function getSongEditorLocalHistory() {
+    try {
+        const raw = localStorage.getItem("xrob-song-editor-history");
+        const data = JSON.parse(raw || "[]");
+        return Array.isArray(data) ? data.filter(x => x && x.id) : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+function saveSongEditorLocalHistory(items) {
+    try {
+        const unique = new Map();
+        for (const item of (Array.isArray(items) ? items : [])) {
+            if (!item || !item.id) continue;
+            unique.set(String(item.id), {
+                id: String(item.id),
+                title: item.title || item.name || "Unknown Track",
+                artist: item.artist || "Unknown Artist",
+                album: item.album || "Unknown Album",
+                name: item.name || "",
+                edited_at: Number(item.edited_at || 0) || 0,
+            });
+        }
+        const out = [...unique.values()]
+            .sort((a,b) => Number(b.edited_at || 0) - Number(a.edited_at || 0))
+            .slice(0, 100);
+        localStorage.setItem("xrob-song-editor-history", JSON.stringify(out));
+    } catch (_) {}
+}
+
+function rememberSongEditorEditedTrack(track, editedAt = Date.now() / 1000) {
+    if (!track || !track.id) return;
+    const current = getSongEditorLocalHistory().filter(x => String(x.id) !== String(track.id));
+    current.unshift({ ...track, edited_at: Number(editedAt || 0) || (Date.now() / 1000) });
+    saveSongEditorLocalHistory(current);
+}
+
+function populateSongEditorImportSelect(serverEditedTracks) {
+    const select = document.getElementById("songEditorImportSelect");
+    if (!select) return;
+    const server = Array.isArray(serverEditedTracks) ? serverEditedTracks : [];
+    const local = getSongEditorLocalHistory();
+    const merged = new Map();
+    [...server, ...local].forEach(item => {
+        if (!item || !item.id) return;
+        const id = String(item.id);
+        const existing = merged.get(id);
+        if (!existing || Number(item.edited_at || 0) > Number(existing.edited_at || 0)) {
+            merged.set(id, item);
+        }
+    });
+    const editedTracks = [...merged.values()]
+        .sort((a,b) => Number(b.edited_at || 0) - Number(a.edited_at || 0));
+    saveSongEditorLocalHistory(editedTracks);
+
+    const existing = select.value;
+    select.innerHTML = '<option value="">Choose an edited library track…</option>';
+    editedTracks.forEach(t => {
+        const o = document.createElement("option");
+        o.value = String(t.id);
+        o.textContent = `${t.title || t.name || "Unknown Track"} — ${t.artist || "Unknown Artist"}`;
+        select.appendChild(o);
+    });
+    if (existing && [...select.options].some(o => o.value === existing)) select.value = existing;
+    select.disabled = false;
+    select.title = editedTracks.length ? "Choose a previously edited library track to reopen it" : "No previously edited tracks yet";
+}
+
 function renderSongEditorTracks(query = "") {
     const list = document.getElementById("songEditorList");
     if (!list) return;
@@ -5013,26 +5082,10 @@ async function loadSongEditor(){
         songEditorTracks = Array.isArray(d.tracks) ? d.tracks : [];
         document.getElementById("songEditorCount")?.replaceChildren(String(songEditorTracks.length));
         document.getElementById("songEditorBadge")?.replaceChildren(String(songEditorTracks.length));
-        const select = document.getElementById("songEditorImportSelect");
-        if (select) {
-            const existing = select.value;
-            select.innerHTML = '<option value="">Choose an edited library track…</option>';
-            const editedTracks = Array.isArray(d.recently_edited_tracks)
-                ? d.recently_edited_tracks
-                : (Array.isArray(d.edited_tracks) ? d.edited_tracks : []);
-            editedTracks.forEach(t => {
-                const o=document.createElement('option');
-                o.value=t.id||'';
-                o.textContent=`${t.title||t.name||'Unknown Track'} — ${t.artist||'Unknown Artist'}`;
-                select.appendChild(o);
-            });
-            if(existing && [...select.options].some(o=>o.value===existing)) select.value=existing;
-            // Keep the selector interactive even when there are currently no edited tracks.
-            // The previous disabled state made the control look broken and prevented the native
-            // dropdown from opening during startup/warmup refreshes.
-            select.disabled = false;
-            select.title = editedTracks.length ? 'Choose a previously edited library track to reopen it' : 'No previously edited tracks yet';
-        }
+        const editedTracks = Array.isArray(d.recently_edited_tracks)
+            ? d.recently_edited_tracks
+            : (Array.isArray(d.edited_tracks) ? d.edited_tracks : []);
+        populateSongEditorImportSelect(editedTracks);
         renderSongEditorTracks(document.getElementById("songEditorSearch")?.value || "");
     } catch (err) {
         list.innerHTML = `<div class="editor-empty">${escapeHtml(err.message || "Could not load editor")}</div>`;
@@ -5149,7 +5202,22 @@ function installEnhancedFeatures(){
     renderEnhancedQueue();
 }); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
-    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();await loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
+    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{
+        e.preventDefault();
+        const id=document.getElementById('metadataId').value;
+        const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};
+        const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(r.ok){
+            const d=await r.json().catch(()=>({}));
+            const track=d.track || {id:body.id,title:body.title,artist:body.artist,album:body.album,name:body.id};
+            rememberSongEditorEditedTrack(track, d.edited_at);
+            showToast('✅ Metadata saved and removed from editor');
+            document.getElementById('metadata-modal').hidden=true;
+            await refreshLibraryCache();
+            renderLibraryView();
+            await loadSongEditor();
+        }else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}
+    });
     document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{
         const btn=document.getElementById("libraryFullScanButton"); if(btn) btn.disabled=true;
         showToast('⏳ Full metadata rebuild…');
