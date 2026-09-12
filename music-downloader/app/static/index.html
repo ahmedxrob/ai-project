@@ -1219,14 +1219,27 @@
        return fresh;
      }
 
+     const stack = byId("overlay-drawers-stack") || document.querySelector(".overlay-drawers-stack");
+
+     function syncDrawerState() {
+       if (!stack) return;
+       const downloadsOpen = !!byId("downloads-drawer") && !byId("downloads-drawer").hidden;
+       const queueOpen = !!byId("queue-drawer") && !byId("queue-drawer").hidden;
+       stack.classList.toggle("downloads-open", downloadsOpen);
+       stack.classList.toggle("queue-open", queueOpen);
+       stack.classList.toggle("both-open", downloadsOpen && queueOpen);
+       stack.classList.toggle("downloads-only", downloadsOpen && !queueOpen);
+       stack.classList.toggle("queue-only", queueOpen && !downloadsOpen);
+     }
+
      const renderQueue = () => {
        if (typeof renderEnhancedQueue === "function") renderEnhancedQueue();
        if (typeof applyRepeatLabel === "function") applyRepeatLabel();
        if (typeof renderLocalIcons === "function") renderLocalIcons();
      };
 
-     function show(el) { if (el) el.hidden = false; }
-     function hide(el) { if (el) el.hidden = true; }
+     function show(el) { if (el) { el.hidden = false; syncDrawerState(); } }
+     function hide(el) { if (el) { el.hidden = true; syncDrawerState(); } }
 
      function toggleQueue() {
        const d = byId("queue-drawer");
@@ -1278,6 +1291,15 @@
        if (typeof renderLocalIcons === "function") renderLocalIcons();
      };
      window.closeDownloadsDrawer = function () { hide(byId("downloads-drawer")); };
+
+     // Keep the combined drawer layout synchronized even when another part of
+     // the app changes the native [hidden] state directly.
+     if (byId("downloads-drawer") && byId("queue-drawer")) {
+       const observer = new MutationObserver(syncDrawerState);
+       observer.observe(byId("downloads-drawer"), { attributes: true, attributeFilter: ["hidden"] });
+       observer.observe(byId("queue-drawer"), { attributes: true, attributeFilter: ["hidden"] });
+     }
+     syncDrawerState();
    })();
   </script>
  </body>
