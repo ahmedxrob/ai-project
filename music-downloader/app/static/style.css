@@ -5816,122 +5816,121 @@ body.music-app {
 
 
 /* =====================================================================
-   XROB MUSIC — FINAL CONSISTENCY PASS
-   Presentation-only corrections. Existing IDs, API hooks and behaviors
-   remain unchanged.
+   XROB MUSIC — INDEPENDENT UTILITY DRAWERS FINAL OVERRIDE
+   Downloads and Up Next have completely independent visibility/position state.
+   Their existing dimensions are preserved; they no longer become one connected panel.
    ===================================================================== */
-
-/* Interactive surfaces should feel like one design system. */
-.home-stat-card,
-.result-card,
-.catalog-card,
-.album-card,
-.daily-mix-track,
-.download-card,
-.song-editor-card,
-.settings-card,
-.search-card,
-.library-toolbar,
-.library-stats-bar,
-.library-stats-dashboard,
-.songs-editor-list,
-.downloads-overview {
-    transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease, transform .16s ease;
+#downloads-drawer[hidden],
+#queue-drawer[hidden] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
 }
 
-.home-stat-card:focus-visible,
-.result-card:focus-visible,
-.catalog-card:focus-visible,
-.album-card:focus-visible,
-.daily-mix-track:focus-visible,
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--accent) 78%, white);
-    outline-offset: 2px;
+.overlay-drawers-stack {
+    position: static !important;
+    display: block !important;
+    width: auto !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    pointer-events: none !important;
 }
 
-/* Consistent media framing prevents card heights from jumping when artwork is missing. */
-.result-card .thumb-wrapper,
-.download-card .download-art,
-.album-card img,
-.daily-mix-track img,
-.song-editor-card img,
-.gp-track-details img {
-    background: var(--bg-input);
-}
-.result-card .thumb-wrapper img,
-.album-card img,
-.song-editor-card img {
-    aspect-ratio: 1 / 1;
-    object-fit: cover;
+.overlay-drawers-stack > #downloads-drawer,
+.overlay-drawers-stack > #queue-drawer {
+    position: fixed !important;
+    right: 16px !important;
+    left: auto !important;
+    width: min(680px, calc(100vw - 32px)) !important;
+    max-width: calc(100vw - 32px) !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    transform: none !important;
+    pointer-events: auto !important;
+    box-sizing: border-box !important;
+    z-index: 1450 !important;
 }
 
-/* Utility controls are compact and predictable, closer to native music-app chrome. */
-.btn-refresh,
-.btn-preview,
-.save-btn,
-.btn-secondary {
-    min-height: 40px;
+/* Downloads stays at the top-right utility position. */
+.overlay-drawers-stack > #downloads-drawer {
+    top: calc(var(--app-header-height) + 14px) !important;
+    bottom: auto !important;
+}
+
+/* Up Next stays at the bottom-right player position. */
+.overlay-drawers-stack > #queue-drawer {
+    top: auto !important;
+    bottom: calc(var(--player-height) + 14px) !important;
+}
+
+/* Never visually join the two independent drawers. */
+.overlay-drawers-stack.both-open > #downloads-drawer,
+.overlay-drawers-stack.both-open > #queue-drawer,
+.overlay-drawers-stack.downloads-only > #downloads-drawer,
+.overlay-drawers-stack.queue-only > #queue-drawer {
+    border-radius: 18px !important;
+    border-top-left-radius: 18px !important;
+    border-top-right-radius: 18px !important;
+    border-bottom-left-radius: 18px !important;
+    border-bottom-right-radius: 18px !important;
+    border-bottom: 1px solid var(--border) !important;
+    border-top: 1px solid var(--border) !important;
+    margin-top: 0 !important;
+    order: initial !important;
+}
+
+/* Slightly more compact bottom player without moving its reserved layout footprint. */
+.global-player-bar.music-player {
+    height: 88px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+.global-player-bar.music-player .gp-track-details img {
+    width: 64px;
+    height: 64px;
+    flex-basis: 64px;
     border-radius: 11px;
-    font-weight: 750;
 }
-.btn-refresh svg,
-.btn-preview svg,
-.save-btn svg,
-.btn-secondary svg,
-.library-search-icon svg,
-.topbar-icon svg {
-    width: 16px;
-    height: 16px;
-    flex: 0 0 16px;
+.global-player-bar.music-player .gp-play-btn {
+    width: 50px;
+    height: 50px;
+}
+.global-player-bar.music-player .gp-skip-btn {
+    width: 38px;
+    height: 38px;
 }
 
-/* Keep the top navigation visually stable when labels collapse on smaller screens. */
-.primary-nav .nav-link,
-.topbar-icon {
-    -webkit-tap-highlight-color: transparent;
-}
-.primary-nav .nav-link > i,
-.topbar-icon > i,
-.brand-mark > img {
-    flex: 0 0 auto;
-}
-
-.library-search-icon {
-    display: grid;
-    place-items: center;
-    width: 18px;
-    height: 18px;
-}
-
-/* Statistics panels should collapse before becoming cramped rather than overflowing. */
-@media (max-width: 1100px) {
-    .library-dashboard-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-    .library-dashboard-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-@media (max-width: 760px) {
-    .library-dashboard-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .library-dashboard-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .library-actions { width: 100%; }
-    .library-actions .library-search { flex: 1 1 100%; min-width: 0; }
-    .library-actions .btn-refresh { flex: 1 1 auto; }
-}
-
-@media (max-width: 560px) {
-    .library-dashboard-columns { grid-template-columns: 1fr; }
-    .library-dashboard-cards { grid-template-columns: 1fr 1fr; }
-    .library-actions .btn-refresh { min-width: 0; padding-inline: 11px; }
-    .library-actions .btn-refresh span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-        scroll-behavior: auto !important;
-        transition-duration: .01ms !important;
-        animation-duration: .01ms !important;
-        animation-iteration-count: 1 !important;
+@media (max-width: 768px) {
+    .overlay-drawers-stack > #downloads-drawer,
+    .overlay-drawers-stack > #queue-drawer {
+        right: 9px !important;
+        width: calc(100vw - 18px) !important;
+        max-width: calc(100vw - 18px) !important;
+    }
+    .overlay-drawers-stack > #downloads-drawer {
+        top: calc(var(--app-header-height) + 8px) !important;
+        bottom: auto !important;
+    }
+    .overlay-drawers-stack > #queue-drawer {
+        top: auto !important;
+        bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
+    }
+    .global-player-bar.music-player {
+        height: 72px !important;
+        padding: 0 10px !important;
+    }
+    .global-player-bar.music-player .gp-track-details img {
+        width: 52px;
+        height: 52px;
+        flex-basis: 52px;
+    }
+    .global-player-bar.music-player .gp-play-btn {
+        width: 44px;
+        height: 44px;
+    }
+    .global-player-bar.music-player .gp-skip-btn {
+        width: 34px;
+        height: 34px;
     }
 }
