@@ -513,9 +513,7 @@ def init_db():
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS song_review (song_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', actioned_at REAL DEFAULT 0)""")
-        # Durable reopen history is separate from the current review state so a
-        # track can be reopened, edited again, and remain discoverable each time.
-        conn.execute("""CREATE TABLE IF NOT EXISTS song_editor_history (song_id TEXT PRIMARY KEY, edited_at REAL NOT NULL DEFAULT 0)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS song_editor_history (song_id TEXT PRIMARY KEY, edited_at REAL NOT NULL, path TEXT NOT NULL DEFAULT '')""")
         conn.execute("""CREATE TABLE IF NOT EXISTS artist_artwork (artist_id TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, updated_at REAL NOT NULL)""")
         # Playlist extensions are additive and preserve the existing schema.
         playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
@@ -6335,70 +6333,24 @@ async def api_library_metadata(payload: dict = Body(...)):
     except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
     edited_at = time.time()
     with db_connect() as conn:
+        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id, edited_at))
+        # Keep a dedicated, durable reopen history.  This is intentionally separate
+        # from the review queue so rebuilding/resetting the queue cannot erase the
+        # list used by the editor's "Reopen track" selector.
         conn.execute(
-            "INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) "
-            "ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at",
-            (song_id, edited_at),
-        )
-        conn.execute(
-            "INSERT INTO song_editor_history(song_id,edited_at) VALUES(?,?) "
-            "ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at",
-            (song_id, edited_at),
+            "INSERT INTO song_editor_history(song_id,edited_at,path) VALUES(?,?,?) "
+            "ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at,path=excluded.path",
+            (song_id, edited_at, str(path.relative_to(DOWNLOAD_DIR))),
         )
         conn.commit()
-    invalidate_library_cache(); return {"status":"ok"}
+    invalidate_library_cache(); return {"status":"ok","edited_at":edited_at}
 
 
 @app.get("/api/song-editor")
 async def api_song_editor():
-    # The live library is the source of truth for track metadata/path. The
-    # review table stores the current queue state; the history table stores
-    # which edited tracks are available to reopen.
     library = await build_library()
     songs = library["songs"]
     songs_by_id = {s["id"]: s for s in songs}
-    song_ids = [s["id"] for s in songs]
-
-    with db_connect() as conn:
-        # SQLite has a bound-parameter limit on some builds. Delete stale rows
-        # in chunks rather than generating one huge NOT IN (...) expression.
-        if song_ids:
-            current_ids = set(song_ids)
-            stale_review = [row[0] for row in conn.execute("SELECT song_id FROM song_review") if row[0] not in current_ids]
-            stale_history = [row[0] for row in conn.execute("SELECT song_id FROM song_editor_history") if row[0] not in current_ids]
-            for stale in (stale_review, stale_history):
-                for offset in range(0, len(stale), 500):
-                    chunk = stale[offset:offset + 500]
-                    if chunk:
-                        placeholders = ",".join("?" * len(chunk))
-                        table = "song_review" if stale is stale_review else "song_editor_history"
-                        conn.execute(f"DELETE FROM {table} WHERE song_id IN ({placeholders})", chunk)
-        else:
-            conn.execute("DELETE FROM song_review")
-            conn.execute("DELETE FROM song_editor_history")
-
-        for song_id in song_ids:
-            conn.execute(
-                "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
-                (song_id, "pending"),
-            )
-
-        # Upgrade/backfill: older versions stored edited timestamps only in
-        # song_review. Copy those rows into the durable reopen history.
-        conn.execute(
-            "INSERT INTO song_editor_history(song_id,edited_at) "
-            "SELECT song_id, actioned_at FROM song_review "
-            "WHERE state='edited' AND actioned_at > 0 "
-            "ON CONFLICT(song_id) DO UPDATE SET edited_at=MAX(song_editor_history.edited_at, excluded.edited_at)"
-        )
-        conn.commit()
-        conn.row_factory = sqlite3.Row
-        pending_rows = conn.execute(
-            "SELECT song_id FROM song_review WHERE state='pending' ORDER BY song_id"
-        ).fetchall()
-        history_rows = conn.execute(
-            "SELECT song_id,edited_at FROM song_editor_history ORDER BY edited_at DESC,song_id"
-        ).fetchall()
 
     def make_item(s):
         rel = str(s["path"].relative_to(DOWNLOAD_DIR))
@@ -6414,14 +6366,54 @@ async def api_song_editor():
             "stream": "/api/library/stream/" + enc,
         }
 
-    out = [make_item(songs_by_id[row["song_id"]]) for row in pending_rows if row["song_id"] in songs_by_id]
+    with db_connect() as conn:
+        conn.row_factory = sqlite3.Row
+        # Queue state: tracks are pending unless explicitly edited/skipped.
+        # Do not let this maintenance step delete reopen-history records.
+        if songs:
+            placeholders = ",".join("?" for _ in songs)
+            conn.execute(
+                f"DELETE FROM song_review WHERE song_id NOT IN ({placeholders})",
+                [s["id"] for s in songs],
+            )
+        else:
+            conn.execute("DELETE FROM song_review")
+        for s in songs:
+            conn.execute(
+                "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
+                (s["id"], "pending"),
+            )
+        # Backfill history from the existing review table once, and then use the
+        # dedicated history as the source of truth for the selector.
+        conn.execute(
+            "INSERT INTO song_editor_history(song_id,edited_at,path) "
+            "SELECT sr.song_id, sr.actioned_at, '' FROM song_review sr "
+            "WHERE sr.state='edited' AND sr.actioned_at>0 "
+            "ON CONFLICT(song_id) DO UPDATE SET edited_at=MAX(song_editor_history.edited_at, excluded.edited_at)"
+        )
+        review_rows = conn.execute(
+            "SELECT song_id,state,actioned_at FROM song_review"
+        ).fetchall()
+        history_rows = conn.execute(
+            "SELECT song_id,edited_at,path FROM song_editor_history ORDER BY edited_at DESC"
+        ).fetchall()
+        conn.commit()
+
+    out = []
+    for row in review_rows:
+        if row["state"] == "pending" and row["song_id"] in songs_by_id:
+            out.append(make_item(songs_by_id[row["song_id"]]))
+
     edited = []
+    seen = set()
     for row in history_rows:
         song = songs_by_id.get(row["song_id"])
-        if song:
-            item = make_item(song)
-            item["edited_at"] = float(row["edited_at"] or 0)
-            edited.append(item)
+        if not song or row["song_id"] in seen:
+            continue
+        item = make_item(song)
+        item["edited_at"] = float(row["edited_at"] or 0)
+        edited.append(item)
+        seen.add(row["song_id"])
 
     return {
         "tracks": out,
@@ -6430,7 +6422,6 @@ async def api_song_editor():
         "recently_edited_tracks": edited,
         "edited_count": len(edited),
     }
-
 
 @app.post("/api/song-editor/reset")
 async def api_song_editor_reset():
