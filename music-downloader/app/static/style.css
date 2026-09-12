@@ -5684,9 +5684,8 @@ body.music-app {
 #tab-home.active .home-hero { min-height: clamp(390px, 54vh, 570px); display:flex; }
 #tab-home.active .recent-grid { padding-bottom: 10px; }
 
-/* Downloads + Queue are one anchored utility stack. The existing JS may set
-   Downloads [hidden] when opening Queue; :has() keeps the first drawer painted
-   while Queue is visible, so Queue truly sits below Downloads. */
+/* Legacy drawer layout rules. Final independent-drawer overrides are defined
+   at the end of this stylesheet so each utility surface owns its visibility. */
 .overlay-drawers-stack {
     top: calc(var(--app-header-height) + 12px);
     right: var(--content-gutter);
@@ -6514,12 +6513,11 @@ body.music-app {
 }
 
 /* ============================================================
-   XROB MUSIC 2.9.3 — CONNECTED DRAWERS + RECENTLY ADDED V3
-   Queue and Downloads behave as one bottom utility stack.
+   XROB MUSIC 2.9.3 — LEGACY DRAWER LAYOUT
+   Superseded by the final independent-drawer rules at the end.
    ============================================================ */
 
-/* One shared bottom anchor: whichever drawer is open occupies the
-   bottom slot; when both are open they form one connected stack. */
+/* Legacy positioning; retained for compatibility and overridden at the end. */
 .overlay-drawers-stack {
     position: fixed !important;
     top: auto !important;
@@ -6554,7 +6552,7 @@ body.music-app {
     border-radius: 0 !important;
 }
 
-/* Downloads is the bottom drawer. Queue naturally sits directly above it. */
+/* Legacy ordering; final rules keep the two surfaces visually separate. */
 .overlay-drawers-stack > .downloads-drawer {
     order: 1 !important;
     border-radius: 18px 18px 0 0 !important;
@@ -6566,7 +6564,7 @@ body.music-app {
     border-radius: 18px 18px 0 0 !important;
 }
 
-/* When both are visible, visually join the two panels like one utility drawer. */
+/* Legacy visual joining; final rules restore independent rounded surfaces. */
 .overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .queue-drawer {
     border-bottom-left-radius: 0 !important;
     border-bottom-right-radius: 0 !important;
@@ -6910,4 +6908,130 @@ body.music-app {
     top: auto !important;
     bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
   }
+}
+
+/* ============================================================
+   INDEPENDENT DRAWER STACK — FINAL OVERRIDE
+   Queue and Downloads are separate surfaces. Opening either one
+   never closes the other, and when both are open they remain two
+   distinct panels stacked with a visible gap.
+   ============================================================ */
+.overlay-drawers-stack {
+    position: fixed !important;
+    right: var(--content-gutter) !important;
+    left: auto !important;
+    z-index: 1450 !important;
+    width: min(720px, calc(100vw - (var(--content-gutter) * 2))) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    pointer-events: none !important;
+    overflow: visible !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer,
+.overlay-drawers-stack > .queue-drawer {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    flex: 0 0 auto !important;
+    pointer-events: auto !important;
+    overflow: hidden !important;
+    border-radius: 18px !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer[hidden],
+.overlay-drawers-stack > .queue-drawer[hidden] {
+    display: none !important;
+}
+
+/* Downloads alone can sit near the header for quick access. */
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):not(:has(> .queue-drawer:not([hidden]))) {
+    top: calc(var(--app-header-height) + 14px) !important;
+    bottom: auto !important;
+}
+
+/* Queue alone stays above the player, matching the music-player workflow. */
+.overlay-drawers-stack:has(> .queue-drawer:not([hidden])):not(:has(> .downloads-drawer:not([hidden]))) {
+    top: auto !important;
+    bottom: calc(var(--player-height) + 10px) !important;
+}
+
+/* Both open: stack separate drawers upward from the player. */
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) {
+    top: auto !important;
+    bottom: calc(var(--player-height) + 10px) !important;
+    gap: 12px !important;
+}
+
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .downloads-drawer,
+.overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) > .queue-drawer {
+    border-radius: 18px !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer {
+    max-height: min(58vh, 560px) !important;
+}
+
+.overlay-drawers-stack > .queue-drawer {
+    max-height: min(58vh, 560px) !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list,
+.overlay-drawers-stack > .queue-drawer .queue-list {
+    overflow: auto !important;
+}
+
+.overlay-drawers-stack > .downloads-drawer .downloads-drawer-list {
+    max-height: min(47vh, 440px) !important;
+}
+
+.overlay-drawers-stack > .queue-drawer .queue-list {
+    max-height: min(43vh, 400px) !important;
+}
+
+@media (max-width: 700px) {
+    .overlay-drawers-stack {
+        right: 8px !important;
+        width: calc(100vw - 16px) !important;
+        gap: 8px !important;
+    }
+
+    .overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):not(:has(> .queue-drawer:not([hidden]))) {
+        top: calc(var(--app-header-height) + 10px) !important;
+        bottom: auto !important;
+    }
+
+    .overlay-drawers-stack:has(> .queue-drawer:not([hidden])),
+    .overlay-drawers-stack:has(> .downloads-drawer:not([hidden])):has(> .queue-drawer:not([hidden])) {
+        top: auto !important;
+        bottom: calc(var(--player-height) + var(--bottom-nav-height) + 8px) !important;
+    }
+
+    .overlay-drawers-stack > .downloads-drawer {
+        max-height: 42vh !important;
+    }
+
+    .overlay-drawers-stack > .queue-drawer {
+        max-height: 38vh !important;
+    }
+
+    .overlay-drawers-stack > .downloads-drawer .downloads-drawer-list {
+        max-height: 34vh !important;
+    }
+
+    .overlay-drawers-stack > .queue-drawer .queue-list {
+        max-height: 30vh !important;
+    }
+}
+
+/* Legacy compatibility override: never paint the Downloads drawer merely because Queue is visible. */
+.overlay-drawers-stack > .downloads-drawer[hidden]:has(~ .queue-drawer:not([hidden])) {
+    display: none !important;
 }
