@@ -4754,6 +4754,10 @@ async function startAppAfterAuth() {
     );
 
 
+    // The player is a persistent app surface, not something that only appears after playback.
+    // Keep it visible at startup with its existing empty-state labels.
+    if (player) player.style.display = "grid";
+
     bindAudioEvents();
     bindPlayerControls();
     bindSearch();
@@ -5021,7 +5025,10 @@ async function loadSongEditor(){
                 select.appendChild(o);
             });
             if(existing && [...select.options].some(o=>o.value===existing)) select.value=existing;
-            select.disabled = editedTracks.length === 0;
+            // Keep the selector interactive even when there are currently no edited tracks.
+            // The previous disabled state made the control look broken and prevented the native
+            // dropdown from opening during startup/warmup refreshes.
+            select.disabled = false;
             select.title = editedTracks.length ? 'Choose a previously edited library track to reopen it' : 'No previously edited tracks yet';
         }
         renderSongEditorTracks(document.getElementById("songEditorSearch")?.value || "");
