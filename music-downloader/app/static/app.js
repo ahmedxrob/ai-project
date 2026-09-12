@@ -4915,29 +4915,10 @@ function setEnhancedQueue(queue, index = 0) {
     renderEnhancedQueue();
 }
 
-function openQueueDrawer(){
-    const d=document.getElementById("queue-drawer");
-    if(!d) return;
-    d.hidden=false;
-    renderEnhancedQueue();
-    applyRepeatLabel();
-    renderLocalIcons();
-}
-function closeQueueDrawer(){
-    const d=document.getElementById("queue-drawer");
-    if(d) d.hidden=true;
-}
-function openDownloadsDrawer(){
-    const d=document.getElementById("downloads-drawer");
-    if(!d) return;
-    d.hidden=false;
-    loadDownloads().catch(()=>{});
-    renderLocalIcons();
-}
-function closeDownloadsDrawer(){
-    const d=document.getElementById("downloads-drawer");
-    if(d) d.hidden=true;
-}
+function openQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d){ d.hidden=false; closeDownloadsDrawer(); renderEnhancedQueue(); applyRepeatLabel(); } }
+function closeQueueDrawer(){ const d=document.getElementById("queue-drawer"); if(d)d.hidden=true; }
+function openDownloadsDrawer(){ const d=document.getElementById("downloads-drawer"); if(!d)return; closeQueueDrawer(); d.hidden=false; loadDownloads().catch(()=>{}); renderLocalIcons(); }
+function closeDownloadsDrawer(){ const d=document.getElementById("downloads-drawer"); if(d)d.hidden=true; }
 
 async function saveQueueAsPlaylist(){ if(!enhancedQueue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await fetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:enhancedQueue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
 
