@@ -1,5 +1,5 @@
 name: "Xrob Port Publisher"
-version: "1.1.9"
+version: "1.1.10"
 slug: "xrob_port_publisher"
 description: "Publish local HTTP/HTTPS services through Cloudflare Quick Tunnels with a simple web UI."
 url: "https://github.com/ahmedxrob/ai-project/tree/main/xrob-port%20publisher"
@@ -13,10 +13,7 @@ boot: auto
 init: false
 
 # Home Assistant Ingress
-ingress: true
-ingress_port: 8055
-ingress_stream: true
-
+webui: "http://[HOST]:[PORT:8055]"
 # Direct LAN access
 ports:
   8055/tcp: 8055
