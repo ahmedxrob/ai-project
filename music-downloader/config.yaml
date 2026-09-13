@@ -11,8 +11,7 @@ arch:
 startup: services
 boot: auto
 
-ingress: true
-ingress_port: 8099
+ingress: false
 
 panel_icon: mdi:music
 panel_title: Xrob Music
