@@ -1,5 +1,5 @@
 name: My Movie AI
-version: "1.7.4"
+version: "1.7.5"
 slug: movie_ai
 description: Personal movie and series database with Gemini and TMDB recommendations
 url: https://github.com/ahmedxrob/ai-project
@@ -16,13 +16,6 @@ webui: "http://[HOST]:[PORT:8099]/recommendations"
 panel_icon: mdi:movie-open
 panel_title: My Movie AI
 panel_admin: false
-
-ingress: true
-ingress_port: 8099
-ingress_entry: /
-
-
-
 
 ports:
   8099/tcp: 8099
