@@ -1,5 +1,5 @@
 name: Xrob Music
-version: "3.5.16"
+version: "3.5.17"
 slug: music_downloader
 description: Search, download, manage and stream your music library
 url: "https://github.com/ahmedxrob/ai-project"
@@ -11,11 +11,10 @@ arch:
 startup: services
 boot: auto
 
-ingress: false
+webui: "http://[HOST]:[PORT:8099]"
 
 panel_icon: mdi:music
 panel_title: Xrob Music
-panel_url: "http://192.168.1.73:8100"
 
 ports:
   8099/tcp: 8100
