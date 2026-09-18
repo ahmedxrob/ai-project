@@ -21,12 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from rapidfuzz import fuzz
 
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:  # Optional at runtime when AI is not installed/configured.
-    genai = None
-    types = None
+from google import genai
+from google.genai import types
 
 from app.database import (
     init_database,
@@ -242,9 +238,6 @@ class RecommendationResponse(BaseModel):
 # ============================================================
 
 def get_gemini_client():
-
-    if genai is None:
-        return None
 
     api_key = get_env(
         "GEMINI_API_KEY"
@@ -2532,12 +2525,8 @@ def watchlist_remove_page(request: Request, tmdb_id:int=Form(...), media_type:st
 # ============================================================
 
 @app.get("/recommendations")
-def recommendations(request: Request, background_tasks: BackgroundTasks, refresh: bool = False):
+def recommendations(request: Request, background_tasks: BackgroundTasks):
     global recommendation_state
-    if refresh:
-        with RECOMMENDATION_LOCK:
-            recommendation_state.update({"status":"idle","data":None,"error":None,"tmdb_data":None,"job_id":None,"progress":0,"stage":"Idle"})
-
     movies = get_all()
     watched_movies = [x for x in movies if x["type"] == "Movie"]
     watched_series = [x for x in movies if x["type"] == "Series"]
@@ -2565,8 +2554,9 @@ def recommendations(request: Request, background_tasks: BackgroundTasks, refresh
         "display_statistics": get_display_statistics(), "lifetime_statistics": get_lifetime_statistics(),
         "ingress_path": get_ingress_path(request),
     })
-    # Keep the ready result cached until the user explicitly asks for a refresh.
-    # This avoids regenerating recommendations on every page reload/navigation.
+    if state["status"] == "ready":
+        with RECOMMENDATION_LOCK:
+            recommendation_state.update({"status":"idle","data":None,"error":None,"tmdb_data":None,"progress":0,"stage":"Idle"})
     response.headers.update({"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0","Pragma":"no-cache","Expires":"0"})
     return response
 
@@ -2901,27 +2891,15 @@ def api_export():
 
 @app.post("/api/import")
 def api_import(payload:dict):
-    if not isinstance(payload, dict):
-        return JSONResponse({"ok":False,"error":"Backup payload must be a JSON object."}, status_code=400)
     imported=0
-    skipped=0
-    for item in payload.get("watched",[]) if isinstance(payload.get("watched",[]), list) else []:
-        try:
-            if not item.get("title") or item.get("type") not in ("Movie","Series"):
-                skipped += 1
-                continue
-            rating = max(0.0, min(10.0, float(item.get("rating",0) or 0)))
-            add_movie(item["title"],rating,item["type"],item.get("poster"),item.get("backdrop"),item.get("year"),item.get("overview"),item.get("tmdb_id"),item.get("genres"),item.get("cast"),item.get("director"),item.get("creators"),item.get("keywords"),item.get("runtime"),item.get("status"))
-            imported += 1
-        except (TypeError, ValueError, KeyError):
-            skipped += 1
-    for item in payload.get("watchlist",[]) if isinstance(payload.get("watchlist",[]), list) else []:
-        if item.get("tmdb_id") and item.get("media_type") in ("Movie","Series"):
-            upsert_watchlist(item)
-    for item in payload.get("not_interested",[]) if isinstance(payload.get("not_interested",[]), list) else []:
-        if item.get("tmdb_id") and item.get("media_type") in ("Movie","Series"):
-            add_not_interested(item["tmdb_id"],item["media_type"],item.get("title", ""))
-    return {"ok":True,"imported":imported,"skipped":skipped}
+    for item in payload.get("watched",[]):
+        if item.get("title") and item.get("type") in ("Movie","Series"):
+            add_movie(item["title"],float(item.get("rating",0)),item["type"],item.get("poster"),item.get("backdrop"),item.get("year"),item.get("overview"),item.get("tmdb_id"),item.get("genres"),item.get("cast"),item.get("director"),item.get("creators"),item.get("keywords"),item.get("runtime"),item.get("status")); imported+=1
+    for item in payload.get("watchlist",[]):
+        if item.get("tmdb_id") and item.get("media_type") in ("Movie","Series"):upsert_watchlist(item)
+    for item in payload.get("not_interested",[]):
+        if item.get("tmdb_id") and item.get("media_type") in ("Movie","Series"):add_not_interested(item["tmdb_id"],item["media_type"],item.get("title", ""))
+    return {"ok":True,"imported":imported}
 
 # ============================================================
 # DELETE
