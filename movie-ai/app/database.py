@@ -326,7 +326,11 @@ def get_analytics():
     total=c.execute('SELECT COUNT(*) n FROM watched').fetchone()['n']; avg=c.execute('SELECT AVG(rating) n FROM watched').fetchone()['n'] or 0
     genres={}
     for row in c.execute('SELECT genres,rating FROM watched').fetchall():
-        for g in _json(row['genres']): genres[g]=genres.get(g,[])+[float(row['rating'])]
+        for raw in _json(row['genres']):
+            name = raw.get('name') if isinstance(raw, dict) else str(raw or '').strip()
+            if not name:
+                continue
+            genres[name] = genres.get(name,[]) + [float(row['rating'])]
     genre_stats=sorted([{'genre':g,'count':len(v),'avg_rating':round(sum(v)/len(v),2)} for g,v in genres.items()],key=lambda x:(x['count'],x['avg_rating']),reverse=True)
     ratings=[dict(r) for r in c.execute('SELECT rating,COUNT(*) count FROM watched GROUP BY rating ORDER BY rating').fetchall()]
     years=[dict(r) for r in c.execute("SELECT CASE WHEN year IS NULL THEN 'Unknown' ELSE CAST((year/10)*10 AS TEXT) END decade,COUNT(*) count FROM watched GROUP BY decade ORDER BY decade").fetchall()]
