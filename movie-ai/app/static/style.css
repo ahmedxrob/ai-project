@@ -4430,3 +4430,9 @@ body.search-panel-open {
         max-height: calc(100vh - 84px);
     }
 }
+
+
+/* Cinema command rails */
+.drag-scroll-rail{cursor:grab;user-select:none;-webkit-user-select:none;touch-action:pan-y}.drag-scroll-rail.is-dragging{cursor:grabbing!important;scroll-behavior:auto!important;scroll-snap-type:none!important}.drag-scroll-rail img{-webkit-user-drag:none;user-drag:none;pointer-events:none}
+
+.taste-feedback{display:inline-flex;gap:4px;margin-left:4px}.taste-feedback button{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:inherit;border-radius:8px;width:30px;height:30px;cursor:pointer}.taste-feedback button:hover{background:rgba(255,255,255,.1)}
