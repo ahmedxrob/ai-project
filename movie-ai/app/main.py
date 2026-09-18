@@ -2443,11 +2443,12 @@ def title_detail(
 
     response = templates.TemplateResponse(
         request=request,
-        name="detail.html",
+        name="index.html",
         context={
             "detail": detail,
             "media_type": media_type,
             "ingress_path": get_ingress_path(request),
+            "detail_view": True,
         },
     )
 
@@ -2456,133 +2457,6 @@ def title_detail(
     response.headers["Expires"] = "0"
 
     return response
-
-
-
-# ============================================================
-# APP PAGES / FRONTEND WORKSPACES
-# ============================================================
-
-@app.get("/search")
-def search_page(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="search.html",
-        context={
-            "active_page": "search",
-            "ingress_path": get_ingress_path(request),
-        },
-    )
-
-
-@app.get("/library")
-def library_page(request: Request):
-    movies = [dict(item) for item in get_all() if item["type"] == "Movie"]
-    series = [dict(item) for item in get_all() if item["type"] == "Series"]
-    rows = movies + series
-    ratings = [float(item["rating"] or 0) for item in rows]
-    stats = {
-        "watched": len(rows),
-        "movies": len(movies),
-        "series": len(series),
-        "avg_rating": (sum(ratings) / len(ratings)) if ratings else 0,
-        "high_rated": sum(1 for rating in ratings if rating >= 8),
-    }
-    return templates.TemplateResponse(
-        request=request,
-        name="library.html",
-        context={
-            "active_page": "library",
-            "ingress_path": get_ingress_path(request),
-            "movies": movies,
-            "series": series,
-            "stats": stats,
-        },
-    )
-
-
-@app.get("/watchlist")
-def watchlist_page(request: Request):
-    items = load_watchlist()
-    return templates.TemplateResponse(
-        request=request,
-        name="watchlist.html",
-        context={
-            "active_page": "watchlist",
-            "ingress_path": get_ingress_path(request),
-            "items": items,
-        },
-    )
-
-
-@app.get("/api/watchlist")
-def api_watchlist():
-    return {"items": load_watchlist()}
-
-
-@app.get("/stats")
-def stats_page(request: Request):
-    lifetime = get_lifetime_statistics()
-    rows = [dict(item) for item in get_all()]
-    total = len(rows)
-    movie_share = round((lifetime["movies"] / lifetime["watched"] * 100), 1) if lifetime["watched"] else 0
-    bands = [
-        ("9+", "Exceptional", lambda r: r >= 9),
-        ("8–8.9", "Strong favorites", lambda r: 8 <= r < 9),
-        ("7–7.9", "Liked titles", lambda r: 7 <= r < 8),
-        ("<7", "Lower rated", lambda r: r < 7),
-    ]
-    rating_bands = []
-    for label, caption, predicate in bands:
-        count = sum(1 for item in rows if predicate(float(item["rating"] or 0)))
-        rating_bands.append({"label": label, "caption": caption, "count": count, "percent": round((count / total * 100), 1) if total else 0})
-    return templates.TemplateResponse(
-        request=request,
-        name="stats.html",
-        context={
-            "active_page": "stats",
-            "ingress_path": get_ingress_path(request),
-            "lifetime": lifetime,
-            "rating_bands": rating_bands,
-            "movie_share": movie_share,
-        },
-    )
-
-
-@app.get("/taste")
-def taste_page(request: Request):
-    rows = [dict(item) for item in get_all()]
-    ratings = [float(item["rating"] or 0) for item in rows]
-    movie_count = sum(1 for item in rows if item["type"] == "Movie")
-    movie_share = round((movie_count / len(rows) * 100), 1) if rows else 0
-    recent = rows[:10]
-    return templates.TemplateResponse(
-        request=request,
-        name="taste.html",
-        context={
-            "active_page": "taste",
-            "ingress_path": get_ingress_path(request),
-            "avg_rating": (sum(ratings) / len(ratings)) if ratings else 0,
-            "loved": sum(1 for rating in ratings if rating >= 8),
-            "movie_share": movie_share,
-            "recent_count": len(recent),
-            "recent": recent,
-        },
-    )
-
-
-@app.get("/settings")
-def settings_page(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="settings.html",
-        context={
-            "active_page": "settings",
-            "ingress_path": get_ingress_path(request),
-            "tmdb_ready": bool(get_env("TMDB_API_KEY") or get_env("TMDB_TOKEN")),
-            "gemini_ready": bool(get_env("GEMINI_API_KEY")),
-        },
-    )
 
 
 # ============================================================
