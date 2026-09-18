@@ -1,73 +1,34 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-
-    <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <meta
-        name="theme-color"
-        content="#060608"
-    >
-
-    <title>
-        My Movie AI
-    </title>
-
-    <link
-        rel="icon"
-        type="image/svg+xml"
-        href="/static/favicon.svg"
-    >
-
-    <link
-        rel="apple-touch-icon"
-        href="/static/favicon.svg"
-    >
-
-    <link
-        rel="stylesheet"
-        href="/static/style.css"
-    >
-
-
-
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#060608">
+<title>{% if page == "recommendations" or not page %}My Movie AI{% elif page == "search" %}Search · My Movie AI{% elif page == "watched" %}Watched · My Movie AI{% elif page == "watchlist" %}Watchlist · My Movie AI{% elif page == "stats" %}Stats · My Movie AI{% elif page == "taste" %}Taste · My Movie AI{% elif page == "settings" %}Settings · My Movie AI{% elif page == "detail" %}{{ detail.title if detail else "Title" }} · My Movie AI{% else %}My Movie AI{% endif %}</title>
+<link rel="icon" type="image/svg+xml" href="{{ ingress_path|default('') }}/static/favicon.svg">
+<link rel="apple-touch-icon" href="{{ ingress_path|default('') }}/static/favicon.svg">
+<link rel="stylesheet" href="{{ ingress_path|default('') }}/static/style.css">
 </head>
-
-<body data-ingress-path="{{ ingress_path|default('') }}" data-page="recommendations">
-
+<body data-ingress-path="{{ ingress_path|default('') }}" data-page="{{ page|default('recommendations') }}">
 <div class="site-background"></div>
-
-
-
 <nav class="topbar app-topbar">
-    <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
-        <div class="brand-icon">🎬</div>
-        <div class="brand-text"><strong>My Movie AI</strong><span>your personal cinema</span></div>
-    </a>
-    <div class="app-nav" aria-label="Primary navigation">
-        <a href="{{ ingress_path|default('') }}/recommendations" data-nav="recommendations">Home</a>
-        <a href="{{ ingress_path|default('') }}/search" data-nav="search">Search</a>
-        <a href="{{ ingress_path|default('') }}/watched" data-nav="watched">Watched</a>
-        <a href="{{ ingress_path|default('') }}/watchlist" data-nav="watchlist">Watchlist</a>
-        <a href="{{ ingress_path|default('') }}/stats" data-nav="stats">Stats</a>
-        <a href="{{ ingress_path|default('') }}/taste" data-nav="taste">Taste</a>
-        <a href="{{ ingress_path|default('') }}/settings" data-nav="settings">Settings</a>
-    </div>
-    <div class="topbar-status"><span class="status-dot"></span> Local library</div>
+  <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
+    <div class="brand-icon">🎬</div><div class="brand-text"><strong>My Movie AI</strong><span>your personal cinema</span></div>
+  </a>
+  <div class="app-nav" aria-label="Primary navigation">
+    <a href="{{ ingress_path|default('') }}/recommendations" data-nav="recommendations">Home</a>
+    <a href="{{ ingress_path|default('') }}/search" data-nav="search">Search</a>
+    <a href="{{ ingress_path|default('') }}/watched" data-nav="watched">Watched</a>
+    <a href="{{ ingress_path|default('') }}/watchlist" data-nav="watchlist">Watchlist</a>
+    <a href="{{ ingress_path|default('') }}/stats" data-nav="stats">Stats</a>
+    <a href="{{ ingress_path|default('') }}/taste" data-nav="taste">Taste</a>
+    <a href="{{ ingress_path|default('') }}/settings" data-nav="settings">Settings</a>
+  </div>
+  {% if page == "detail" %}<a class="detail-back" href="{{ ingress_path|default('') }}/recommendations">← Back</a>{% else %}<div class="topbar-status"><span class="status-dot"></span> Local library</div>{% endif %}
 </nav>
-
-
-
-
-
-
-    <!-- ================================================== -->
+<main class="page app-page">
+{% if page == "recommendations" or not page %}
+<!-- ================================================== -->
     <!-- HERO -->
     <!-- ================================================== -->
 
@@ -1309,25 +1270,170 @@
     </section>
 
     {% endif %}
-    <footer>
+{% elif page == "search" %}
+<section class="page-hero compact-hero"><div><span class="panel-label">DISCOVER</span><h1>Search movies & series</h1><p>Search TMDB across both movies and TV, then open any title for details.</p></div></section>
+<section class="app-panel search-page-panel">
+  <div class="search-page-top"><div class="large-search-wrap"><span>⌕</span><input id="global-search" autocomplete="off" placeholder="Search a movie, series, actor or title…"><button id="search-clear" type="button" aria-label="Clear">×</button></div></div>
+  <div class="search-tabs" role="tablist"><button class="active" data-kind="All" type="button">All</button><button data-kind="Movie" type="button">Movies</button><button data-kind="Series" type="button">Series</button></div>
+  <div id="search-meta" class="search-meta"></div><div id="search-results-grid" class="media-grid"><div class="page-empty"><div>⌕</div><strong>Start searching</strong><span>Try “Dune”, “The Bear”, or any title you like.</span></div></div>
+  <div id="search-pagination" class="pagination"></div>
+</section>
+{% elif page == "watched" %}
+<section class="page-hero compact-hero"><div><span class="panel-label">YOUR LIBRARY</span><h1>Watched</h1><p>Your personal collection, separated cleanly from discovery.</p></div><a class="primary-button" href="{{ ingress_path|default('') }}/search">＋ Add watched title</a></section>
+<section class="library-toolbar"><div class="search-inline"><span>⌕</span><input id="library-filter" placeholder="Filter your library…"></div><div class="view-tabs"><button class="active" data-filter="All">All {{ movies|length }}</button><button data-filter="Movie">Movies {{ watched_movies|length }}</button><button data-filter="Series">Series {{ watched_series|length }}</button></div></section>
+<section class="media-grid library-page-grid" id="library-grid">
+{% for item in movies %}<article class="media-card library-page-card" data-type="{{ item.type|e }}" data-title="{{ item.title|e|lower }}"><a href="{{ ingress_path|default('') }}/title/{{ item.type }}/{{ item.tmdb_id }}"><div class="media-card-poster">{% if item.poster %}<img src="{{ item.poster|e }}" alt="{{ item.title|e }}" loading="lazy">{% else %}<div class="poster-placeholder">{{ '📺' if item.type=='Series' else '🎬' }}</div>{% endif %}<span class="media-type-pill">{{ item.type|upper }}</span><span class="user-score">★ {{ '%.1f'|format(item.rating) }}</span></div><div class="media-card-body"><h3>{{ item.title }}</h3><div class="media-card-meta">{{ item.year or '' }}{% if item.year %} · {% endif %}Your rating {{ '%.1f'|format(item.rating) }}/10</div><p>{{ item.overview or 'No description available.' }}</p></div></a><form action="{{ ingress_path|default('') }}/delete/{{ item.id }}" method="post" onsubmit="return confirm('Remove this title from your watched library?')"><button class="card-danger-button" type="submit">Remove</button></form></article>{% else %}<div class="page-empty"><div>🎬</div><strong>Your watched library is empty</strong><span>Add a movie or series from Search.</span></div>{% endfor %}
+</section>
+{% elif page == "watchlist" %}
+<section class="page-hero compact-hero"><div><span class="panel-label">SAVE FOR LATER</span><h1>Watchlist</h1><p>Titles you want to watch next.</p></div><a class="secondary-button" href="{{ ingress_path|default('') }}/search">Find titles</a></section>
+<section class="media-grid">{% for x in items %}<article class="media-card"><a href="{{ ingress_path|default('') }}/title/{{ x.media_type }}/{{ x.tmdb_id }}"><div class="media-card-poster">{% if x.poster %}<img src="{{ x.poster|e }}" alt="{{ x.title|e }}" loading="lazy">{% else %}<div class="poster-placeholder">{{ '📺' if x.media_type=='Series' else '🎬' }}</div>{% endif %}<span class="media-type-pill">{{ x.media_type|upper }}</span></div><div class="media-card-body"><h3>{{ x.title }}</h3><div class="media-card-meta">{{ x.year or '' }} · ★ {{ '%.1f'|format(x.vote_average or 0) }}</div><p>{{ x.overview or 'No description available.' }}</p></div></a><form action="{{ ingress_path|default('') }}/watchlist/remove" method="post"><input type="hidden" name="tmdb_id" value="{{ x.tmdb_id }}"><input type="hidden" name="media_type" value="{{ x.media_type }}"><button class="card-danger-button" type="submit">Remove from watchlist</button></form></article>{% else %}<div class="page-empty"><div>♡</div><strong>Your watchlist is empty</strong><span>Open a title and save it for later.</span></div>{% endfor %}</section>
+{% elif page == "stats" %}
+<section class="page-hero compact-hero"><div><span class="panel-label">LIBRARY INTELLIGENCE</span><h1>Stats</h1><p>Understand how your personal cinema is evolving.</p></div></section>
+<section class="stat-grid-page">{% for n,l in [('total','Library titles'),('average_rating','Average rating'),('watchlist','Watchlist'),('not_interested','Dismissed')] %}<div class="big-stat"><strong>{{ analytics[n] or 0 }}</strong><span>{{ l }}</span></div>{% endfor %}</section>
+<section class="dashboard-grid"><div class="app-panel"><div class="panel-heading"><h2>Top genres</h2><span>by frequency & rating</span></div>{% for g in analytics.genres %}<div class="stat-bar-row"><span>{{ g.genre }}</span><div><i style="width:{{ [100, (g.avg_rating/10*100)|round(0,'common')|int]|min }}%"></i></div><b>{{ g.count }}</b></div>{% else %}<div class="page-empty">Add rated titles with metadata to build this chart.</div>{% endfor %}</div><div class="app-panel"><div class="panel-heading"><h2>Ratings</h2><span>your distribution</span></div>{% for r in analytics.ratings %}<div class="stat-bar-row"><span>★ {{ '%.1f'|format(r.rating) }}</span><div><i style="width:{{ [100, r.count*15]|min }}%"></i></div><b>{{ r.count }}</b></div>{% else %}<div class="page-empty">No ratings yet.</div>{% endfor %}</div></section>
+{% elif page == "taste" %}
+<section class="page-hero compact-hero"><div><span class="panel-label">PERSONALIZATION</span><h1>Your taste</h1><p>Weighted from the titles you rate, enriched with metadata.</p></div></section>
+<section class="dashboard-grid"><div class="app-panel"><div class="panel-heading"><h2>Favorite genres</h2><span>strongest signals</span></div><div class="chip-cloud">{% for x in profile.genres %}<span>{{ x.name }} <b>{{ x.score }}</b></span>{% else %}<div class="page-empty">Add more rated titles to build your profile.</div>{% endfor %}</div></div><div class="app-panel"><div class="panel-heading"><h2>Favorite people</h2><span>actors & creators</span></div><div class="chip-cloud">{% for x in profile.people %}<span>{{ x.name }} <b>{{ x.score }}</b></span>{% else %}<div class="page-empty">No cast data yet.</div>{% endfor %}</div></div></section>
+<section class="app-panel"><div class="panel-heading"><h2>Favorite decades</h2><span>weighted by your ratings</span></div><div class="chip-cloud">{% for x in profile.decades %}<span>{{ x.name }}s <b>{{ x.score }}</b></span>{% else %}<div class="page-empty">No year data yet.</div>{% endfor %}</div></section>
+{% elif page == "settings" %}
+<section class="page-hero compact-hero"><div><span class="panel-label">CONTROL CENTER</span><h1>Settings</h1><p>Configure recommendations, backups, and system health.</p></div></section>
+<section class="dashboard-grid"><div class="app-panel"><div class="panel-heading"><h2>Recommendation engine</h2><span>changes apply to new jobs</span></div><form class="settings-form" method="post" action="{{ ingress_path|default('') }}/settings/save"><label>AI picks per type<input type="number" name="recommendation_count" min="4" max="20" value="{{ settings.recommendation_count }}"></label><label>Avoid recently shown<input type="number" name="avoid_recent" min="0" max="500" value="{{ settings.avoid_recent }}"></label><label>Diversity<input type="range" name="diversity" min="0" max="1" step="0.05" value="{{ settings.diversity }}"><output>{{ settings.diversity }}</output></label><label>Discovery<input type="range" name="discovery" min="0" max="1" step="0.05" value="{{ settings.discovery }}"><output>{{ settings.discovery }}</output></label><button class="primary-button" type="submit">Save settings</button></form></div><div class="app-panel"><div class="panel-heading"><h2>System</h2><span>local-first</span></div><div class="system-check"><div><b>Database</b><span>● {{ 'Healthy' if health.database else 'Unavailable' }}</span></div><div><b>TMDB</b><span>● {{ 'Configured' if health.tmdb_configured else 'Not configured' }}</span></div><div><b>Gemini</b><span>● {{ 'Configured' if health.gemini_configured else 'Not configured' }}</span></div><div><b>Version</b><span>{{ health.version }}</span></div></div><div class="settings-actions"><a href="{{ ingress_path|default('') }}/api/export" class="secondary-button">⇩ Export backup</a><label class="secondary-button file-button">⇧ Import backup<input id="import-file" type="file" accept="application/json,.json" hidden></label></div></div></section>
+{% if saved %}<div class="save-notice">Settings saved.</div>{% endif %}
+{% elif page == "detail" %}
+<section class="detail-hero"{% if detail.backdrop %} style="--detail-backdrop: url('{{ detail.backdrop }}')"{% endif %}>
+        <div class="detail-hero-overlay"></div>
+        <div class="detail-hero-content">
+            <div class="detail-poster-wrap">
+                {% if detail.poster %}
+                <img class="detail-poster" src="{{ detail.poster }}" alt="{{ detail.title }}">
+                {% else %}
+                <div class="detail-poster detail-poster-empty">🎬</div>
+                {% endif %}
+            </div>
 
-        <span>
-            My Movie AI
-        </span>
+            <div class="detail-main">
+                <div class="detail-kicker">{{ "MOVIE" if media_type == "Movie" else "SERIES" }} • TMDB</div>
+                <div class="detail-title-row">
+                    <div>
+                        <h1>{{ detail.title }}</h1>
+                        {% if detail.tagline %}<p class="detail-tagline">{{ detail.tagline }}</p>{% endif %}
+                    </div>
+                    <div class="match-ring" style="--match-angle: {{ (detail.match_percentage / 100 * 360)|round(0) }}deg">
+                        <strong>{{ detail.match_percentage }}%</strong>
+                        <span>match</span>
+                    </div>
+                </div>
 
-        <span>
-            •
-        </span>
+                <div class="detail-meta">
+                    {% if detail.year %}<span>{{ detail.year }}</span>{% endif %}
+                    <span class="detail-rating">★ {{ "%.1f"|format(detail.vote_average) }}</span>
+                    {% if detail.status %}<span>{{ detail.status }}</span>{% endif %}
+                    {% if detail.runtime %}<span>{{ detail.runtime }} min</span>{% endif %}
+                    {% if detail.seasons %}<span>{{ detail.seasons }} seasons</span>{% endif %}
+                </div>
 
-        <span>
-            Recommendations powered by Gemini + TMDB
-        </span>
+                <div class="detail-genres">
+                    {% for genre in detail.genres %}
+                    <span>{{ genre }}</span>
+                    {% endfor %}
+                </div>
 
-    </footer>
+                <p class="detail-overview">{{ detail.overview or "No description available." }}</p>
+
+                <div class="detail-actions">
+                    {% if detail.is_watched %}
+                    <div class="detail-watched-badge">✅ Already watched{% if detail.user_rating is not none %} • Your rating {{ "%.1f"|format(detail.user_rating) }}/10{% endif %}</div>
+                    {% else %}
+                    <form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watched-form">
+                        <input type="hidden" name="title" value="{{ detail.title }}">
+                        <input type="hidden" name="media_type" value="{{ media_type }}">
+                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
+                        <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required>
+                        <button type="submit">✅ Mark watched</button>
+                    </form>
+                    {% endif %}
+
+                    <form method="post" action="{{ ingress_path|default('') }}/watchlist/toggle">
+                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
+                        <input type="hidden" name="media_type" value="{{ media_type }}">
+                        <input type="hidden" name="title" value="{{ detail.title }}">
+                        <input type="hidden" name="year" value="{{ detail.year or '' }}">
+                        <input type="hidden" name="poster" value="{{ detail.poster or '' }}">
+                        <input type="hidden" name="backdrop" value="{{ detail.backdrop or '' }}">
+                        <input type="hidden" name="overview" value="{{ detail.overview or '' }}">
+                        <input type="hidden" name="vote_average" value="{{ detail.vote_average }}">
+                        <input type="hidden" name="remove" value="{{ 'true' if detail.is_watchlisted else 'false' }}">
+                        <button class="watchlist-button" type="submit">{{ "✓ In Watchlist" if detail.is_watchlisted else "+ Watchlist" }}</button>
+                    </form>
+
+                    {% if detail.trailer and detail.trailer.key %}<a class="tmdb-detail-button" href="https://www.youtube.com/watch?v={{ detail.trailer.key }}" target="_blank" rel="noopener noreferrer">▶ Trailer</a>{% endif %}
+                    <a class="tmdb-detail-button" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">Open TMDB ↗</a>
+                </div>
+
+                <div class="why-detail">
+                    <div class="why-detail-label">WHY YOU MAY LIKE IT</div>
+                    <p>Based on your current library and ratings, this title is estimated at <strong>{{ detail.match_percentage }}% compatibility</strong> with your taste.</p>
+                </div>
+
+                {% if detail.director %}
+                <div class="detail-director"><span>{{ "DIRECTOR" if media_type == "Movie" else "CREATED BY" }}</span><strong>{{ detail.director }}</strong></div>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    {% if detail.cast %}
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>Cast</h2><span>{{ detail.cast|length }} featured</span></div>
+        <div class="cast-rail">
+            {% for person in detail.cast %}
+            <div class="cast-card">
+                {% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty">👤</div>{% endif %}
+                <strong>{{ person.name }}</strong>
+                {% if person.character %}<span>{{ person.character }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
 
 
+    {% if media_type == "Series" %}
+    <section class="detail-section series-progress-panel">
+        <div class="detail-section-heading"><h2>Continue watching</h2><span id="series-progress-label">Not started</span></div>
+        <div class="series-progress-controls">
+            <label>Season <input id="series-season" type="number" min="1" value="1"></label>
+            <label>Episode <input id="series-episode" type="number" min="1" value="1"></label>
+            <label>Progress <input id="series-progress" type="number" min="0" max="100" value="0">%</label>
+            <select id="series-status"><option>Not started</option><option selected>Watching</option><option>Completed</option><option>Paused</option><option>Dropped</option></select>
+            <button id="save-series-progress" type="button">Save progress</button>
+        </div>
+    </section>
+    {% endif %}
 
-
+    {% if detail.similar %}
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>More like this</h2><span>TMDB similar titles</span></div>
+        <div class="similar-rail">
+            {% for item in detail.similar %}
+            <a class="similar-card" href="{{ ingress_path|default('') }}/title/{{ media_type }}/{{ item.tmdb_id }}">
+                {% if item.poster %}<img src="{{ item.poster }}" alt="{{ item.title }}">{% endif %}
+                <div class="similar-info">
+                    <strong>{{ item.title }}</strong>
+                    <span>{% if item.year %}{{ item.year }} • {% endif %}★ {{ "%.1f"|format(item.vote_average) }}</span>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+{% endif %}
+</main>
+<footer class="app-footer"><span>My Movie AI</span><span>Private cinema · local-first</span></footer>
+<script>
+(function(){ const p=document.body.dataset.page; document.querySelectorAll('[data-nav]').forEach(a=>{if(a.dataset.nav===p)a.classList.add('active')}); })();
+</script>
+{% if page == "recommendations" or not page %}
 <script>
 
 /* ========================================================= */
@@ -2980,9 +3086,39 @@ document.addEventListener("submit", async function (event) {
 })();
 
 </script>
+{% elif page == "search" %}
+<script>
+(function(){
+ const input=document.getElementById('global-search'), clear=document.getElementById('search-clear'), grid=document.getElementById('search-results-grid'), meta=document.getElementById('search-meta'), pag=document.getElementById('search-pagination'); let timer,kind='All',page=1;
+ const appUrl=p=>(document.body.dataset.ingressPath||'')+p; const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+ function card(x){const type=x.media_type; return `<a class="media-card" href="${appUrl('/title/'+type+'/'+x.tmdb_id)}"><div class="media-card-poster">${x.poster?`<img src="${esc(x.poster)}" alt="" loading="lazy">`:`<div class="poster-placeholder">${type==='Series'?'📺':'🎬'}</div>`}<span class="media-type-pill">${type==='Series'?'SERIES':'MOVIE'}</span></div><div class="media-card-body"><h3>${esc(x.title)}</h3><div class="media-card-meta">${x.year||''} <span>•</span> ★ ${Number(x.vote_average||0).toFixed(1)}</div><p>${esc(x.overview||'No description available.')}</p></div></a>`}
+ function drawPages(total){const pages=Math.min(Number(total||1),500); if(pages<=1){pag.innerHTML='';return;} let out=''; const start=Math.max(1,page-2), end=Math.min(pages,page+2); if(page>1)out+=`<button data-p="${page-1}">‹</button>`; for(let p=start;p<=end;p++)out+=`<button class="${p===page?'active':''}" data-p="${p}">${p}</button>`; if(page<pages)out+=`<button data-p="${page+1}">›</button>`; pag.innerHTML=out; pag.querySelectorAll('button').forEach(b=>b.onclick=()=>{page=Number(b.dataset.p);run()});}
+ async function run(){const q=input.value.trim(); if(q.length<2){grid.innerHTML='<div class="page-empty"><div>⌕</div><strong>Start searching</strong><span>Type at least 2 characters.</span></div>';meta.textContent='';pag.innerHTML='';return;} grid.innerHTML='<div class="page-loading"><span class="loading-spinner"></span> Searching…</div>'; try{const r=await fetch(appUrl('/api/search')+'?q='+encodeURIComponent(q)+'&media_type='+encodeURIComponent(kind)+'&page='+page,{cache:'no-store'}); const d=await r.json(); const items=d.results||[]; meta.textContent=`${items.length ? items.length+' results' : 'No results'} · page ${d.page||page}`; grid.innerHTML=items.length?items.map(card).join(''):'<div class="page-empty"><div>🎬</div><strong>No titles found</strong><span>Try another title or switch between Movies and Series.</span></div>'; drawPages(d.total_pages||1);}catch(e){grid.innerHTML='<div class="page-empty"><div>!</div><strong>Search unavailable</strong><span>Check your TMDB configuration.</span></div>';meta.textContent='';pag.innerHTML='';}}
+ input.oninput=()=>{page=1;clearTimeout(timer);timer=setTimeout(run,280)}; clear.onclick=()=>{input.value='';page=1;run();input.focus()}; document.querySelectorAll('.search-tabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.search-tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');kind=b.dataset.kind;page=1;run()});
+})();
+</script>
+{% elif page == "watched" %}
+<script>const input=document.getElementById('library-filter'),cards=[...document.querySelectorAll('.library-page-card')],tabs=[...document.querySelectorAll('.view-tabs button')];let type='All';function filter(){const q=(input.value||'').trim().toLowerCase();cards.forEach(c=>c.style.display=((type==='All'||c.dataset.type===type)&&(!q||c.dataset.title.includes(q)))?'':'none')}input.oninput=filter;tabs.forEach(b=>b.onclick=()=>{tabs.forEach(x=>x.classList.remove('active'));b.classList.add('active');type=b.dataset.filter;filter()});</script>
+{% elif page == "settings" %}
+<script>const file=document.getElementById('import-file');if(file)file.onchange=async()=>{if(!file.files[0])return;try{const p=JSON.parse(await file.files[0].text());const r=await fetch('{{ ingress_path|default('') }}/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});const d=await r.json();alert(r.ok?'Imported '+(d.imported||0)+' watched titles.':'Import failed.');location.reload()}catch(e){alert('Invalid backup file.')}};</script>
+{% elif page == "detail" %}
+<script>
+(function () {
+    const base = document.body.dataset.ingressPath || "";
+    document.querySelectorAll(".similar-card").forEach(function (card) {
+        const href = card.getAttribute("href") || "";
+        if (!href.startsWith("/app/") && base && href.startsWith("/title/")) {
+            card.setAttribute("href", base + href);
+        }
+    });
+})();
+</script>
 
-
-
-</main>
+{% if media_type == "Series" %}
+<script>
+(async function(){const base=document.body.dataset.ingressPath||"";const id={{ detail.tmdb_id }};const u=p=>base+p;const season=document.getElementById('series-season'),episode=document.getElementById('series-episode'),progress=document.getElementById('series-progress'),status=document.getElementById('series-status'),label=document.getElementById('series-progress-label');try{const r=await fetch(u('/api/series/progress/'+id),{cache:'no-store'});const x=await r.json();season.value=x.season||1;episode.value=x.episode||1;progress.value=x.progress||0;status.value=x.status||'Not started';label.textContent=x.status||'Not started'}catch(e){}document.getElementById('save-series-progress')?.addEventListener('click',async()=>{const f=new FormData();f.append('tmdb_id',id);f.append('season',season.value);f.append('episode',episode.value);f.append('progress',progress.value);f.append('status',status.value);const r=await fetch(u('/api/series/progress'),{method:'POST',body:f});if(r.ok){label.textContent=status.value;document.getElementById('save-series-progress').textContent='Saved ✓';setTimeout(()=>document.getElementById('save-series-progress').textContent='Save progress',1400)}})})();
+</script>
+{% endif %}
+{% endif %}
 </body>
 </html>
