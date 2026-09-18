@@ -1,236 +1,1950 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#050505">
-<title>{% if page == "recommendations" or not page %}My Movie AI{% elif page == "search" %}Search · My Movie AI{% elif page == "watched" %}My Library · My Movie AI{% elif page == "watchlist" %}My List · My Movie AI{% elif page == "stats" %}Stats · My Movie AI{% elif page == "taste" %}Taste · My Movie AI{% elif page == "settings" %}Settings · My Movie AI{% elif page == "detail" %}{{ detail.title if detail else "Title" }} · My Movie AI{% else %}My Movie AI{% endif %}</title>
-<link rel="icon" type="image/svg+xml" href="{{ ingress_path|default('') }}/static/favicon.svg">
-<link rel="apple-touch-icon" href="{{ ingress_path|default('') }}/static/favicon.svg">
-<link rel="stylesheet" href="{{ ingress_path|default('') }}/static/style.css">
-<style>:root{--app-background-image:url("{{ ingress_path|default('') }}/static/background.jpg")}</style>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="theme-color"
+        content="#060608"
+    >
+
+    <title>{% if detail is defined and detail %}{{ detail.title }} — My Movie AI{% else %}My Movie AI{% endif %}</title>
+
+    <link
+        rel="icon"
+        type="image/svg+xml"
+        href="/static/favicon.svg"
+    >
+
+    <link
+        rel="apple-touch-icon"
+        href="/static/favicon.svg"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+
+
 </head>
-<body data-ingress-path="{{ ingress_path|default('') }}" data-page="{{ page|default('recommendations') }}">
 
-<!-- =========================================================
-     GLOBAL APP SHELL
-     ========================================================= -->
-<div class="app-noise" aria-hidden="true"></div>
-<header class="site-header" id="site-header">
-  <div class="header-inner">
-    <a class="brand-mark" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI Home">
-      <span class="brand-glyph">M</span>
-      <span class="brand-wordmark">MY MOVIE AI</span>
-    </a>
+<body data-ingress-path="{{ ingress_path|default('') }}">
 
-    <nav class="primary-nav" aria-label="Primary navigation">
-      <a data-nav="recommendations" href="{{ ingress_path|default('') }}/recommendations"><span>Home</span></a>
-      <a data-nav="search" href="{{ ingress_path|default('') }}/search"><span>Search</span></a>
-      <a data-nav="watched" href="{{ ingress_path|default('') }}/watched"><span>My Library</span></a>
-      <a data-nav="watchlist" href="{{ ingress_path|default('') }}/watchlist"><span>My List</span></a>
-      <a data-nav="stats" href="{{ ingress_path|default('') }}/stats"><span>Stats</span></a>
-      <a data-nav="taste" href="{{ ingress_path|default('') }}/taste"><span>Taste</span></a>
-    </nav>
+{% if detail is defined and detail %}
 
-    <div class="header-actions">
-      {% if page == 'recommendations' or not page %}
-      <button class="header-icon-button" id="open-search-button" type="button" aria-label="Add or search title" aria-expanded="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m1.35-5.4a6.75 6.75 0 1 1-13.5 0 6.75 6.75 0 0 1 13.5 0Z"/></svg>
-      </button>
-      {% else %}
-      <a class="header-icon-button" href="{{ ingress_path|default('') }}/search" aria-label="Search">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m1.35-5.4a6.75 6.75 0 1 1-13.5 0 6.75 6.75 0 0 1 13.5 0Z"/></svg>
-      </a>
-      {% endif %}
-      <a class="header-settings" href="{{ ingress_path|default('') }}/settings">Settings</a>
-      <div class="profile-chip" aria-label="Profile"><span>MM</span></div>
+<div class="site-background"></div>
+
+<nav class="topbar detail-topbar">
+    <div class="brand">
+        <div class="brand-icon">🎬</div>
+        <div class="brand-text">
+            <strong>My Movie AI</strong>
+            <span>your personal cinema</span>
+        </div>
     </div>
-  </div>
-</header>
+    <a class="detail-back" href="{{ ingress_path|default('') }}/recommendations">← Back to picks</a>
+</nav>
 
-{% if page == 'recommendations' or not page %}
-<section class="home-hero">
-  <div class="home-hero-backdrop" aria-hidden="true"></div>
-  <div class="home-hero-content page-width">
-    <div class="eyebrow">YOUR PRIVATE CINEMA</div>
-    <h1>What are you<br><em>watching tonight?</em></h1>
-    <p>Discover movies and series tailored to your taste, keep your watchlist close, and build a library that feels like your own streaming service.</p>
-    <div class="hero-actions">
-      <button class="button button-primary" type="button" onclick="document.getElementById('open-search-button')?.click()">＋ Add to library</button>
-      <a class="button button-ghost" href="{{ ingress_path|default('') }}/watchlist">♡ My List</a>
-    </div>
-    <div class="hero-stats-row">
-      <div><strong>{{ lifetime_statistics.watched|default(0) }}</strong><span>Watched</span></div>
-      <div><strong>{{ lifetime_statistics.movies|default(0) }}</strong><span>Movies</span></div>
-      <div><strong>{{ lifetime_statistics.series|default(0) }}</strong><span>Series</span></div>
-      <div><strong id="header-recommendations-count">{{ lifetime_statistics.recommendations|default(0) }}</strong><span>Recommendations</span></div>
-    </div>
-  </div>
-</section>
-
-<main class="page-shell home-shell page-width">
-  <section class="section-block discovery-block">
-    <div class="section-title-row">
-      <div><span class="eyebrow">DISCOVERY</span><h2>Find something new</h2></div>
-      <a class="text-link" href="{{ ingress_path|default('') }}/recommendations">Refresh <span>↗</span></a>
-    </div>
-    <div class="discovery-callout">
-      <div><span class="discovery-icon">✦</span><div><strong>Curated for you</strong><span>AI picks, TMDB discovery, and current trends in one place.</span></div></div>
-      <div class="discovery-pills"><span>{{ recommendations.ai_movies|length if recommendations else 0 }} AI movie picks</span><span>{{ recommendations.ai_series|length if recommendations else 0 }} AI series picks</span></div>
-    </div>
-  </section>
-
-  <section class="section-block" id="trending-now">
-    <div class="section-title-row"><div><span class="eyebrow">RIGHT NOW ON TMDB</span><h2>Trending today</h2></div><span class="section-muted">Live</span></div>
-    <div class="subsection-title"><span class="subsection-dot movie-dot"></span><div><h3>Trending Movies</h3><span id="trending-movie-count">—</span></div></div>
-    <div class="trending-grid media-rail" id="trending-movies"><div class="rail-loading">Loading today's trending movies…</div></div>
-    <div class="subsection-title series-subsection"><span class="subsection-dot series-dot"></span><div><h3>Trending Series</h3><span id="trending-series-count">—</span></div></div>
-    <div class="trending-grid media-rail" id="trending-series"><div class="rail-loading">Loading today's trending series…</div></div>
-  </section>
-
-  {% macro rec_card(item, type, source, default_match) %}
-  <article class="recommendation-card media-card-shell recommendation-clickable" data-media-type="{{ type }}" data-tmdb-id="{{ item.tmdb_id }}">
-    <div class="poster-frame">
-      {% if item.poster %}<img src="{{ item.poster }}" alt="{{ item.title }}" loading="lazy">{% else %}<div class="poster-fallback">{{ '▣' if type == 'Movie' else 'TV' }}</div>{% endif %}
-      <div class="poster-gradient"></div>
-      <span class="poster-source {{ 'source-ai' if source == 'AI' else 'source-tmdb' }}">{{ 'AI PICK' if source == 'AI' else 'DISCOVERY' }}</span>
-      <span class="poster-match">{{ item.match_percentage|default(default_match) }}% MATCH</span>
-      <span class="poster-type">{{ 'Series' if type == 'Series' else 'Movie' }}</span>
-    </div>
-    <div class="media-card-info">
-      <div class="card-title-line"><h3>{{ item.title }}</h3><span class="score">★ {{ '%.1f'|format(item.vote_average or 0) }}</span></div>
-      <div class="card-meta">{% if item.year %}<span>{{ item.year }}</span>{% endif %}{% if item.year %}<span>•</span>{% endif %}<span>{{ 'Series' if type == 'Series' else 'Movie' }}</span></div>
-      {% if item.overview %}<p>{{ item.overview }}</p>{% endif %}
-      {% if item.reason %}<button type="button" class="why-button" onclick="toggleWhy(this)">Why this?</button><div class="why-panel">{{ item.reason }}</div>{% endif %}
-      <div class="card-actions">
-        {% if item.tmdb_url %}<a class="card-action secondary" href="{{ item.tmdb_url }}" target="_blank" rel="noopener noreferrer">TMDB</a>{% endif %}
-        <form action="/recommendation/watched" method="post" class="ajax-watched-form"><input type="hidden" name="title" value="{{ item.title }}"><input type="hidden" name="media_type" value="{{ type }}"><input type="hidden" name="tmdb_id" value="{{ item.tmdb_id }}"><input type="number" name="rating" min="0" max="10" step="0.1" value="8" required><button class="card-action primary watched-button" type="submit">Watched</button></form>
-      </div>
-      <form action="/recommendation/not-interested" method="post" class="ajax-not-interested-form card-dismiss"><input type="hidden" name="title" value="{{ item.title }}"><input type="hidden" name="media_type" value="{{ type }}"><input type="hidden" name="tmdb_id" value="{{ item.tmdb_id }}"><button class="not-interested-button" type="submit">Not interested</button></form>
-    </div>
-  </article>
-  {% endmacro %}
-
-  {% set ai_movie_count = recommendations.ai_movies|length if recommendations else 0 %}
-  {% set tmdb_movie_count = recommendations.tmdb_movies|length if recommendations else 0 %}
-  {% set ai_series_count = recommendations.ai_series|length if recommendations else 0 %}
-  {% set tmdb_series_count = recommendations.tmdb_series|length if recommendations else 0 %}
-
-  {% for group, items, type, label, tone, empty_message, default_match in [
-      ('AI MOVIE PICKS', recommendations.ai_movies if recommendations else [], 'Movie', 'AI movie picks', 'ai', 'No AI movie picks are available yet.', 82),
-      ('TMDB MOVIE DISCOVERY', recommendations.tmdb_movies if recommendations else [], 'Movie', 'TMDB movie discovery', 'tmdb', 'No movie discoveries are available yet.', 72),
-      ('AI SERIES PICKS', recommendations.ai_series if recommendations else [], 'Series', 'AI series picks', 'ai', 'No AI series picks are available yet.', 82),
-      ('TMDB SERIES DISCOVERY', recommendations.tmdb_series if recommendations else [], 'Series', 'TMDB series discovery', 'tmdb', 'No series discoveries are available yet.', 72)
-  ] %}
-    <section class="section-block recommendation-section">
-      <div class="section-title-row"><div><span class="eyebrow {{ 'eyebrow-red' if tone == 'ai' else '' }}">{{ group }}</span><h2>{{ label }}</h2></div><span class="count-badge">{{ items|length }}</span></div>
-      {% if items %}<div class="recommendation-grid media-rail">{% for item in items %}{{ rec_card(item, type, 'AI' if tone == 'ai' else 'TMDB', default_match) }}{% endfor %}</div>
-      {% elif recommendations_loading and tone == 'ai' %}<div class="generation-card ai-generation-loading"><span class="ai-generation-spinner"></span><div><strong>Building your {{ type|lower }} picks…</strong><span>AI is analyzing your ratings and finding personalized matches.</span></div></div>
-      {% else %}<div class="empty-state compact"><span>✦</span><strong>{{ empty_message }}</strong><span>Open Search to explore more titles.</span></div>{% endif %}
-    </section>
-  {% endfor %}
-</main>
-
-<!-- Add/search drawer -->
-<div class="overlay" id="search-panel" aria-hidden="true">
-  <div class="drawer drawer-large">
-    <div class="drawer-head"><div><span class="eyebrow">YOUR LIBRARY</span><h2>Add a title</h2></div><button class="drawer-close" id="close-search-button" type="button" aria-label="Close">×</button></div>
-    <form id="add-form" class="add-title-form" action="/api/add" method="post">
-      <input type="hidden" id="tmdb_id" name="tmdb_id" value="">
-      <div class="field-row"><div class="field field-grow"><label for="title">Search TMDB</label><input id="title" name="title" autocomplete="off" placeholder="Search for a movie or series…" required></div><div class="field field-type"><label for="media_type">Type</label><select id="media_type" name="media_type"><option>Movie</option><option>Series</option></select></div><div class="field field-rating"><label for="rating">Rating</label><input id="rating" name="rating" type="number" min="0" max="10" step="0.1" value="8" required></div></div>
-      <div class="search-results-popover" id="search-results"></div>
-      <div class="selected-preview" id="selected-preview"><div class="selected-preview-empty"><span>⌕</span><div><strong>Select a title</strong><span>Choose a TMDB result to preview it here.</span></div></div></div>
-      <div class="drawer-actions"><button class="button button-primary primary-button" type="submit">Add to library</button><button class="button button-quiet" id="clear-search" type="button">Clear</button></div>
-    </form>
-  </div>
-</div>
-
-{% elif page == 'search' %}
-<main class="page-shell inner-page page-width">
-  <section class="page-masthead"><div><span class="eyebrow">DISCOVER</span><h1>Find your next favorite</h1><p>Search movies and series, scan ratings, then open any title for the full cinematic detail page.</p></div><div class="masthead-orb">⌕</div></section>
-  <section class="search-workspace">
-    <div class="search-bar-large"><svg viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m1.35-5.4a6.75 6.75 0 1 1 13.5 0 6.75 6.75 0 0 1 13.5 0Z"/></svg><input id="global-search" autocomplete="off" placeholder="Search movies, series, actors, or titles…"><button id="search-clear" type="button">Clear</button></div>
-    <div class="filter-bar search-tabs" role="tablist"><button class="active" data-kind="All" type="button">All</button><button data-kind="Movie" type="button">Movies</button><button data-kind="Series" type="button">Series</button></div>
-    <div class="results-head"><span id="search-meta"></span></div>
-    <div id="search-results-grid" class="media-grid search-results-grid"><div class="empty-state"><span>⌕</span><strong>Start exploring</strong><span>Type at least two characters to begin.</span></div></div>
-    <div id="search-pagination" class="pagination"></div>
-  </section>
-</main>
-
-{% elif page == 'watched' %}
-<main class="page-shell inner-page page-width">
-  <section class="page-masthead library-masthead"><div><span class="eyebrow">MY LIBRARY</span><h1>Watched</h1><p>Everything you have seen, rated, and kept in your personal cinema.</p></div><div class="masthead-stat"><strong>{{ movies|length }}</strong><span>Titles</span></div></section>
-  <section class="content-toolbar"><div class="search-bar-compact"><span>⌕</span><input id="library-filter" placeholder="Filter your library…"></div><div class="filter-bar view-tabs"><button class="active" data-filter="All">All <b>{{ movies|length }}</b></button><button data-filter="Movie">Movies <b>{{ watched_movies|length }}</b></button><button data-filter="Series">Series <b>{{ watched_series|length }}</b></button></div><a class="button button-primary" href="{{ ingress_path|default('') }}/search">＋ Add title</a></section>
-  <section class="media-grid library-grid" id="library-grid">
-  {% for item in movies %}<article class="media-card-shell library-page-card library-clickable" data-type="{{ item.type|e }}" data-title="{{ item.title|e|lower }}" data-media-type="{{ item.type|e }}" data-tmdb-id="{{ item.tmdb_id }}"><a class="card-link" href="{{ ingress_path|default('') }}/title/{{ item.type }}/{{ item.tmdb_id }}?match=100"><div class="poster-frame">{% if item.poster %}<img src="{{ item.poster|e }}" alt="{{ item.title|e }}" loading="lazy">{% else %}<div class="poster-fallback">{{ 'TV' if item.type=='Series' else '▣' }}</div>{% endif %}<span class="poster-type">{{ item.type }}</span><span class="poster-score">★ {{ '%.1f'|format(item.rating) }}</span></div><div class="media-card-info"><div class="card-title-line"><h3>{{ item.title }}</h3></div><div class="card-meta">{% if item.year %}<span>{{ item.year }}</span><span>•</span>{% endif %}<span>Your rating {{ '%.1f'|format(item.rating) }}/10</span></div><p>{{ item.overview or 'No description available.' }}</p></div></a><form class="card-remove-form" action="{{ ingress_path|default('') }}/delete/{{ item.id }}" method="post" onsubmit="return confirm('Remove this title from your watched library?')"><button class="icon-remove" type="submit" aria-label="Remove">×</button></form></article>{% else %}<div class="empty-state"><span>▣</span><strong>Your library is empty</strong><span>Search for a title and mark it watched to start building your collection.</span></div>{% endfor %}
-  </section>
-</main>
-
-{% elif page == 'watchlist' %}
-<main class="page-shell inner-page page-width">
-  <section class="page-masthead list-masthead"><div><span class="eyebrow">MY LIST</span><h1>Saved for later</h1><p>Keep the titles you want close. No clutter, just your queue.</p></div><div class="masthead-stat"><strong>{{ items|length }}</strong><span>Saved</span></div></section>
-  <section class="content-toolbar"><div class="toolbar-copy"><span class="eyebrow">YOUR NEXT WATCH</span><strong>{{ items|length }} title{% if items|length != 1 %}s{% endif %}</strong></div><a class="button button-primary" href="{{ ingress_path|default('') }}/search">＋ Find titles</a></section>
-  <section class="media-grid library-grid watchlist-grid">{% for x in items %}<article class="media-card-shell"><a class="card-link" href="{{ ingress_path|default('') }}/title/{{ x.media_type }}/{{ x.tmdb_id }}"><div class="poster-frame">{% if x.poster %}<img src="{{ x.poster|e }}" alt="{{ x.title|e }}" loading="lazy">{% else %}<div class="poster-fallback">{{ 'TV' if x.media_type=='Series' else '▣' }}</div>{% endif %}<span class="poster-type">{{ x.media_type }}</span></div><div class="media-card-info"><div class="card-title-line"><h3>{{ x.title }}</h3><span class="score">★ {{ '%.1f'|format(x.vote_average or 0) }}</span></div><div class="card-meta">{% if x.year %}<span>{{ x.year }}</span>{% endif %}</div><p>{{ x.overview or 'No description available.' }}</p></div></a><form class="card-bottom-action" action="{{ ingress_path|default('') }}/watchlist/remove" method="post"><input type="hidden" name="tmdb_id" value="{{ x.tmdb_id }}"><input type="hidden" name="media_type" value="{{ x.media_type }}"><button class="watchlist-remove" type="submit">Remove from My List</button></form></article>{% else %}<div class="empty-state"><span>♡</span><strong>Your list is empty</strong><span>Open any title and save it for your next movie night.</span></div>{% endfor %}</section>
-</main>
-
-{% elif page == 'stats' %}
-<main class="page-shell inner-page page-width">
-  <section class="page-masthead stats-masthead"><div><span class="eyebrow">LIBRARY INTELLIGENCE</span><h1>Your cinema at a glance</h1><p>Simple, useful signals from the titles you have saved and rated.</p></div><div class="masthead-orb stats-orb">◈</div></section>
-  <section class="metric-grid">{% for n,l in [('total','Library titles'),('average_rating','Average rating'),('watchlist','My List'),('not_interested','Dismissed')] %}<div class="metric-card"><span>{{ l }}</span><strong>{{ analytics[n] or 0 }}</strong><small>{% if n == 'average_rating' %}out of 10{% elif n == 'total' %}in your library{% elif n == 'watchlist' %}saved for later{% else %}hidden from discovery{% endif %}</small></div>{% endfor %}</section>
-  <section class="stats-layout"><div class="data-panel"><div class="panel-heading"><div><span class="eyebrow">PATTERNS</span><h2>Top genres</h2></div><span>Count + rating</span></div>{% for g in analytics.genres %}<div class="bar-row"><div><span>{{ g.genre }}</span><b>{{ g.count }}</b></div><div class="bar-track"><i style="width:{{ [100, (g.avg_rating/10*100)|round(0,'common')|int]|min }}%"></i></div><small>★ {{ '%.1f'|format(g.avg_rating) }}</small></div>{% else %}<div class="empty-state compact"><span>◈</span><strong>No genre data yet</strong><span>Add rated titles with metadata to build this view.</span></div>{% endfor %}</div>
-  <div class="data-panel"><div class="panel-heading"><div><span class="eyebrow">RATINGS</span><h2>Your scoring</h2></div><span>Distribution</span></div>{% for r in analytics.ratings %}<div class="bar-row rating-row"><div><span>★ {{ '%.1f'|format(r.rating) }}</span><b>{{ r.count }}</b></div><div class="bar-track"><i style="width:{{ [100, r.count*15]|min }}%"></i></div></div>{% else %}<div class="empty-state compact"><span>★</span><strong>No ratings yet</strong><span>Your ratings will appear here.</span></div>{% endfor %}</div></section>
-</main>
-
-{% elif page == 'taste' %}
-<main class="page-shell inner-page page-width">
-  <section class="page-masthead taste-masthead"><div><span class="eyebrow">YOUR TASTE</span><h1>The things you keep choosing</h1><p>Your profile is weighted from ratings and enriched with title metadata.</p></div><div class="taste-orbit"><span>✦</span></div></section>
-  <section class="taste-layout"><div class="data-panel taste-panel"><div class="panel-heading"><div><span class="eyebrow">GENRES</span><h2>Favorite genres</h2></div><span>strongest signals</span></div><div class="taste-list">{% for x in profile.genres %}<div class="taste-row"><span>{{ x.name }}</span><div class="mini-track"><i style="width:{{ [100, (x.score / (profile.genres[0].score if profile.genres else 1) * 100)|round(0,'common')|int]|min }}%"></i></div><b>{{ x.score }}</b></div>{% else %}<div class="empty-state compact"><span>✦</span><strong>Your taste is still forming</strong><span>Rate more titles to build useful signals.</span></div>{% endfor %}</div></div>
-  <div class="data-panel taste-panel"><div class="panel-heading"><div><span class="eyebrow">PEOPLE</span><h2>Favorite people</h2></div><span>actors & creators</span></div><div class="chip-grid">{% for x in profile.people %}<span class="taste-chip">{{ x.name }}<b>{{ x.score }}</b></span>{% else %}<div class="empty-state compact"><span>◎</span><strong>No cast data yet</strong><span>Keep rating titles with cast metadata.</span></div>{% endfor %}</div></div></section>
-  <section class="data-panel taste-panel"><div class="panel-heading"><div><span class="eyebrow">TIME</span><h2>Favorite decades</h2></div><span>weighted by your ratings</span></div><div class="decade-grid">{% for x in profile.decades %}<div class="decade-card"><strong>{{ x.name }}s</strong><span>{{ x.score }}</span></div>{% else %}<div class="empty-state compact"><span>◷</span><strong>No year data yet</strong><span>We will map your eras as the library grows.</span></div>{% endfor %}</div></section>
-</main>
-
-{% elif page == 'settings' %}
-<main class="page-shell inner-page page-width">
-  <section class="page-masthead settings-masthead"><div><span class="eyebrow">CONTROL CENTER</span><h1>Make it yours</h1><p>Set how discovery behaves, protect your local library, and check service health.</p></div><div class="settings-orbit">⚙</div></section>
-  <section class="settings-layout"><div class="settings-main">
-    <section class="data-panel settings-card"><div class="panel-heading"><div><span class="eyebrow">RECOMMENDATIONS</span><h2>How discovery behaves</h2></div><span>Applied to new jobs</span></div><form class="settings-form" method="post" action="{{ ingress_path|default('') }}/settings/save"><div class="settings-field-grid"><label class="settings-field"><span>AI picks per type</span><input type="number" name="recommendation_count" min="4" max="20" value="{{ settings.recommendation_count }}"><small>How many personalized results to create.</small></label><label class="settings-field"><span>Avoid recently shown</span><input type="number" name="avoid_recent" min="0" max="500" value="{{ settings.avoid_recent }}"><small>Recent items to keep out of discovery.</small></label></div><div class="range-field"><div><span>Diversity</span><output>{{ settings.diversity }}</output></div><input type="range" name="diversity" min="0" max="1" step="0.05" value="{{ settings.diversity }}"><small>More diversity broadens discovery beyond familiar patterns.</small></div><div class="range-field"><div><span>Discovery</span><output>{{ settings.discovery }}</output></div><input type="range" name="discovery" min="0" max="1" step="0.05" value="{{ settings.discovery }}"><small>Higher values lean more toward fresh catalogue discovery.</small></div><button class="button button-primary" type="submit">Save settings</button></form></section>
-    <section class="data-panel settings-card"><div class="panel-heading"><div><span class="eyebrow">BACKUPS</span><h2>Keep your library portable</h2></div><span>Local-first</span></div><div class="backup-actions"><a class="button button-quiet" href="{{ ingress_path|default('') }}/api/export">Export backup</a><label class="button button-quiet file-button">Import backup<input id="import-file" type="file" accept="application/json,.json" hidden></label></div></section>
-  </div><aside class="settings-side"><section class="data-panel health-panel"><div class="panel-heading"><div><span class="eyebrow">SYSTEM</span><h2>Health</h2></div></div><div class="health-list"><div><span>Database</span><b class="health-ok">{{ 'Healthy' if health.database else 'Unavailable' }}</b></div><div><span>TMDB</span><b>{{ 'Configured' if health.tmdb_configured else 'Not configured' }}</b></div><div><span>Gemini</span><b>{{ 'Configured' if health.gemini_configured else 'Not configured' }}</b></div><div><span>Version</span><b>{{ health.version }}</b></div></div></section><section class="settings-note"><strong>Private by design</strong><p>Your watched library and settings remain local to this application.</p></section></aside></section>
-  {% if saved %}<div class="save-notice">✓ Settings saved successfully.</div>{% endif %}
-</main>
-
-{% elif page == 'detail' %}
 <main class="detail-page">
-  <section class="detail-hero-cinema"{% if detail.backdrop %} style="--detail-image:url('{{ detail.backdrop }}')"{% endif %}>
-    <div class="detail-hero-shade"></div><div class="detail-hero-inner page-width">
-      <a class="detail-back-link" href="{{ ingress_path|default('') }}/recommendations">← Back to Home</a>
-      <div class="detail-layout"><div class="detail-poster-large">{% if detail.poster %}<img src="{{ detail.poster }}" alt="{{ detail.title }}">{% else %}<div class="poster-fallback">▣</div>{% endif %}</div>
-      <div class="detail-copy"><span class="eyebrow">{{ 'MOVIE' if media_type == 'Movie' else 'SERIES' }}</span><div class="detail-title-row"><div><h1>{{ detail.title }}</h1>{% if detail.tagline %}<p class="detail-tagline">{{ detail.tagline }}</p>{% endif %}</div><div class="match-bubble"><strong>{{ detail.match_percentage }}%</strong><span>match</span></div></div>
-      <div class="detail-meta-line">{% if detail.year %}<span>{{ detail.year }}</span>{% endif %}<span>★ {{ '%.1f'|format(detail.vote_average) }}</span>{% if detail.status %}<span>{{ detail.status }}</span>{% endif %}{% if detail.runtime %}<span>{{ detail.runtime }} min</span>{% endif %}{% if detail.seasons %}<span>{{ detail.seasons }} seasons</span>{% endif %}</div>
-      <div class="genre-pills">{% for genre in detail.genres %}<span>{{ genre }}</span>{% endfor %}</div><p class="detail-overview">{{ detail.overview or 'No description available.' }}</p>
-      <div class="detail-actions-main">{% if detail.is_watched %}<div class="status-badge">✓ Watched{% if detail.user_rating is not none %} · You rated {{ '%.1f'|format(detail.user_rating) }}/10{% endif %}</div>{% else %}<form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watched-form"><input type="hidden" name="title" value="{{ detail.title }}"><input type="hidden" name="media_type" value="{{ media_type }}"><input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}"><input type="number" name="rating" min="0" max="10" step="0.1" value="8" required><button class="button button-primary" type="submit">Mark watched</button></form>{% endif %}<form method="post" action="{{ ingress_path|default('') }}/watchlist/toggle"><input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}"><input type="hidden" name="media_type" value="{{ media_type }}"><input type="hidden" name="title" value="{{ detail.title }}"><input type="hidden" name="year" value="{{ detail.year or '' }}"><input type="hidden" name="poster" value="{{ detail.poster or '' }}"><input type="hidden" name="backdrop" value="{{ detail.backdrop or '' }}"><input type="hidden" name="overview" value="{{ detail.overview or '' }}"><input type="hidden" name="vote_average" value="{{ detail.vote_average }}"><input type="hidden" name="remove" value="{{ 'true' if detail.is_watchlisted else 'false' }}"><button class="button button-quiet" type="submit">{{ '✓ In My List' if detail.is_watchlisted else '+ My List' }}</button></form>{% if detail.trailer and detail.trailer.key %}<a class="button button-quiet" href="https://www.youtube.com/watch?v={{ detail.trailer.key }}" target="_blank" rel="noopener noreferrer">▶ Trailer</a>{% endif %}<a class="button button-quiet" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">TMDB ↗</a></div>
-      <div class="why-detail-block"><span>WHY THIS TITLE</span><p>Based on your library and ratings, this title is estimated at <strong>{{ detail.match_percentage }}% compatibility</strong> with your taste.</p></div>{% if detail.director %}<div class="credit-line"><span>{{ 'Director' if media_type == 'Movie' else 'Created by' }}</span><strong>{{ detail.director }}</strong></div>{% endif %}
-      </div></div>
+    <section class="detail-hero"{% if detail.backdrop %} style="--detail-backdrop: url('{{ detail.backdrop }}')"{% endif %}>
+        <div class="detail-hero-overlay"></div>
+        <div class="detail-hero-content">
+            <div class="detail-poster-wrap">
+                {% if detail.poster %}
+                <img class="detail-poster" src="{{ detail.poster }}" alt="{{ detail.title }}">
+                {% else %}
+                <div class="detail-poster detail-poster-empty">🎬</div>
+                {% endif %}
+            </div>
+
+            <div class="detail-main">
+                <div class="detail-kicker">{{ "MOVIE" if media_type == "Movie" else "SERIES" }} • TMDB</div>
+                <div class="detail-title-row">
+                    <div>
+                        <h1>{{ detail.title }}</h1>
+                        {% if detail.tagline %}<p class="detail-tagline">{{ detail.tagline }}</p>{% endif %}
+                    </div>
+                    <div class="match-ring" style="--match-angle: {{ (detail.match_percentage / 100 * 360)|round(0) }}deg">
+                        <strong>{{ detail.match_percentage }}%</strong>
+                        <span>match</span>
+                    </div>
+                </div>
+
+                <div class="detail-meta">
+                    {% if detail.year %}<span>{{ detail.year }}</span>{% endif %}
+                    <span class="detail-rating">★ {{ "%.1f"|format(detail.vote_average) }}</span>
+                    {% if detail.status %}<span>{{ detail.status }}</span>{% endif %}
+                    {% if detail.runtime %}<span>{{ detail.runtime }} min</span>{% endif %}
+                    {% if detail.seasons %}<span>{{ detail.seasons }} seasons</span>{% endif %}
+                </div>
+
+                <div class="detail-genres">
+                    {% for genre in detail.genres %}
+                    <span>{{ genre }}</span>
+                    {% endfor %}
+                </div>
+
+                <p class="detail-overview">{{ detail.overview or "No description available." }}</p>
+
+                <div class="detail-actions">
+                    {% if detail.is_watched %}
+                    <div class="detail-watched-badge">✅ Already watched{% if detail.user_rating is not none %} • Your rating {{ "%.1f"|format(detail.user_rating) }}/10{% endif %}</div>
+                    {% else %}
+                    <form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watched-form">
+                        <input type="hidden" name="title" value="{{ detail.title }}">
+                        <input type="hidden" name="media_type" value="{{ media_type }}">
+                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
+                        <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required>
+                        <button type="submit">✅ Mark watched</button>
+                    </form>
+                    {% endif %}
+
+                    <form method="post" action="{{ ingress_path|default('') }}/watchlist/toggle">
+                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
+                        <input type="hidden" name="media_type" value="{{ media_type }}">
+                        <input type="hidden" name="title" value="{{ detail.title }}">
+                        <input type="hidden" name="year" value="{{ detail.year or '' }}">
+                        <input type="hidden" name="poster" value="{{ detail.poster or '' }}">
+                        <input type="hidden" name="backdrop" value="{{ detail.backdrop or '' }}">
+                        <input type="hidden" name="overview" value="{{ detail.overview or '' }}">
+                        <input type="hidden" name="vote_average" value="{{ detail.vote_average }}">
+                        <input type="hidden" name="remove" value="{{ 'true' if detail.is_watchlisted else 'false' }}">
+                        <button class="watchlist-button" type="submit">{{ "✓ In Watchlist" if detail.is_watchlisted else "+ Watchlist" }}</button>
+                    </form>
+
+                    <a class="tmdb-detail-button" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">Open TMDB ↗</a>
+                </div>
+
+                <div class="why-detail">
+                    <div class="why-detail-label">WHY YOU MAY LIKE IT</div>
+                    <p>Based on your current library and ratings, this title is estimated at <strong>{{ detail.match_percentage }}% compatibility</strong> with your taste.</p>
+                </div>
+
+                {% if detail.director %}
+                <div class="detail-director"><span>{{ "DIRECTOR" if media_type == "Movie" else "CREATED BY" }}</span><strong>{{ detail.director }}</strong></div>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    {% if detail.cast %}
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>Cast</h2><span>{{ detail.cast|length }} featured</span></div>
+        <div class="cast-rail">
+            {% for person in detail.cast %}
+            <div class="cast-card">
+                {% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty">👤</div>{% endif %}
+                <strong>{{ person.name }}</strong>
+                {% if person.character %}<span>{{ person.character }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if detail.similar %}
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>More like this</h2><span>TMDB similar titles</span></div>
+        <div class="similar-rail">
+            {% for item in detail.similar %}
+            <a class="similar-card" href="{{ ingress_path|default('') }}/title/{{ media_type }}/{{ item.tmdb_id }}">
+                {% if item.poster %}<img src="{{ item.poster }}" alt="{{ item.title }}">{% endif %}
+                <div class="similar-info">
+                    <strong>{{ item.title }}</strong>
+                    <span>{% if item.year %}{{ item.year }} • {% endif %}★ {{ "%.1f"|format(item.vote_average) }}</span>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</main>
+{% else %}
+
+
+<div class="site-background"></div>
+
+
+
+<nav class="topbar">
+
+    <div class="brand">
+
+        <div class="brand-icon">
+            🎬
+        </div>
+
+        <div class="brand-text">
+
+            <strong>
+                My Movie AI
+            </strong>
+
+            <span>
+                your personal cinema
+            </span>
+
+        </div>
+
     </div>
-  </section>
-  {% if detail.cast %}<section class="detail-section-wide page-width"><div class="section-title-row"><div><span class="eyebrow">CAST</span><h2>Who you’ll see</h2></div><span class="section-muted">{{ detail.cast|length }} featured</span></div><div class="cast-rail">{% for person in detail.cast %}<div class="cast-card">{% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-fallback">◎</div>{% endif %}<strong>{{ person.name }}</strong>{% if person.character %}<span>{{ person.character }}</span>{% endif %}</div>{% endfor %}</div></section>{% endif %}
-  {% if media_type == 'Series' %}<section class="detail-section-wide page-width"><div class="data-panel series-progress-panel"><div class="panel-heading"><div><span class="eyebrow">SERIES PROGRESS</span><h2>Continue watching</h2></div><span id="series-progress-label">Not started</span></div><div class="series-progress-controls"><label>Season<input id="series-season" type="number" min="1" value="1"></label><label>Episode<input id="series-episode" type="number" min="1" value="1"></label><label>Progress<input id="series-progress" type="number" min="0" max="100" value="0">%</label><select id="series-status"><option>Not started</option><option selected>Watching</option><option>Completed</option><option>Paused</option><option>Dropped</option></select><button id="save-series-progress" class="button button-primary" type="button">Save progress</button></div></div></section>{% endif %}
-  {% if detail.similar %}<section class="detail-section-wide page-width"><div class="section-title-row"><div><span class="eyebrow">DISCOVER NEXT</span><h2>More like this</h2></div><span class="section-muted">TMDB similar titles</span></div><div class="similar-rail media-rail">{% for item in detail.similar %}<a class="similar-card" href="{{ ingress_path|default('') }}/title/{{ media_type }}/{{ item.tmdb_id }}"><div class="poster-frame">{% if item.poster %}<img src="{{ item.poster }}" alt="{{ item.title }}" loading="lazy">{% else %}<div class="poster-fallback">▣</div>{% endif %}</div><div><strong>{{ item.title }}</strong><span>{% if item.year %}{{ item.year }} · {% endif %}★ {{ '%.1f'|format(item.vote_average) }}</span></div></a>{% endfor %}</div></section>{% endif %}
+
+
+    <div class="topbar-actions">
+
+        <button
+            type="button"
+            id="open-search-button"
+            class="topbar-search-button"
+            aria-label="Open search"
+            aria-expanded="false"
+        >
+            <span>🔎</span>
+            <strong>Search</strong>
+        </button>
+
+        <div class="topbar-status">
+            <span class="status-dot"></span>
+            Personal Library
+        </div>
+
+    </div>
+
+</nav>
+
+
+<main class="page">
+
+
+    <!-- ================================================== -->
+    <!-- HERO -->
+    <!-- ================================================== -->
+
+    <section class="hero">
+
+        <div class="hero-content">
+
+            <div class="hero-kicker">
+                YOUR PRIVATE CINEMA
+            </div>
+
+            <h1>
+                What are you<br>
+                watching tonight?
+            </h1>
+
+            <p>
+                Track everything you've watched,
+                rate it, and let AI discover
+                your next favorite.
+            </p>
+            <div class="hero-stats">
+
+                <div class="stat">
+                    <strong>{{ lifetime_statistics.watched|default(0) }}</strong>
+                    <span>Watched</span>
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+                    <strong>{{ lifetime_statistics.movies|default(0) }}</strong>
+                    <span>Movies</span>
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+                    <strong>{{ lifetime_statistics.series|default(0) }}</strong>
+                    <span>Series</span>
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+                    <strong id="header-recommendations-count">{{ lifetime_statistics.recommendations|default(0) }}</strong>
+                    <span>Recommendations</span>
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+                    <strong id="header-ai-generated-count">{{ lifetime_statistics.ai_generated|default(0) }}</strong>
+                    <span>AI Generated</span>
+                </div>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- ADD WATCHED -->
+    <!-- ================================================== -->
+
+    <section class="panel add-panel search-panel" id="search-panel" aria-hidden="true">
+
+        <div class="panel-header">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    Add something you've watched
+                </h2>
+
+            </div>
+
+            <button
+                type="button"
+                id="close-search-button"
+                class="panel-close-button"
+                aria-label="Close search"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <form
+            action="/add"
+            method="post"
+            class="add-form"
+            id="add-form"
+            data-ajax-add="true"
+        >
+
+
+
+            <!-- SEARCH -->
+
+            <div class="field search-field">
+
+                <label for="title">
+                    Search title
+                </label>
+
+
+                <div class="search-input-wrap">
+
+                    <span class="search-icon">
+                        🔎
+                    </span>
+
+                    <input
+                        id="title"
+                        type="text"
+                        name="title"
+                        placeholder="Search Interstellar..."
+                        autocomplete="off"
+                        required
+                    >
+
+                    <button
+                        type="button"
+                        id="clear-search"
+                        class="clear-search"
+                        aria-label="Clear search"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                <div
+                    id="search-results"
+                    class="search-results"
+                ></div>
+
+            </div>
+
+
+            <!-- EXACT TMDB ID -->
+
+            <input
+                type="hidden"
+                id="tmdb_id"
+                name="tmdb_id"
+                value=""
+            >
+
+            <!-- AUTO-DETECTED TYPE -->
+
+            <input
+                type="hidden"
+                id="media_type"
+                name="media_type"
+                value=""
+            >
+
+
+            <!-- SELECTED PREVIEW -->
+
+            <div
+                id="selected-preview"
+                class="selected-preview"
+            >
+
+                <div class="selected-preview-empty">
+
+                    <div class="preview-empty-icon">
+                        🎬
+                    </div>
+
+                    <span>
+                        Search for a title and select
+                        a result to preview it here.
+                    </span>
+
+                </div>
+
+            </div>
+
+
+            <!-- RATING -->
+
+            <div class="field preview-rating-field">
+
+                <label for="rating">
+                    Your rating
+                </label>
+
+
+                <div class="input-rating">
+
+                    <span>
+                        ★
+                    </span>
+
+                    <input
+                        id="rating"
+                        type="number"
+                        name="rating"
+                        min="0"
+                        max="10"
+                        step="0.1"
+                        placeholder="9.5"
+                        required
+                    >
+
+                    <small>
+                        /10
+                    </small>
+
+                </div>
+
+            </div>
+
+
+            <button
+                type="submit"
+                class="primary-button"
+                id="add-button"
+            >
+
+                <span>
+                    Add to collection
+                </span>
+
+                <span>
+                    →
+                </span>
+
+            </button>
+
+        </form>
+
+
+        <div class="panel-hint">
+
+            Search TMDB and select the exact title
+            before saving it to your library.
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- DISCOVERY -->
+    <!-- ================================================== -->
+
+    <section class="recommend-control">
+
+        <div>
+
+            <span class="panel-label">
+                AI + TMDB DISCOVERY
+            </span>
+
+            <h2>
+                Find something new
+            </h2>
+
+            <p>
+                8 AI picks + 8 TMDB discoveries
+                for movies and series.
+            </p>
+
+        </div>
+
+
+        <a
+            href="/recommendations"
+            class="generate-button"
+        >
+
+            <span>
+                ✦
+            </span>
+
+            <strong>
+                Discover
+            </strong>
+
+            <span>
+                →
+            </span>
+
+        </a>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- TRENDING NOW -->
+    <!-- ================================================== -->
+
+    <section
+        class="trending-section"
+        id="trending-now"
+    >
+
+        <div class="section-heading trending-section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    RIGHT NOW ON TMDB
+                </span>
+
+                <h2>
+                    🔥 Trending Now
+                </h2>
+
+            </div>
+
+            <span>
+                Today
+            </span>
+
+        </div>
+
+
+        <div class="trending-source">
+
+            <div class="source-heading trending-movie-heading">
+
+                <div>
+                    <span class="source-icon">
+                        🎬
+                    </span>
+
+                    <div>
+                        <h3>Trending Movies</h3>
+                        <p>Most popular movie activity on TMDB today</p>
+                    </div>
+                </div>
+
+                <span class="source-count" id="trending-movie-count">
+                    —
+                </span>
+
+            </div>
+
+            <div
+                class="trending-grid"
+                id="trending-movies"
+            >
+                <div class="trending-loading">
+                    Loading today's trending movies...
+                </div>
+            </div>
+
+        </div>
+
+
+        <div class="trending-source trending-series-source">
+
+            <div class="source-heading trending-series-heading">
+
+                <div>
+                    <span class="source-icon">
+                        📺
+                    </span>
+
+                    <div>
+                        <h3>Trending Series</h3>
+                        <p>Most popular TV activity on TMDB today</p>
+                    </div>
+                </div>
+
+                <span class="source-count" id="trending-series-count">
+                    —
+                </span>
+
+            </div>
+
+            <div
+                class="trending-grid"
+                id="trending-series"
+            >
+                <div class="trending-loading">
+                    Loading today's trending series...
+                </div>
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- RECOMMENDATIONS -->
+    <!-- ================================================== -->
+
+    {% if recommendations or tmdb_discoveries %}
+
+    <section class="recommendations-section">
+
+
+        <!-- ================================================= -->
+        <!-- MOVIES -->
+        <!-- ================================================= -->
+
+        <div class="section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    MOVIE DISCOVERY
+                </span>
+
+                <h2>
+                    🎬 Movies
+                </h2>
+
+            </div>
+
+            <span>
+                16 total
+            </span>
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- AI MOVIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section">
+
+            <div class="source-heading ai-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🤖
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            AI Picks
+                        </h3>
+
+                        <p>
+                            Personalized from your ratings
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <span class="source-count">
+                    {{ recommendations.ai_movies|length if recommendations else 0 }}
+                </span>
+
+            </div>
+
+
+            {% if recommendations and recommendations.ai_movies %}
+
+            <div class="recommendation-grid">
+
+                {% for item in recommendations.ai_movies %}
+
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            🎬
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge ai-source">
+                            🤖 AI PICK
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(82) }}% MATCH
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline ajax-watched-form"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Movie"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form ajax-not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Movie"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            {% if recommendations_loading %}
+            <div class="ai-generation-loading">
+                <div class="ai-generation-spinner"></div>
+                <div>
+                    <strong>AI is creating your movie picks...</strong>
+                    <span>Gemini is analyzing your ratings and finding personalized matches.</span>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-recommendations">
+                No AI movie picks available.
+            </div>
+            {% endif %}
+
+            {% endif %}
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- TMDB MOVIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section tmdb-section">
+
+            <div class="source-heading tmdb-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🔵
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            TMDB Discoveries
+                        </h3>
+
+                        <p>
+                            Discoveries from TMDB
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <span class="source-count">
+                    {{ recommendations.tmdb_movies|length if recommendations else (tmdb_discoveries.movies|length) }}
+                </span>
+
+            </div>
+
+
+            {% if (recommendations and recommendations.tmdb_movies) or (not recommendations and tmdb_discoveries.movies) %}
+
+            <div class="recommendation-grid">
+
+                {% for item in (recommendations.tmdb_movies if recommendations else tmdb_discoveries.movies) %}
+
+                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            🎬
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge tmdb-source">
+                            🔵 TMDB
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(72) }}% MATCH
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline ajax-watched-form"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Movie"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form ajax-not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Movie"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            <div class="empty-recommendations">
+                No TMDB movie discoveries available.
+            </div>
+
+            {% endif %}
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- SERIES -->
+        <!-- ================================================= -->
+
+        <div class="section-heading series-main-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    SERIES DISCOVERY
+                </span>
+
+                <h2>
+                    📺 Series
+                </h2>
+
+            </div>
+
+            <span>
+                16 total
+            </span>
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- AI SERIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section">
+
+            <div class="source-heading ai-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🤖
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            AI Picks
+                        </h3>
+
+                        <p>
+                            Personalized from your ratings
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <span class="source-count">
+                    {{ recommendations.ai_series|length if recommendations else 0 }}
+                </span>
+
+            </div>
+
+
+            {% if recommendations and recommendations.ai_series %}
+
+            <div class="recommendation-grid">
+
+                {% for item in recommendations.ai_series %}
+
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            📺
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge ai-source">
+                            🤖 AI PICK
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(82) }}% MATCH
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline ajax-watched-form"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Series"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form ajax-not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Series"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            {% if recommendations_loading %}
+            <div class="ai-generation-loading">
+                <div class="ai-generation-spinner"></div>
+                <div>
+                    <strong>AI is creating your series picks...</strong>
+                    <span>Gemini is analyzing your ratings and finding personalized matches.</span>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-recommendations">
+                No AI series picks available.
+            </div>
+            {% endif %}
+
+            {% endif %}
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- TMDB SERIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section tmdb-section">
+
+            <div class="source-heading tmdb-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🔵
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            TMDB Discoveries
+                        </h3>
+
+                        <p>
+                            Discoveries from TMDB
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <span class="source-count">
+                    {{ recommendations.tmdb_series|length if recommendations else (tmdb_discoveries.series|length) }}
+                </span>
+
+            </div>
+
+
+            {% if (recommendations and recommendations.tmdb_series) or (not recommendations and tmdb_discoveries.series) %}
+
+            <div class="recommendation-grid">
+
+                {% for item in (recommendations.tmdb_series if recommendations else tmdb_discoveries.series) %}
+
+                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            📺
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge tmdb-source">
+                            🔵 TMDB
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(72) }}% MATCH
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline ajax-watched-form"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Series"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form ajax-not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Series"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            <div class="empty-recommendations">
+                No TMDB series discoveries available.
+            </div>
+
+            {% endif %}
+
+        </div>
+
+    </section>
+
+    {% endif %}
+
+
+    <!-- ================================================== -->
+    <!-- WATCHED MOVIES -->
+    <!-- ================================================== -->
+
+    <section class="library-section" id="watched-movies-section">
+
+        <div class="section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    🎬 Watched Movies
+                </h2>
+
+            </div>
+
+            <span id="watched-movies-count">
+                {{ watched_movies|length }}
+            </span>
+
+        </div>
+
+
+        {% if watched_movies %}
+
+        <div class="library-grid" id="watched-movies-grid">
+
+            {% for movie in watched_movies %}
+
+            <article
+                class="library-card library-clickable"
+                data-media-type="Movie"
+                data-tmdb-id="{{ movie['tmdb_id'] }}"
+            >
+
+                <div class="library-poster">
+
+                    {% if movie["poster"] %}
+
+                    <img
+                        src="{{ movie['poster'] }}"
+                        alt="{{ movie['title'] }}"
+                        loading="lazy"
+                    >
+
+                    {% else %}
+
+                    <div class="poster-placeholder">
+                        🎬
+                    </div>
+
+                    {% endif %}
+
+                </div>
+
+
+                <div class="library-content">
+
+                    <h3>
+                        {{ movie["title"] }}
+                    </h3>
+
+
+                    <div class="library-meta">
+
+                        {% if movie["year"] %}
+
+                        <span>
+                            {{ movie["year"] }}
+                        </span>
+
+                        <span>
+                            •
+                        </span>
+
+                        {% endif %}
+
+
+                        <span class="user-rating">
+                            ★ {{ "%.1f"|format(movie["rating"]) }}/10
+                        </span>
+
+                    </div>
+
+
+                    {% if movie["overview"] %}
+
+                    <p>
+                        {{ movie["overview"] }}
+                    </p>
+
+                    {% endif %}
+
+
+                    <form
+                        action="/delete/{{ movie['id'] }}"
+                        method="post"
+                    >
+
+                        <button
+                            type="submit"
+                            class="remove-button"
+                        >
+                            Remove
+                        </button>
+
+                    </form>
+
+                </div>
+
+            </article>
+
+            {% endfor %}
+
+        </div>
+
+
+        {% else %}
+
+        <div class="empty-library">
+            No watched movies yet.
+        </div>
+
+        {% endif %}
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- WATCHED SERIES -->
+    <!-- ================================================== -->
+
+    <section class="library-section" id="watched-series-section">
+
+        <div class="section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    📺 Watched Series
+                </h2>
+
+            </div>
+
+            <span id="watched-series-count">
+                {{ watched_series|length }}
+            </span>
+
+        </div>
+
+
+        {% if watched_series %}
+
+        <div class="library-grid" id="watched-series-grid">
+
+            {% for movie in watched_series %}
+
+            <article
+                class="library-card library-clickable"
+                data-media-type="Series"
+                data-tmdb-id="{{ movie['tmdb_id'] }}"
+            >
+
+                <div class="library-poster">
+
+                    {% if movie["poster"] %}
+
+                    <img
+                        src="{{ movie['poster'] }}"
+                        alt="{{ movie['title'] }}"
+                        loading="lazy"
+                    >
+
+                    {% else %}
+
+                    <div class="poster-placeholder">
+                        📺
+                    </div>
+
+                    {% endif %}
+
+                </div>
+
+
+                <div class="library-content">
+
+                    <h3>
+                        {{ movie["title"] }}
+                    </h3>
+
+
+                    <div class="library-meta">
+
+                        {% if movie["year"] %}
+
+                        <span>
+                            {{ movie["year"] }}
+                        </span>
+
+                        <span>
+                            •
+                        </span>
+
+                        {% endif %}
+
+
+                        <span class="user-rating">
+                            ★ {{ "%.1f"|format(movie["rating"]) }}/10
+                        </span>
+
+                    </div>
+
+
+                    {% if movie["overview"] %}
+
+                    <p>
+                        {{ movie["overview"] }}
+                    </p>
+
+                    {% endif %}
+
+
+                    <form
+                        action="/delete/{{ movie['id'] }}"
+                        method="post"
+                    >
+
+                        <button
+                            type="submit"
+                            class="remove-button"
+                        >
+                            Remove
+                        </button>
+
+                    </form>
+
+                </div>
+
+            </article>
+
+            {% endfor %}
+
+        </div>
+
+
+        {% else %}
+
+        <div class="empty-library">
+            No watched series yet.
+        </div>
+
+        {% endif %}
+
+    </section>
+
+
+    <footer>
+
+        <span>
+            My Movie AI
+        </span>
+
+        <span>
+            •
+        </span>
+
+        <span>
+            Recommendations powered by Gemini + TMDB
+        </span>
+
+    </footer>
+
 </main>
 {% endif %}
 
-<footer class="app-footer page-width"><span>MY MOVIE AI</span><span>Private cinema · local-first</span></footer>
-
-<script>
-(function(){
-  const page=document.body.dataset.page||"recommendations";
-  document.querySelectorAll("[data-nav]").forEach(function(a){
-    if(a.dataset.nav===page) a.classList.add("active");
-  });
-})();
-</script>
-
-{% if page == "recommendations" or not page %}
 <script>
 
 /* ========================================================= */
@@ -1883,22 +3597,8 @@ document.addEventListener("submit", async function (event) {
 })();
 
 </script>
-{% elif page == "search" %}
-<script>
-(function(){
- const input=document.getElementById('global-search'), clear=document.getElementById('search-clear'), grid=document.getElementById('search-results-grid'), meta=document.getElementById('search-meta'), pag=document.getElementById('search-pagination'); let timer,kind='All',page=1;
- const appUrl=p=>(document.body.dataset.ingressPath||'')+p; const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
- function card(x){const type=x.media_type; return `<a class="media-card" href="${appUrl('/title/'+type+'/'+x.tmdb_id)}"><div class="media-card-poster">${x.poster?`<img src="${esc(x.poster)}" alt="" loading="lazy">`:`<div class="poster-placeholder">${type==='Series'?'📺':'🎬'}</div>`}<span class="media-type-pill">${type==='Series'?'SERIES':'MOVIE'}</span></div><div class="media-card-body"><h3>${esc(x.title)}</h3><div class="media-card-meta">${x.year||''} <span>•</span> ★ ${Number(x.vote_average||0).toFixed(1)}</div><p>${esc(x.overview||'No description available.')}</p></div></a>`}
- function drawPages(total){const pages=Math.min(Number(total||1),500); if(pages<=1){pag.innerHTML='';return;} let out=''; const start=Math.max(1,page-2), end=Math.min(pages,page+2); if(page>1)out+=`<button data-p="${page-1}">‹</button>`; for(let p=start;p<=end;p++)out+=`<button class="${p===page?'active':''}" data-p="${p}">${p}</button>`; if(page<pages)out+=`<button data-p="${page+1}">›</button>`; pag.innerHTML=out; pag.querySelectorAll('button').forEach(b=>b.onclick=()=>{page=Number(b.dataset.p);run()});}
- async function run(){const q=input.value.trim(); if(q.length<2){grid.innerHTML='<div class="page-empty"><div>⌕</div><strong>Start searching</strong><span>Type at least 2 characters.</span></div>';meta.textContent='';pag.innerHTML='';return;} grid.innerHTML='<div class="page-loading"><span class="loading-spinner"></span> Searching…</div>'; try{const r=await fetch(appUrl('/api/search')+'?q='+encodeURIComponent(q)+'&media_type='+encodeURIComponent(kind)+'&page='+page,{cache:'no-store'}); const d=await r.json(); const items=d.results||[]; meta.textContent=`${items.length ? items.length+' results' : 'No results'} · page ${d.page||page}`; grid.innerHTML=items.length?items.map(card).join(''):'<div class="page-empty"><div>🎬</div><strong>No titles found</strong><span>Try another title or switch between Movies and Series.</span></div>'; drawPages(d.total_pages||1);}catch(e){grid.innerHTML='<div class="page-empty"><div>!</div><strong>Search unavailable</strong><span>Check your TMDB configuration.</span></div>';meta.textContent='';pag.innerHTML='';}}
- input.oninput=()=>{page=1;clearTimeout(timer);timer=setTimeout(run,280)}; clear.onclick=()=>{input.value='';page=1;run();input.focus()}; document.querySelectorAll('.search-tabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.search-tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');kind=b.dataset.kind;page=1;run()});
-})();
-</script>
-{% elif page == "watched" %}
-<script>const input=document.getElementById('library-filter'),cards=[...document.querySelectorAll('.library-page-card')],tabs=[...document.querySelectorAll('.view-tabs button')];let type='All';function filter(){const q=(input.value||'').trim().toLowerCase();cards.forEach(c=>c.style.display=((type==='All'||c.dataset.type===type)&&(!q||c.dataset.title.includes(q)))?'':'none')}input.oninput=filter;tabs.forEach(b=>b.onclick=()=>{tabs.forEach(x=>x.classList.remove('active'));b.classList.add('active');type=b.dataset.filter;filter()});</script>
-{% elif page == "settings" %}
-<script>const file=document.getElementById('import-file');if(file)file.onchange=async()=>{if(!file.files[0])return;try{const p=JSON.parse(await file.files[0].text());const r=await fetch('{{ ingress_path|default('') }}/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});const d=await r.json();alert(r.ok?'Imported '+(d.imported||0)+' watched titles.':'Import failed.');location.reload()}catch(e){alert('Invalid backup file.')}};</script>
-{% elif page == "detail" %}
+
+{% if detail is defined and detail %}
 <script>
 (function () {
     const base = document.body.dataset.ingressPath || "";
@@ -1910,12 +3610,6 @@ document.addEventListener("submit", async function (event) {
     });
 })();
 </script>
-
-{% if media_type == "Series" %}
-<script>
-(async function(){const base=document.body.dataset.ingressPath||"";const id={{ detail.tmdb_id }};const u=p=>base+p;const season=document.getElementById('series-season'),episode=document.getElementById('series-episode'),progress=document.getElementById('series-progress'),status=document.getElementById('series-status'),label=document.getElementById('series-progress-label');try{const r=await fetch(u('/api/series/progress/'+id),{cache:'no-store'});const x=await r.json();season.value=x.season||1;episode.value=x.episode||1;progress.value=x.progress||0;status.value=x.status||'Not started';label.textContent=x.status||'Not started'}catch(e){}document.getElementById('save-series-progress')?.addEventListener('click',async()=>{const f=new FormData();f.append('tmdb_id',id);f.append('season',season.value);f.append('episode',episode.value);f.append('progress',progress.value);f.append('status',status.value);const r=await fetch(u('/api/series/progress'),{method:'POST',body:f});if(r.ok){label.textContent=status.value;document.getElementById('save-series-progress').textContent='Saved ✓';setTimeout(()=>document.getElementById('save-series-progress').textContent='Save progress',1400)}})})();
-</script>
-{% endif %}
 {% endif %}
 </body>
 </html>
