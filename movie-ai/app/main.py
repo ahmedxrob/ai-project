@@ -914,6 +914,7 @@ def tmdb_search(
 def tmdb_live_search(
     query,
     media_type,
+    page=1,
 ):
 
     token = get_env(
@@ -921,12 +922,12 @@ def tmdb_live_search(
     )
 
     if not token:
-        return []
+        return {"results": [], "page": int(page), "total_pages": 1, "total_results": 0}
 
     query = query.strip()
 
     if not query:
-        return []
+        return {"results": [], "page": int(page), "total_pages": 1, "total_results": 0}
 
     endpoint = (
         "https://api.themoviedb.org/3/search/"
@@ -946,7 +947,7 @@ def tmdb_live_search(
                 "include_adult":
                     "false",
                 "page":
-                    1,
+                    max(1, int(page)),
             },
         )
 
@@ -1003,16 +1004,17 @@ def tmdb_live_search(
                 }
             )
 
-        return output
+        return {
+            "results": output,
+            "page": int(data.get("page") or page),
+            "total_pages": int(data.get("total_pages") or 1),
+            "total_results": int(data.get("total_results") or len(output)),
+        }
 
     except Exception as error:
 
-        print(
-            f"TMDB live search error: "
-            f"{error}"
-        )
-
-        return []
+        logger.exception("TMDB live search error")
+        return {"results": [], "page": int(page), "total_pages": 1, "total_results": 0}
 
 
 # ============================================================
@@ -1795,11 +1797,76 @@ def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
 @app.get("/")
 @app.get("//")
 def home(request: Request):
+    return app_redirect(request, "recommendations")
 
-    return app_redirect(
-        request,
-        "recommendations",
-    )
+
+def _page_context(request: Request, **extra):
+    context={"ingress_path":get_ingress_path(request)}
+    context.update(extra)
+    return context
+
+
+@app.get("/search")
+def search_page(request: Request):
+    return templates.TemplateResponse(request=request, name="search.html", context=_page_context(request, page="search"))
+
+
+@app.get("/watched")
+def watched_page(request: Request):
+    movies=get_all()
+    watched_movies=[x for x in movies if x["type"]=="Movie"]
+    watched_series=[x for x in movies if x["type"]=="Series"]
+    return templates.TemplateResponse(request=request, name="watched.html", context=_page_context(request, page="watched", movies=movies, watched_movies=watched_movies, watched_series=watched_series))
+
+
+@app.get("/watchlist")
+def watchlist_page(request: Request):
+    return templates.TemplateResponse(request=request, name="watchlist.html", context=_page_context(request, page="watchlist", items=[dict(x) for x in get_watchlist()]))
+
+
+@app.get("/stats")
+def stats_page(request: Request):
+    return templates.TemplateResponse(request=request, name="stats.html", context=_page_context(request, page="stats", analytics=get_analytics()))
+
+
+def _taste_profile_data():
+    rows=get_all(); genre_scores={}; people_scores={}; decade_scores={}
+    for r in rows:
+        rating=float(r["rating"] or 0); weight=max(0.1,rating/10)
+        try: genres=json.loads(r["genres"] or "[]")
+        except Exception: genres=[]
+        for g in genres:
+            name=g.get("name") if isinstance(g,dict) else str(g)
+            if name: genre_scores[name]=genre_scores.get(name,0)+weight
+        try: cast=json.loads(r["cast"] or "[]")
+        except Exception: cast=[]
+        for person in cast[:10]:
+            name=person.get("name") if isinstance(person,dict) else str(person)
+            if name: people_scores[name]=people_scores.get(name,0)+weight
+        if r["year"]:
+            name=str((int(r["year"])//10)*10)
+            decade_scores[name]=decade_scores.get(name,0)+weight
+    def top(d): return [{"name":k,"score":round(v,2)} for k,v in sorted(d.items(),key=lambda x:x[1],reverse=True)[:15]]
+    return {"genres":top(genre_scores),"people":top(people_scores),"decades":top(decade_scores)}
+
+
+@app.get("/taste")
+def taste_page(request: Request):
+    return templates.TemplateResponse(request=request, name="taste.html", context=_page_context(request, page="taste", profile=_taste_profile_data()))
+
+
+@app.get("/settings")
+def settings_page(request: Request):
+    return templates.TemplateResponse(request=request, name="settings.html", context=_page_context(request, page="settings", settings={"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}, health=health(), saved=False))
+
+
+@app.post("/settings/save")
+def settings_save(request: Request, recommendation_count:int=Form(8), avoid_recent:int=Form(50), diversity:float=Form(0.7), discovery:float=Form(0.3)):
+    set_setting("recommendation_count", max(4,min(20,int(recommendation_count))))
+    set_setting("avoid_recent", max(0,min(500,int(avoid_recent))))
+    set_setting("diversity", max(0,min(1,float(diversity))))
+    set_setting("discovery", max(0,min(1,float(discovery))))
+    return templates.TemplateResponse(request=request, name="settings.html", context=_page_context(request, page="settings", settings={"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}, health=health(), saved=True))
 
 
 # ============================================================
@@ -1951,34 +2018,55 @@ def api_display_statistics_sync(
 @app.get("/api/search")
 def api_search(
     q: str = "",
-    media_type: str = "",
+    media_type: str = "All",
+    page: int = 1,
 ):
-    """Search exactly one media type. The frontend calls this twice,
-    once for Movie and once for Series, then combines the results."""
+    """Search movies, series, or both. Page is delegated to TMDB for real pagination."""
 
     q = q.strip()
+    page = max(1, min(int(page or 1), 500))
 
     if len(q) < 2:
-        return {"results": []}
+        return {"results": [], "page": page, "total_pages": 1, "total_results": 0}
 
-    if media_type not in ("Movie", "Series"):
+    if media_type == "All":
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            movie_future = executor.submit(tmdb_live_search, q, "Movie", page)
+            series_future = executor.submit(tmdb_live_search, q, "Series", page)
+            movie_data = movie_future.result()
+            series_data = series_future.result()
+        movies = movie_data.get("results", [])
+        series = series_data.get("results", [])
+        for item in movies:
+            item["media_type"] = "Movie"
+        for item in series:
+            item["media_type"] = "Series"
+        # Interleave types so All does not feel movie-first on every page.
+        results=[]
+        for i in range(max(len(movies), len(series))):
+            if i < len(movies): results.append(movies[i])
+            if i < len(series): results.append(series[i])
         return {
-            "results": [],
-            "error": "media_type must be Movie or Series",
+            "results": results,
+            "media_type": "All",
+            "page": page,
+            "total_pages": max(movie_data.get("total_pages",1), series_data.get("total_pages",1)),
+            "total_results": movie_data.get("total_results",0) + series_data.get("total_results",0),
         }
 
-    results = tmdb_live_search(
-        q,
-        media_type,
-    )
+    if media_type not in ("Movie", "Series"):
+        return JSONResponse({"results": [], "error": "media_type must be All, Movie or Series"}, status_code=400)
 
-    # Ensure every item explicitly carries its media type.
+    data = tmdb_live_search(q, media_type, page)
+    results = data.get("results", [])
     for item in results:
         item["media_type"] = media_type
-
     return {
         "results": results,
         "media_type": media_type,
+        "page": data.get("page", page),
+        "total_pages": data.get("total_pages", 1),
+        "total_results": data.get("total_results", len(results)),
     }
 
 
@@ -2424,6 +2512,13 @@ def watchlist_toggle(
     )
 
 
+@app.post("/watchlist/remove")
+def watchlist_remove_page(request: Request, tmdb_id:int=Form(...), media_type:str=Form(...)):
+    if media_type in ("Movie","Series"):
+        remove_watchlist(tmdb_id, media_type)
+    return app_redirect(request, "watchlist")
+
+
 # ============================================================
 # RECOMMENDATIONS
 # ============================================================
@@ -2452,6 +2547,7 @@ def recommendations(request: Request, background_tasks: BackgroundTasks):
         data = None
         loading = True
     response = templates.TemplateResponse(request=request, name="index.html", context={
+        "page": "recommendations",
         "movies": movies, "watched_movies": watched_movies, "watched_series": watched_series,
         "recommendations": data, "recommendations_loading": loading, "tmdb_discoveries": tmdb_discoveries,
         "display_statistics": get_display_statistics(), "lifetime_statistics": get_lifetime_statistics(),
@@ -2699,7 +2795,7 @@ def health():
     except Exception:
         stats = {}
         db_ok = False
-    return {"status":"healthy" if db_ok else "degraded","database":db_ok,"tmdb_configured":tmdb_ok,"gemini_configured":gemini_ok,"version":"1.8.0"}
+    return {"status":"healthy" if db_ok else "degraded","database":db_ok,"tmdb_configured":tmdb_ok,"gemini_configured":gemini_ok,"version":"1.9.0"}
 
 @app.post("/api/recommendations/refresh")
 def api_recommendations_refresh(background_tasks: BackgroundTasks):
@@ -2735,20 +2831,7 @@ def api_recommendation_feedback(tmdb_id: int = Form(...), media_type: str = Form
 
 @app.get("/api/taste-profile")
 def api_taste_profile():
-    rows=get_all(); genre_scores={}; people_scores={}; decade_scores={}
-    for r in rows:
-        rating=float(r["rating"] or 0); weight=max(0.1,rating/10)
-        try: genres=json.loads(r["genres"] or "[]")
-        except Exception: genres=[]
-        for g in genres: genre_scores[g]=genre_scores.get(g,0)+weight
-        try: cast=json.loads(r["cast"] or "[]")
-        except Exception: cast=[]
-        for person in cast[:10]:
-            name=person.get("name") if isinstance(person,dict) else str(person)
-            if name: people_scores[name]=people_scores.get(name,0)+weight
-        if r["year"]: decade_scores[str((int(r["year"] )//10)*10)]=decade_scores.get(str((int(r["year"] )//10)*10),0)+weight
-    def top(d): return [{"name":k,"score":round(v,2)} for k,v in sorted(d.items(),key=lambda x:x[1],reverse=True)[:10]]
-    return {"genres":top(genre_scores),"people":top(people_scores),"decades":top(decade_scores)}
+    return _taste_profile_data()
 
 @app.post("/api/settings")
 def api_settings(payload: dict):
