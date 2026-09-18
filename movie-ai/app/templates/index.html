@@ -14,30 +14,33 @@
 <header class="topbar app-topbar">
   <div class="topbar-inner">
     <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
-      <img class="brand-mark" src="{{ ingress_path|default('') }}/static/favicon.svg" alt="">
-      <span class="brand-wordmark">MY MOVIE AI</span>
+      <span class="brand-mark-wrap"><img class="brand-mark" src="{{ ingress_path|default('') }}/static/favicon.svg" alt=""></span>
+      <span class="brand-wordmark"><b>MY</b> MOVIE AI</span>
     </a>
 
     <nav class="app-nav" aria-label="Primary navigation">
       <a href="{{ ingress_path|default('') }}/recommendations" data-nav="recommendations">Home</a>
-      <a href="{{ ingress_path|default('') }}/search" data-nav="search">Movies &amp; Series</a>
+      <a href="{{ ingress_path|default('') }}/search" data-nav="search">Browse</a>
       <a href="{{ ingress_path|default('') }}/watched" data-nav="watched">My List</a>
       <a href="{{ ingress_path|default('') }}/watchlist" data-nav="watchlist">Watchlist</a>
       <a href="{{ ingress_path|default('') }}/stats" data-nav="stats">Stats</a>
       <a href="{{ ingress_path|default('') }}/taste" data-nav="taste">Taste</a>
-      <a href="{{ ingress_path|default('') }}/settings" data-nav="settings">Settings</a>
     </nav>
 
     <div class="topbar-actions">
-      <a class="topbar-icon topbar-search" href="{{ ingress_path|default('') }}/search" aria-label="Search">⌕</a>
-      <a class="topbar-profile" href="{{ ingress_path|default('') }}/settings" aria-label="Settings">
+      <a id="open-search-button" class="topbar-search-pill" href="{{ ingress_path|default('') }}/search" aria-label="Search movies and series">
+        <span class="topbar-search-icon" aria-hidden="true">⌕</span>
+        <span>Search</span>
+      </a>
+      <a class="topbar-profile" href="{{ ingress_path|default('') }}/settings" aria-label="Open settings">
         <span class="profile-avatar">AI</span>
         <span class="profile-label">Personal</span>
+        <span class="profile-chevron" aria-hidden="true">⌄</span>
       </a>
       {% if page == "detail" %}
-      <a class="detail-back" href="{{ ingress_path|default('') }}/recommendations"><span>‹</span> Back</a>
+      <a class="detail-back" href="{{ ingress_path|default('') }}/recommendations"><span aria-hidden="true">‹</span><span>Back</span></a>
       {% else %}
-      <div class="topbar-status"><span class="status-dot"></span><span>Local</span></div>
+      <div class="topbar-status" aria-label="App status"><span class="status-dot"></span><span>Local</span></div>
       {% endif %}
     </div>
   </div>
@@ -62,10 +65,15 @@
             </h1>
 
             <p>
-                Explore your personal cinema,
-                get AI-powered discoveries,
-                and keep your library organized.
+                Explore your personal cinema, get AI-powered discoveries,
+                and keep your library organized in one place.
             </p>
+
+            <div class="hero-actions">
+                <a class="hero-primary-button" href="{{ ingress_path|default('') }}/search"><span aria-hidden="true">▶</span> Start browsing</a>
+                <a class="hero-secondary-button" href="{{ ingress_path|default('') }}/watchlist"><span aria-hidden="true">＋</span> My watchlist</a>
+            </div>
+
             <div class="hero-stats">
 
                 <div class="stat">
@@ -425,7 +433,7 @@
 
 
                             <form
-                                action="/recommendation/watched"
+                                action="{{ ingress_path|default('') }}/recommendation/watched"
                                 method="post"
                                 class="watched-inline ajax-watched-form"
                             >
@@ -471,7 +479,7 @@
 
 
                         <form
-                            action="/recommendation/not-interested"
+                            action="{{ ingress_path|default('') }}/recommendation/not-interested"
                             method="post"
                             class="not-interested-form ajax-not-interested-form"
                         >
@@ -674,7 +682,7 @@
 
 
                             <form
-                                action="/recommendation/watched"
+                                action="{{ ingress_path|default('') }}/recommendation/watched"
                                 method="post"
                                 class="watched-inline ajax-watched-form"
                             >
@@ -720,7 +728,7 @@
 
 
                         <form
-                            action="/recommendation/not-interested"
+                            action="{{ ingress_path|default('') }}/recommendation/not-interested"
                             method="post"
                             class="not-interested-form ajax-not-interested-form"
                         >
@@ -938,7 +946,7 @@
 
 
                             <form
-                                action="/recommendation/watched"
+                                action="{{ ingress_path|default('') }}/recommendation/watched"
                                 method="post"
                                 class="watched-inline ajax-watched-form"
                             >
@@ -984,7 +992,7 @@
 
 
                         <form
-                            action="/recommendation/not-interested"
+                            action="{{ ingress_path|default('') }}/recommendation/not-interested"
                             method="post"
                             class="not-interested-form ajax-not-interested-form"
                         >
@@ -1187,7 +1195,7 @@
 
 
                             <form
-                                action="/recommendation/watched"
+                                action="{{ ingress_path|default('') }}/recommendation/watched"
                                 method="post"
                                 class="watched-inline ajax-watched-form"
                             >
@@ -1233,7 +1241,7 @@
 
 
                         <form
-                            action="/recommendation/not-interested"
+                            action="{{ ingress_path|default('') }}/recommendation/not-interested"
                             method="post"
                             class="not-interested-form ajax-not-interested-form"
                         >
