@@ -10,22 +10,38 @@
 <link rel="stylesheet" href="{{ ingress_path|default('') }}/static/style.css">
 </head>
 <body data-ingress-path="{{ ingress_path|default('') }}" data-page="{{ page|default('recommendations') }}">
-<div class="site-background"></div>
-<nav class="topbar app-topbar">
-  <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
-    <div class="brand-icon">🎬</div><div class="brand-text"><strong>My Movie AI</strong><span>your personal cinema</span></div>
-  </a>
-  <div class="app-nav" aria-label="Primary navigation">
-    <a href="{{ ingress_path|default('') }}/recommendations" data-nav="recommendations">Home</a>
-    <a href="{{ ingress_path|default('') }}/search" data-nav="search">Search</a>
-    <a href="{{ ingress_path|default('') }}/watched" data-nav="watched">Watched</a>
-    <a href="{{ ingress_path|default('') }}/watchlist" data-nav="watchlist">Watchlist</a>
-    <a href="{{ ingress_path|default('') }}/stats" data-nav="stats">Stats</a>
-    <a href="{{ ingress_path|default('') }}/taste" data-nav="taste">Taste</a>
-    <a href="{{ ingress_path|default('') }}/settings" data-nav="settings">Settings</a>
+<div class="site-background" style="--app-bg:url('{{ ingress_path|default('') }}/static/background.jpg')"></div>
+<header class="topbar app-topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
+      <img class="brand-mark" src="{{ ingress_path|default('') }}/static/favicon.svg" alt="">
+      <span class="brand-wordmark">MY MOVIE AI</span>
+    </a>
+
+    <nav class="app-nav" aria-label="Primary navigation">
+      <a href="{{ ingress_path|default('') }}/recommendations" data-nav="recommendations">Home</a>
+      <a href="{{ ingress_path|default('') }}/search" data-nav="search">Movies &amp; Series</a>
+      <a href="{{ ingress_path|default('') }}/watched" data-nav="watched">My List</a>
+      <a href="{{ ingress_path|default('') }}/watchlist" data-nav="watchlist">Watchlist</a>
+      <a href="{{ ingress_path|default('') }}/stats" data-nav="stats">Stats</a>
+      <a href="{{ ingress_path|default('') }}/taste" data-nav="taste">Taste</a>
+      <a href="{{ ingress_path|default('') }}/settings" data-nav="settings">Settings</a>
+    </nav>
+
+    <div class="topbar-actions">
+      <a class="topbar-icon topbar-search" href="{{ ingress_path|default('') }}/search" aria-label="Search">⌕</a>
+      <a class="topbar-profile" href="{{ ingress_path|default('') }}/settings" aria-label="Settings">
+        <span class="profile-avatar">AI</span>
+        <span class="profile-label">Personal</span>
+      </a>
+      {% if page == "detail" %}
+      <a class="detail-back" href="{{ ingress_path|default('') }}/recommendations"><span>‹</span> Back</a>
+      {% else %}
+      <div class="topbar-status"><span class="status-dot"></span><span>Local</span></div>
+      {% endif %}
+    </div>
   </div>
-  {% if page == "detail" %}<a class="detail-back" href="{{ ingress_path|default('') }}/recommendations">← Back</a>{% else %}<div class="topbar-status"><span class="status-dot"></span> Local library</div>{% endif %}
-</nav>
+</header>
 <main class="page app-page">
 {% if page == "recommendations" or not page %}
 <!-- ================================================== -->
@@ -1429,7 +1445,7 @@
     {% endif %}
 {% endif %}
 </main>
-<footer class="app-footer"><span>My Movie AI</span><span>Private cinema · local-first</span></footer>
+<footer class="app-footer"><div class="footer-brand"><span class="footer-dot"></span><strong>MY MOVIE AI</strong></div><span>Private cinema · local-first</span></footer>
 <script>
 (function(){ const p=document.body.dataset.page; document.querySelectorAll('[data-nav]').forEach(a=>{if(a.dataset.nav===p)a.classList.add('active')}); })();
 </script>
