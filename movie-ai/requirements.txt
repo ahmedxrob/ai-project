@@ -6,4 +6,3 @@ requests
 rapidfuzz
 pydantic
 google-genai
-
