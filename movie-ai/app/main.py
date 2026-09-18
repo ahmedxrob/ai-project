@@ -2,10 +2,6 @@ import json
 import os
 import random
 import time
-import hashlib
-import logging
-import threading
-import uuid
 import requests
 
 from pathlib import Path
@@ -14,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 from fastapi import FastAPI, Request, Form, BackgroundTasks
-from fastapi.responses import RedirectResponse, JSONResponse, Response
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
@@ -40,10 +36,6 @@ from app.database import (
     get_lifetime_statistics,
     increment_lifetime_recommendations,
     increment_lifetime_trending,
-    upsert_watchlist, remove_watchlist, is_watchlisted, get_watchlist,
-    add_recommendation_event, get_recommendation_events,
-    get_analytics, set_setting, get_setting, get_not_interested, remove_not_interested,
-    get_series_progress, set_series_progress, cache_get, cache_set, cache_clear,
 )
 
 
@@ -54,9 +46,6 @@ from app.database import (
 app = FastAPI(
     title="My Movie AI"
 )
-
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="[%(asctime)s] [%(levelname)s] %(message)s")
-logger = logging.getLogger("movie_ai")
 
 templates = Jinja2Templates(
     directory="app/templates"
@@ -93,67 +82,113 @@ TMDB_SERIES_TARGET = 8
 
 RECENT_HISTORY_LIMIT = 12
 
-WATCHLIST_FILE = Path("/data/watchlist.json")  # legacy migration source only
-RECOMMENDATION_LOCK = threading.Lock()
-RECOMMENDATION_JOBS = {}
-RECOMMENDATION_MAX_HISTORY = 50
-
+WATCHLIST_FILE = Path("/data/watchlist.json")
 recommendation_state = {
     "status": "idle",
     "data": None,
     "error": None,
     "tmdb_data": None,
-    "job_id": None,
-    "progress": 0,
-    "stage": "Idle",
 }
-
-
-def _job_update(job_id, **updates):
-    with RECOMMENDATION_LOCK:
-        job = RECOMMENDATION_JOBS.setdefault(job_id, {})
-        job.update(updates)
-        recommendation_state.update(updates)
-        recommendation_state["job_id"] = job_id
-
-
-def _migrate_legacy_watchlist():
-    if not WATCHLIST_FILE.exists():
-        return
-    try:
-        items = json.loads(WATCHLIST_FILE.read_text(encoding="utf-8"))
-        for item in items if isinstance(items, list) else []:
-            if item.get("tmdb_id") and item.get("media_type"):
-                upsert_watchlist(item)
-        WATCHLIST_FILE.rename(WATCHLIST_FILE.with_suffix('.json.migrated'))
-        print("Migrated legacy watchlist.json to SQLite")
-    except Exception as error:
-        print(f"Watchlist migration skipped: {error}")
-
-_migrate_legacy_watchlist()
 
 
 # ============================================================
 # BACKGROUND RECOMMENDATION JOB
 # ============================================================
 
-def run_recommendation_job(prefetched_tmdb=None, job_id=None):
+def run_recommendation_job(prefetched_tmdb=None):
+
     global recommendation_state
-    job_id = job_id or str(uuid.uuid4())
+
     try:
-        _job_update(job_id, status="loading", error=None, progress=3, stage="Building your taste profile")
+
+        print("Background AI recommendation job started...")
+
+        recommendation_state["status"] = "loading"
+        recommendation_state["error"] = None
+
         movies = get_all()
-        _job_update(job_id, progress=12, stage="Generating AI candidates")
-        result = generate_recommendations(movies, prefetched_tmdb=prefetched_tmdb, job_id=job_id)
-        increment_lifetime_recommendations(
-            ai_movies=len(result.get("ai_movies", [])), ai_series=len(result.get("ai_series", [])),
-            tmdb_movies=len(result.get("tmdb_movies", [])), tmdb_series=len(result.get("tmdb_series", [])),
+
+        result = generate_recommendations(
+            movies,
+            prefetched_tmdb=prefetched_tmdb,
         )
-        _job_update(job_id, data=result, status="ready", error=None, progress=100, stage="Ready")
-        print(f"Recommendation job {job_id} finished")
+
+        increment_lifetime_recommendations(
+            ai_movies=len(result.get("ai_movies", [])),
+            ai_series=len(result.get("ai_series", [])),
+            tmdb_movies=len(result.get("tmdb_movies", [])),
+            tmdb_series=len(result.get("tmdb_series", [])),
+        )
+
+
+        recommendation_state["data"] = result
+        recommendation_state["status"] = "ready"
+
+        print("Background AI recommendation job finished.")
+
     except Exception as error:
-        logging.exception("Recommendation job failed")
-        _job_update(job_id, status="error", error=str(error), progress=100, stage="Failed")
+
+        print(
+            f"Background AI recommendation error: {error}"
+        )
+
+        recommendation_state["status"] = "error"
+        recommendation_state["error"] = str(error)
+
+
+# ============================================================
+# WATCHLIST
+# ============================================================
+
+def load_watchlist():
+    try:
+        if WATCHLIST_FILE.exists():
+            data = json.loads(WATCHLIST_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+    except Exception as error:
+        print(f"Watchlist load error: {error}")
+    return []
+
+
+def save_watchlist(items):
+    try:
+        WATCHLIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        WATCHLIST_FILE.write_text(
+            json.dumps(items, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as error:
+        print(f"Watchlist save error: {error}")
+
+
+def watchlist_key(media_type, tmdb_id):
+    return f"{media_type}:{tmdb_id}"
+
+
+def is_in_watchlist(media_type, tmdb_id):
+    key = watchlist_key(media_type, tmdb_id)
+    return any(item.get("key") == key for item in load_watchlist())
+
+
+def toggle_watchlist_item(item):
+    items = load_watchlist()
+    key = watchlist_key(item["media_type"], item["tmdb_id"])
+    items = [x for x in items if x.get("key") != key]
+    if not item.get("remove", False):
+        items.append({
+            "key": key,
+            "tmdb_id": item["tmdb_id"],
+            "media_type": item["media_type"],
+            "title": item.get("title", ""),
+            "year": item.get("year"),
+            "poster": item.get("poster"),
+            "backdrop": item.get("backdrop"),
+            "overview": item.get("overview", ""),
+            "vote_average": item.get("vote_average", 0),
+        })
+    save_watchlist(items)
+    return not item.get("remove", False)
 
 
 # ============================================================
@@ -216,10 +251,6 @@ class RecommendationItem(BaseModel):
     reason: str
 
     match_percentage: Optional[int] = None
-    genres: List[str] = []
-    director: Optional[str] = None
-    cast: List[str] = []
-    keywords: List[str] = []
 
 
 class RecommendationResponse(BaseModel):
@@ -256,22 +287,44 @@ def get_gemini_client():
 # ============================================================
 
 def build_user_profile(watched):
-    def decode(value):
-        try:
-            return json.loads(value or "[]") if isinstance(value, str) else (value or [])
-        except Exception:
-            return []
-    movies, series = [], []
-    for item in watched:
-        record = {
-            "title": item["title"], "rating": float(item["rating"]), "year": item["year"],
-            "genres": decode(item["genres"]), "director": item["director"] or "",
-            "cast": decode(item["cast"])[:8], "creators": decode(item["creators"]),
-            "keywords": decode(item["keywords"])[:12], "runtime": item["runtime"],
-        }
-        (movies if item["type"] == "Movie" else series).append(record)
-    return {"movies": movies, "series": series}
 
+    movies = []
+    series = []
+
+    for item in watched:
+
+        data = {
+            "title": item["title"],
+            "rating": float(
+                item["rating"]
+            ),
+            "year": item["year"],
+        }
+
+        if item["type"] == "Movie":
+            movies.append(data)
+        else:
+            series.append(data)
+
+    movies.sort(
+        key=lambda x: x["rating"],
+        reverse=True,
+    )
+
+    series.sort(
+        key=lambda x: x["rating"],
+        reverse=True,
+    )
+
+    return {
+        "movies": movies,
+        "series": series,
+    }
+
+
+# ============================================================
+# GEMINI PROMPT
+# ============================================================
 
 def build_gemini_prompt(watched):
 
@@ -367,7 +420,6 @@ RULES:
 19. Give a personalized match percentage from 55 to 99.
 20. The match percentage must reflect how strongly the title fits the user profile, not TMDB popularity.
 21. Return structured data only.
-22. Include likely genres, director when known, up to 5 notable cast names, and up to 8 useful thematic keywords for every candidate.
 
 RANDOMIZATION VALUE:
 {random_nonce}
@@ -566,29 +618,29 @@ def get_ai_recommendations(watched):
 # TMDB REQUEST
 # ============================================================
 
-def tmdb_request(endpoint, token, params=None, ttl=1800):
-    params = params or {}
-    key_source = endpoint + "?" + "&".join(f"{k}={params[k]}" for k in sorted(params))
-    cache_key = "tmdb:" + hashlib.sha256(key_source.encode()).hexdigest()
-    cached = cache_get(cache_key)
-    if cached is not None:
-        return cached
-    headers = {"Authorization": f"Bearer {token}", "accept": "application/json"}
-    last_error = None
-    for attempt in range(3):
-        try:
-            response = requests.get(endpoint, headers=headers, params=params, timeout=12)
-            if response.status_code == 429 or response.status_code >= 500:
-                raise requests.HTTPError(f"TMDB temporary HTTP {response.status_code}")
-            response.raise_for_status()
-            data = response.json()
-            cache_set(cache_key, data, ttl=ttl)
-            return data
-        except (requests.RequestException, ValueError) as error:
-            last_error = error
-            if attempt < 2:
-                time.sleep(0.8 * (2 ** attempt))
-    raise last_error or RuntimeError("TMDB request failed")
+def tmdb_request(
+    endpoint,
+    token,
+    params=None,
+):
+
+    headers = {
+        "Authorization":
+            f"Bearer {token}",
+        "accept":
+            "application/json",
+    }
+
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        params=params or {},
+        timeout=12,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
 
 
 # ============================================================
@@ -711,9 +763,14 @@ def normalise_tmdb_result(
                 or 0
             ),
 
-        "vote_count": int(result.get("vote_count", 0) or 0),
-        "popularity": float(result.get("popularity", 0) or 0),
-        "original_language": result.get("original_language", ""),
+        "vote_count":
+            int(
+                result.get(
+                    "vote_count",
+                    0,
+                )
+                or 0
+            ),
 
         "tmdb_url":
             tmdb_url,
@@ -914,7 +971,6 @@ def tmdb_search(
 def tmdb_live_search(
     query,
     media_type,
-    page=1,
 ):
 
     token = get_env(
@@ -922,12 +978,12 @@ def tmdb_live_search(
     )
 
     if not token:
-        return {"results": [], "page": int(page), "total_pages": 1, "total_results": 0}
+        return []
 
     query = query.strip()
 
     if not query:
-        return {"results": [], "page": int(page), "total_pages": 1, "total_results": 0}
+        return []
 
     endpoint = (
         "https://api.themoviedb.org/3/search/"
@@ -947,7 +1003,7 @@ def tmdb_live_search(
                 "include_adult":
                     "false",
                 "page":
-                    max(1, int(page)),
+                    1,
             },
         )
 
@@ -1004,17 +1060,16 @@ def tmdb_live_search(
                 }
             )
 
-        return {
-            "results": output,
-            "page": int(data.get("page") or page),
-            "total_pages": int(data.get("total_pages") or 1),
-            "total_results": int(data.get("total_results") or len(output)),
-        }
+        return output
 
     except Exception as error:
 
-        logger.exception("TMDB live search error")
-        return {"results": [], "page": int(page), "total_pages": 1, "total_results": 0}
+        print(
+            f"TMDB live search error: "
+            f"{error}"
+        )
+
+        return []
 
 
 # ============================================================
@@ -1041,21 +1096,19 @@ def tmdb_get_details(
 
     try:
 
-        data = tmdb_request(endpoint, token, {"language":"en-US","append_to_response":"credits,keywords"}, ttl=21600)
-        result = normalise_tmdb_result(data, media_type)
-        credits=data.get("credits",{}) or {}
-        if media_type == "Movie":
-            people=[{"name":p.get("name",""),"character":p.get("character","")} for p in credits.get("cast",[])[:12] if p.get("name")]
-            directors=[p.get("name") for p in credits.get("crew",[]) if p.get("job")=="Director" and p.get("name")]
-            result["director"]=", ".join(dict.fromkeys(directors[:3]))
-        else:
-            people=[{"name":p.get("name",""),"character":p.get("character","")} for p in credits.get("cast",[])[:12] if p.get("name")]
-            creators=[p.get("name") for p in data.get("created_by",[]) if p.get("name")]
-            result["creators"]=list(dict.fromkeys(creators[:5])); result["director"]=", ".join(dict.fromkeys(creators[:3]))
-        result["cast"]=people
-        kw=(data.get("keywords") or {}).get("keywords",[]) or (data.get("keywords") or {}).get("results",[]) or []
-        result["keywords"]=[x.get("name") for x in kw if x.get("name")][:20]
-        return result
+        data = tmdb_request(
+            endpoint,
+            token,
+            {
+                "language":
+                    "en-US"
+            },
+        )
+
+        return normalise_tmdb_result(
+            data,
+            media_type,
+        )
 
     except Exception as error:
 
@@ -1088,7 +1141,7 @@ def tmdb_get_detail_page(tmdb_id, media_type):
             token,
             {
                 "language": "en-US",
-                "append_to_response": "credits,similar,videos,watch/providers",
+                "append_to_response": "credits,similar",
             },
         )
 
@@ -1141,8 +1194,6 @@ def tmdb_get_detail_page(tmdb_id, media_type):
             "seasons": data.get("number_of_seasons") if media_type == "Series" else None,
             "status": data.get("status", ""),
             "tagline": data.get("tagline", ""),
-            "trailer": next((v for v in (data.get("videos", {}) or {}).get("results", []) if v.get("site") == "YouTube" and v.get("type") == "Trailer"), None),
-            "providers": (data.get("watch/providers", {}) or {}).get("results", {}),
             "match_percentage": None,
         })
 
@@ -1171,12 +1222,14 @@ def verify_recommendation(
     if not result:
         return None
 
-    result["reason"] = item.reason or "Recommended because it matches your watched titles and ratings."
+    result["reason"] = (
+        item.reason
+        or
+        "Recommended because it matches "
+        "your watched titles and ratings."
+    )
+
     result["source"] = "AI"
-    result["ai_genres"] = list(item.genres or [])
-    result["ai_director"] = item.director or ""
-    result["ai_cast"] = list(item.cast or [])
-    result["ai_keywords"] = list(item.keywords or [])
     result["match_percentage"] = max(55, min(99, int(item.match_percentage or 82)))
 
     return result
@@ -1547,53 +1600,19 @@ def tmdb_fallback(
     }
 
 
-def rank_recommendations(items, watched):
-    """Calculate a reproducible local taste score rather than trusting an AI percentage."""
-    def decode(v):
-        try: return json.loads(v or "[]") if isinstance(v,str) else (v or [])
-        except Exception: return []
-    high=[x for x in watched if float(x["rating"] or 0)>=8]
-    all_genres={}
-    all_people={}
-    all_keywords={}
-    years=[]
-    for x in high:
-        w=max(.2,float(x["rating"])/10)
-        for g in decode(x["genres"]): all_genres[str(g).lower()]=all_genres.get(str(g).lower(),0)+w
-        for person in decode(x["cast"])[:10]:
-            name=(person.get("name") if isinstance(person,dict) else str(person)) or ""
-            if name: all_people[name.lower()]=all_people.get(name.lower(),0)+w
-        for k in decode(x["keywords"]): all_keywords[str(k).lower()]=all_keywords.get(str(k).lower(),0)+w
-        if x["year"]: years.append(int(x["year"]))
-    def score(item):
-        genres=[str(g).lower() for g in (item.get("genres") or item.get("ai_genres") or [])]
-        genre_score=min(1,sum(all_genres.get(g,0) for g in genres)/max(1,sum(all_genres.values()))) if all_genres else 0
-        people=[str(x).lower() for x in (item.get("ai_cast") or [])]
-        people_score=min(1,sum(all_people.get(x,0) for x in people)/max(1,sum(all_people.values()))) if all_people else 0
-        keywords=[str(x).lower() for x in (item.get("ai_keywords") or [])]
-        keyword_score=min(1,sum(all_keywords.get(x,0) for x in keywords)/max(1,sum(all_keywords.values()))) if all_keywords else 0
-        title=str(item.get("title") or "").lower()
-        title_similarity=max((fuzz.token_set_ratio(title,str(x["title"]).lower())/100 for x in watched),default=0)
-        # Similarity is intentionally limited so the engine still discovers new titles.
-        popularity=min(1,float(item.get("vote_average") or 0)/10)
-        year_score=0
-        if years and item.get("year"):
-            distance=min(abs(int(item["year"])-y) for y in years); year_score=max(0,1-distance/40)
-        ai_signal=float(item.get("match_percentage") or 70)/100
-        final=(genre_score*.30+people_score*.12+keyword_score*.10+title_similarity*.08+popularity*.12+year_score*.08+ai_signal*.20)
-        item["match_percentage"]=max(55,min(99,round(final*100)))
-        return item["match_percentage"]
-    return sorted(items,key=score,reverse=True)
-
-
 # ============================================================
 # GENERATE RECOMMENDATIONS
 # ============================================================
 
-def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
+def generate_recommendations(
+    watched,
+    prefetched_tmdb=None,
+):
 
-    print("Starting AI + TMDB recommendation engine")
-    if job_id: _job_update(job_id, progress=18, stage="Analyzing ratings and preferences")
+    print(
+        "Starting separate "
+        "AI + TMDB engine..."
+    )
 
     watched_movie_ids = {
         item["tmdb_id"]
@@ -1613,10 +1632,19 @@ def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
         )
     }
 
-    recent_limit = max(0, min(500, int(get_setting("avoid_recent", RECENT_HISTORY_LIMIT) or RECENT_HISTORY_LIMIT)))
-    recent_movie_ids = set(get_recent_recommendation_ids("Movie", recent_limit)) if recent_limit else set()
-    recent_series_ids = set(get_recent_recommendation_ids("Series", recent_limit)) if recent_limit else set()
-    ai_target = max(4, min(20, int(get_setting("recommendation_count", AI_MOVIES_TARGET) or AI_MOVIES_TARGET)))
+    recent_movie_ids = set(
+        get_recent_recommendation_ids(
+            "Movie",
+            RECENT_HISTORY_LIMIT,
+        )
+    )
+
+    recent_series_ids = set(
+        get_recent_recommendation_ids(
+            "Series",
+            RECENT_HISTORY_LIMIT,
+        )
+    )
 
     not_interested_movie_ids = set(
         get_not_interested_ids(
@@ -1642,8 +1670,11 @@ def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
         | not_interested_series_ids
     )
 
-    if job_id: _job_update(job_id, progress=30, stage="Asking AI for candidates")
-    ai_result = get_ai_recommendations(watched)
+    ai_result = (
+        get_ai_recommendations(
+            watched
+        )
+    )
 
     ai_movies = []
     ai_series = []
@@ -1654,8 +1685,11 @@ def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
             "Gemini succeeded."
         )
 
-        if job_id: _job_update(job_id, progress=52, stage="Verifying candidates with TMDB")
-        verified_movies, verified_series = verify_all_recommendations(ai_result)
+        verified_movies, verified_series = (
+            verify_all_recommendations(
+                ai_result
+            )
+        )
 
         ai_movies = filter_new_results(
             verified_movies,
@@ -1667,11 +1701,21 @@ def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
             blocked_series,
         )
 
-        ai_movies = rank_recommendations(ai_movies, watched)
-        ai_series = rank_recommendations(ai_series, watched)
+        random.shuffle(
+            ai_movies
+        )
 
-        ai_movies = ai_movies[:ai_target]
-        ai_series = ai_series[:ai_target]
+        random.shuffle(
+            ai_series
+        )
+
+        ai_movies = ai_movies[
+            :AI_MOVIES_TARGET
+        ]
+
+        ai_series = ai_series[
+            :AI_SERIES_TARGET
+        ]
 
         print(
             f"AI movies: "
@@ -1689,7 +1733,6 @@ def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
             "Gemini unavailable."
         )
 
-    if job_id: _job_update(job_id, progress=72, stage="Finding fresh discoveries")
     tmdb_results = (
         prefetched_tmdb
         if prefetched_tmdb is not None
@@ -1739,20 +1782,36 @@ def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
     ]
 
     for item in ai_movies:
-        add_recommendation_history(item["tmdb_id"], "Movie", item["title"], job_id, "AI", item.get("match_percentage"))
-        add_recommendation_event(item["tmdb_id"], "Movie", item["title"], "shown", job_id, {"source":"AI","match":item.get("match_percentage")})
+
+        add_recommendation_history(
+            tmdb_id=item["tmdb_id"],
+            media_type="Movie",
+            title=item["title"],
+        )
 
     for item in tmdb_movies:
-        add_recommendation_history(item["tmdb_id"], "Movie", item["title"], job_id, "TMDB", item.get("match_percentage"))
-        add_recommendation_event(item["tmdb_id"], "Movie", item["title"], "shown", job_id, {"source":"TMDB"})
+
+        add_recommendation_history(
+            tmdb_id=item["tmdb_id"],
+            media_type="Movie",
+            title=item["title"],
+        )
 
     for item in ai_series:
-        add_recommendation_history(item["tmdb_id"], "Series", item["title"], job_id, "AI", item.get("match_percentage"))
-        add_recommendation_event(item["tmdb_id"], "Series", item["title"], "shown", job_id, {"source":"AI","match":item.get("match_percentage")})
+
+        add_recommendation_history(
+            tmdb_id=item["tmdb_id"],
+            media_type="Series",
+            title=item["title"],
+        )
 
     for item in tmdb_series:
-        add_recommendation_history(item["tmdb_id"], "Series", item["title"], job_id, "TMDB", item.get("match_percentage"))
-        add_recommendation_event(item["tmdb_id"], "Series", item["title"], "shown", job_id, {"source":"TMDB"})
+
+        add_recommendation_history(
+            tmdb_id=item["tmdb_id"],
+            media_type="Series",
+            title=item["title"],
+        )
 
     print(
         f"FINAL MOVIES: "
@@ -1797,76 +1856,11 @@ def generate_recommendations(watched, prefetched_tmdb=None, job_id=None):
 @app.get("/")
 @app.get("//")
 def home(request: Request):
-    return app_redirect(request, "recommendations")
 
-
-def _page_context(request: Request, **extra):
-    context={"ingress_path":get_ingress_path(request)}
-    context.update(extra)
-    return context
-
-
-@app.get("/search")
-def search_page(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="search"))
-
-
-@app.get("/watched")
-def watched_page(request: Request):
-    movies=get_all()
-    watched_movies=[x for x in movies if x["type"]=="Movie"]
-    watched_series=[x for x in movies if x["type"]=="Series"]
-    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="watched", movies=movies, watched_movies=watched_movies, watched_series=watched_series))
-
-
-@app.get("/watchlist")
-def watchlist_page(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="watchlist", items=[dict(x) for x in get_watchlist()]))
-
-
-@app.get("/stats")
-def stats_page(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="stats", analytics=get_analytics()))
-
-
-def _taste_profile_data():
-    rows=get_all(); genre_scores={}; people_scores={}; decade_scores={}
-    for r in rows:
-        rating=float(r["rating"] or 0); weight=max(0.1,rating/10)
-        try: genres=json.loads(r["genres"] or "[]")
-        except Exception: genres=[]
-        for g in genres:
-            name=g.get("name") if isinstance(g,dict) else str(g)
-            if name: genre_scores[name]=genre_scores.get(name,0)+weight
-        try: cast=json.loads(r["cast"] or "[]")
-        except Exception: cast=[]
-        for person in cast[:10]:
-            name=person.get("name") if isinstance(person,dict) else str(person)
-            if name: people_scores[name]=people_scores.get(name,0)+weight
-        if r["year"]:
-            name=str((int(r["year"])//10)*10)
-            decade_scores[name]=decade_scores.get(name,0)+weight
-    def top(d): return [{"name":k,"score":round(v,2)} for k,v in sorted(d.items(),key=lambda x:x[1],reverse=True)[:15]]
-    return {"genres":top(genre_scores),"people":top(people_scores),"decades":top(decade_scores)}
-
-
-@app.get("/taste")
-def taste_page(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="taste", profile=_taste_profile_data()))
-
-
-@app.get("/settings")
-def settings_page(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="settings", settings={"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}, health=health(), saved=False))
-
-
-@app.post("/settings/save")
-def settings_save(request: Request, recommendation_count:int=Form(8), avoid_recent:int=Form(50), diversity:float=Form(0.7), discovery:float=Form(0.3)):
-    set_setting("recommendation_count", max(4,min(20,int(recommendation_count))))
-    set_setting("avoid_recent", max(0,min(500,int(avoid_recent))))
-    set_setting("diversity", max(0,min(1,float(diversity))))
-    set_setting("discovery", max(0,min(1,float(discovery))))
-    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="settings", settings={"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}, health=health(), saved=True))
+    return app_redirect(
+        request,
+        "recommendations",
+    )
 
 
 # ============================================================
@@ -2018,55 +2012,34 @@ def api_display_statistics_sync(
 @app.get("/api/search")
 def api_search(
     q: str = "",
-    media_type: str = "All",
-    page: int = 1,
+    media_type: str = "",
 ):
-    """Search movies, series, or both. Page is delegated to TMDB for real pagination."""
+    """Search exactly one media type. The frontend calls this twice,
+    once for Movie and once for Series, then combines the results."""
 
     q = q.strip()
-    page = max(1, min(int(page or 1), 500))
 
     if len(q) < 2:
-        return {"results": [], "page": page, "total_pages": 1, "total_results": 0}
-
-    if media_type == "All":
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            movie_future = executor.submit(tmdb_live_search, q, "Movie", page)
-            series_future = executor.submit(tmdb_live_search, q, "Series", page)
-            movie_data = movie_future.result()
-            series_data = series_future.result()
-        movies = movie_data.get("results", [])
-        series = series_data.get("results", [])
-        for item in movies:
-            item["media_type"] = "Movie"
-        for item in series:
-            item["media_type"] = "Series"
-        # Interleave types so All does not feel movie-first on every page.
-        results=[]
-        for i in range(max(len(movies), len(series))):
-            if i < len(movies): results.append(movies[i])
-            if i < len(series): results.append(series[i])
-        return {
-            "results": results,
-            "media_type": "All",
-            "page": page,
-            "total_pages": max(movie_data.get("total_pages",1), series_data.get("total_pages",1)),
-            "total_results": movie_data.get("total_results",0) + series_data.get("total_results",0),
-        }
+        return {"results": []}
 
     if media_type not in ("Movie", "Series"):
-        return JSONResponse({"results": [], "error": "media_type must be All, Movie or Series"}, status_code=400)
+        return {
+            "results": [],
+            "error": "media_type must be Movie or Series",
+        }
 
-    data = tmdb_live_search(q, media_type, page)
-    results = data.get("results", [])
+    results = tmdb_live_search(
+        q,
+        media_type,
+    )
+
+    # Ensure every item explicitly carries its media type.
     for item in results:
         item["media_type"] = media_type
+
     return {
         "results": results,
         "media_type": media_type,
-        "page": data.get("page", page),
-        "total_pages": data.get("total_pages", 1),
-        "total_results": data.get("total_results", len(results)),
     }
 
 
@@ -2149,10 +2122,10 @@ def add(
                     "overview"
                 ),
 
-            tmdb_id=tmdb_data.get("tmdb_id"),
-            genres=tmdb_data.get("genres"), cast=tmdb_data.get("cast"),
-            director=tmdb_data.get("director"), creators=tmdb_data.get("creators"),
-            keywords=tmdb_data.get("keywords"), runtime=tmdb_data.get("runtime"), status=tmdb_data.get("status"),
+            tmdb_id=
+                tmdb_data.get(
+                    "tmdb_id"
+                ),
         )
 
     else:
@@ -2259,9 +2232,6 @@ def api_add(
             year=canonical.get("year"),
             overview=canonical.get("overview"),
             tmdb_id=canonical.get("tmdb_id"),
-            genres=canonical.get("genres"), cast=canonical.get("cast"),
-            director=canonical.get("director"), creators=canonical.get("creators"),
-            keywords=canonical.get("keywords"), runtime=canonical.get("runtime"), status=canonical.get("status"),
         )
     else:
         add_movie(
@@ -2464,17 +2434,19 @@ def title_detail(
             match_percentage = int(max(60, min(88, round((detail.get("vote_average", 7) or 7) * 10))))
 
     detail["match_percentage"] = match_percentage
-    detail["is_watchlisted"] = is_watchlisted(tmdb_id, media_type)
+    detail["is_watchlisted"] = is_in_watchlist(
+        media_type,
+        tmdb_id,
+    )
     detail["is_watched"] = bool(watched_item)
     detail["user_rating"] = watched_item["rating"] if watched_item else None
 
     response = templates.TemplateResponse(
         request=request,
-        name="index.html",
+        name="detail.html",
         context={
             "detail": detail,
             "media_type": media_type,
-            "page": "detail",
             "ingress_path": get_ingress_path(request),
         },
     )
@@ -2484,6 +2456,133 @@ def title_detail(
     response.headers["Expires"] = "0"
 
     return response
+
+
+
+# ============================================================
+# APP PAGES / FRONTEND WORKSPACES
+# ============================================================
+
+@app.get("/search")
+def search_page(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="search.html",
+        context={
+            "active_page": "search",
+            "ingress_path": get_ingress_path(request),
+        },
+    )
+
+
+@app.get("/library")
+def library_page(request: Request):
+    movies = [dict(item) for item in get_all() if item["type"] == "Movie"]
+    series = [dict(item) for item in get_all() if item["type"] == "Series"]
+    rows = movies + series
+    ratings = [float(item["rating"] or 0) for item in rows]
+    stats = {
+        "watched": len(rows),
+        "movies": len(movies),
+        "series": len(series),
+        "avg_rating": (sum(ratings) / len(ratings)) if ratings else 0,
+        "high_rated": sum(1 for rating in ratings if rating >= 8),
+    }
+    return templates.TemplateResponse(
+        request=request,
+        name="library.html",
+        context={
+            "active_page": "library",
+            "ingress_path": get_ingress_path(request),
+            "movies": movies,
+            "series": series,
+            "stats": stats,
+        },
+    )
+
+
+@app.get("/watchlist")
+def watchlist_page(request: Request):
+    items = load_watchlist()
+    return templates.TemplateResponse(
+        request=request,
+        name="watchlist.html",
+        context={
+            "active_page": "watchlist",
+            "ingress_path": get_ingress_path(request),
+            "items": items,
+        },
+    )
+
+
+@app.get("/api/watchlist")
+def api_watchlist():
+    return {"items": load_watchlist()}
+
+
+@app.get("/stats")
+def stats_page(request: Request):
+    lifetime = get_lifetime_statistics()
+    rows = [dict(item) for item in get_all()]
+    total = len(rows)
+    movie_share = round((lifetime["movies"] / lifetime["watched"] * 100), 1) if lifetime["watched"] else 0
+    bands = [
+        ("9+", "Exceptional", lambda r: r >= 9),
+        ("8–8.9", "Strong favorites", lambda r: 8 <= r < 9),
+        ("7–7.9", "Liked titles", lambda r: 7 <= r < 8),
+        ("<7", "Lower rated", lambda r: r < 7),
+    ]
+    rating_bands = []
+    for label, caption, predicate in bands:
+        count = sum(1 for item in rows if predicate(float(item["rating"] or 0)))
+        rating_bands.append({"label": label, "caption": caption, "count": count, "percent": round((count / total * 100), 1) if total else 0})
+    return templates.TemplateResponse(
+        request=request,
+        name="stats.html",
+        context={
+            "active_page": "stats",
+            "ingress_path": get_ingress_path(request),
+            "lifetime": lifetime,
+            "rating_bands": rating_bands,
+            "movie_share": movie_share,
+        },
+    )
+
+
+@app.get("/taste")
+def taste_page(request: Request):
+    rows = [dict(item) for item in get_all()]
+    ratings = [float(item["rating"] or 0) for item in rows]
+    movie_count = sum(1 for item in rows if item["type"] == "Movie")
+    movie_share = round((movie_count / len(rows) * 100), 1) if rows else 0
+    recent = rows[:10]
+    return templates.TemplateResponse(
+        request=request,
+        name="taste.html",
+        context={
+            "active_page": "taste",
+            "ingress_path": get_ingress_path(request),
+            "avg_rating": (sum(ratings) / len(ratings)) if ratings else 0,
+            "loved": sum(1 for rating in ratings if rating >= 8),
+            "movie_share": movie_share,
+            "recent_count": len(recent),
+            "recent": recent,
+        },
+    )
+
+
+@app.get("/settings")
+def settings_page(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        context={
+            "active_page": "settings",
+            "ingress_path": get_ingress_path(request),
+            "tmdb_ready": bool(get_env("TMDB_API_KEY") or get_env("TMDB_TOKEN")),
+            "gemini_ready": bool(get_env("GEMINI_API_KEY")),
+        },
+    )
 
 
 # ============================================================
@@ -2503,9 +2602,17 @@ def watchlist_toggle(
     vote_average: float = Form(0),
     remove: bool = Form(False),
 ):
-    item = {"tmdb_id":tmdb_id,"media_type":media_type,"title":title,"year":year,"poster":poster,"backdrop":backdrop,"overview":overview or "","vote_average":vote_average}
-    if remove: remove_watchlist(tmdb_id, media_type)
-    else: upsert_watchlist(item)
+    toggle_watchlist_item({
+        "tmdb_id": tmdb_id,
+        "media_type": media_type,
+        "title": title,
+        "year": year,
+        "poster": poster,
+        "backdrop": backdrop,
+        "overview": overview or "",
+        "vote_average": vote_average,
+        "remove": remove,
+    })
 
     return app_redirect(
         request,
@@ -2513,51 +2620,112 @@ def watchlist_toggle(
     )
 
 
-@app.post("/watchlist/remove")
-def watchlist_remove_page(request: Request, tmdb_id:int=Form(...), media_type:str=Form(...)):
-    if media_type in ("Movie","Series"):
-        remove_watchlist(tmdb_id, media_type)
-    return app_redirect(request, "watchlist")
-
-
 # ============================================================
 # RECOMMENDATIONS
 # ============================================================
 
-@app.get("/recommendations")
-def recommendations(request: Request, background_tasks: BackgroundTasks):
+@app.get(
+    "/recommendations"
+)
+def recommendations(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+
     global recommendation_state
+
     movies = get_all()
-    watched_movies = [x for x in movies if x["type"] == "Movie"]
-    watched_series = [x for x in movies if x["type"] == "Series"]
-    with RECOMMENDATION_LOCK:
-        state = dict(recommendation_state)
-    if state["status"] == "ready" and state.get("data") is not None:
-        data = state["data"]
-        loading = False
-        tmdb_discoveries = None
+
+    watched_movies = [
+        item
+        for item in movies
+        if item["type"] == "Movie"
+    ]
+
+    watched_series = [
+        item
+        for item in movies
+        if item["type"] == "Series"
+    ]
+
+    # Finished AI job: render the complete recommendation result.
+    if recommendation_state["status"] == "ready":
+
+        recommendations_data = (
+            recommendation_state["data"]
+        )
+
+        response = templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={
+                "movies": movies,
+                "watched_movies": watched_movies,
+                "watched_series": watched_series,
+                "recommendations": recommendations_data,
+                "recommendations_loading": False,
+                "tmdb_discoveries": None,
+                "display_statistics": get_display_statistics(),
+                "lifetime_statistics": get_lifetime_statistics(),
+                "ingress_path": get_ingress_path(request),
+            },
+        )
+
+        recommendation_state = {
+            "status": "idle",
+            "data": None,
+            "error": None,
+            "tmdb_data": None,
+        }
+
     else:
-        tmdb_discoveries = state.get("tmdb_data")
+
+        # Fetch TMDB discovery immediately so the user can see the
+        # page and TMDB rails while Gemini continues in the background.
+        tmdb_discoveries = recommendation_state.get("tmdb_data")
+
         if tmdb_discoveries is None:
             tmdb_discoveries = tmdb_fallback(movies)
-        if state["status"] in ("idle", "error"):
-            job_id = str(uuid.uuid4())
-            with RECOMMENDATION_LOCK:
-                recommendation_state.update({"status":"loading","data":None,"error":None,"tmdb_data":tmdb_discoveries,"job_id":job_id,"progress":1,"stage":"Starting"})
-            background_tasks.add_task(run_recommendation_job, tmdb_discoveries, job_id)
-        data = None
-        loading = True
-    response = templates.TemplateResponse(request=request, name="index.html", context={
-        "page": "recommendations",
-        "movies": movies, "watched_movies": watched_movies, "watched_series": watched_series,
-        "recommendations": data, "recommendations_loading": loading, "tmdb_discoveries": tmdb_discoveries,
-        "display_statistics": get_display_statistics(), "lifetime_statistics": get_lifetime_statistics(),
-        "ingress_path": get_ingress_path(request),
-    })
-    if state["status"] == "ready":
-        with RECOMMENDATION_LOCK:
-            recommendation_state.update({"status":"idle","data":None,"error":None,"tmdb_data":None,"progress":0,"stage":"Idle"})
-    response.headers.update({"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0","Pragma":"no-cache","Expires":"0"})
+
+        if recommendation_state["status"] != "loading":
+
+            recommendation_state = {
+                "status": "loading",
+                "data": None,
+                "error": None,
+                "tmdb_data": tmdb_discoveries,
+            }
+
+            background_tasks.add_task(
+                run_recommendation_job,
+                tmdb_discoveries,
+            )
+
+        else:
+            recommendation_state["tmdb_data"] = tmdb_discoveries
+
+        response = templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={
+                "movies": movies,
+                "watched_movies": watched_movies,
+                "watched_series": watched_series,
+                "recommendations": None,
+                "recommendations_loading": True,
+                "tmdb_discoveries": tmdb_discoveries,
+                "display_statistics": get_display_statistics(),
+                "lifetime_statistics": get_lifetime_statistics(),
+                "ingress_path": get_ingress_path(request),
+            },
+        )
+
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, max-age=0"
+    )
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
     return response
 
 
@@ -2568,14 +2736,10 @@ def recommendations(request: Request, background_tasks: BackgroundTasks):
 @app.get("/api/recommendations/status")
 def recommendation_status():
 
-    with RECOMMENDATION_LOCK:
-        return {
-            "status": recommendation_state["status"],
-            "error": recommendation_state["error"],
-            "job_id": recommendation_state.get("job_id"),
-            "progress": recommendation_state.get("progress", 0),
-            "stage": recommendation_state.get("stage", "Idle"),
-        }
+    return {
+        "status": recommendation_state["status"],
+        "error": recommendation_state["error"],
+    }
 
 
 # ============================================================
@@ -2664,10 +2828,10 @@ def recommendation_watched(
                     "overview"
                 ),
 
-            tmdb_id=tmdb_data.get("tmdb_id"),
-            genres=tmdb_data.get("genres"), cast=tmdb_data.get("cast"),
-            director=tmdb_data.get("director"), creators=tmdb_data.get("creators"),
-            keywords=tmdb_data.get("keywords"), runtime=tmdb_data.get("runtime"), status=tmdb_data.get("status"),
+            tmdb_id=
+                tmdb_data.get(
+                    "tmdb_id"
+                ),
         )
 
     else:
@@ -2781,125 +2945,6 @@ def api_recommendation_not_interested(
         "title": title,
     })
 
-
-# ============================================================
-# HEALTH / ANALYTICS / PERSONALIZATION API
-# ============================================================
-
-@app.get("/health")
-def health():
-    tmdb_ok = bool(get_env("TMDB_TOKEN"))
-    gemini_ok = bool(get_env("GEMINI_API_KEY"))
-    try:
-        stats = get_analytics()
-        db_ok = True
-    except Exception:
-        stats = {}
-        db_ok = False
-    return {"status":"healthy" if db_ok else "degraded","database":db_ok,"tmdb_configured":tmdb_ok,"gemini_configured":gemini_ok,"version":"1.9.1"}
-
-@app.post("/api/recommendations/refresh")
-def api_recommendations_refresh(background_tasks: BackgroundTasks):
-    with RECOMMENDATION_LOCK:
-        if recommendation_state.get("status") == "loading":
-            return {"ok":False,"busy":True,"job_id":recommendation_state.get("job_id")}
-        job_id=str(uuid.uuid4())
-        recommendation_state.update({"status":"loading","data":None,"error":None,"tmdb_data":None,"job_id":job_id,"progress":1,"stage":"Starting"})
-    background_tasks.add_task(run_recommendation_job, None, job_id)
-    return {"ok":True,"job_id":job_id}
-
-@app.get("/api/analytics")
-def api_analytics(): return get_analytics()
-
-@app.get("/api/watchlist")
-def api_watchlist(media_type: str = ""):
-    return {"items":[dict(x) for x in get_watchlist(media_type if media_type in ("Movie","Series") else None)]}
-
-@app.get("/api/not-interested")
-def api_not_interested(media_type: str = ""):
-    return {"items":[dict(x) for x in get_not_interested(media_type if media_type in ("Movie","Series") else None)]}
-
-@app.delete("/api/not-interested/{media_type}/{tmdb_id}")
-def api_remove_not_interested(media_type: str, tmdb_id: int):
-    if media_type not in ("Movie","Series"): return JSONResponse({"ok":False,"error":"Invalid media type"},status_code=400)
-    remove_not_interested(tmdb_id, media_type); return {"ok":True}
-
-@app.post("/api/recommendation/feedback")
-def api_recommendation_feedback(tmdb_id: int = Form(...), media_type: str = Form(...), title: str = Form(...), event: str = Form(...)):
-    allowed={"clicked","liked","disliked","dismissed","deep_dive"}
-    if media_type not in ("Movie","Series") or event not in allowed: return JSONResponse({"ok":False,"error":"Invalid feedback"},status_code=400)
-    add_recommendation_event(tmdb_id,media_type,title,event); return {"ok":True}
-
-@app.get("/api/taste-profile")
-def api_taste_profile():
-    return _taste_profile_data()
-
-@app.post("/api/settings")
-def api_settings(payload: dict):
-    for key,value in payload.items(): set_setting(key,value)
-    return {"ok":True,"settings":payload}
-
-@app.get("/api/settings")
-def api_get_settings():
-    return {"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}
-
-@app.post("/api/series/progress")
-def api_series_progress(tmdb_id:int=Form(...),season:int=Form(1),episode:int=Form(1),progress:float=Form(0),status:str=Form("Watching")):
-    if status not in ("Not started","Watching","Completed","Paused","Dropped"): return JSONResponse({"ok":False,"error":"Invalid status"},status_code=400)
-    set_series_progress(tmdb_id,season,episode,max(0,min(100,progress)),status); return {"ok":True}
-
-@app.get("/api/series/progress/{tmdb_id}")
-def api_get_series_progress(tmdb_id:int):
-    row=get_series_progress(tmdb_id); return dict(row) if row else {"tmdb_id":tmdb_id,"status":"Not started","season":1,"episode":1,"progress":0}
-
-# ============================================================
-# DISCOVERY / DATA PORTABILITY
-# ============================================================
-
-@app.get("/api/surprise")
-def api_surprise(media_type: str = "Movie"):
-    if media_type not in ("Movie","Series"): media_type="Movie"
-    pool=tmdb_fallback(get_all()).get("movies" if media_type=="Movie" else "series",[])
-    if not pool: return {"ok":False,"error":"No discovery data available"}
-    item=random.choice(pool[:20]); item["source"]="SURPRISE"; item["match_percentage"]=random.randint(70,92)
-    return {"ok":True,"item":item}
-
-@app.get("/api/movie-night")
-def api_movie_night(mood: str = "balanced", runtime: str = "any"):
-    pool=tmdb_fallback(get_all()).get("movies",[])
-    if not pool:return {"ok":False,"error":"No movie data available"}
-    if runtime == "short": pool=[x for x in pool if not x.get("runtime") or x.get("runtime")<=100] or pool
-    elif runtime == "long": pool=[x for x in pool if not x.get("runtime") or x.get("runtime")>=130] or pool
-    picks=sorted(pool,key=lambda x:(x.get("vote_average") or 0),reverse=True)[:12]
-    random.shuffle(picks); return {"ok":True,"items":picks[:2],"mood":mood,"runtime":runtime}
-
-@app.get("/api/providers/{media_type}/{tmdb_id}")
-def api_providers(media_type:str,tmdb_id:int,country:str="MA"):
-    if media_type not in ("Movie","Series"): return JSONResponse({"ok":False,"error":"Invalid media type"},status_code=400)
-    token=get_env("TMDB_TOKEN")
-    if not token:return {"ok":False,"providers":{}}
-    endpoint=f"https://api.themoviedb.org/3/{'movie' if media_type=='Movie' else 'tv'}/{tmdb_id}/watch/providers"
-    try:
-        data=tmdb_request(endpoint,token,{"watch_region":country.upper()},ttl=21600)
-        return {"ok":True,"country":country.upper(),"providers":(data.get("results") or {}).get(country.upper(),{})}
-    except Exception as error:return {"ok":False,"error":str(error),"providers":{}}
-
-@app.get("/api/export")
-def api_export():
-    payload={"version":2,"exported_at":time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),"watched":[dict(x) for x in get_all()],"watchlist":[dict(x) for x in get_watchlist()],"not_interested":[dict(x) for x in get_not_interested()],"settings":api_get_settings()}
-    return Response(content=json.dumps(payload,ensure_ascii=False,indent=2),media_type="application/json",headers={"Content-Disposition":"attachment; filename=movie-ai-backup.json"})
-
-@app.post("/api/import")
-def api_import(payload:dict):
-    imported=0
-    for item in payload.get("watched",[]):
-        if item.get("title") and item.get("type") in ("Movie","Series"):
-            add_movie(item["title"],float(item.get("rating",0)),item["type"],item.get("poster"),item.get("backdrop"),item.get("year"),item.get("overview"),item.get("tmdb_id"),item.get("genres"),item.get("cast"),item.get("director"),item.get("creators"),item.get("keywords"),item.get("runtime"),item.get("status")); imported+=1
-    for item in payload.get("watchlist",[]):
-        if item.get("tmdb_id") and item.get("media_type") in ("Movie","Series"):upsert_watchlist(item)
-    for item in payload.get("not_interested",[]):
-        if item.get("tmdb_id") and item.get("media_type") in ("Movie","Series"):add_not_interested(item["tmdb_id"],item["media_type"],item.get("title", ""))
-    return {"ok":True,"imported":imported}
 
 # ============================================================
 # DELETE
