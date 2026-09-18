@@ -15,7 +15,7 @@
 <nav class="topbar app-topbar">
   <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
     <img class="brand-icon" src="{{ ingress_path|default('') }}/static/favicon.svg" alt="">
-    <div class="brand-text"><strong>MY MOVIE AI</strong><span>PERSONAL CINEMA</span></div>
+    <div class="brand-text"><strong>MY MOVIE AI</strong><span>YOUR PRIVATE CINEMA</span></div>
   </a>
   <div class="app-nav" aria-label="Primary navigation">
     <a href="{{ ingress_path|default('') }}/recommendations" data-nav="recommendations">Home</a>
@@ -28,7 +28,7 @@
   </div>
   <div class="topbar-actions">
     {% if page == "detail" %}<a class="detail-back" href="{{ ingress_path|default('') }}/recommendations">← Back</a>{% else %}<a class="topbar-search" href="{{ ingress_path|default('') }}/search" aria-label="Search">⌕ <span>Search</span></a>{% endif %}
-    <div class="topbar-status"><span class="status-dot"></span><span>Local library</span></div>
+    <div class="topbar-status"><span class="status-dot"></span><span>Local</span></div>
   </div>
 </nav>
 <main class="page app-page">
@@ -55,6 +55,11 @@
                 get AI-powered discoveries,
                 and keep your library organized.
             </p>
+            <div class="hero-actions">
+                <a href="{{ ingress_path|default('') }}/recommendations?refresh=1" class="generate-button"><span>✦</span><strong>Discover something new</strong><span>→</span></a>
+                <a href="{{ ingress_path|default('') }}/search" class="secondary-button">Browse the catalog</a>
+            </div>
+
             <div class="hero-stats">
 
                 <div class="stat">
