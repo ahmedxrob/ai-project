@@ -1808,7 +1808,7 @@ def _page_context(request: Request, **extra):
 
 @app.get("/search")
 def search_page(request: Request):
-    return templates.TemplateResponse(request=request, name="search.html", context=_page_context(request, page="search"))
+    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="search"))
 
 
 @app.get("/watched")
@@ -1816,17 +1816,17 @@ def watched_page(request: Request):
     movies=get_all()
     watched_movies=[x for x in movies if x["type"]=="Movie"]
     watched_series=[x for x in movies if x["type"]=="Series"]
-    return templates.TemplateResponse(request=request, name="watched.html", context=_page_context(request, page="watched", movies=movies, watched_movies=watched_movies, watched_series=watched_series))
+    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="watched", movies=movies, watched_movies=watched_movies, watched_series=watched_series))
 
 
 @app.get("/watchlist")
 def watchlist_page(request: Request):
-    return templates.TemplateResponse(request=request, name="watchlist.html", context=_page_context(request, page="watchlist", items=[dict(x) for x in get_watchlist()]))
+    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="watchlist", items=[dict(x) for x in get_watchlist()]))
 
 
 @app.get("/stats")
 def stats_page(request: Request):
-    return templates.TemplateResponse(request=request, name="stats.html", context=_page_context(request, page="stats", analytics=get_analytics()))
+    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="stats", analytics=get_analytics()))
 
 
 def _taste_profile_data():
@@ -1852,12 +1852,12 @@ def _taste_profile_data():
 
 @app.get("/taste")
 def taste_page(request: Request):
-    return templates.TemplateResponse(request=request, name="taste.html", context=_page_context(request, page="taste", profile=_taste_profile_data()))
+    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="taste", profile=_taste_profile_data()))
 
 
 @app.get("/settings")
 def settings_page(request: Request):
-    return templates.TemplateResponse(request=request, name="settings.html", context=_page_context(request, page="settings", settings={"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}, health=health(), saved=False))
+    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="settings", settings={"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}, health=health(), saved=False))
 
 
 @app.post("/settings/save")
@@ -1866,7 +1866,7 @@ def settings_save(request: Request, recommendation_count:int=Form(8), avoid_rece
     set_setting("avoid_recent", max(0,min(500,int(avoid_recent))))
     set_setting("diversity", max(0,min(1,float(diversity))))
     set_setting("discovery", max(0,min(1,float(discovery))))
-    return templates.TemplateResponse(request=request, name="settings.html", context=_page_context(request, page="settings", settings={"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}, health=health(), saved=True))
+    return templates.TemplateResponse(request=request, name="index.html", context=_page_context(request, page="settings", settings={"recommendation_count":get_setting("recommendation_count",8),"avoid_recent":get_setting("avoid_recent",50),"diversity":get_setting("diversity",0.7),"discovery":get_setting("discovery",0.3)}, health=health(), saved=True))
 
 
 # ============================================================
@@ -2470,10 +2470,11 @@ def title_detail(
 
     response = templates.TemplateResponse(
         request=request,
-        name="detail.html",
+        name="index.html",
         context={
             "detail": detail,
             "media_type": media_type,
+            "page": "detail",
             "ingress_path": get_ingress_path(request),
         },
     )
@@ -2795,7 +2796,7 @@ def health():
     except Exception:
         stats = {}
         db_ok = False
-    return {"status":"healthy" if db_ok else "degraded","database":db_ok,"tmdb_configured":tmdb_ok,"gemini_configured":gemini_ok,"version":"1.9.0"}
+    return {"status":"healthy" if db_ok else "degraded","database":db_ok,"tmdb_configured":tmdb_ok,"gemini_configured":gemini_ok,"version":"1.9.1"}
 
 @app.post("/api/recommendations/refresh")
 def api_recommendations_refresh(background_tasks: BackgroundTasks):
