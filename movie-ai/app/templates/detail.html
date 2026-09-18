@@ -90,6 +90,7 @@
                         <button class="watchlist-button" type="submit">{{ "✓ In Watchlist" if detail.is_watchlisted else "+ Watchlist" }}</button>
                     </form>
 
+                    {% if detail.trailer and detail.trailer.key %}<a class="tmdb-detail-button" href="https://www.youtube.com/watch?v={{ detail.trailer.key }}" target="_blank" rel="noopener noreferrer">▶ Trailer</a>{% endif %}
                     <a class="tmdb-detail-button" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">Open TMDB ↗</a>
                 </div>
 
@@ -116,6 +117,20 @@
                 {% if person.character %}<span>{{ person.character }}</span>{% endif %}
             </div>
             {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+
+    {% if media_type == "Series" %}
+    <section class="detail-section series-progress-panel">
+        <div class="detail-section-heading"><h2>Continue watching</h2><span id="series-progress-label">Not started</span></div>
+        <div class="series-progress-controls">
+            <label>Season <input id="series-season" type="number" min="1" value="1"></label>
+            <label>Episode <input id="series-episode" type="number" min="1" value="1"></label>
+            <label>Progress <input id="series-progress" type="number" min="0" max="100" value="0">%</label>
+            <select id="series-status"><option>Not started</option><option selected>Watching</option><option>Completed</option><option>Paused</option><option>Dropped</option></select>
+            <button id="save-series-progress" type="button">Save progress</button>
         </div>
     </section>
     {% endif %}
@@ -149,5 +164,11 @@
     });
 })();
 </script>
+
+{% if media_type == "Series" %}
+<script>
+(async function(){const base=document.body.dataset.ingressPath||"";const id={{ detail.tmdb_id }};const u=p=>base+p;const season=document.getElementById('series-season'),episode=document.getElementById('series-episode'),progress=document.getElementById('series-progress'),status=document.getElementById('series-status'),label=document.getElementById('series-progress-label');try{const r=await fetch(u('/api/series/progress/'+id),{cache:'no-store'});const x=await r.json();season.value=x.season||1;episode.value=x.episode||1;progress.value=x.progress||0;status.value=x.status||'Not started';label.textContent=x.status||'Not started'}catch(e){}document.getElementById('save-series-progress')?.addEventListener('click',async()=>{const f=new FormData();f.append('tmdb_id',id);f.append('season',season.value);f.append('episode',episode.value);f.append('progress',progress.value);f.append('status',status.value);const r=await fetch(u('/api/series/progress'),{method:'POST',body:f});if(r.ok){label.textContent=status.value;document.getElementById('save-series-progress').textContent='Saved ✓';setTimeout(()=>document.getElementById('save-series-progress').textContent='Save progress',1400)}})})();
+</script>
+{% endif %}
 </body>
 </html>
