@@ -1,5 +1,5 @@
 name: My Movie AI
-version: "1.8.1"
+version: "1.9.1"
 slug: movie_ai
 description: Personal movie and series database with AI recommendations, taste profiling, watchlist, analytics and discovery
 url: https://github.com/ahmedxrob/ai-project
