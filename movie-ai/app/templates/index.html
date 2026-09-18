@@ -36,26 +36,7 @@
     >
 
 
-<style>
-.drag-scroll-rail {
-    cursor: grab;
-    user-select: none;
-    -webkit-user-select: none;
-    touch-action: pan-y;
-}
 
-.drag-scroll-rail.is-dragging {
-    cursor: grabbing !important;
-    scroll-behavior: auto !important;
-    scroll-snap-type: none !important;
-}
-
-.drag-scroll-rail img {
-    -webkit-user-drag: none;
-    user-drag: none;
-    pointer-events: none;
-}
-</style>
 </head>
 
 <body data-ingress-path="{{ ingress_path|default('') }}">
@@ -174,6 +155,19 @@
 
         </div>
 
+    </section>
+
+
+    <section class="cinema-command-bar" aria-label="Cinema tools">
+        <button type="button" class="cinema-tool" data-tool="analytics"><span>◫</span><b>Stats</b><small>Library</small></button>
+        <button type="button" class="cinema-tool" data-tool="taste"><span>✦</span><b>Taste</b><small>Profile</small></button>
+        <button type="button" class="cinema-tool" data-tool="watchlist"><span>♡</span><b>Watchlist</b><small id="watchlist-count">—</small></button>
+        <button type="button" class="cinema-tool" data-tool="surprise"><span>🎲</span><b>Surprise</b><small>Pick one</small></button>
+        <button type="button" class="cinema-tool" data-tool="night"><span>🍿</span><b>Movie Night</b><small>2 picks</small></button>
+        <button type="button" class="cinema-tool" data-tool="refresh"><span>↻</span><b>Refresh AI</b><small>New picks</small></button>
+        <a class="cinema-tool" href="/api/export"><span>⇩</span><b>Backup</b><small>Export data</small></a>
+        <button type="button" class="cinema-tool" data-tool="import"><span>⇧</span><b>Import</b><small>Restore data</small></button>
+        <button type="button" class="cinema-tool" data-tool="settings"><span>⚙</span><b>Preferences</b><small>AI tuning</small></button>
     </section>
 
 
@@ -3488,6 +3482,43 @@ document.addEventListener("submit", async function (event) {
 
 </script>
 
+
+<div id="cinema-modal" class="cinema-modal" aria-hidden="true">
+  <div class="cinema-modal-backdrop" data-close-modal></div>
+  <section class="cinema-modal-card" role="dialog" aria-modal="true" aria-labelledby="cinema-modal-title">
+    <button class="cinema-modal-close" type="button" data-close-modal aria-label="Close">×</button>
+    <div class="panel-label" id="cinema-modal-kicker">MY MOVIE AI</div>
+    <h2 id="cinema-modal-title">Cinema tools</h2>
+    <div id="cinema-modal-body" class="cinema-modal-body"><div class="cinema-modal-loading">Loading…</div></div>
+  </section>
+</div>
+
+<style>
+.cinema-command-bar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;margin:0 0 28px;padding:12px;border:1px solid rgba(255,255,255,.08);background:rgba(12,12,16,.78);backdrop-filter:blur(18px);border-radius:20px;position:relative;z-index:4}.cinema-tool{border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.035);color:inherit;text-decoration:none;border-radius:15px;padding:14px 12px;display:flex;flex-direction:column;gap:4px;text-align:left;cursor:pointer;transition:.18s ease}.cinema-tool:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.07)}.cinema-tool span{font-size:20px}.cinema-tool b{font-size:13px}.cinema-tool small{opacity:.55;font-size:11px}.cinema-modal{display:none;position:fixed;inset:0;z-index:9999}.cinema-modal.open{display:block}.cinema-modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px)}.cinema-modal-card{position:relative;margin:8vh auto 0;width:min(760px,calc(100vw - 28px));max-height:84vh;overflow:auto;background:#101014;border:1px solid rgba(255,255,255,.1);border-radius:24px;padding:28px;box-shadow:0 30px 100px rgba(0,0,0,.55)}.cinema-modal-close{position:absolute;right:16px;top:14px;border:0;background:transparent;color:inherit;font-size:28px;cursor:pointer}.cinema-modal-body{margin-top:18px}.cinema-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.cinema-stat{padding:16px;border-radius:15px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.06)}.cinema-stat strong{display:block;font-size:24px}.cinema-stat span{font-size:11px;opacity:.55}.cinema-bars{display:grid;gap:9px;margin-top:18px}.cinema-bar-row{display:grid;grid-template-columns:100px 1fr 45px;gap:8px;align-items:center;font-size:12px}.cinema-bar{height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}.cinema-bar i{display:block;height:100%;background:currentColor;border-radius:inherit}.cinema-picks{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.cinema-pick{display:grid;grid-template-columns:90px 1fr;gap:12px;padding:10px;border:1px solid rgba(255,255,255,.08);border-radius:16px;color:inherit;text-decoration:none;background:rgba(255,255,255,.03)}.cinema-pick img{width:90px;height:130px;object-fit:cover;border-radius:10px}.cinema-pick h3{margin:4px 0;font-size:14px}.cinema-pick p{font-size:12px;opacity:.65;line-height:1.45}.cinema-chip{display:inline-block;padding:5px 8px;border-radius:99px;background:rgba(255,255,255,.07);font-size:11px;margin:3px}.cinema-empty{padding:30px;text-align:center;opacity:.65}.cinema-danger{color:#ff8d8d}.cinema-success{color:#8dffa9}@media(max-width:850px){.cinema-command-bar{grid-template-columns:repeat(3,1fr)}.cinema-stat-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:520px){.cinema-command-bar{grid-template-columns:repeat(2,1fr)}.cinema-picks{grid-template-columns:1fr}}
+</style>
+
+<script>
+(function(){
+ const modal=document.getElementById('cinema-modal'), body=document.getElementById('cinema-modal-body'), title=document.getElementById('cinema-modal-title'), kicker=document.getElementById('cinema-modal-kicker');
+ const appUrl=p=>{const base=document.body.dataset.ingressPath||'';return base+(p.startsWith('/')?p:'/'.concat(p));};
+ const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+ const open=(t,html)=>{title.textContent=t;kicker.textContent='MY MOVIE AI';body.innerHTML=html;modal.classList.add('open');modal.setAttribute('aria-hidden','false');};
+ const close=()=>{modal.classList.remove('open');modal.setAttribute('aria-hidden','true');};
+ document.querySelectorAll('[data-close-modal]').forEach(x=>x.addEventListener('click',close)); document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
+ async function json(url,opts){const r=await fetch(appUrl(url),Object.assign({cache:'no-store'},opts||{}));if(!r.ok)throw new Error('Request failed');return r.json()}
+ function statsHtml(a){return `<div class="cinema-stat-grid"><div class="cinema-stat"><strong>${a.total||0}</strong><span>Library titles</span></div><div class="cinema-stat"><strong>${a.average_rating||0}</strong><span>Average rating</span></div><div class="cinema-stat"><strong>${a.watchlist||0}</strong><span>Watchlist</span></div><div class="cinema-stat"><strong>${a.not_interested||0}</strong><span>Dismissed</span></div></div><h3 style="margin-top:24px">Top genres</h3><div class="cinema-bars">${(a.genres||[]).slice(0,8).map(x=>`<div class="cinema-bar-row"><span>${esc(x.genre)}</span><div class="cinema-bar"><i style="width:${Math.min(100,(x.avg_rating/10)*100)}%"></i></div><b>${x.count}</b></div>`).join('')}</div>`}
+ async function showStats(){open('Library intelligence','<div class="cinema-modal-loading">Analyzing your library…</div>');try{open('Library intelligence',statsHtml(await json('/api/analytics')))}catch(e){open('Library intelligence','<div class="cinema-empty cinema-danger">Could not load analytics.</div>')}}
+ async function showTaste(){open('Taste profile','<div class="cinema-modal-loading">Building taste profile…</div>');try{const a=await json('/api/taste-profile');open('Taste profile',`<p style="opacity:.65">Your profile is calculated from ratings and enriched metadata. Higher-rated titles contribute more.</p><h3>Genres</h3><div>${(a.genres||[]).map(x=>`<span class="cinema-chip">${esc(x.name)} · ${x.score}</span>`).join('')||'<span class="cinema-empty">Add more titles with TMDB metadata to build your profile.</span>'}</div><h3>Frequent people</h3><div>${(a.people||[]).map(x=>`<span class="cinema-chip">${esc(x.name)} · ${x.score}</span>`).join('')}</div><h3>Favorite decades</h3><div>${(a.decades||[]).map(x=>`<span class="cinema-chip">${esc(x.name)}s · ${x.score}</span>`).join('')}</div>`)}catch(e){open('Taste profile','<div class="cinema-danger">Could not load taste profile.</div>')}}
+ async function showWatchlist(){open('Watchlist','<div class="cinema-modal-loading">Loading watchlist…</div>');try{const a=await json('/api/watchlist');const items=a.items||[];document.getElementById('watchlist-count').textContent=items.length;open('Watchlist',items.length?`<div class="cinema-picks">${items.map(x=>`<a class="cinema-pick" href="${appUrl('/title/'+x.media_type+'/'+x.tmdb_id)}"><img src="${esc(x.poster||'')}" alt=""><div><span class="cinema-chip">${esc(x.media_type)}</span><h3>${esc(x.title)}</h3><p>${x.year||''} · ★ ${Number(x.vote_average||0).toFixed(1)}</p></div></a>`).join('')}</div>`:'<div class="cinema-empty">Your watchlist is empty.</div>')}catch(e){open('Watchlist','<div class="cinema-danger">Could not load watchlist.</div>')}}
+ async function surprise(){open('Surprise me','<div class="cinema-modal-loading">Finding a wildcard…</div>');try{const a=await json('/api/surprise?media_type=Movie');const x=a.item;open('Surprise me',`<div class="cinema-picks"><a class="cinema-pick" href="${appUrl('/title/'+x.media_type+'/'+x.tmdb_id)}"><img src="${esc(x.poster||'')}" alt=""><div><span class="cinema-chip">SURPRISE · ${x.match_percentage}%</span><h3>${esc(x.title)}</h3><p>${esc(x.overview||'A wildcard discovery from your current cinema universe.')}</p></div></a></div>`)}catch(e){open('Surprise me','<div class="cinema-danger">No discovery data is available right now.</div>')}}
+ async function night(){open('Movie night','<div class="cinema-modal-loading">Planning two films…</div>');try{const a=await json('/api/movie-night');open('Movie night',`<p style="opacity:.65">A two-film double feature.</p><div class="cinema-picks">${a.items.map(x=>`<a class="cinema-pick" href="${appUrl('/title/Movie/'+x.tmdb_id)}"><img src="${esc(x.poster||'')}" alt=""><div><span class="cinema-chip">★ ${Number(x.vote_average||0).toFixed(1)}</span><h3>${esc(x.title)}</h3><p>${esc(x.overview||'')}</p></div></a>`).join('')}</div>`)}catch(e){open('Movie night','<div class="cinema-danger">Could not build a movie night.</div>')}}
+ async function showSettings(){open('Recommendation preferences','<div class="cinema-modal-loading">Loading preferences…</div>');try{const x=await json('/api/settings');open('Recommendation preferences',`<form id="prefs-form" style="display:grid;gap:14px"><label>AI picks per type <input name="recommendation_count" type="number" min="4" max="20" value="${x.recommendation_count||8}"></label><label>Avoid recently shown <input name="avoid_recent" type="number" min="0" max="500" value="${x.avoid_recent||50}"></label><label>Diversity <input name="diversity" type="range" min="0" max="1" step=".05" value="${x.diversity??.7}"></label><label>Discovery <input name="discovery" type="range" min="0" max="1" step=".05" value="${x.discovery??.3}"></label><button type="submit">Save preferences</button></form>`);document.getElementById('prefs-form').addEventListener('submit',async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));o.recommendation_count=Number(o.recommendation_count);o.avoid_recent=Number(o.avoid_recent);o.diversity=Number(o.diversity);o.discovery=Number(o.discovery);await json('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});open('Recommendation preferences','<div class="cinema-empty cinema-success">Preferences saved. Refresh AI to apply them.</div>')})}catch(e){open('Recommendation preferences','<div class="cinema-danger">Could not load preferences.</div>')}}
+ function importData(){const input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.onchange=async()=>{const file=input.files?.[0];if(!file)return;try{const payload=JSON.parse(await file.text());const x=await json('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});open('Import complete',`<div class="cinema-empty cinema-success">Imported ${x.imported||0} watched titles. Your library is ready.</div>`)}catch(e){open('Import failed','<div class="cinema-empty cinema-danger">Invalid backup or import failed.</div>')}};input.click()}
+ async function refresh(){try{const a=await json('/api/recommendations/refresh',{method:'POST'});if(a.busy){open('AI discovery','<div class="cinema-empty">A recommendation job is already running.</div>');return}open('AI discovery','<p>New recommendations are being generated in the background. The page will update when ready.</p><div class="cinema-bar"><i id="ai-progress" style="width:1%"></i></div><p id="ai-stage">Starting…</p>');let n=0;const poll=setInterval(async()=>{try{const x=await json('/api/recommendations/status');document.getElementById('ai-progress').style.width=(x.progress||0)+'%';document.getElementById('ai-stage').textContent=x.stage||'';if(x.status==='ready'){clearInterval(poll);location.reload()}if(x.status==='error'){clearInterval(poll);document.getElementById('ai-stage').textContent=x.error||'Generation failed'}}catch(e){if(++n>10)clearInterval(poll)}},900)}catch(e){open('AI discovery','<div class="cinema-danger">Could not start discovery.</div>')}}
+ document.querySelectorAll('.cinema-tool[data-tool]').forEach(b=>b.addEventListener('click',()=>({analytics:showStats,taste:showTaste,watchlist:showWatchlist,surprise:surprise,night:night,refresh:refresh,settings:showSettings,import:importData}[b.dataset.tool]||(()=>{}))()));
+ json('/api/watchlist').then(x=>{const el=document.getElementById('watchlist-count');if(el)el.textContent=(x.items||[]).length}).catch(()=>{});
+})();
+</script>
 </body>
 
 </html>
