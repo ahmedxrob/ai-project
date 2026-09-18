@@ -428,3 +428,5 @@
         letter-spacing: -2px;
     }
 }
+
+.series-progress-panel{margin-top:24px}.series-progress-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.series-progress-controls label{display:flex;flex-direction:column;gap:5px;font-size:11px;opacity:.7}.series-progress-controls input,.series-progress-controls select,.series-progress-controls button{padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:inherit}.series-progress-controls button{cursor:pointer}
