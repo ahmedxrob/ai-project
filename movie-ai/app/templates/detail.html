@@ -12,15 +12,21 @@
 <body data-ingress-path="{{ ingress_path|default('') }}">
 <div class="site-background"></div>
 
-<nav class="topbar detail-topbar">
-    <div class="brand">
+<nav class="topbar app-topbar detail-topbar">
+    <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
         <div class="brand-icon">🎬</div>
-        <div class="brand-text">
-            <strong>My Movie AI</strong>
-            <span>your personal cinema</span>
-        </div>
+        <div class="brand-text"><strong>My Movie AI</strong><span>your personal cinema</span></div>
+    </a>
+    <div class="app-nav" aria-label="Primary navigation">
+        <a href="{{ ingress_path|default('') }}/recommendations">Home</a>
+        <a href="{{ ingress_path|default('') }}/search">Search</a>
+        <a href="{{ ingress_path|default('') }}/watched">Watched</a>
+        <a href="{{ ingress_path|default('') }}/watchlist">Watchlist</a>
+        <a href="{{ ingress_path|default('') }}/stats">Stats</a>
+        <a href="{{ ingress_path|default('') }}/taste">Taste</a>
+        <a href="{{ ingress_path|default('') }}/settings">Settings</a>
     </div>
-    <a class="detail-back" href="{{ ingress_path|default('') }}/recommendations">← Back to picks</a>
+    <a class="detail-back" href="{{ ingress_path|default('') }}/recommendations">← Back</a>
 </nav>
 
 <main class="detail-page">
