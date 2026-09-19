@@ -7229,6 +7229,26 @@ svg.app-svg-icon {
     min-height: 30px;
 }
 
+/* Horizontal rails: preserve native card clicks while allowing deliberate drag. */
+.drag-scroll-rail {
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain;
+    scroll-behavior: smooth;
+}
+.drag-scroll-rail.is-dragging {
+    cursor: grabbing !important;
+    scroll-behavior: auto !important;
+    scroll-snap-type: none !important;
+}
+.drag-scroll-rail img {
+    -webkit-user-drag: none;
+    user-drag: none;
+    pointer-events: none;
+}
+
 /* ============================================================
    PREMIUM HOME CONSISTENCY PASS
    ============================================================ */
@@ -7314,14 +7334,6 @@ svg.app-svg-icon {
     z-index: 5;
 }
 
-.drag-scroll-rail {
-    overscroll-behavior-x: contain;
-    scroll-behavior: smooth;
-}
-
-.drag-scroll-rail.is-dragging {
-    scroll-behavior: auto;
-}
 
 @media (max-width: 700px) {
     .home-wishlist-button,
@@ -7367,14 +7379,16 @@ svg.app-svg-icon {
     isolation: isolate;
 }
 
+/* Details URL is retained for semantics/fallback, while the card itself
+   owns pointer navigation so overlays can never steal button clicks. */
 .card-open-link {
     position: absolute;
     inset: 0;
-    z-index: 5;
+    z-index: 0;
     display: block;
     border-radius: inherit;
     text-decoration: none;
-    cursor: pointer;
+    pointer-events: none;
 }
 
 .card-open-link:focus-visible {
@@ -7396,22 +7410,20 @@ svg.app-svg-icon {
 .trending-card .home-wishlist-button,
 .trending-card .trending-badge,
 .trending-card .trending-rank {
-    z-index: 7 !important;
+    position: relative;
+    z-index: 8 !important;
 }
 
 .recommendation-card .recommendation-actions,
 .recommendation-card .why-button,
 .trending-card .trending-actions,
 .trending-card .why-button {
-    z-index: 7 !important;
+    position: relative;
+    z-index: 8 !important;
 }
 
 .recommendation-card .recommendation-actions *,
-.trending-card .trending-actions *,
-.recommendation-card .why-button,
-.trending-card .why-button,
-.recommendation-card .home-wishlist-button,
-.trending-card .home-wishlist-button {
+.trending-card .trending-actions * {
     position: relative;
-    z-index: 8;
+    z-index: 9;
 }
