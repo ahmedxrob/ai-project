@@ -104,6 +104,29 @@ def init_database():
     # Current displayed rail statistics. These are a snapshot of what the
     # homepage is currently showing, not a lifetime counter.
     connection.execute('''
+        CREATE TABLE IF NOT EXISTS media_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            media_type TEXT NOT NULL CHECK(media_type IN ('Movie', 'Series')),
+            title TEXT NOT NULL,
+            year INTEGER,
+            season INTEGER,
+            episode INTEGER,
+            file_path TEXT NOT NULL UNIQUE,
+            file_name TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            duration_seconds REAL,
+            video_codec TEXT,
+            audio_codec TEXT,
+            poster TEXT,
+            tmdb_id INTEGER,
+            watched_position REAL NOT NULL DEFAULT 0,
+            watched_at DATETIME,
+            added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    connection.execute('''
         CREATE TABLE IF NOT EXISTS display_statistics (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             ai_movies INTEGER NOT NULL DEFAULT 0,
@@ -639,3 +662,87 @@ def increment_lifetime_trending(media_type, tmdb_ids):
     connection.commit()
     connection.close()
     return get_lifetime_statistics()
+
+
+# ============================================================
+# LOCAL MEDIA LIBRARY
+# ============================================================
+
+def upsert_media_file(item):
+    connection = get_connection()
+    connection.execute('''
+        INSERT INTO media_files (
+            media_type, title, year, season, episode, file_path, file_name,
+            size_bytes, duration_seconds, video_codec, audio_codec, poster, tmdb_id, last_seen
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(file_path) DO UPDATE SET
+            media_type=excluded.media_type,
+            title=excluded.title,
+            year=excluded.year,
+            season=excluded.season,
+            episode=excluded.episode,
+            file_name=excluded.file_name,
+            size_bytes=excluded.size_bytes,
+            duration_seconds=excluded.duration_seconds,
+            video_codec=excluded.video_codec,
+            audio_codec=excluded.audio_codec,
+            poster=excluded.poster,
+            tmdb_id=COALESCE(excluded.tmdb_id, media_files.tmdb_id),
+            last_seen=CURRENT_TIMESTAMP
+    ''', (
+        item.get("media_type"), item.get("title"), item.get("year"),
+        item.get("season"), item.get("episode"), item.get("file_path"),
+        item.get("file_name"), item.get("size_bytes", 0), item.get("duration_seconds"),
+        item.get("video_codec"), item.get("audio_codec"), item.get("poster"), item.get("tmdb_id")
+    ))
+    connection.commit()
+    row = connection.execute("SELECT * FROM media_files WHERE file_path = ?", (item.get("file_path"),)).fetchone()
+    connection.close()
+    return dict(row) if row else None
+
+
+def get_media_files(media_type=None, limit=5000):
+    connection = get_connection()
+    if media_type in ("Movie", "Series"):
+        rows = connection.execute(
+            "SELECT * FROM media_files ORDER BY title COLLATE NOCASE, season, episode LIMIT ?",
+            (limit,)
+        ).fetchall()
+        rows = [r for r in rows if r["media_type"] == media_type]
+    else:
+        rows = connection.execute(
+            "SELECT * FROM media_files ORDER BY media_type, title COLLATE NOCASE, season, episode LIMIT ?",
+            (limit,)
+        ).fetchall()
+    connection.close()
+    return [dict(row) for row in rows]
+
+
+def get_media_file(media_id):
+    connection = get_connection()
+    row = connection.execute("SELECT * FROM media_files WHERE id = ?", (int(media_id),)).fetchone()
+    connection.close()
+    return dict(row) if row else None
+
+
+def update_media_progress(media_id, position, completed=False):
+    connection = get_connection()
+    connection.execute(
+        "UPDATE media_files SET watched_position = ?, watched_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (max(0.0, float(position or 0)), int(media_id))
+    )
+    connection.commit()
+    connection.close()
+
+
+def media_counts():
+    connection = get_connection()
+    rows = connection.execute(
+        "SELECT media_type, COUNT(*) AS count FROM media_files GROUP BY media_type"
+    ).fetchall()
+    connection.close()
+    result = {"Movie": 0, "Series": 0}
+    for row in rows:
+        result[row["media_type"]] = int(row["count"] or 0)
+    result["total"] = result["Movie"] + result["Series"]
+    return result
