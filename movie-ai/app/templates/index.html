@@ -32,7 +32,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=20260919.5"
+        href="/static/style.css?v=20260919.6"
     >
 
 
@@ -72,7 +72,7 @@
 {% elif name == 'fire' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a7 7 0 0 0 7-7c0-4.2-3.1-6.4-4.2-9.2-.4 2.5-1.8 3.5-3 4.4-.2-2-1-3.7-2.5-5.2C9.1 8.8 5 11 5 14a7 7 0 0 0 7 7Z"></path></svg>
 {% elif name == 'refresh' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-13.7-5.7L4 7.6"></path><path d="M4 4v3.6h3.6"></path><path d="M4 13a8 8 0 0 0 13.7 5.7L20 16.4"></path><path d="M20 20v-3.6h-3.6"></path></svg>
 {% elif name == 'heart' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 8.7c0 5.1-8.8 10.2-8.8 10.2S3.2 13.8 3.2 8.7A4.7 4.7 0 0 1 12 6a4.7 4.7 0 0 1 8.8 2.7Z"></path></svg>
-{% elif name == 'settings' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"></path><path d="m19.4 15 .2.2a2 2 0 0 1-2.8 2.8l-.2-.2a2 2 0 0 0-3.4 1.4v.3a2 2 0 0 1-4 0v-.3a2 2 0 0 0-3.4-1.4l-.2.2A2 2 0 0 1 2.8 15l.2-.2A2 2 0 0 0 1.6 11.4h-.3a2 2 0 0 1 0-4h.3A2 2 0 0 0 3 4l-.2-.2A2 2 0 0 1 5.6 1l.2.2A2 2 0 0 0 9.2 0h.3a2 2 0 0 1 4 0h.3a2 2 0 0 0 3.4 1.2l.2-.2A2 2 0 0 1 20.2 4l-.2.2a2 2 0 0 0 1.4 3.4h.3a2 2 0 0 1 0 4h-.3a2 2 0 0 0-1.4 3.4Z"></path></svg>
+{% elif name == 'settings' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"></path><circle cx="9" cy="7" r="2"></circle><path d="M5 17h14"></path><circle cx="15" cy="17" r="2"></circle></svg>
 {% endif %}
 </span>
 {% endmacro %}
@@ -785,6 +785,20 @@
 
                         <div class="poster-overlay"></div>
 
+                        <button
+                            type="button"
+                            class="home-wishlist-button{% if is_in_watchlist('Movie', item.tmdb_id) %} is-saved{% endif %}"
+                            data-media-type="Movie"
+                            data-tmdb-id="{{ item.tmdb_id }}"
+                            data-title="{{ item.title|e }}"
+                            data-year="{{ item.year or '' }}"
+                            data-poster="{{ (item.poster or '')|e }}"
+                            data-backdrop="{{ (item.backdrop or '')|e }}"
+                            data-overview="{{ (item.overview or '')|e }}"
+                            data-vote-average="{{ item.vote_average or 0 }}"
+                            aria-label="{{ 'Remove from wishlist' if is_in_watchlist('Movie', item.tmdb_id) else 'Add to wishlist' }}"
+                            title="{{ 'Remove from wishlist' if is_in_watchlist('Movie', item.tmdb_id) else 'Add to wishlist' }}"
+                        >{{ ui_icon('heart') }}</button>
 
                         <div class="source-badge ai-source">
                             {{ ui_icon("ai") }} AI PICK
@@ -1032,6 +1046,20 @@
 
                         <div class="poster-overlay"></div>
 
+                        <button
+                            type="button"
+                            class="home-wishlist-button{% if is_in_watchlist('Movie', item.tmdb_id) %} is-saved{% endif %}"
+                            data-media-type="Movie"
+                            data-tmdb-id="{{ item.tmdb_id }}"
+                            data-title="{{ item.title|e }}"
+                            data-year="{{ item.year or '' }}"
+                            data-poster="{{ (item.poster or '')|e }}"
+                            data-backdrop="{{ (item.backdrop or '')|e }}"
+                            data-overview="{{ (item.overview or '')|e }}"
+                            data-vote-average="{{ item.vote_average or 0 }}"
+                            aria-label="{{ 'Remove from wishlist' if is_in_watchlist('Movie', item.tmdb_id) else 'Add to wishlist' }}"
+                            title="{{ 'Remove from wishlist' if is_in_watchlist('Movie', item.tmdb_id) else 'Add to wishlist' }}"
+                        >{{ ui_icon('heart') }}</button>
 
                         <div class="source-badge tmdb-source">
                             {{ ui_icon("tmdb") }} TMDB
@@ -1206,6 +1234,25 @@
         </div>
 
 
+
+        <!-- ================================================= -->
+        <!-- TRENDING MOVIES -->
+        <!-- ================================================= -->
+
+        <section class="trending-section trending-home-section">
+            <div class="section-heading trending-home-heading trending-movie-heading">
+                <div>
+                    <span class="panel-label">TRENDING NOW</span>
+                    <h2><span class="section-title-icon" aria-hidden="true">{{ ui_icon("fire") }}</span>Movies</h2>
+                </div>
+                <span><span id="trending-movie-count">0</span> live</span>
+            </div>
+
+            <div id="trending-movies" class="trending-grid drag-scroll-rail" aria-label="Trending movies">
+                <div class="trending-loading">Loading trending movies...</div>
+            </div>
+        </section>
+
         <!-- ================================================= -->
         <!-- SERIES -->
         <!-- ================================================= -->
@@ -1292,6 +1339,20 @@
 
                         <div class="poster-overlay"></div>
 
+                        <button
+                            type="button"
+                            class="home-wishlist-button{% if is_in_watchlist('Series', item.tmdb_id) %} is-saved{% endif %}"
+                            data-media-type="Series"
+                            data-tmdb-id="{{ item.tmdb_id }}"
+                            data-title="{{ item.title|e }}"
+                            data-year="{{ item.year or '' }}"
+                            data-poster="{{ (item.poster or '')|e }}"
+                            data-backdrop="{{ (item.backdrop or '')|e }}"
+                            data-overview="{{ (item.overview or '')|e }}"
+                            data-vote-average="{{ item.vote_average or 0 }}"
+                            aria-label="{{ 'Remove from wishlist' if is_in_watchlist('Series', item.tmdb_id) else 'Add to wishlist' }}"
+                            title="{{ 'Remove from wishlist' if is_in_watchlist('Series', item.tmdb_id) else 'Add to wishlist' }}"
+                        >{{ ui_icon('heart') }}</button>
 
                         <div class="source-badge ai-source">
                             {{ ui_icon("ai") }} AI PICK
@@ -1539,6 +1600,20 @@
 
                         <div class="poster-overlay"></div>
 
+                        <button
+                            type="button"
+                            class="home-wishlist-button{% if is_in_watchlist('Series', item.tmdb_id) %} is-saved{% endif %}"
+                            data-media-type="Series"
+                            data-tmdb-id="{{ item.tmdb_id }}"
+                            data-title="{{ item.title|e }}"
+                            data-year="{{ item.year or '' }}"
+                            data-poster="{{ (item.poster or '')|e }}"
+                            data-backdrop="{{ (item.backdrop or '')|e }}"
+                            data-overview="{{ (item.overview or '')|e }}"
+                            data-vote-average="{{ item.vote_average or 0 }}"
+                            aria-label="{{ 'Remove from wishlist' if is_in_watchlist('Series', item.tmdb_id) else 'Add to wishlist' }}"
+                            title="{{ 'Remove from wishlist' if is_in_watchlist('Series', item.tmdb_id) else 'Add to wishlist' }}"
+                        >{{ ui_icon('heart') }}</button>
 
                         <div class="source-badge tmdb-source">
                             {{ ui_icon("tmdb") }} TMDB
@@ -1717,6 +1792,25 @@
     {% endif %}
     </div>
 
+
+
+        <!-- ================================================= -->
+        <!-- TRENDING SERIES -->
+        <!-- ================================================= -->
+
+        <section class="trending-section trending-home-section trending-series-section">
+            <div class="section-heading trending-home-heading trending-series-heading">
+                <div>
+                    <span class="panel-label">TRENDING NOW</span>
+                    <h2><span class="section-title-icon" aria-hidden="true">{{ ui_icon("fire") }}</span>Series</h2>
+                </div>
+                <span><span id="trending-series-count">0</span> live</span>
+            </div>
+
+            <div id="trending-series" class="trending-grid drag-scroll-rail" aria-label="Trending series">
+                <div class="trending-loading">Loading trending series...</div>
+            </div>
+        </section>
 
     <footer>
 
@@ -2596,6 +2690,65 @@ document.addEventListener(
 
 
 /* ========================================================= */
+/* QUICK HOME WISHLIST — NO PAGE RELOAD */
+/* ========================================================= */
+document.addEventListener("click", async function(event) {
+    const button = event.target.closest(".home-wishlist-button");
+    if (!button) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (button.dataset.busy === "1") return;
+
+    const mediaType = button.dataset.mediaType;
+    const tmdbId = button.dataset.tmdbId;
+    if (!mediaType || !tmdbId) return;
+
+    const wasSaved = button.classList.contains("is-saved");
+    button.dataset.busy = "1";
+    button.disabled = true;
+
+    const form = new FormData();
+    form.set("tmdb_id", tmdbId);
+    form.set("media_type", mediaType);
+    form.set("title", button.dataset.title || "");
+    if (button.dataset.year) form.set("year", button.dataset.year);
+    form.set("poster", button.dataset.poster || "");
+    form.set("backdrop", button.dataset.backdrop || "");
+    form.set("overview", button.dataset.overview || "");
+    form.set("vote_average", button.dataset.voteAverage || "0");
+    form.set("remove", wasSaved ? "true" : "false");
+
+    try {
+        const response = await fetch(appUrl("/api/watchlist/toggle"), {
+            method: "POST",
+            body: form,
+            headers: { "Accept": "application/json" },
+            cache: "no-store"
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || "Unable to update wishlist.");
+        }
+
+        button.classList.toggle("is-saved", Boolean(data.saved));
+        const label = data.saved ? "Remove from wishlist" : "Add to wishlist";
+        button.setAttribute("aria-label", label);
+        button.setAttribute("title", label);
+        showToast(data.saved ? `♥ ${data.title} added to wishlist` : `${data.title} removed from wishlist`);
+    } catch (error) {
+        console.error("Quick wishlist toggle error:", error);
+        showToast(error.message || "Unable to update wishlist.", "error");
+    } finally {
+        button.dataset.busy = "0";
+        button.disabled = false;
+    }
+});
+
+
+/* ========================================================= */
 /* OPEN RECOMMENDATION DETAIL PAGE - delegated for dynamic cards */
 /* ========================================================= */
 document.addEventListener("click", function (event) {
@@ -2683,6 +2836,10 @@ function escapeHtml(value) {
     return div.innerHTML;
 }
 
+function heartIconMarkup() {
+    return '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 8.7c0 5.1-8.8 10.2-8.8 10.2S3.2 13.8 3.2 8.7A4.7 4.7 0 0 1 12 6a4.7 4.7 0 0 1 8.8 2.7Z"></path></svg>';
+}
+
 function renderTrendingRail(items, containerId, countId, mediaType) {
     const container = document.getElementById(containerId);
     const count = document.getElementById(countId);
@@ -2707,6 +2864,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
         const overview = escapeHtml(item.overview || "");
         const year = item.year ? escapeHtml(item.year) : "";
         const rating = Number(item.vote_average || 0).toFixed(1);
+        item.is_watchlisted = Boolean(item.is_watchlisted);
         const poster = item.poster
             ? `<img class="media-image" src="${escapeHtml(item.poster)}" alt="${title}" loading="lazy">`
             : `<div class="poster-placeholder media-fallback-icon">${mediaType === "Movie" ? "FILM" : "TV"}</div>`;
@@ -2723,6 +2881,20 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
                 <div class="trending-poster">
                     ${poster}
                     <div class="trending-poster-overlay"></div>
+                    <button
+                        type="button"
+                        class="home-wishlist-button${item.is_watchlisted ? ' is-saved' : ''}"
+                        data-media-type="${mediaType}"
+                        data-tmdb-id="${item.tmdb_id}"
+                        data-title="${escapeHtml(item.title)}"
+                        data-year="${year}"
+                        data-poster="${escapeHtml(item.poster || '')}"
+                        data-backdrop="${escapeHtml(item.backdrop || '')}"
+                        data-overview="${overview}"
+                        data-vote-average="${rating}"
+                        aria-label="${item.is_watchlisted ? 'Remove from wishlist' : 'Add to wishlist'}"
+                        title="${item.is_watchlisted ? 'Remove from wishlist' : 'Add to wishlist'}"
+                    >${heartIconMarkup()}</button>
                     <div class="trending-badge">{{ ui_icon("fire") }} TRENDING</div>
                     <div class="trending-rank">
                         #${items.indexOf(item) + 1}
@@ -2805,6 +2977,10 @@ const lifetimeStatisticsTimer = setInterval(loadLifetimeStatistics, 5000);
 
 
 async function loadTrendingNow() {
+    if (!document.getElementById("trending-movies") && !document.getElementById("trending-series")) {
+        return;
+    }
+
     try {
         const response = await fetch(
             appUrl("/api/trending"),
