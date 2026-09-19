@@ -32,30 +32,10 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=20260919.12"
+        href="/static/style.css?v=20260919.13"
     >
 
 
-<style>
-.drag-scroll-rail {
-    cursor: grab;
-    user-select: none;
-    -webkit-user-select: none;
-    touch-action: pan-x pan-y;
-}
-
-.drag-scroll-rail.is-dragging {
-    cursor: grabbing !important;
-    scroll-behavior: auto !important;
-    scroll-snap-type: none !important;
-}
-
-.drag-scroll-rail img {
-    -webkit-user-drag: none;
-    user-drag: none;
-    pointer-events: none;
-}
-</style>
 </head>
 
 {% macro ui_icon(name, size='sm') %}
@@ -819,7 +799,7 @@
                 {% for item in recommendations.ai_movies %}
 
                 <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}" data-details-url="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}">
-                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}"></a>
+                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}" tabindex="-1" aria-hidden="true"></a>
 
                     <div class="recommendation-poster">
 
@@ -1104,7 +1084,7 @@
                 {% for item in recommendations.ai_series %}
 
                 <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}" data-details-url="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}">
-                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}"></a>
+                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}" tabindex="-1" aria-hidden="true"></a>
 
                     <div class="recommendation-poster">
 
@@ -1368,7 +1348,7 @@
                 {% for item in (recommendations.tmdb_movies if recommendations else tmdb_discoveries.movies) %}
 
                 <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}" data-details-url="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}">
-                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}"></a>
+                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}" tabindex="-1" aria-hidden="true"></a>
 
                     <div class="recommendation-poster">
 
@@ -1619,7 +1599,7 @@
                 {% for item in (recommendations.tmdb_series if recommendations else tmdb_discoveries.series) %}
 
                 <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}" data-details-url="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}">
-                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}"></a>
+                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}" tabindex="-1" aria-hidden="true"></a>
 
                     <div class="recommendation-poster">
 
@@ -1863,7 +1843,12 @@ const UI_ICONS = {
     why: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M9.7 9.2a2.4 2.4 0 1 1 4.1 1.7c-.9.9-1.8 1.2-1.8 2.6"></path><path d="M12 16.8h.01"></path></svg>',
     check: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="m8.8 12 2.1 2.1 4.4-4.5"></path></svg>',
     close: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="m7 7 10 10M17 7 7 17"></path></svg>',
-    tmdb: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4.5"></path></svg>'
+    tmdb: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4.5"></path></svg>',
+    user: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.2"></circle><path d="M5.5 19c.7-3.1 3-4.8 6.5-4.8s5.8 1.7 6.5 4.8"></path></svg>',
+    fire: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a7 7 0 0 0 7-7c0-4.2-3.1-6.4-4.2-9.2-.4 2.5-1.8 3.5-3 4.4-.2-2-1-3.7-2.5-5.2C9.1 8.8 5 11 5 14a7 7 0 0 0 7 7Z"></path></svg>',
+    heart: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 8.7c0 5.1-8.8 10.2-8.8 10.2S3.2 13.8 3.2 8.7A4.7 4.7 0 0 1 12 6a4.7 4.7 0 0 1 8.8 2.7Z"></path></svg>',
+    refresh: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-13.7-5.7L4 7.6"></path><path d="M4 4v3.6h3.6"></path><path d="M4 13a8 8 0 0 0 13.7 5.7L20 16.4"></path><path d="M20 20v-3.6h-3.6"></path></svg>',
+    settings: '<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"></path><circle cx="9" cy="7" r="2"></circle><path d="M5 17h14"></path><circle cx="15" cy="17" r="2"></circle></svg>'
 };
 
 function uiIcon(name, size = 'sm') {
@@ -2799,14 +2784,14 @@ function bindHomeDetailCards(root) {
         card.setAttribute('aria-label', card.getAttribute('aria-label') || `Open ${card.dataset.mediaType || ''} details`);
 
         card.addEventListener('click', function(event) {
-            if (event.target.closest('a, button, form, input, select, textarea')) return;
+            if (event.target.closest('.home-wishlist-button, a, button, form, input, select, textarea')) return;
             const rail = card.closest('.drag-scroll-rail');
             if (rail && rail.dataset.dragged === '1') {
                 rail.dataset.dragged = '0';
                 return;
             }
             openHomeCardDetails(card);
-        });
+        }, true);
 
         card.addEventListener('keydown', function(event) {
             if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -2922,7 +2907,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
                 data-tmdb-id="${item.tmdb_id}"
                 data-details-url="${appUrl(`/title/${mediaType}/${item.tmdb_id}`)}"
             >
-                <a class="card-open-link" href="${appUrl(`/title/${mediaType}/${item.tmdb_id}`)}" aria-label="Open ${title}"></a>
+                <a class="card-open-link" href="${appUrl(`/title/${mediaType}/${item.tmdb_id}`)}" aria-label="Open ${title}" tabindex="-1" aria-hidden="true"></a>
                 <div class="trending-poster">
                     ${poster}
                     <div class="trending-poster-overlay"></div>
@@ -2965,7 +2950,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
                             class="tmdb-button"
                         >{{ ui_icon("tmdb") }}TMDB</a>
 
-                        <form action="/recommendation/watched" method="post" class="watched-inline ajax-watched-form trending-watched-form">
+                        <form action="${appUrl("/recommendation/watched")}" method="post" class="watched-inline ajax-watched-form trending-watched-form">
                             <input type="hidden" name="title" value="${title}">
                             <input type="hidden" name="media_type" value="${mediaType}">
                             <input type="hidden" name="tmdb_id" value="${item.tmdb_id}">
@@ -2973,7 +2958,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
                             <button type="submit" class="watched-button">{{ ui_icon("check") }}Watched</button>
                         </form>
 
-                        <form action="/recommendation/not-interested" method="post" class="not-interested-form ajax-not-interested-form">
+                        <form action="${appUrl("/recommendation/not-interested")}" method="post" class="not-interested-form ajax-not-interested-form">
                             <input type="hidden" name="title" value="${title}">
                             <input type="hidden" name="media_type" value="${mediaType}">
                             <input type="hidden" name="tmdb_id" value="${item.tmdb_id}">
