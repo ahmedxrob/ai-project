@@ -1,333 +1,753 @@
+import json
 import sqlite3
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 DATA_DIR = Path('/data')
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / 'movies.db'
 
 
+def utc_now():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
 def get_connection():
     connection = sqlite3.connect(DB_PATH, timeout=15)
     connection.row_factory = sqlite3.Row
-    connection.execute('PRAGMA foreign_keys=ON')
-    connection.execute('PRAGMA busy_timeout=15000')
+    connection.execute('PRAGMA foreign_keys = ON')
+    connection.execute('PRAGMA journal_mode = WAL')
+    connection.execute('PRAGMA busy_timeout = 15000')
     return connection
 
 
-def _column_names(connection, table):
-    return {r['name'] for r in connection.execute(f'PRAGMA table_info({table})').fetchall()}
+def _add_column_if_missing(connection, table, column, column_type):
+    columns = connection.execute(f'PRAGMA table_info({table})').fetchall()
+    if column not in {row['name'] for row in columns}:
+        connection.execute(f'ALTER TABLE {table} ADD COLUMN {column} {column_type}')
 
 
-def _add_column(connection, table, name, definition):
-    if name not in _column_names(connection, table):
-        connection.execute(f'ALTER TABLE {table} ADD COLUMN {name} {definition}')
+def _dedupe_table(connection, table):
+    connection.execute(f'''
+        DELETE FROM {table}
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM {table}
+            GROUP BY tmdb_id, type
+        )
+    ''')
 
 
 def init_database():
-    c = get_connection()
-    c.execute('PRAGMA journal_mode=WAL')
-    c.execute('''CREATE TABLE IF NOT EXISTS watched (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        rating REAL NOT NULL CHECK(rating >= 0 AND rating <= 10),
-        type TEXT NOT NULL CHECK(type IN ('Movie','Series')),
-        poster TEXT, backdrop TEXT, year INTEGER, overview TEXT, tmdb_id INTEGER,
-        genres TEXT DEFAULT '[]', cast TEXT DEFAULT '[]', director TEXT DEFAULT '',
-        creators TEXT DEFAULT '[]', keywords TEXT DEFAULT '[]', runtime INTEGER,
-        status TEXT DEFAULT '', added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-    for n,d in {
-        'genres':"TEXT DEFAULT '[]'", 'cast':"TEXT DEFAULT '[]'", 'director':"TEXT DEFAULT ''",
-        'creators':"TEXT DEFAULT '[]'", 'keywords':"TEXT DEFAULT '[]'", 'runtime':'INTEGER',
-        'status':"TEXT DEFAULT ''", 'added_at':'DATETIME', 'updated_at':'DATETIME'
-    }.items(): _add_column(c,'watched',n,d)
+    connection = get_connection()
+    try:
+        connection.executescript('''
+            CREATE TABLE IF NOT EXISTS watched (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                rating REAL NOT NULL DEFAULT 0,
+                type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
+                poster TEXT,
+                backdrop TEXT,
+                year INTEGER,
+                overview TEXT,
+                tmdb_id INTEGER,
+                genres TEXT DEFAULT '[]',
+                notes TEXT DEFAULT '',
+                watch_count INTEGER NOT NULL DEFAULT 0,
+                last_watched_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
 
-    c.execute('''CREATE TABLE IF NOT EXISTS recommendation_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, tmdb_id INTEGER NOT NULL,
-        type TEXT NOT NULL CHECK(type IN ('Movie','Series')), title TEXT NOT NULL,
-        job_id TEXT, source TEXT DEFAULT 'unknown', match_score REAL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(tmdb_id,type)
-    )''')
-    for n,d in {'job_id':'TEXT','source':"TEXT DEFAULT 'unknown'",'match_score':'REAL'}.items(): _add_column(c,'recommendation_history',n,d)
+            CREATE TABLE IF NOT EXISTS recommendation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tmdb_id INTEGER NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
+                title TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
 
-    c.execute('''CREATE TABLE IF NOT EXISTS recommendation_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, tmdb_id INTEGER NOT NULL,
-        type TEXT NOT NULL CHECK(type IN ('Movie','Series')), title TEXT NOT NULL,
-        event TEXT NOT NULL CHECK(event IN ('shown','clicked','watched','liked','disliked','not_interested','dismissed','deep_dive')),
-        job_id TEXT, metadata TEXT DEFAULT '{}', created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_rec_events_title ON recommendation_events(tmdb_id,type,created_at DESC)')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_rec_history_recent ON recommendation_history(type,created_at DESC)')
-    c.execute('''CREATE TABLE IF NOT EXISTS not_interested (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, tmdb_id INTEGER NOT NULL,
-        type TEXT NOT NULL CHECK(type IN ('Movie','Series')), title TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(tmdb_id,type)
-    )''')
+            CREATE TABLE IF NOT EXISTS not_interested (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tmdb_id INTEGER NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
+                title TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
 
-    # Repair legacy duplicates before enforcing uniqueness.
-    c.execute('''DELETE FROM recommendation_history WHERE id NOT IN (SELECT MAX(id) FROM recommendation_history GROUP BY tmdb_id,type)''')
-    c.execute('''DELETE FROM not_interested WHERE id NOT IN (SELECT MAX(id) FROM not_interested GROUP BY tmdb_id,type)''')
-    c.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_rec_history_title ON recommendation_history(tmdb_id,type)')
-    c.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_not_interested_title ON not_interested(tmdb_id,type)')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_watched_type_rating ON watched(type,rating DESC)')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_watched_tmdb ON watched(tmdb_id,type)')
+            CREATE TABLE IF NOT EXISTS recommendation_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tmdb_id INTEGER NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
+                title TEXT NOT NULL,
+                feedback TEXT NOT NULL CHECK(feedback IN ('like', 'later', 'dislike', 'already_watched')),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS watch_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                watched_id INTEGER,
+                tmdb_id INTEGER,
+                type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
+                title TEXT NOT NULL,
+                rating REAL,
+                event TEXT NOT NULL DEFAULT 'watched',
+                watched_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS lifetime_statistics (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                watched_total INTEGER NOT NULL DEFAULT 0,
+                movies_total INTEGER NOT NULL DEFAULT 0,
+                series_total INTEGER NOT NULL DEFAULT 0,
+                recommendations_total INTEGER NOT NULL DEFAULT 0,
+                ai_generated_total INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS lifetime_trending_seen (
+                day TEXT NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('Movie', 'Series')),
+                tmdb_id INTEGER NOT NULL,
+                PRIMARY KEY (day, type, tmdb_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS display_statistics (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                ai_movies INTEGER NOT NULL DEFAULT 0,
+                ai_series INTEGER NOT NULL DEFAULT 0,
+                tmdb_movies INTEGER NOT NULL DEFAULT 0,
+                tmdb_series INTEGER NOT NULL DEFAULT 0,
+                trending_movies INTEGER NOT NULL DEFAULT 0,
+                trending_series INTEGER NOT NULL DEFAULT 0,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS recommendation_jobs (
+                job_id TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('queued', 'loading', 'ready', 'error')),
+                data_json TEXT,
+                tmdb_json TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        ''')
+
+        # Migrate older databases.
+        for column, column_type in {
+            'poster': 'TEXT',
+            'backdrop': 'TEXT',
+            'year': 'INTEGER',
+            'overview': 'TEXT',
+            'tmdb_id': 'INTEGER',
+            'genres': "TEXT DEFAULT '[]'",
+            'notes': "TEXT DEFAULT ''",
+            'watch_count': 'INTEGER NOT NULL DEFAULT 0',
+            'last_watched_at': 'TEXT',
+            'created_at': 'TEXT',
+            'updated_at': 'TEXT',
+        }.items():
+            _add_column_if_missing(connection, 'watched', column, column_type)
+
+        # Remove old duplicate rows before enforcing uniqueness.
+        connection.execute('''
+            DELETE FROM watched
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM watched
+                WHERE tmdb_id IS NOT NULL
+                GROUP BY tmdb_id, type
+            )
+            AND tmdb_id IS NOT NULL
+        ''')
+        connection.execute('''
+            DELETE FROM recommendation_history
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM recommendation_history GROUP BY tmdb_id, type
+            )
+        ''')
+        connection.execute('''
+            DELETE FROM not_interested
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM not_interested GROUP BY tmdb_id, type
+            )
+        ''')
+        connection.execute('''
+            DELETE FROM recommendation_feedback
+            WHERE id NOT IN (
+                SELECT MAX(id) FROM recommendation_feedback GROUP BY tmdb_id, type
+            )
+        ''')
+
+        connection.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_watched_tmdb_type
+            ON watched(tmdb_id, type)
+            WHERE tmdb_id IS NOT NULL
+        ''')
+        connection.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_watched_title_type_year
+            ON watched(lower(trim(title)), type, COALESCE(year, 0))
+            WHERE tmdb_id IS NULL
+        ''')
+        connection.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_recommendation_history_tmdb_type
+            ON recommendation_history(tmdb_id, type)
+        ''')
+        connection.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_not_interested_tmdb_type
+            ON not_interested(tmdb_id, type)
+        ''')
+        connection.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_recommendation_feedback_tmdb_type
+            ON recommendation_feedback(tmdb_id, type)
+        ''')
+        connection.execute('CREATE INDEX IF NOT EXISTS ix_watched_type ON watched(type)')
+        connection.execute('CREATE INDEX IF NOT EXISTS ix_watched_year ON watched(year)')
+        connection.execute('CREATE INDEX IF NOT EXISTS ix_watched_last_watched ON watched(last_watched_at)')
+        connection.execute('CREATE INDEX IF NOT EXISTS ix_history_watched_at ON watch_history(watched_at)')
+        connection.execute('CREATE INDEX IF NOT EXISTS ix_history_tmdb_type ON watch_history(tmdb_id, type)')
+        connection.execute('CREATE INDEX IF NOT EXISTS ix_jobs_client_status ON recommendation_jobs(client_id, status, updated_at)')
+
+        # Initialize lifetime stats from current library only on first creation.
+        row = connection.execute('SELECT id FROM lifetime_statistics WHERE id = 1').fetchone()
+        if row is None:
+            watched_total = connection.execute('SELECT COUNT(*) c FROM watched').fetchone()['c']
+            movies_total = connection.execute("SELECT COUNT(*) c FROM watched WHERE type='Movie'").fetchone()['c']
+            series_total = connection.execute("SELECT COUNT(*) c FROM watched WHERE type='Series'").fetchone()['c']
+            rec_total = connection.execute('SELECT COUNT(*) c FROM recommendation_history').fetchone()['c']
+            connection.execute('''
+                INSERT INTO lifetime_statistics(id, watched_total, movies_total, series_total, recommendations_total, ai_generated_total)
+                VALUES (1, ?, ?, ?, ?, 0)
+            ''', (watched_total, movies_total, series_total, rec_total))
+
+        connection.execute('''
+            INSERT OR IGNORE INTO display_statistics(id) VALUES (1)
+        ''')
+
+        # Normalize missing timestamps in old rows.
+        now = utc_now()
+        connection.execute('UPDATE watched SET created_at = COALESCE(created_at, ?) WHERE created_at IS NULL', (now,))
+        connection.execute('UPDATE watched SET updated_at = COALESCE(updated_at, created_at, ?) WHERE updated_at IS NULL', (now,))
+        connection.execute("UPDATE watched SET genres = '[]' WHERE genres IS NULL OR trim(genres) = ''")
+        connection.execute("UPDATE watched SET notes = '' WHERE notes IS NULL")
+
+        connection.commit()
+    finally:
+        connection.close()
 
 
-    c.execute('''CREATE TABLE IF NOT EXISTS watchlist (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, tmdb_id INTEGER NOT NULL,
-        media_type TEXT NOT NULL CHECK(media_type IN ('Movie','Series')), title TEXT NOT NULL,
-        year INTEGER, poster TEXT, backdrop TEXT, overview TEXT, vote_average REAL DEFAULT 0,
-        priority INTEGER DEFAULT 0, added_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(tmdb_id,media_type)
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS tmdb_cache (
-        cache_key TEXT PRIMARY KEY, payload TEXT NOT NULL, expires_at DATETIME NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_tmdb_cache_expiry ON tmdb_cache(expires_at)')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS app_settings (
-        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS series_progress (
-        tmdb_id INTEGER PRIMARY KEY, season INTEGER DEFAULT 1, episode INTEGER DEFAULT 1,
-        progress REAL DEFAULT 0, status TEXT DEFAULT 'Not started', updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS lifetime_statistics (
-        id INTEGER PRIMARY KEY CHECK(id=1), watched_total INTEGER NOT NULL DEFAULT 0,
-        movies_total INTEGER NOT NULL DEFAULT 0, series_total INTEGER NOT NULL DEFAULT 0,
-        recommendations_total INTEGER NOT NULL DEFAULT 0, ai_generated_total INTEGER NOT NULL DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS lifetime_trending_seen (
-        day TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('Movie','Series')), tmdb_id INTEGER NOT NULL,
-        PRIMARY KEY(day,type,tmdb_id)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS display_statistics (
-        id INTEGER PRIMARY KEY CHECK(id=1), ai_movies INTEGER DEFAULT 0, ai_series INTEGER DEFAULT 0,
-        tmdb_movies INTEGER DEFAULT 0, tmdb_series INTEGER DEFAULT 0, trending_movies INTEGER DEFAULT 0,
-        trending_series INTEGER DEFAULT 0, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute('INSERT OR IGNORE INTO display_statistics(id) VALUES(1)')
-
-    row = c.execute('SELECT id FROM lifetime_statistics WHERE id=1').fetchone()
-    if not row:
-        wm = c.execute("SELECT COUNT(*) n FROM watched WHERE type='Movie'").fetchone()['n']
-        ws = c.execute("SELECT COUNT(*) n FROM watched WHERE type='Series'").fetchone()['n']
-        rh = c.execute('SELECT COUNT(*) n FROM recommendation_history').fetchone()['n']
-        c.execute('INSERT INTO lifetime_statistics(id,watched_total,movies_total,series_total,recommendations_total,ai_generated_total) VALUES(1,?,?,?,?,?)',(wm+ws,wm,ws,rh,0))
-    else:
-        # Backfill only empty timestamps on upgraded databases.
-        c.execute("UPDATE watched SET added_at=COALESCE(added_at,CURRENT_TIMESTAMP), updated_at=COALESCE(updated_at,CURRENT_TIMESTAMP)")
-    c.commit(); c.close()
-
-
-def _json(value):
-    import json
-    try: return json.loads(value or '[]')
-    except Exception: return []
-
-
-def _dump(value):
-    import json
-    if isinstance(value, str):
-        try: json.loads(value); return value
-        except Exception: return json.dumps([value], ensure_ascii=False)
-    return json.dumps(value if value is not None else [], ensure_ascii=False)
-
+# ============================================================
+# LIBRARY
+# ============================================================
 
 def get_all():
-    c=get_connection(); rows=c.execute('SELECT * FROM watched ORDER BY id DESC').fetchall(); c.close(); return rows
+    connection = get_connection()
+    try:
+        return connection.execute('''
+            SELECT id,title,rating,type,poster,backdrop,year,overview,tmdb_id,
+                   genres,notes,watch_count,last_watched_at,created_at,updated_at
+            FROM watched
+            ORDER BY COALESCE(last_watched_at, updated_at, created_at) DESC, id DESC
+        ''').fetchall()
+    finally:
+        connection.close()
+
+
+def _decode_row(row):
+    if not row:
+        return None
+    item = dict(row)
+    try:
+        item['genres'] = json.loads(item.get('genres') or '[]')
+    except (ValueError, TypeError):
+        item['genres'] = []
+    item['watch_count'] = int(item.get('watch_count') or 0)
+    return item
 
 
 def find_movie(title=None, media_type=None, tmdb_id=None):
-    c=get_connection(); r=None
-    if tmdb_id and media_type: r=c.execute('SELECT * FROM watched WHERE tmdb_id=? AND type=? LIMIT 1',(tmdb_id,media_type)).fetchone()
-    if r is None and title and media_type: r=c.execute('SELECT * FROM watched WHERE LOWER(TRIM(title))=LOWER(TRIM(?)) AND type=? LIMIT 1',(title,media_type)).fetchone()
-    c.close(); return r
+    connection = get_connection()
+    try:
+        result = None
+        if tmdb_id and media_type:
+            result = connection.execute('SELECT * FROM watched WHERE tmdb_id=? AND type=? LIMIT 1', (tmdb_id, media_type)).fetchone()
+        if result is None and title and media_type:
+            result = connection.execute('''
+                SELECT * FROM watched
+                WHERE lower(trim(title))=lower(trim(?)) AND type=?
+                ORDER BY id DESC LIMIT 1
+            ''', (title, media_type)).fetchone()
+        return result
+    finally:
+        connection.close()
 
 
-def movie_exists(title=None, media_type=None, tmdb_id=None): return find_movie(title,media_type,tmdb_id) is not None
+def movie_exists(title=None, media_type=None, tmdb_id=None):
+    return find_movie(title=title, media_type=media_type, tmdb_id=tmdb_id) is not None
 
 
-def add_movie(title,rating,media_type,poster=None,backdrop=None,year=None,overview=None,tmdb_id=None,genres=None,cast=None,director=None,creators=None,keywords=None,runtime=None,status=None):
-    if media_type not in ('Movie','Series'): raise ValueError('Invalid media type')
-    c=get_connection(); existing=None
-    if tmdb_id: existing=c.execute('SELECT * FROM watched WHERE tmdb_id=? AND type=? LIMIT 1',(tmdb_id,media_type)).fetchone()
-    if existing is None: existing=c.execute('SELECT * FROM watched WHERE LOWER(TRIM(title))=LOWER(TRIM(?)) AND type=? LIMIT 1',(title,media_type)).fetchone()
-    vals=(title,rating,media_type,poster,backdrop,year,overview,tmdb_id,_dump(genres),_dump(cast),director or '',_dump(creators),_dump(keywords),runtime,status or '')
-    if existing:
-        genres_v = _dump(genres) if genres is not None else existing['genres']
-        cast_v = _dump(cast) if cast is not None else existing['cast']
-        creators_v = _dump(creators) if creators is not None else existing['creators']
-        keywords_v = _dump(keywords) if keywords is not None else existing['keywords']
-        director_v = director if director is not None else existing['director']
-        status_v = status if status is not None else existing['status']
-        c.execute('''UPDATE watched SET title=?,rating=?,type=?,poster=COALESCE(?,poster),backdrop=COALESCE(?,backdrop),year=COALESCE(?,year),overview=COALESCE(?,overview),tmdb_id=COALESCE(?,tmdb_id),genres=?,cast=?,director=?,creators=?,keywords=?,runtime=COALESCE(?,runtime),status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''', (title,rating,media_type,poster,backdrop,year,overview,tmdb_id,genres_v,cast_v,director_v,creators_v,keywords_v,runtime,status_v,existing['id']))
-        new_id=existing['id']
-    else:
-        cur=c.execute('''INSERT INTO watched(title,rating,type,poster,backdrop,year,overview,tmdb_id,genres,cast,director,creators,keywords,runtime,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',vals)
-        new_id=cur.lastrowid
-        c.execute('''UPDATE lifetime_statistics SET watched_total=watched_total+1,movies_total=movies_total+?,series_total=series_total+?,updated_at=CURRENT_TIMESTAMP WHERE id=1''',(1 if media_type=='Movie' else 0,1 if media_type=='Series' else 0))
-    c.commit(); c.close(); return new_id
+def add_movie(title, rating, media_type, poster=None, backdrop=None, year=None,
+              overview=None, tmdb_id=None, genres=None, notes=None):
+    title = (title or '').strip()
+    rating = max(0, min(10, float(rating or 0)))
+    if media_type not in ('Movie', 'Series'):
+        raise ValueError('Invalid media type')
+
+    connection = get_connection()
+    now = utc_now()
+    genres_json = json.dumps(genres or [], ensure_ascii=False)
+    try:
+        connection.execute('BEGIN IMMEDIATE')
+        existing = None
+        if tmdb_id:
+            existing = connection.execute('SELECT * FROM watched WHERE tmdb_id=? AND type=? LIMIT 1', (tmdb_id, media_type)).fetchone()
+        if existing is None:
+            if year is not None:
+                existing = connection.execute('''
+                    SELECT * FROM watched
+                    WHERE lower(trim(title))=lower(trim(?)) AND type=? AND COALESCE(year,0)=COALESCE(?,0)
+                    LIMIT 1
+                ''', (title, media_type, year)).fetchone()
+            else:
+                existing = connection.execute('''
+                    SELECT * FROM watched
+                    WHERE lower(trim(title))=lower(trim(?)) AND type=? AND tmdb_id IS NULL
+                    LIMIT 1
+                ''', (title, media_type)).fetchone()
+
+        if existing:
+            connection.execute('''
+                UPDATE watched SET title=?,rating=?,type=?,poster=?,backdrop=?,year=?,overview=?,tmdb_id=?,genres=?,notes=?,updated_at=?
+                WHERE id=?
+            ''', (
+                title or existing['title'], rating, media_type,
+                poster if poster else existing['poster'],
+                backdrop if backdrop else existing['backdrop'],
+                year if year is not None else existing['year'],
+                overview if overview is not None and overview != '' else existing['overview'],
+                tmdb_id if tmdb_id else existing['tmdb_id'],
+                genres_json if genres else existing['genres'],
+                notes if notes is not None else existing['notes'],
+                now, existing['id'],
+            ))
+            connection.commit()
+            return existing['id']
+
+        try:
+            cursor = connection.execute('''
+                INSERT INTO watched(title,rating,type,poster,backdrop,year,overview,tmdb_id,genres,notes,watch_count,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)
+            ''', (title, rating, media_type, poster, backdrop, year, overview or '', tmdb_id, genres_json, notes or '', now, now))
+        except sqlite3.IntegrityError:
+            # Race-safe fallback when another worker inserted the same title/ID.
+            connection.rollback()
+            return add_movie(title, rating, media_type, poster, backdrop, year, overview, tmdb_id, genres, notes)
+
+        connection.execute('''
+            UPDATE lifetime_statistics SET watched_total=watched_total+1,
+                movies_total=movies_total+?, series_total=series_total+?, updated_at=CURRENT_TIMESTAMP WHERE id=1
+        ''', (1 if media_type == 'Movie' else 0, 1 if media_type == 'Series' else 0))
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def update_movie(movie_id, title, rating, year=None, overview=None, notes=None):
+    connection = get_connection()
+    try:
+        connection.execute('''
+            UPDATE watched
+            SET title=?, rating=?, year=?, overview=?, notes=?, updated_at=?
+            WHERE id=?
+        ''', ((title or '').strip(), max(0, min(10, float(rating or 0))), year, overview or '', notes or '', utc_now(), movie_id))
+        connection.commit()
+        row = connection.execute('SELECT * FROM watched WHERE id=?', (movie_id,)).fetchone()
+        return _decode_row(row)
+    finally:
+        connection.close()
 
 
 def delete_movie(movie_id):
-    c=get_connection(); c.execute('DELETE FROM watched WHERE id=?',(movie_id,)); c.commit(); c.close()
+    connection = get_connection()
+    try:
+        connection.execute('DELETE FROM watched WHERE id=?', (movie_id,))
+        connection.commit()
+    finally:
+        connection.close()
 
 
-def add_recommendation_history(tmdb_id,media_type,title,job_id=None,source='unknown',match_score=None):
-    if not tmdb_id:return
-    c=get_connection(); c.execute('''INSERT INTO recommendation_history(tmdb_id,type,title,job_id,source,match_score) VALUES(?,?,?,?,?,?) ON CONFLICT(tmdb_id,type) DO UPDATE SET job_id=excluded.job_id,source=excluded.source,match_score=excluded.match_score,created_at=CURRENT_TIMESTAMP''',(tmdb_id,media_type,title,job_id,source,match_score)); c.commit(); c.close()
+def record_watch_event(movie_id=None, tmdb_id=None, media_type=None, title=None, rating=None, event='watched'):
+    connection = get_connection()
+    try:
+        connection.execute('BEGIN IMMEDIATE')
+        row = None
+        if movie_id:
+            row = connection.execute('SELECT * FROM watched WHERE id=?', (movie_id,)).fetchone()
+        if row is not None:
+            watched_at = utc_now()
+            connection.execute('''
+                UPDATE watched SET watch_count=COALESCE(watch_count,0)+1,last_watched_at=?,updated_at=? WHERE id=?
+            ''', (watched_at, watched_at, row['id']))
+            connection.execute('''
+                INSERT INTO watch_history(watched_id,tmdb_id,type,title,rating,event,watched_at)
+                VALUES(?,?,?,?,?,?,?)
+            ''', (row['id'], row['tmdb_id'], row['type'], row['title'], row['rating'], event, watched_at))
+            connection.commit()
+            return _decode_row(connection.execute('SELECT * FROM watched WHERE id=?', (row['id'],)).fetchone())
+
+        if not media_type or not title:
+            connection.rollback()
+            return None
+        watched_at = utc_now()
+        connection.execute('''
+            INSERT INTO watch_history(watched_id,tmdb_id,type,title,rating,event,watched_at)
+            VALUES(NULL,?,?,?,?,?,?)
+        ''', (tmdb_id, media_type, title, rating, event, watched_at))
+        connection.commit()
+        return None
+    finally:
+        connection.close()
 
 
-def get_recent_recommendation_ids(media_type,limit=50):
-    c=get_connection(); rows=c.execute('SELECT tmdb_id FROM recommendation_history WHERE type=? ORDER BY created_at DESC LIMIT ?',(media_type,limit)).fetchall(); c.close(); return [r['tmdb_id'] for r in rows]
+def get_watch_history(limit=100):
+    connection = get_connection()
+    try:
+        rows = connection.execute('''
+            SELECT id,watched_id,tmdb_id,type,title,rating,event,watched_at
+            FROM watch_history ORDER BY watched_at DESC LIMIT ?
+        ''', (max(1, min(500, int(limit))),)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
 
 
-def add_recommendation_event(tmdb_id,media_type,title,event,job_id=None,metadata=None):
-    if not tmdb_id:return
-    c=get_connection(); c.execute('INSERT INTO recommendation_events(tmdb_id,type,title,event,job_id,metadata) VALUES(?,?,?,?,?,?)',(tmdb_id,media_type,title,event,job_id,_dump(metadata or {}))); c.commit(); c.close()
+# ============================================================
+# RECOMMENDATION HISTORY / FEEDBACK
+# ============================================================
+
+def add_recommendation_history(tmdb_id, media_type, title):
+    if not tmdb_id:
+        return
+    connection = get_connection()
+    try:
+        connection.execute('''INSERT OR IGNORE INTO recommendation_history(tmdb_id,type,title) VALUES(?,?,?)''', (tmdb_id, media_type, title))
+        connection.commit()
+    finally:
+        connection.close()
 
 
-def get_recommendation_events(limit=500):
-    c=get_connection(); rows=c.execute('SELECT * FROM recommendation_events ORDER BY created_at DESC LIMIT ?',(limit,)).fetchall(); c.close(); return rows
+def get_recent_recommendation_ids(media_type, limit=50):
+    connection = get_connection()
+    try:
+        rows = connection.execute('''
+            SELECT tmdb_id FROM recommendation_history WHERE type=? ORDER BY created_at DESC LIMIT ?
+        ''', (media_type, limit)).fetchall()
+        return [row['tmdb_id'] for row in rows]
+    finally:
+        connection.close()
 
 
-def add_not_interested(tmdb_id,media_type,title):
-    if not tmdb_id:return
-    c=get_connection(); c.execute('INSERT INTO not_interested(tmdb_id,type,title) VALUES(?,?,?) ON CONFLICT(tmdb_id,type) DO NOTHING',(tmdb_id,media_type,title)); c.commit(); c.close()
-    add_recommendation_event(tmdb_id,media_type,title,'not_interested')
+def add_not_interested(tmdb_id, media_type, title):
+    if not tmdb_id:
+        return
+    connection = get_connection()
+    try:
+        connection.execute('''INSERT OR IGNORE INTO not_interested(tmdb_id,type,title) VALUES(?,?,?)''', (tmdb_id, media_type, title))
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def get_not_interested_ids(media_type):
-    c=get_connection(); rows=c.execute('SELECT tmdb_id FROM not_interested WHERE type=?',(media_type,)).fetchall(); c.close(); return [r['tmdb_id'] for r in rows]
+    connection = get_connection()
+    try:
+        rows = connection.execute('SELECT tmdb_id FROM not_interested WHERE type=?', (media_type,)).fetchall()
+        return [row['tmdb_id'] for row in rows]
+    finally:
+        connection.close()
 
 
-def remove_not_interested(tmdb_id,media_type):
-    c=get_connection(); c.execute('DELETE FROM not_interested WHERE tmdb_id=? AND type=?',(tmdb_id,media_type)); c.commit(); c.close()
+def set_recommendation_feedback(tmdb_id, media_type, title, feedback):
+    if feedback not in ('like', 'later', 'dislike', 'already_watched'):
+        raise ValueError('Invalid feedback')
+    connection = get_connection()
+    try:
+        now = utc_now()
+        connection.execute('''
+            INSERT INTO recommendation_feedback(tmdb_id,type,title,feedback,created_at,updated_at)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(tmdb_id,type) DO UPDATE SET title=excluded.title,feedback=excluded.feedback,updated_at=excluded.updated_at
+        ''', (tmdb_id, media_type, title, feedback, now, now))
+        if feedback == 'dislike':
+            connection.execute('INSERT OR IGNORE INTO not_interested(tmdb_id,type,title) VALUES(?,?,?)', (tmdb_id, media_type, title))
+        connection.commit()
+    finally:
+        connection.close()
 
 
-def get_not_interested(media_type=None):
-    c=get_connection();
-    rows=c.execute('SELECT * FROM not_interested'+(' WHERE type=?' if media_type else '')+' ORDER BY created_at DESC',((media_type,) if media_type else ())).fetchall(); c.close(); return rows
+def get_recommendation_feedback(media_type=None, feedback=None, limit=100):
+    connection = get_connection()
+    try:
+        query = 'SELECT * FROM recommendation_feedback'
+        values = []
+        clauses = []
+        if media_type:
+            clauses.append('type=?'); values.append(media_type)
+        if feedback:
+            clauses.append('feedback=?'); values.append(feedback)
+        if clauses:
+            query += ' WHERE ' + ' AND '.join(clauses)
+        query += ' ORDER BY updated_at DESC LIMIT ?'
+        values.append(max(1, min(500, int(limit))))
+        return [dict(row) for row in connection.execute(query, values).fetchall()]
+    finally:
+        connection.close()
 
 
-def upsert_watchlist(item):
-    c=get_connection(); c.execute('''INSERT INTO watchlist(tmdb_id,media_type,title,year,poster,backdrop,overview,vote_average,priority) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(tmdb_id,media_type) DO UPDATE SET title=excluded.title,year=excluded.year,poster=excluded.poster,backdrop=excluded.backdrop,overview=excluded.overview,vote_average=excluded.vote_average,priority=excluded.priority,updated_at=CURRENT_TIMESTAMP''',(item['tmdb_id'],item['media_type'],item.get('title',''),item.get('year'),item.get('poster'),item.get('backdrop'),item.get('overview',''),item.get('vote_average',0),item.get('priority',0))); c.commit(); c.close()
+# ============================================================
+# RECOMMENDATION JOBS
+# ============================================================
+
+def create_recommendation_job(job_id, client_id, status='queued', tmdb_data=None):
+    now = utc_now()
+    connection = get_connection()
+    try:
+        # Keep at most one live job per browser client.
+        connection.execute('''
+            UPDATE recommendation_jobs
+            SET status='error', error='Superseded by a newer recommendation request', updated_at=?
+            WHERE client_id=? AND status IN ('queued','loading')
+        ''', (now, client_id))
+        connection.execute('''
+            INSERT INTO recommendation_jobs(job_id,client_id,status,data_json,tmdb_json,error,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?)
+        ''', (job_id, client_id, status, None, json.dumps(tmdb_data or {}, ensure_ascii=False), None, now, now))
+        connection.commit()
+    finally:
+        connection.close()
 
 
-def remove_watchlist(tmdb_id,media_type):
-    c=get_connection(); c.execute('DELETE FROM watchlist WHERE tmdb_id=? AND media_type=?',(tmdb_id,media_type)); c.commit(); c.close()
+def get_active_recommendation_job(client_id):
+    connection = get_connection()
+    try:
+        row = connection.execute('''
+            SELECT * FROM recommendation_jobs
+            WHERE client_id=? AND status IN ('queued','loading')
+            ORDER BY created_at DESC LIMIT 1
+        ''', (client_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
 
 
-def is_watchlisted(tmdb_id,media_type):
-    c=get_connection(); r=c.execute('SELECT 1 FROM watchlist WHERE tmdb_id=? AND media_type=?',(tmdb_id,media_type)).fetchone(); c.close(); return bool(r)
+def get_recommendation_job(job_id):
+    connection = get_connection()
+    try:
+        row = connection.execute('SELECT * FROM recommendation_jobs WHERE job_id=? LIMIT 1', (job_id,)).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        for key in ('data_json', 'tmdb_json'):
+            raw = item.get(key)
+            try:
+                item[key.replace('_json', '')] = json.loads(raw) if raw else None
+            except (ValueError, TypeError):
+                item[key.replace('_json', '')] = None
+        return item
+    finally:
+        connection.close()
 
 
-def get_watchlist(media_type=None):
-    c=get_connection();
-    q='SELECT * FROM watchlist'; args=()
-    if media_type: q+=' WHERE media_type=?'; args=(media_type,)
-    q+=' ORDER BY priority DESC,added_at DESC'; rows=c.execute(q,args).fetchall(); c.close(); return rows
+def is_recommendation_job_active(job_id):
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT status FROM recommendation_jobs WHERE job_id=? LIMIT 1",
+            (job_id,),
+        ).fetchone()
+        return bool(row and row["status"] in ("queued", "loading"))
+    finally:
+        connection.close()
 
 
-def get_watchlist_count():
-    c=get_connection(); n=c.execute('SELECT COUNT(*) n FROM watchlist').fetchone()['n']; c.close(); return int(n)
+def update_recommendation_job(job_id, status=None, data=None, tmdb_data=None, error=None):
+    connection = get_connection()
+    try:
+        current = connection.execute('SELECT * FROM recommendation_jobs WHERE job_id=?', (job_id,)).fetchone()
+        if not current:
+            return
+        next_status = status or current['status']
+        connection.execute('''
+            UPDATE recommendation_jobs SET status=?, data_json=?, tmdb_json=?, error=?, updated_at=? WHERE job_id=?
+        ''', (
+            next_status,
+            json.dumps(data, ensure_ascii=False) if data is not None else current['data_json'],
+            json.dumps(tmdb_data, ensure_ascii=False) if tmdb_data is not None else current['tmdb_json'],
+            error,
+            utc_now(),
+            job_id,
+        ))
+        connection.commit()
+    finally:
+        connection.close()
 
 
-def cache_get(key):
-    c=get_connection(); r=c.execute('SELECT payload FROM tmdb_cache WHERE cache_key=? AND expires_at>CURRENT_TIMESTAMP',(key,)).fetchone(); c.close()
-    if not r:return None
-    import json
-    try:return json.loads(r['payload'])
-    except Exception:return None
+# ============================================================
+# STATISTICS
+# ============================================================
 
-
-def cache_set(key,payload,ttl=3600):
-    import json
-    c=get_connection(); c.execute("INSERT INTO tmdb_cache(cache_key,payload,expires_at) VALUES(?,?,datetime('now',?)) ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,expires_at=excluded.expires_at,created_at=CURRENT_TIMESTAMP",(key,json.dumps(payload,ensure_ascii=False),f'+{int(ttl)} seconds')); c.commit(); c.close()
-
-
-def cache_clear(prefix=None):
-    c=get_connection();
-    if prefix:c.execute('DELETE FROM tmdb_cache WHERE cache_key LIKE ?',(prefix+'%',))
-    else:c.execute('DELETE FROM tmdb_cache')
-    c.commit(); c.close()
-
-
-def set_setting(key,value):
-    import json
-    v=json.dumps(value,ensure_ascii=False) if not isinstance(value,str) else value
-    c=get_connection(); c.execute('INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP',(key,v)); c.commit(); c.close()
-
-
-def get_setting(key,default=None):
-    import json
-    c=get_connection(); r=c.execute('SELECT value FROM app_settings WHERE key=?',(key,)).fetchone(); c.close()
-    if not r:return default
-    try:return json.loads(r['value'])
-    except Exception:return r['value']
-
-
-def set_series_progress(tmdb_id,season=1,episode=1,progress=0,status='Watching'):
-    c=get_connection(); c.execute('INSERT INTO series_progress(tmdb_id,season,episode,progress,status) VALUES(?,?,?,?,?) ON CONFLICT(tmdb_id) DO UPDATE SET season=excluded.season,episode=excluded.episode,progress=excluded.progress,status=excluded.status,updated_at=CURRENT_TIMESTAMP',(tmdb_id,season,episode,progress,status)); c.commit(); c.close()
-
-
-def get_series_progress(tmdb_id=None):
-    c=get_connection();
-    if tmdb_id:r=c.execute('SELECT * FROM series_progress WHERE tmdb_id=?',(tmdb_id,)).fetchone(); c.close(); return r
-    rows=c.execute('SELECT * FROM series_progress ORDER BY updated_at DESC').fetchall(); c.close(); return rows
+def _ensure_display_statistics_row(connection):
+    connection.execute('INSERT OR IGNORE INTO display_statistics(id) VALUES(1)')
 
 
 def get_display_statistics():
-    c=get_connection(); r=c.execute('SELECT * FROM display_statistics WHERE id=1').fetchone(); c.close()
-    vals={k:max(0,int(r[k] or 0)) for k in ('ai_movies','ai_series','tmdb_movies','tmdb_series','trending_movies','trending_series')}
-    vals.update(ai_generated=vals['ai_movies']+vals['ai_series'],recommendations=sum(vals.values()),updated_at=r['updated_at'] if r else None); return vals
+    connection = get_connection()
+    try:
+        _ensure_display_statistics_row(connection)
+        row = connection.execute('SELECT ai_movies,ai_series,tmdb_movies,tmdb_series,trending_movies,trending_series,updated_at FROM display_statistics WHERE id=1').fetchone()
+        if not row:
+            return {'ai_movies':0,'ai_series':0,'tmdb_movies':0,'tmdb_series':0,'trending_movies':0,'trending_series':0,'ai_generated':0,'recommendations':0,'updated_at':None}
+        values = {key: int(row[key] or 0) if key != 'updated_at' else row[key] for key in row.keys()}
+        values['ai_generated'] = values['ai_movies'] + values['ai_series']
+        values['recommendations'] = values['ai_generated'] + values['tmdb_movies'] + values['tmdb_series'] + values['trending_movies'] + values['trending_series']
+        return values
+    finally:
+        connection.close()
 
 
-def set_recommendation_statistics(ai_movies=0,ai_series=0,tmdb_movies=0,tmdb_series=0):
-    c=get_connection(); c.execute('UPDATE display_statistics SET ai_movies=?,ai_series=?,tmdb_movies=?,tmdb_series=?,updated_at=CURRENT_TIMESTAMP WHERE id=1',(max(0,int(ai_movies)),max(0,int(ai_series)),max(0,int(tmdb_movies)),max(0,int(tmdb_series)))); c.commit(); c.close()
+def set_recommendation_statistics(ai_movies=0, ai_series=0, tmdb_movies=0, tmdb_series=0):
+    connection = get_connection()
+    try:
+        _ensure_display_statistics_row(connection)
+        connection.execute('''UPDATE display_statistics SET ai_movies=?,ai_series=?,tmdb_movies=?,tmdb_series=?,updated_at=CURRENT_TIMESTAMP WHERE id=1''', (max(0,int(ai_movies)),max(0,int(ai_series)),max(0,int(tmdb_movies)),max(0,int(tmdb_series))))
+        connection.commit()
+    finally:
+        connection.close()
 
 
-def set_trending_statistics(trending_movies=0,trending_series=0):
-    c=get_connection(); c.execute('UPDATE display_statistics SET trending_movies=?,trending_series=?,updated_at=CURRENT_TIMESTAMP WHERE id=1',(max(0,int(trending_movies)),max(0,int(trending_series)))); c.commit(); c.close()
+def set_trending_statistics(trending_movies=0, trending_series=0):
+    connection = get_connection()
+    try:
+        _ensure_display_statistics_row(connection)
+        connection.execute('''UPDATE display_statistics SET trending_movies=?,trending_series=?,updated_at=CURRENT_TIMESTAMP WHERE id=1''', (max(0,int(trending_movies)),max(0,int(trending_series))))
+        connection.commit()
+    finally:
+        connection.close()
 
 
-def set_display_statistics(ai_movies=0,ai_series=0,tmdb_movies=0,tmdb_series=0,trending_movies=0,trending_series=0):
-    c=get_connection(); c.execute('UPDATE display_statistics SET ai_movies=?,ai_series=?,tmdb_movies=?,tmdb_series=?,trending_movies=?,trending_series=?,updated_at=CURRENT_TIMESTAMP WHERE id=1',(max(0,int(ai_movies)),max(0,int(ai_series)),max(0,int(tmdb_movies)),max(0,int(tmdb_series)),max(0,int(trending_movies)),max(0,int(trending_series)))); c.commit(); c.close()
+def set_display_statistics(ai_movies=0, ai_series=0, tmdb_movies=0, tmdb_series=0, trending_movies=0, trending_series=0):
+    connection = get_connection()
+    try:
+        _ensure_display_statistics_row(connection)
+        connection.execute('''
+            UPDATE display_statistics SET ai_movies=?,ai_series=?,tmdb_movies=?,tmdb_series=?,trending_movies=?,trending_series=?,updated_at=CURRENT_TIMESTAMP WHERE id=1
+        ''', (max(0,int(ai_movies)),max(0,int(ai_series)),max(0,int(tmdb_movies)),max(0,int(tmdb_series)),max(0,int(trending_movies)),max(0,int(trending_series))))
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def get_current_statistics():
+    connection = get_connection()
+    try:
+        totals = connection.execute('''
+            SELECT COUNT(*) total,
+                   SUM(CASE WHEN type='Movie' THEN 1 ELSE 0 END) movies,
+                   SUM(CASE WHEN type='Series' THEN 1 ELSE 0 END) series,
+                   COALESCE(AVG(rating),0) avg_rating,
+                   COALESCE(MAX(rating),0) max_rating,
+                   COALESCE(MIN(rating),0) min_rating,
+                   COALESCE(SUM(COALESCE(watch_count,0)),0) plays
+            FROM watched
+        ''').fetchone()
+        years = [dict(row) for row in connection.execute('''
+            SELECT COALESCE(year,0) year, COUNT(*) count FROM watched GROUP BY COALESCE(year,0) ORDER BY count DESC, year DESC LIMIT 12
+        ''').fetchall()]
+        genre_counts = {}
+        for row in connection.execute('SELECT genres FROM watched').fetchall():
+            try:
+                genres = json.loads(row['genres'] or '[]')
+            except (ValueError, TypeError):
+                genres = []
+            for genre in genres:
+                if genre:
+                    genre_counts[genre] = genre_counts.get(genre, 0) + 1
+        genres = [{'genre': k, 'count': v} for k, v in sorted(genre_counts.items(), key=lambda item: (-item[1], item[0]))[:12]]
+        recent = [dict(row) for row in connection.execute('''
+            SELECT id,title,type,rating,year,poster,last_watched_at,watch_count FROM watched
+            ORDER BY COALESCE(last_watched_at,updated_at,created_at) DESC,id DESC LIMIT 12
+        ''').fetchall()]
+        return {
+            'total': int(totals['total'] or 0),
+            'movies': int(totals['movies'] or 0),
+            'series': int(totals['series'] or 0),
+            'avg_rating': round(float(totals['avg_rating'] or 0), 2),
+            'max_rating': round(float(totals['max_rating'] or 0), 1),
+            'min_rating': round(float(totals['min_rating'] or 0), 1) if totals['total'] else 0,
+            'plays': int(totals['plays'] or 0),
+            'years': years,
+            'genres': genres,
+            'recent': recent,
+        }
+    finally:
+        connection.close()
 
 
 def get_lifetime_statistics():
-    c=get_connection(); r=c.execute('SELECT * FROM lifetime_statistics WHERE id=1').fetchone(); c.close()
-    if not r:return {'watched':0,'movies':0,'series':0,'recommendations':0,'ai_generated':0,'updated_at':None}
-    return {'watched':int(r['watched_total']),'movies':int(r['movies_total']),'series':int(r['series_total']),'recommendations':int(r['recommendations_total']),'ai_generated':int(r['ai_generated_total']),'updated_at':r['updated_at']}
+    connection = get_connection()
+    try:
+        row = connection.execute('''
+            SELECT watched_total,movies_total,series_total,recommendations_total,ai_generated_total,updated_at
+            FROM lifetime_statistics WHERE id=1 LIMIT 1
+        ''').fetchone()
+        if not row:
+            return {'watched':0,'movies':0,'series':0,'recommendations':0,'ai_generated':0,'updated_at':None}
+        return {
+            'watched': max(0,int(row['watched_total'] or 0)),
+            'movies': max(0,int(row['movies_total'] or 0)),
+            'series': max(0,int(row['series_total'] or 0)),
+            'recommendations': max(0,int(row['recommendations_total'] or 0)),
+            'ai_generated': max(0,int(row['ai_generated_total'] or 0)),
+            'updated_at': row['updated_at'],
+        }
+    finally:
+        connection.close()
 
 
-def increment_lifetime_recommendations(ai_movies=0,ai_series=0,tmdb_movies=0,tmdb_series=0):
-    total=int(ai_movies or 0)+int(ai_series or 0)+int(tmdb_movies or 0)+int(tmdb_series or 0); ai=int(ai_movies or 0)+int(ai_series or 0)
-    c=get_connection(); c.execute('UPDATE lifetime_statistics SET recommendations_total=recommendations_total+?,ai_generated_total=ai_generated_total+?,updated_at=CURRENT_TIMESTAMP WHERE id=1',(total,ai)); c.commit(); c.close()
+def increment_lifetime_recommendations(ai_movies=0, ai_series=0, tmdb_movies=0, tmdb_series=0):
+    ai_movies = max(0,int(ai_movies or 0)); ai_series=max(0,int(ai_series or 0)); tmdb_movies=max(0,int(tmdb_movies or 0)); tmdb_series=max(0,int(tmdb_series or 0))
+    inc = ai_movies + ai_series + tmdb_movies + tmdb_series
+    if not inc:
+        return get_lifetime_statistics()
+    connection = get_connection()
+    try:
+        connection.execute('''UPDATE lifetime_statistics SET recommendations_total=recommendations_total+?,ai_generated_total=ai_generated_total+?,updated_at=CURRENT_TIMESTAMP WHERE id=1''', (inc, ai_movies+ai_series))
+        connection.commit()
+    finally:
+        connection.close()
+    return get_lifetime_statistics()
 
 
-def increment_lifetime_trending(media_type,tmdb_ids):
-    day=datetime.now(timezone.utc).date().isoformat(); c=get_connection();
-    for tid in tmdb_ids or []:
-        if tid:c.execute('INSERT OR IGNORE INTO lifetime_trending_seen(day,type,tmdb_id) VALUES(?,?,?)',(day,media_type,int(tid)))
-    c.commit(); c.close()
+def increment_lifetime_trending(media_type, tmdb_ids):
+    day = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    connection = get_connection(); added = 0
+    try:
+        for tmdb_id in tmdb_ids or []:
+            try: tmdb_id = int(tmdb_id)
+            except (TypeError, ValueError): continue
+            cursor = connection.execute('INSERT OR IGNORE INTO lifetime_trending_seen(day,type,tmdb_id) VALUES(?,?,?)', (day, media_type, tmdb_id))
+            if cursor.rowcount: added += 1
+        if added:
+            connection.execute('UPDATE lifetime_statistics SET recommendations_total=recommendations_total+?,updated_at=CURRENT_TIMESTAMP WHERE id=1', (added,))
+        connection.commit()
+    finally:
+        connection.close()
+    return get_lifetime_statistics()
 
 
-def get_analytics():
-    c=get_connection()
-    total=c.execute('SELECT COUNT(*) n FROM watched').fetchone()['n']; avg=c.execute('SELECT AVG(rating) n FROM watched').fetchone()['n'] or 0
-    genres={}
-    for row in c.execute('SELECT genres,rating FROM watched').fetchall():
-        for g in _json(row['genres']): genres[g]=genres.get(g,[])+[float(row['rating'])]
-    genre_stats=sorted([{'genre':g,'count':len(v),'avg_rating':round(sum(v)/len(v),2)} for g,v in genres.items()],key=lambda x:(x['count'],x['avg_rating']),reverse=True)
-    ratings=[dict(r) for r in c.execute('SELECT rating,COUNT(*) count FROM watched GROUP BY rating ORDER BY rating').fetchall()]
-    years=[dict(r) for r in c.execute("SELECT CASE WHEN year IS NULL THEN 'Unknown' ELSE CAST((year/10)*10 AS TEXT) END decade,COUNT(*) count FROM watched GROUP BY decade ORDER BY decade").fetchall()]
-    c.close(); return {'total':int(total),'average_rating':round(float(avg),2),'watchlist':get_watchlist_count(),'not_interested':len(get_not_interested_ids('Movie'))+len(get_not_interested_ids('Series')),'genres':genre_stats[:15],'ratings':ratings,'decades':years}
+init_database()
