@@ -2019,32 +2019,49 @@ def api_search(
     q: str = "",
     media_type: str = "",
 ):
-    """Search exactly one media type. The frontend calls this twice,
-    once for Movie and once for Series, then combines the results."""
+    """Search movies and/or series in one request.
+
+    When media_type is omitted, both TMDB movie and TV endpoints are
+    queried and returned separately so the client cannot accidentally
+    lose the series results because of two competing requests.
+    """
 
     q = q.strip()
 
     if len(q) < 2:
-        return {"results": []}
-
-    if media_type not in ("Movie", "Series"):
         return {
             "results": [],
-            "error": "media_type must be Movie or Series",
+            "movies": [],
+            "series": [],
         }
 
-    results = tmdb_live_search(
-        q,
-        media_type,
-    )
+    if media_type in ("Movie", "Series"):
+        results = tmdb_live_search(q, media_type)
+        for item in results:
+            item["media_type"] = media_type
+        return {
+            "results": results,
+            "media_type": media_type,
+        }
 
-    # Ensure every item explicitly carries its media type.
-    for item in results:
-        item["media_type"] = media_type
+    if media_type:
+        return {
+            "results": [],
+            "movies": [],
+            "series": [],
+            "error": "media_type must be Movie or Series when supplied",
+        }
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        movie_future = executor.submit(tmdb_live_search, q, "Movie")
+        series_future = executor.submit(tmdb_live_search, q, "Series")
+        movies = movie_future.result()
+        series = series_future.result()
 
     return {
-        "results": results,
-        "media_type": media_type,
+        "results": movies + series,
+        "movies": movies,
+        "series": series,
     }
 
 
