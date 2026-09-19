@@ -6559,3 +6559,130 @@ img {
     max-width: 16px;
     max-height: 16px;
 }
+
+
+/* =========================================================
+   FINAL FULL DESIGN NORMALIZATION
+   Images and icons are separated from layout boxes.  Every inline SVG
+   gets an explicit render box, while poster/media images keep their
+   natural card-fit behavior.
+   ========================================================= */
+
+/* One source of truth for inline UI icons. */
+svg.app-svg-icon {
+    display: block !important;
+    box-sizing: border-box !important;
+    width: 18px !important;
+    height: 18px !important;
+    min-width: 18px !important;
+    min-height: 18px !important;
+    max-width: 18px !important;
+    max-height: 18px !important;
+    flex: 0 0 18px !important;
+    overflow: hidden !important;
+    vertical-align: middle !important;
+}
+
+/* Parent-controlled inline icons: the parent owns the size. */
+.ui-inline-icon > svg.app-svg-icon {
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    flex: 0 0 auto !important;
+}
+
+/* Navigation / utility */
+.brand-icon > svg.app-svg-icon { width: 20px !important; height: 20px !important; min-width:20px !important; min-height:20px !important; max-width:20px !important; max-height:20px !important; flex-basis:20px !important; }
+.topbar-nav-link .nav-icon > svg.app-svg-icon { width: 17px !important; height: 17px !important; min-width:17px !important; min-height:17px !important; max-width:17px !important; max-height:17px !important; flex-basis:17px !important; }
+.topbar-search-button > svg.app-svg-icon,
+.topbar-icon-button > svg.app-svg-icon { width: 16px !important; height: 16px !important; min-width:16px !important; min-height:16px !important; max-width:16px !important; max-height:16px !important; flex-basis:16px !important; }
+.panel-close-button > svg.app-svg-icon { width: 14px !important; height: 14px !important; min-width:14px !important; min-height:14px !important; max-width:14px !important; max-height:14px !important; flex-basis:14px !important; }
+
+/* Headings / source labels */
+.section-title-icon > svg.app-svg-icon,
+.section-heading h2 > svg.app-svg-icon { width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; max-width:18px !important; max-height:18px !important; flex-basis:18px !important; }
+.source-icon > svg.app-svg-icon,
+.search-result-group-icon > svg.app-svg-icon { width:16px !important; height:16px !important; min-width:16px !important; min-height:16px !important; max-width:16px !important; max-height:16px !important; flex-basis:16px !important; }
+.search-result-arrow > svg.app-svg-icon { width:15px !important; height:15px !important; min-width:15px !important; min-height:15px !important; max-width:15px !important; max-height:15px !important; flex-basis:15px !important; }
+
+/* Watched page */
+.watched-hero-icon > svg.app-svg-icon { width:23px !important; height:23px !important; min-width:23px !important; min-height:23px !important; max-width:23px !important; max-height:23px !important; flex-basis:23px !important; }
+.watched-empty-icon > svg.app-svg-icon { width:19px !important; height:19px !important; min-width:19px !important; min-height:19px !important; max-width:19px !important; max-height:19px !important; flex-basis:19px !important; }
+.watched-play-badge > svg.app-svg-icon { width:13px !important; height:13px !important; min-width:13px !important; min-height:13px !important; max-width:13px !important; max-height:13px !important; flex-basis:13px !important; }
+.watched-poster-placeholder > svg.app-svg-icon { width:26px !important; height:26px !important; min-width:26px !important; min-height:26px !important; max-width:26px !important; max-height:26px !important; flex-basis:26px !important; fill:none !important; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+
+/* Search / detail / cards */
+.search-result-card > svg.app-svg-icon,
+.search-result-card .card-icon > svg.app-svg-icon,
+.library-card > svg.app-svg-icon,
+.recommendation-card > svg.app-svg-icon,
+.trending-card > svg.app-svg-icon,
+.source-card > svg.app-svg-icon { width:16px !important; height:16px !important; min-width:16px !important; min-height:16px !important; max-width:16px !important; max-height:16px !important; flex-basis:16px !important; }
+.preview-empty-icon > svg.app-svg-icon { width:20px !important; height:20px !important; min-width:20px !important; min-height:20px !important; max-width:20px !important; max-height:20px !important; flex-basis:20px !important; }
+
+/* Remove any inherited text/emoji sizing from icon-only boxes. */
+[class*="icon"],
+[class*="icon"]::before,
+[class*="icon"]::after {
+    text-rendering: geometricPrecision;
+}
+
+/* Media images: only posters/avatars are allowed to fill their media frame. */
+.detail-poster-wrap,
+.search-result-poster,
+.recommendation-poster,
+.library-poster,
+.trending-poster,
+.watched-card-poster,
+.selected-preview-poster,
+.cast-card {
+    overflow: hidden;
+}
+.detail-poster,
+.search-result-poster img,
+.recommendation-poster img,
+.library-poster img,
+.trending-poster img,
+.watched-card-poster img,
+.selected-preview-poster img,
+.cast-card img,
+.similar-card img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: cover;
+}
+
+/* Detail poster keeps its intended aspect ratio. */
+.detail-poster-wrap .detail-poster {
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+    object-fit: cover;
+}
+
+/* Never allow standalone UI images/logos to become viewport-sized. */
+.brand-icon img,
+.topbar img,
+.topbar-icon-button img,
+.ui-inline-icon img {
+    display:block;
+    width:100%;
+    height:100%;
+    max-width:100%;
+    max-height:100%;
+    object-fit:contain;
+}
+
+/* Small screens: keep icon rhythm identical instead of scaling icons with cards. */
+@media (max-width: 620px) {
+    .brand-icon > svg.app-svg-icon { width:19px !important; height:19px !important; min-width:19px !important; min-height:19px !important; max-width:19px !important; max-height:19px !important; }
+    .topbar-nav-link .nav-icon > svg.app-svg-icon { width:16px !important; height:16px !important; min-width:16px !important; min-height:16px !important; max-width:16px !important; max-height:16px !important; }
+    .topbar-icon-button > svg.app-svg-icon { width:15px !important; height:15px !important; min-width:15px !important; min-height:15px !important; max-width:15px !important; max-height:15px !important; }
+    .watched-hero-icon > svg.app-svg-icon { width:21px !important; height:21px !important; min-width:21px !important; min-height:21px !important; max-width:21px !important; max-height:21px !important; }
+}
