@@ -19,6 +19,7 @@ import secrets
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
+from collections import defaultdict
 
 from fastapi import (
     Body,
@@ -59,7 +60,7 @@ app = FastAPI(
 async def web_auth_middleware(request: Request, call_next):
     path = request.url.path
     # OpenSubsonic and static assets keep their existing authentication behavior.
-    if path.startswith("/rest/") or path.startswith("/static/") or path == "/api/auth/login" or path == "/api/auth/status" or path == "/api/auth/logout" or path == "/favicon.ico":
+    if path.startswith("/rest/") or path.startswith("/static/") or path in {"/api/health", "/api/auth/login", "/api/auth/status", "/api/auth/logout", "/favicon.ico"}:
         return await call_next(request)
     if path.startswith("/api/") and not _is_authenticated(request.cookies.get(AUTH_COOKIE)):
         return JSONResponse({"detail":"Authentication required"}, status_code=401)
@@ -68,10 +69,10 @@ async def web_auth_middleware(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in os.getenv("XROB_CORS_ORIGINS", "").split(",") if origin.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Requested-With"],
 )
 
 app.mount(
@@ -99,27 +100,113 @@ DATA_DIR = Path(os.getenv("XROB_DATA_DIR", "/data"))
 DB_FILE = DATA_DIR / "tasks.db"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 AUTH_USER = os.getenv("XROB_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "admin")
+AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "")
 AUTH_COOKIE = "xrob_session"
 AUTH_TTL = 60 * 60 * 24 * 14
+AUTH_MAX_SESSIONS = 24
+AUTH_MIN_PASSWORD_LENGTH = 12
 AUTH_SESSIONS = {}
+AUTH_LOGIN_ATTEMPTS = defaultdict(list)
+AUTH_LOGIN_WINDOW = 300
+AUTH_LOGIN_MAX_ATTEMPTS = 5
+AUTH_BOOTSTRAP_FILE = DATA_DIR / "web_bootstrap.txt"
 
 def _auth_token():
     return secrets.token_urlsafe(32)
 
+def _hash_web_password(password):
+    if not password:
+        return ""
+    iterations = 310000
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
+
+def _verify_web_password(password, stored):
+    stored = str(stored or "")
+    if not stored:
+        return False, False
+    if not stored.startswith("pbkdf2_sha256$"):
+        # Legacy plaintext credentials are accepted once and migrated after success.
+        return secrets.compare_digest(password, stored), True
+    try:
+        _, iterations, salt_hex, digest_hex = stored.split("$", 3)
+        expected = bytes.fromhex(digest_hex)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations))
+        return secrets.compare_digest(actual, expected), False
+    except Exception:
+        return False, False
+
+def _stored_web_password(settings):
+    return str(settings.get("web_password_hash") or settings.get("web_password") or AUTH_PASSWORD or "")
+
+def _write_settings_sync(settings):
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+
+def _ensure_secure_web_credentials_sync():
+    settings = load_settings()
+    explicit_env = os.getenv("XROB_PASSWORD")
+    if explicit_env:
+        return settings
+    username = str(settings.get("web_username") or AUTH_USER or "admin")[:64]
+    stored = str(settings.get("web_password_hash") or settings.get("web_password") or "")
+    # Upgrade the insecure legacy default or an empty password before serving requests.
+    if not stored or stored == "admin":
+        password = secrets.token_urlsafe(18)
+        settings["web_username"] = username
+        settings["web_password_hash"] = _hash_web_password(password)
+        settings.pop("web_password", None)
+        _write_settings_sync(settings)
+        try:
+            AUTH_BOOTSTRAP_FILE.write_text(
+                f"Xrob Music initial web login\nusername={username}\npassword={password}\n",
+                encoding="utf-8",
+            )
+            os.chmod(AUTH_BOOTSTRAP_FILE, 0o600)
+        except OSError:
+            pass
+        print(f"Xrob Music: generated a secure initial web password. Read {AUTH_BOOTSTRAP_FILE}")
+    elif stored and not stored.startswith("pbkdf2_sha256$"):
+        # Migrate an existing custom plaintext password to a one-way verifier.
+        settings["web_password_hash"] = _hash_web_password(stored)
+        settings.pop("web_password", None)
+        _write_settings_sync(settings)
+    return settings
+
 def _current_web_credentials():
     settings = load_settings()
-    return str(settings.get("web_username") or AUTH_USER), str(settings.get("web_password") or AUTH_PASSWORD)
+    return str(settings.get("web_username") or AUTH_USER or "admin"), _stored_web_password(settings)
+
+def _auth_client_key(request: Request):
+    return request.client.host if request.client else "unknown"
+
+def _login_blocked(request: Request):
+    now = time.time()
+    key = _auth_client_key(request)
+    attempts = [t for t in AUTH_LOGIN_ATTEMPTS.get(key, []) if now - t < AUTH_LOGIN_WINDOW]
+    AUTH_LOGIN_ATTEMPTS[key] = attempts
+    return len(attempts) >= AUTH_LOGIN_MAX_ATTEMPTS
+
+def _record_login_failure(request: Request):
+    key = _auth_client_key(request)
+    AUTH_LOGIN_ATTEMPTS[key].append(time.time())
+
+def _clear_login_failures(request: Request):
+    AUTH_LOGIN_ATTEMPTS.pop(_auth_client_key(request), None)
 
 def _is_authenticated(token):
     if not token:
         return False
-    created = AUTH_SESSIONS.get(token)
-    if not created:
+    session = AUTH_SESSIONS.get(token)
+    if not session:
         return False
-    if time.time() - created > AUTH_TTL:
+    now = time.time()
+    if now - session.get("created", 0) > AUTH_TTL:
         AUTH_SESSIONS.pop(token, None)
         return False
+    session["last_seen"] = now
     return True
 
 
@@ -166,7 +253,7 @@ DEFAULT_SETTINGS = {
     "subsonic_user": "admin",
     "subsonic_password": "",
     "web_username": os.getenv("XROB_USERNAME", "admin"),
-    "web_password": os.getenv("XROB_PASSWORD", "admin"),
+    "web_password_hash": "",
 }
 
 AUDIO_FORMATS = {"mp3", "flac", "m4a", "opus", "ogg", "wav", "aac", "alac"}
@@ -366,6 +453,14 @@ def load_settings():
             addon.get("subsonic_password") or ""
         )
 
+    # Add-on auth options seed the first run only. Afterwards the in-app account
+    # settings remain authoritative and are not overwritten on every request.
+    if not SETTINGS_FILE.exists():
+        if addon.get("web_username") is not None:
+            settings["web_username"] = str(addon.get("web_username") or settings.get("web_username") or AUTH_USER or "admin")
+        if "web_password" in addon and str(addon.get("web_password") or ""):
+            settings["web_password"] = str(addon.get("web_password") or "")
+
     fmt = str(settings.get("audio_format") or "mp3").lower().lstrip(".")
     if fmt not in AUDIO_FORMATS:
         fmt = "mp3"
@@ -400,9 +495,19 @@ def save_settings(data: dict):
     }
 
     old_user = str(settings.get("web_username") or "")
-    old_password = str(settings.get("web_password") or "")
+    old_credential = str(settings.get("web_password_hash") or settings.get("web_password") or "")
     for key in allowed & data.keys():
-        settings[key] = data[key]
+        if key not in {"web_password"}:
+            settings[key] = data[key]
+
+    if "web_password" in data and str(data.get("web_password") or ""):
+        new_password = str(data.get("web_password") or "")
+        if len(new_password) < AUTH_MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Web password must be at least {AUTH_MIN_PASSWORD_LENGTH} characters.")
+        if new_password.casefold() in {"admin", "password", "password123", "changeme", "123456789012"}:
+            raise ValueError("Choose a stronger web password.")
+        settings["web_password_hash"] = _hash_web_password(new_password)
+        settings.pop("web_password", None)
 
     fmt = str(settings.get("audio_format") or "mp3").lower().lstrip(".")
     if fmt not in AUDIO_FORMATS:
@@ -420,12 +525,17 @@ def save_settings(data: dict):
     settings["scan_enabled"] = bool(settings.get("scan_enabled", True))
     settings["scan_interval_minutes"] = max(5, int(settings.get("scan_interval_minutes", 60) or 60))
     settings["web_username"] = str(settings.get("web_username") or os.getenv("XROB_USERNAME", "admin"))[:64]
-    settings["web_password"] = str(settings.get("web_password") or os.getenv("XROB_PASSWORD", "admin"))[:256]
+    # Keep a verifier, never persist web passwords in plaintext.
+    if settings.get("web_password") and not settings.get("web_password_hash"):
+        legacy_password = str(settings.get("web_password"))
+        if len(legacy_password) < AUTH_MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Web password must be at least {AUTH_MIN_PASSWORD_LENGTH} characters.")
+        settings["web_password_hash"] = _hash_web_password(legacy_password)
+        settings.pop("web_password", None)
+    settings["web_password_hash"] = str(settings.get("web_password_hash") or "")
 
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-    if old_user != settings.get("web_username") or ("web_password" in data and old_password != settings.get("web_password")):
+    _write_settings_sync(settings)
+    if old_user != settings.get("web_username") or ("web_password" in data and str(data.get("web_password") or "")):
         AUTH_SESSIONS.clear()
 
     return settings
@@ -436,7 +546,7 @@ def public_settings():
     # Subsonic credentials are add-on/server configuration, not web UI settings.
     settings.pop("subsonic_user", None)
     settings.pop("subsonic_password", None)
-    settings["web_password_set"] = bool(settings.get("web_password"))
+    settings["web_password_set"] = bool(settings.get("web_password_hash") or settings.get("web_password") or AUTH_PASSWORD)
     settings["web_username"] = str(settings.get("web_username") or "admin")
     settings.pop("web_password", None)
     settings["storage"] = storage_info_sync()
@@ -2129,6 +2239,7 @@ async def startup_event():
 
     await asyncio.to_thread(configure_storage)
     await asyncio.to_thread(init_db)
+    await asyncio.to_thread(_ensure_secure_web_credentials_sync)
 
     global TASKS
 
@@ -2389,23 +2500,78 @@ def _library_duplicate_keys_sync():
     return keys
 
 
+def _library_search_sync(query: str, page: int, limit: int = 20):
+    query = normalize_identity_text(query)
+    if not query:
+        return []
+    index = _load_library_index_sync()
+    entries = index.get("entries", {}) if isinstance(index, dict) else {}
+    rows = []
+    for rel, cached in entries.items():
+        if not isinstance(cached, dict):
+            cached = {}
+        rel = str(rel)
+        path = DOWNLOAD_DIR / rel
+        if not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS:
+            continue
+        title = str(cached.get("title") or path.stem)
+        artist = str(cached.get("artist") or "Unknown Artist")
+        album = str(cached.get("album") or "Unknown Album")
+        haystack = " ".join((title, artist, album, rel))
+        if query not in normalize_identity_text(haystack):
+            continue
+        enc = urllib.parse.quote(rel, safe="/")
+        duration = safe_float(cached.get("duration"), 0)
+        rows.append({
+            "id": make_song_id(path),
+            "title": title,
+            "artist": artist,
+            "album": album,
+            "name": rel,
+            "duration": duration,
+            "duration_text": format_duration(duration),
+            "cover": "/api/library/cover/" + enc,
+            "stream": "/api/library/stream/" + enc,
+            "source": "library",
+        })
+    # The index may be empty just after first install. Fall back to a light filesystem snapshot.
+    if not rows:
+        for row in _fast_file_library_sync():
+            rel = str(row["path"])
+            path = DOWNLOAD_DIR / rel
+            cached = entries.get(rel, {}) if isinstance(entries, dict) else {}
+            title = str(cached.get("title") or path.stem)
+            artist = str(cached.get("artist") or "Unknown Artist")
+            album = str(cached.get("album") or "Unknown Album")
+            if query not in normalize_identity_text(" ".join((title, artist, album, rel))):
+                continue
+            enc = urllib.parse.quote(rel, safe="/")
+            duration = safe_float(cached.get("duration"), 0)
+            rows.append({"id":make_song_id(path),"title":title,"artist":artist,"album":album,"name":rel,"duration":duration,"duration_text":format_duration(duration),"cover":"/api/library/cover/"+enc,"stream":"/api/library/stream/"+enc,"source":"library"})
+    rows.sort(key=lambda x: (str(x.get("artist") or "").casefold(), str(x.get("album") or "").casefold(), str(x.get("title") or "").casefold()))
+    start = max(0, page - 1) * limit
+    return rows[start:start + limit]
+
+
 @app.get("/api/search")
 async def api_search(
     q: str = Query(...),
-    page: int = Query(1),
+    page: int = Query(1, ge=1),
+    source: str = Query("youtube"),
 ):
 
     if not q.strip():
         return []
 
-    max_results = 20
+    source = source.strip().lower()
+    if source not in {"youtube", "library"}:
+        raise HTTPException(status_code=400, detail="source must be 'youtube' or 'library'")
 
     try:
-        results = await youtube_search(
-            q,
-            max_results,
-            max(1, page),
-        )
+        if source == "library":
+            return await asyncio.to_thread(_library_search_sync, q, page, 20)
+
+        results = await youtube_search(q, 20, page)
         library_keys = await asyncio.to_thread(_library_duplicate_keys_sync)
         active_keys = {
             normalize_duplicate_key(task.get("title", ""), task.get("artist", ""))
@@ -2416,14 +2582,11 @@ async def api_search(
             key = normalize_duplicate_key(item.get("title", ""), item.get("channel", "Unknown Artist"))
             item["already_downloaded"] = bool(key and key in library_keys)
             item["already_queued"] = bool(key and key in active_keys)
+            item["source"] = "youtube"
         return results
 
     except Exception as error:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(error),
-        )
+        raise HTTPException(status_code=500, detail=str(error))
 
 
 # ============================================================
@@ -6161,6 +6324,7 @@ async def api_playlist_create(payload: dict = Body(...)):
 @app.put("/api/playlists/{playlist_id}")
 async def api_playlist_update(playlist_id:str,payload:dict=Body(...)):
     with db_connect() as conn:
+        conn.row_factory=sqlite3.Row
         row=conn.execute("SELECT * FROM playlists WHERE id=?",(playlist_id,)).fetchone()
         if not row: raise HTTPException(404,"Playlist not found")
         current=dict(row)
@@ -6201,13 +6365,20 @@ async def api_library_health():
     for path in files:
         try: md=await read_metadata(path)
         except Exception as exc: unreadable.append({"path":str(path.relative_to(DOWNLOAD_DIR)),"error":str(exc)}); continue
+        rel=str(path.relative_to(DOWNLOAD_DIR))
         title=str(md.get("title") or "").strip(); artist=str(md.get("artist") or "").strip(); album=str(md.get("album") or "").strip()
-        if not title or not artist or not album: bad_tags.append({"path":str(path.relative_to(DOWNLOAD_DIR)),"title":title,"artist":artist,"album":album})
-        if not await ensure_cover(path): missing_art.append(str(path.relative_to(DOWNLOAD_DIR)))
+        if not title or not artist or not album: bad_tags.append({"path":rel,"title":title,"artist":artist,"album":album})
+        if not await ensure_cover(path): missing_art.append(rel)
         key=normalize_duplicate_key(title, artist)
-        groups.setdefault(key,[]).append(str(path.relative_to(DOWNLOAD_DIR)))
-    duplicates=[{"key":k,"files":v} for k,v in groups.items() if k and len(v)>1]
-    return {"unreadable":unreadable,"bad_tags":bad_tags,"missing_artwork":missing_art,"duplicates":duplicates,"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":len(duplicates)}}
+        if key:
+            groups.setdefault(key,[]).append({
+                "path":rel, "id":make_song_id(path), "title":title or path.stem,
+                "artist":artist or "Unknown Artist", "album":album or "Unknown Album",
+                "size":path.stat().st_size if path.exists() else 0,
+                "duration":safe_float(md.get("duration"), 0),
+            })
+    duplicates=[{"key":k,"title":(v[0].get("title") if v else ""),"artist":(v[0].get("artist") if v else ""),"files":v} for k,v in groups.items() if len(v)>1]
+    return {"unreadable":unreadable,"bad_tags":bad_tags,"missing_artwork":missing_art,"duplicates":duplicates,"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":len(duplicates),"duplicate_files":sum(len(g["files"]) for g in duplicates)}}
 
 
 @app.post("/api/library/scan/{mode}")
@@ -6265,14 +6436,33 @@ async def api_library_scan_status():
 
 @app.post("/api/auth/login")
 async def api_auth_login(request: Request, payload: dict = Body(...)):
-    user = str(payload.get("username") or "")
-    password = str(payload.get("password") or "")
-    expected_user, expected_password = _current_web_credentials()
-    if not secrets.compare_digest(user, expected_user) or not secrets.compare_digest(password, expected_password):
+    if _login_blocked(request):
+        raise HTTPException(429, "Too many failed sign-in attempts. Try again in a few minutes.")
+    user = str(payload.get("username") or "")[:64]
+    password = str(payload.get("password") or "")[:256]
+    expected_user, stored_credential = _current_web_credentials()
+    password_ok, was_legacy_plaintext = _verify_web_password(password, stored_credential)
+    if not secrets.compare_digest(user, expected_user) or not password_ok:
+        _record_login_failure(request)
         raise HTTPException(401, "Invalid username or password")
-    token = _auth_token(); AUTH_SESSIONS[token] = time.time()
+    _clear_login_failures(request)
+    if was_legacy_plaintext and not os.getenv("XROB_PASSWORD"):
+        settings = load_settings()
+        settings["web_password_hash"] = _hash_web_password(password)
+        settings.pop("web_password", None)
+        _write_settings_sync(settings)
+    token = _auth_token()
+    now = time.time()
+    AUTH_SESSIONS[token] = {"created": now, "last_seen": now, "username": expected_user}
+    if len(AUTH_SESSIONS) > AUTH_MAX_SESSIONS:
+        oldest = sorted(AUTH_SESSIONS.items(), key=lambda pair: pair[1].get("last_seen", 0))
+        for stale_token, _ in oldest[: len(AUTH_SESSIONS) - AUTH_MAX_SESSIONS]:
+            AUTH_SESSIONS.pop(stale_token, None)
     response = JSONResponse({"status":"ok", "username":expected_user})
-    response.set_cookie(AUTH_COOKIE, token, max_age=AUTH_TTL, httponly=True, samesite="lax", secure=request.url.scheme == "https")
+    response.set_cookie(
+        AUTH_COOKIE, token, max_age=AUTH_TTL, httponly=True, samesite="lax",
+        secure=request.url.scheme == "https", path="/"
+    )
     return response
 
 @app.get("/api/auth/status")
@@ -6285,7 +6475,7 @@ async def api_auth_status(request: Request):
 async def api_auth_logout(request: Request):
     token=request.cookies.get(AUTH_COOKIE)
     if token: AUTH_SESSIONS.pop(token, None)
-    response=JSONResponse({"status":"ok"}); response.delete_cookie(AUTH_COOKIE); return response
+    response=JSONResponse({"status":"ok"}); response.delete_cookie(AUTH_COOKIE, path="/"); return response
 
 @app.get("/api/errors")
 async def api_errors(limit:int=Query(200,ge=1,le=1000)):
