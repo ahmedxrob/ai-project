@@ -32,7 +32,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=20260919.13"
+        href="/static/style.css?v=20260919.17"
     >
 
 
@@ -388,16 +388,22 @@
 
 {% elif settings_page %}
     <section class="utility-page settings-page">
-        <header class="utility-hero">
-            <div>
-                <span class="utility-kicker">APP PREFERENCES</span>
+        <header class="utility-hero settings-hero-premium">
+            <div class="utility-hero-copy">
+                <span class="utility-kicker">APP CONTROL CENTER</span>
                 <h1>Settings</h1>
-                <p>Quick controls and information for your personal cinema app.</p>
+                <p>Shape how your personal cinema behaves, how much discovery appears on Home, and how the app is organized.</p>
+                <div class="settings-hero-meta">
+                    <span class="settings-status-dot"></span>
+                    <span>Preferences are saved automatically to this app</span>
+                    <span class="settings-meta-separator">•</span>
+                    <strong>{{ recommendation_limit|default(8) }} cards / section</strong>
+                </div>
             </div>
-            <div class="utility-hero-icon">{{ ui_icon('settings') }}</div>
+            <div class="utility-hero-icon settings-hero-mark">{{ ui_icon('settings', 'md') }}</div>
         </header>
 
-        <div class="settings-grid">
+        <div class="settings-grid settings-grid-premium">
             <section class="settings-card">
                 <div class="settings-card-icon">{{ ui_icon('refresh') }}</div>
                 <div><h2>Recommendations</h2><p>AI results stay available when you return Home. Use the refresh icon in the top bar when you want a new set.</p></div>
@@ -428,6 +434,38 @@
             <section class="settings-card">
                 <div class="settings-card-icon">{{ ui_icon('movie') }}</div>
                 <div><h2>Navigation</h2><p>Use the top bar for Home, Search, Watched, Wishlist, Settings, and recommendation refresh.</p></div>
+            </section>
+
+            <section class="settings-card settings-card-wide about-settings-card">
+                <div class="settings-about-mark">{{ ui_icon('spark', 'md') }}</div>
+                <div class="settings-about-content">
+                    <div class="settings-card-kicker">ABOUT THIS APP</div>
+                    <div class="settings-about-head">
+                        <div>
+                            <h2>My Movie AI</h2>
+                            <p class="settings-about-lead">A private movie and series discovery workspace built around your watch history, ratings, wishlist, and personal recommendations.</p>
+                        </div>
+                        <span class="settings-version-pill">Personal Cinema</span>
+                    </div>
+                    <div class="settings-about-grid">
+                        <div>
+                            <strong>Discovery</strong>
+                            <span>Trending, AI Picks, and TMDB Discoveries stay in one consistent Home experience.</span>
+                        </div>
+                        <div>
+                            <strong>Your library</strong>
+                            <span>Watched titles, ratings, and wishlist items remain separate so each page has a clear purpose.</span>
+                        </div>
+                        <div>
+                            <strong>Responsive by design</strong>
+                            <span>The same controls adapt across desktop and smaller screens without changing the workflow.</span>
+                        </div>
+                    </div>
+                    <div class="settings-about-footer">
+                        <span>Tip: change the Home result count above and the discovery sections refresh automatically.</span>
+                        <a href="{{ ingress_path|default('') }}/recommendations" class="settings-home-link">Return Home →</a>
+                    </div>
+                </div>
             </section>
         </div>
     </section>
@@ -504,7 +542,7 @@
 
     <section class="panel add-panel search-panel" id="search-panel" aria-hidden="true">
 
-        <div class="panel-header">
+        <div class="panel-header search-panel-header">
 
             <div>
 
@@ -513,8 +551,9 @@
                 </span>
 
                 <h2>
-                    Add something you've watched
+                    Search movies &amp; series
                 </h2>
+                <p class="search-panel-subtitle">Find a title, preview it, and add it to your library with a rating.</p>
 
             </div>
 
@@ -1944,7 +1983,8 @@ if (closeSearchButton) {
 }
 
 // Open the search overlay when arriving from another page through the topbar.
-if (searchPanel && new URLSearchParams(window.location.search).get("open_search") === "1") {
+const openSearchRequested = new URLSearchParams(window.location.search).get("open_search") === "1";
+if (searchPanel && openSearchRequested) {
     openSearchPanel();
     history.replaceState({}, document.title, window.location.pathname);
 }
@@ -1984,7 +2024,9 @@ if (window.history && "scrollRestoration" in window.history) {
 window.addEventListener(
     "pageshow",
     function () {
-        closeSearchPanel();
+        if (!openSearchRequested) {
+            closeSearchPanel();
+        }
         window.scrollTo(0, 0);
     }
 );
