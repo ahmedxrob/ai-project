@@ -7003,3 +7003,114 @@ svg.app-svg-icon {
     .watched-card-body { padding:11px; }
     .watched-card-body h3 { font-size:12px; }
 }
+\n
+/* ============================================================
+   HOME CARD WISHLIST CONTROL
+   ============================================================ */
+.home-wishlist-button {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 8;
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    max-width: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid rgba(255,255,255,.17);
+    border-radius: 9px;
+    background: rgba(5,5,8,.72);
+    color: rgba(255,255,255,.88);
+    box-shadow: 0 8px 18px rgba(0,0,0,.24);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    cursor: pointer;
+    transition: transform .18s ease, background .18s ease, border-color .18s ease, color .18s ease;
+}
+
+.home-wishlist-button:hover {
+    transform: translateY(-1px) scale(1.03);
+    border-color: rgba(255,255,255,.28);
+    background: rgba(18,18,23,.9);
+    color: #fff;
+}
+
+.home-wishlist-button.is-saved {
+    border-color: rgba(229,9,20,.45);
+    background: rgba(229,9,20,.18);
+    color: #ff5b64;
+}
+
+.home-wishlist-button.is-saved svg {
+    fill: currentColor;
+}
+
+.home-wishlist-button svg {
+    width: 15px !important;
+    height: 15px !important;
+    min-width: 15px !important;
+    min-height: 15px !important;
+    max-width: 15px !important;
+    max-height: 15px !important;
+    display: block;
+}
+
+.home-wishlist-button:disabled {
+    opacity: .62;
+    cursor: default;
+}
+
+.trending-home-section {
+    margin-top: 38px;
+}
+
+.trending-series-section {
+    margin-top: 40px;
+}
+
+.trending-home-heading h2 {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+
+.trending-home-heading .section-title-icon,
+.trending-home-heading .section-title-icon .ui-inline-icon {
+    display: inline-grid;
+    place-items: center;
+}
+
+.trending-home-heading .section-title-icon svg {
+    width: 18px !important;
+    height: 18px !important;
+    min-width: 18px !important;
+    min-height: 18px !important;
+    max-width: 18px !important;
+    max-height: 18px !important;
+}
+
+@media (max-width: 600px) {
+    .home-wishlist-button {
+        top: 8px;
+        left: 8px;
+        width: 28px;
+        height: 28px;
+        min-width: 28px;
+        max-width: 28px;
+        min-height: 28px;
+        max-height: 28px;
+    }
+
+    .home-wishlist-button svg {
+        width: 14px !important;
+        height: 14px !important;
+        min-width: 14px !important;
+        min-height: 14px !important;
+        max-width: 14px !important;
+        max-height: 14px !important;
+    }
+}
