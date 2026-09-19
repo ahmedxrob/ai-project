@@ -58,6 +58,23 @@
 </style>
 </head>
 
+{% macro ui_icon(name, size='sm') %}
+<span class="ui-inline-icon ui-inline-icon--{{ size }}" aria-hidden="true">
+{% if name == 'movie' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m10 8 6 4-6 4V8Z"></path></svg>
+{% elif name == 'series' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 5v4M16 5v4M4 9h16"></path></svg>
+{% elif name == 'ai' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3Z"></path><path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"></path></svg>
+{% elif name == 'why' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M9.7 9.2a2.4 2.4 0 1 1 4.1 1.7c-.9.9-1.8 1.2-1.8 2.6"></path><path d="M12 16.8h.01"></path></svg>
+{% elif name == 'check' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="m8.8 12 2.1 2.1 4.4-4.5"></path></svg>
+{% elif name == 'close' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+{% elif name == 'tmdb' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4.5"></path></svg>
+{% elif name == 'user' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.2"></circle><path d="M5.5 19c.7-3.1 3-4.8 6.5-4.8s5.8 1.7 6.5 4.8"></path></svg>
+{% elif name == 'spark' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"></path></svg>
+{% elif name == 'fire' %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a7 7 0 0 0 7-7c0-4.2-3.1-6.4-4.2-9.2-.4 2.5-1.8 3.5-3 4.4-.2-2-1-3.7-2.5-5.2C9.1 8.8 5 11 5 14a7 7 0 0 0 7 7Z"></path></svg>
+{% endif %}
+</span>
+{% endmacro %}
+
+
 <body data-ingress-path="{{ ingress_path|default('') }}">
 
 <div class="site-background"></div>
@@ -165,14 +182,14 @@
 
                 <div class="detail-actions">
                     {% if detail.is_watched %}
-                    <div class="detail-watched-badge">✅ Already watched{% if detail.user_rating is not none %} • Your rating {{ "%.1f"|format(detail.user_rating) }}/10{% endif %}</div>
+                    <div class="detail-watched-badge">{{ ui_icon("check") }}Already watched{% if detail.user_rating is not none %} • Your rating {{ "%.1f"|format(detail.user_rating) }}/10{% endif %}</div>
                     {% else %}
                     <form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watched-form">
                         <input type="hidden" name="title" value="{{ detail.title }}">
                         <input type="hidden" name="media_type" value="{{ media_type }}">
                         <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
                         <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required>
-                        <button type="submit">✅ Mark watched</button>
+                        <button type="submit">{{ ui_icon("check") }}Mark watched</button>
                     </form>
                     {% endif %}
 
@@ -210,7 +227,7 @@
         <div class="cast-rail">
             {% for person in detail.cast %}
             <div class="cast-card">
-                {% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty">👤</div>{% endif %}
+                {% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty">{{ ui_icon("user", "lg") }}</div>{% endif %}
                 <strong>{{ person.name }}</strong>
                 {% if person.character %}<span>{{ person.character }}</span>{% endif %}
             </div>
@@ -428,7 +445,7 @@
                 class="panel-close-button"
                 aria-label="Close search"
             >
-                ×
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
             </button>
 
         </div>
@@ -622,7 +639,7 @@
         >
 
             <span>
-                ✦
+                {{ ui_icon("spark") }}
             </span>
 
             <strong>
@@ -817,7 +834,7 @@
                         {% else %}
 
                         <div class="poster-placeholder">
-                            🎬
+                            {{ ui_icon("movie") }}
                         </div>
 
                         {% endif %}
@@ -827,7 +844,7 @@
 
 
                         <div class="source-badge ai-source">
-                            🤖 AI PICK
+                            {{ ui_icon("ai") }} AI PICK
                         </div>
 
                         <div class="match-badge">
@@ -880,7 +897,7 @@
                             class="why-button"
                             onclick="toggleWhy(this)"
                         >
-                            💡 Why this?
+                            {{ ui_icon("why") }}Why this?
                         </button>
 
 
@@ -897,7 +914,7 @@
                                 rel="noopener noreferrer"
                                 class="tmdb-button"
                             >
-                                🎬 TMDB
+                                {{ ui_icon("tmdb") }}TMDB
                             </a>
 
 
@@ -939,7 +956,7 @@
                                     type="submit"
                                     class="watched-button"
                                 >
-                                    ✅ Watched
+                                    {{ ui_icon("check") }}Watched
                                 </button>
 
                             </form>
@@ -975,7 +992,7 @@
                                 type="submit"
                                 class="not-interested-button"
                             >
-                                ✕ Not interested
+                                {{ ui_icon("close") }}Not interested
                             </button>
 
                         </form>
@@ -1064,7 +1081,7 @@
                         {% else %}
 
                         <div class="poster-placeholder">
-                            🎬
+                            {{ ui_icon("movie") }}
                         </div>
 
                         {% endif %}
@@ -1074,7 +1091,7 @@
 
 
                         <div class="source-badge tmdb-source">
-                            🔵 TMDB
+                            {{ ui_icon("tmdb") }} TMDB
                         </div>
 
                         <div class="match-badge">
@@ -1127,7 +1144,7 @@
                             class="why-button"
                             onclick="toggleWhy(this)"
                         >
-                            💡 Why this?
+                            {{ ui_icon("why") }}Why this?
                         </button>
 
 
@@ -1144,7 +1161,7 @@
                                 rel="noopener noreferrer"
                                 class="tmdb-button"
                             >
-                                🎬 TMDB
+                                {{ ui_icon("tmdb") }}TMDB
                             </a>
 
 
@@ -1186,7 +1203,7 @@
                                     type="submit"
                                     class="watched-button"
                                 >
-                                    ✅ Watched
+                                    {{ ui_icon("check") }}Watched
                                 </button>
 
                             </form>
@@ -1222,7 +1239,7 @@
                                 type="submit"
                                 class="not-interested-button"
                             >
-                                ✕ Not interested
+                                {{ ui_icon("close") }}Not interested
                             </button>
 
                         </form>
@@ -1324,7 +1341,7 @@
                         {% else %}
 
                         <div class="poster-placeholder">
-                            📺
+                            {{ ui_icon("series") }}
                         </div>
 
                         {% endif %}
@@ -1334,7 +1351,7 @@
 
 
                         <div class="source-badge ai-source">
-                            🤖 AI PICK
+                            {{ ui_icon("ai") }} AI PICK
                         </div>
 
                         <div class="match-badge">
@@ -1387,7 +1404,7 @@
                             class="why-button"
                             onclick="toggleWhy(this)"
                         >
-                            💡 Why this?
+                            {{ ui_icon("why") }}Why this?
                         </button>
 
 
@@ -1404,7 +1421,7 @@
                                 rel="noopener noreferrer"
                                 class="tmdb-button"
                             >
-                                🎬 TMDB
+                                {{ ui_icon("tmdb") }}TMDB
                             </a>
 
 
@@ -1446,7 +1463,7 @@
                                     type="submit"
                                     class="watched-button"
                                 >
-                                    ✅ Watched
+                                    {{ ui_icon("check") }}Watched
                                 </button>
 
                             </form>
@@ -1482,7 +1499,7 @@
                                 type="submit"
                                 class="not-interested-button"
                             >
-                                ✕ Not interested
+                                {{ ui_icon("close") }}Not interested
                             </button>
 
                         </form>
@@ -1571,7 +1588,7 @@
                         {% else %}
 
                         <div class="poster-placeholder">
-                            📺
+                            {{ ui_icon("series") }}
                         </div>
 
                         {% endif %}
@@ -1581,7 +1598,7 @@
 
 
                         <div class="source-badge tmdb-source">
-                            🔵 TMDB
+                            {{ ui_icon("tmdb") }} TMDB
                         </div>
 
                         <div class="match-badge">
@@ -1634,7 +1651,7 @@
                             class="why-button"
                             onclick="toggleWhy(this)"
                         >
-                            💡 Why this?
+                            {{ ui_icon("why") }}Why this?
                         </button>
 
 
@@ -1651,7 +1668,7 @@
                                 rel="noopener noreferrer"
                                 class="tmdb-button"
                             >
-                                🎬 TMDB
+                                {{ ui_icon("tmdb") }}TMDB
                             </a>
 
 
@@ -1693,7 +1710,7 @@
                                     type="submit"
                                     class="watched-button"
                                 >
-                                    ✅ Watched
+                                    {{ ui_icon("check") }}Watched
                                 </button>
 
                             </form>
@@ -1729,7 +1746,7 @@
                                 type="submit"
                                 class="not-interested-button"
                             >
-                                ✕ Not interested
+                                {{ ui_icon("close") }}Not interested
                             </button>
 
                         </form>
@@ -1772,7 +1789,7 @@
                 </span>
 
                 <h2>
-                    🎬 Watched Movies
+                    {{ ui_icon("movie", "md") }}Watched Movies
                 </h2>
 
             </div>
@@ -1809,7 +1826,7 @@
                     {% else %}
 
                     <div class="poster-placeholder">
-                        🎬
+                        {{ ui_icon("movie", "lg") }}
                     </div>
 
                     {% endif %}
@@ -1904,7 +1921,7 @@
                 </span>
 
                 <h2>
-                    📺 Watched Series
+                    {{ ui_icon("series", "md") }}Watched Series
                 </h2>
 
             </div>
@@ -1941,7 +1958,7 @@
                     {% else %}
 
                     <div class="poster-placeholder">
-                        📺
+                        {{ ui_icon("series", "lg") }}
                     </div>
 
                     {% endif %}
@@ -2042,6 +2059,21 @@
 
 
 <script>
+
+const UI_ICONS = {
+    movie: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m10 8 6 4-6 4V8Z"></path></svg>',
+    series: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 5v4M16 5v4M4 9h16"></path></svg>',
+    ai: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3Z"></path><path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"></path></svg>',
+    why: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M9.7 9.2a2.4 2.4 0 1 1 4.1 1.7c-.9.9-1.8 1.2-1.8 2.6"></path><path d="M12 16.8h.01"></path></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="m8.8 12 2.1 2.1 4.4-4.5"></path></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="m7 7 10 10M17 7 7 17"></path></svg>',
+    tmdb: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4.5"></path></svg>'
+};
+
+function uiIcon(name, size = 'sm') {
+    return `<span class="ui-inline-icon ui-inline-icon--${size}" aria-hidden="true">${UI_ICONS[name] || ''}</span>`;
+}
+
 
 /* ========================================================= */
 /* APP / INGRESS URL HELPER */
@@ -2658,7 +2690,7 @@ function renderSelectedPreview(
                         `
                         : `
                             <div class="selected-preview-placeholder">
-                                ${isSeries ? "📺" : "🎬"}
+                                ${isSeries ? uiIcon("series", "lg") : uiIcon("movie", "lg")}
                             </div>
                         `
                 }
@@ -2682,7 +2714,7 @@ function renderSelectedPreview(
                     }
 
                     <span>
-                        ${isSeries ? "📺 Series" : "🎬 Movie"}
+                        ${uiIcon(isSeries ? "series" : "movie")} ${isSeries ? "Series" : "Movie"}
                     </span>
 
                     <span class="selected-tmdb-rating">
@@ -2700,8 +2732,8 @@ function renderSelectedPreview(
                 <div class="selected-preview-badge">
                     ${
                         isSeries
-                            ? "📺 SERIES"
-                            : "🎬 MOVIE"
+                            ? `${uiIcon("series")} SERIES`
+                            : `${uiIcon("movie")} MOVIE`
                     }
                     <span>•</span>
                     TMDB #${item.tmdb_id}
@@ -2746,7 +2778,7 @@ if (clearSearch) {
                     <div
                         class="preview-empty-icon"
                     >
-                        🎬
+                        {{ ui_icon("movie", "lg") }}
                     </div>
 
                     <span>
@@ -2993,7 +3025,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
                 <div class="trending-poster">
                     ${poster}
                     <div class="trending-poster-overlay"></div>
-                    <div class="trending-badge">🔥 TRENDING</div>
+                    <div class="trending-badge">{{ ui_icon("fire") }} TRENDING</div>
                     <div class="trending-rank">
                         #${items.indexOf(item) + 1}
                     </div>
@@ -3172,8 +3204,8 @@ function toggleWhy(
 
     } else {
 
-        button.innerText =
-            "💡 Why this?";
+        button.innerHTML =
+            uiIcon("why") + "Why this?";
 
     }
 }
@@ -3459,7 +3491,7 @@ document.addEventListener("submit", async function (event) {
 
     const card = form.closest(".recommendation-card");
     const button = form.querySelector(".watched-button");
-    const originalText = button ? button.textContent : "✅ Watched";
+    const originalText = button ? button.innerHTML : uiIcon("check") + "Watched";
 
     if (button) {
         button.disabled = true;
@@ -3508,7 +3540,7 @@ document.addEventListener("submit", async function (event) {
 
         if (button) {
             button.disabled = false;
-            button.textContent = originalText;
+            button.innerHTML = originalText;
         }
     }
 });
@@ -3538,7 +3570,7 @@ document.addEventListener("submit", async function (event) {
         return;
     }
 
-    const originalText = button.textContent;
+    const originalText = button.innerHTML;
     button.disabled = true;
     button.textContent = "Removing...";
 
@@ -3604,7 +3636,7 @@ document.addEventListener("submit", async function (event) {
         removeLiveRecommendationFromWatch(card);
 
         showToast(
-            `✕ ${title} removed from recommendations`
+            `${title} removed from recommendations`
         );
 
     } catch (error) {
@@ -3615,7 +3647,7 @@ document.addEventListener("submit", async function (event) {
         );
 
         button.disabled = false;
-        button.textContent = originalText;
+        button.innerHTML = originalText;
 
         showToast(
             error.message ||
