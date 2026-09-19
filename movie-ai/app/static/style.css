@@ -7961,3 +7961,323 @@ body {
 .about-hero-mark svg { width:26px !important; height:26px !important; }
 @media (max-width:980px){ .search-page-layout{grid-template-columns:1fr;} .search-page-preview-card .selected-preview-empty{min-height:300px;} }
 @media (max-width:700px){ .search-page-fullscreen{padding:18px 12px 70px;} .search-page-hero{align-items:flex-start;} .search-page-hero-mark{flex-basis:52px;width:52px;height:52px;border-radius:14px;} .search-page-hero-mark svg{width:20px!important;height:20px!important;} .search-page-add-form{grid-template-columns:1fr;} .about-grid-premium{grid-template-columns:1fr;} .about-footer-card{align-items:flex-start;flex-direction:column;} }
+
+
+/* ============================================================
+   FINAL PREMIUM CONSISTENCY + INTERACTION AUDIT
+   ============================================================ */
+
+/* Home cards: the media frame and content area are separate layout regions. */
+.recommendation-card,
+.trending-card {
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+    contain: layout paint style;
+}
+
+.recommendation-poster,
+.trending-poster {
+    flex: 0 0 auto !important;
+    isolation: isolate !important;
+    overflow: hidden !important;
+    z-index: 1 !important;
+}
+
+.recommendation-poster img,
+.trending-poster img {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+.recommendation-poster .poster-overlay,
+.trending-poster .trending-poster-overlay {
+    position: absolute !important;
+    inset: 0 !important;
+    z-index: 2 !important;
+    pointer-events: none !important;
+}
+
+.recommendation-poster .source-badge,
+.recommendation-poster .match-badge,
+.trending-poster .trending-badge,
+.trending-poster .trending-rank,
+.recommendation-poster .home-wishlist-button,
+.trending-poster .home-wishlist-button {
+    z-index: 6 !important;
+}
+
+.source-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+}
+
+.source-badge .ui-inline-icon,
+.source-badge .ui-inline-icon svg {
+    width: 10px !important;
+    height: 10px !important;
+    min-width: 10px !important;
+    min-height: 10px !important;
+    max-width: 10px !important;
+    max-height: 10px !important;
+}
+
+.match-badge,
+.ai-card .match-badge {
+    height: auto !important;
+    min-height: 24px !important;
+    line-height: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: nowrap !important;
+}
+
+.recommendation-content,
+.trending-content {
+    position: relative !important;
+    z-index: 3 !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: linear-gradient(180deg, rgba(18,18,23,.985), rgba(10,10,14,.99)) !important;
+}
+
+.recommendation-content > h3,
+.trending-content > h3 {
+    max-width: 100% !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+.recommendation-overview,
+.trending-content p {
+    min-height: 3.9em !important;
+    max-height: 3.9em !important;
+    overflow: hidden !important;
+}
+
+.recommendation-actions,
+.trending-actions {
+    margin-top: auto !important;
+    padding-top: 8px !important;
+}
+
+/* Premium search surface: less empty space, stronger hierarchy, cleaner side panel. */
+.search-page-layout {
+    grid-template-columns: minmax(0, 1.35fr) minmax(360px, .85fr) !important;
+    align-items: stretch !important;
+}
+
+.search-page-card-kicker-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 16px !important;
+    margin-bottom: 10px !important;
+}
+
+.search-page-card-kicker {
+    margin-bottom: 4px !important;
+}
+
+.search-page-card-hint {
+    color: rgba(255,255,255,.40) !important;
+    font-size: 10px !important;
+}
+
+.search-page-live-pill {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 6px 9px !important;
+    border: 1px solid rgba(53,208,127,.16) !important;
+    border-radius: 999px !important;
+    background: rgba(53,208,127,.06) !important;
+    color: rgba(255,255,255,.52) !important;
+    font-size: 8px !important;
+    font-weight: 850 !important;
+    letter-spacing: .08em !important;
+}
+
+.search-page-live-pill span {
+    width: 6px !important;
+    height: 6px !important;
+    border-radius: 999px !important;
+    background: #35d07f !important;
+    box-shadow: 0 0 0 4px rgba(53,208,127,.06) !important;
+}
+
+.search-page-search-card {
+    min-height: calc(100vh - 300px) !important;
+    max-height: calc(100vh - 170px) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    position: sticky !important;
+    top: 92px !important;
+    overflow: hidden !important;
+}
+
+.search-page-results {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    padding: 3px !important;
+}
+
+.search-page-search-tip {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 10px 16px !important;
+    padding: 9px 2px 2px !important;
+    color: rgba(255,255,255,.26) !important;
+    font-size: 8px !important;
+}
+
+.search-page-search-tip span {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+}
+
+.search-page-side {
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+    position: sticky !important;
+    top: 92px !important;
+    align-self: start !important;
+}
+
+.search-page-preview-card {
+    min-height: 0 !important;
+}
+
+.search-page-preview-card .selected-preview-empty {
+    min-height: 430px !important;
+}
+
+.search-page-add-form {
+    margin-top: 0 !important;
+    grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.4fr) !important;
+    background: linear-gradient(180deg, rgba(20,20,26,.92), rgba(11,11,15,.95)) !important;
+}
+
+.search-page-add-form .primary-button {
+    min-height: 48px !important;
+}
+
+.selected-preview-actions {
+    display: flex !important;
+    gap: 8px !important;
+    margin-top: 14px !important;
+}
+
+.selected-preview-details-link {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    min-height: 34px !important;
+    padding: 0 12px !important;
+    border: 1px solid rgba(255,255,255,.10) !important;
+    border-radius: 9px !important;
+    background: rgba(255,255,255,.035) !important;
+    color: rgba(255,255,255,.76) !important;
+    text-decoration: none !important;
+    font-size: 9px !important;
+    font-weight: 850 !important;
+}
+
+.selected-preview-details-link:hover {
+    color: #fff !important;
+    background: rgba(229,9,20,.14) !important;
+    border-color: rgba(229,9,20,.24) !important;
+}
+
+.selected-preview-details-link .ui-inline-icon,
+.selected-preview-details-link .ui-inline-icon svg {
+    width: 12px !important;
+    height: 12px !important;
+}
+
+/* Gesture layer: horizontal rails should feel native, not like a draggable image strip. */
+.drag-scroll-rail {
+    touch-action: pan-x !important;
+    cursor: grab !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    overscroll-behavior-x: contain !important;
+}
+
+.drag-scroll-rail.is-dragging {
+    cursor: grabbing !important;
+}
+
+@media (max-width: 980px) {
+    .search-page-layout {
+        grid-template-columns: 1fr !important;
+    }
+    .search-page-search-card,
+    .search-page-side {
+        position: static !important;
+        max-height: none !important;
+    }
+    .search-page-search-card {
+        min-height: 480px !important;
+    }
+    .search-page-side {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) minmax(220px, .62fr) !important;
+        align-items: stretch !important;
+    }
+    .search-page-add-form {
+        grid-template-columns: 1fr !important;
+        align-content: start !important;
+    }
+}
+
+@media (max-width: 700px) {
+    .search-page-search-card {
+        min-height: 0 !important;
+    }
+    .search-page-results {
+        max-height: 56vh !important;
+    }
+    .search-page-side {
+        display: flex !important;
+    }
+    .search-page-preview-card .selected-preview-empty {
+        min-height: 260px !important;
+    }
+    .search-page-card-kicker-row {
+        align-items: flex-start !important;
+    }
+    .search-page-live-pill {
+        display: none !important;
+    }
+    .search-page-search-tip {
+        display: none !important;
+    }
+}
+
+/* Accessibility + motion safety. */
+:focus-visible {
+    outline: 2px solid rgba(229,9,20,.72);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .001ms !important;
+    }
+}
