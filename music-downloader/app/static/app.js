@@ -37,6 +37,7 @@ let currentLibraryIndex = -1;
 
 let currentPage = 1;
 let currentQuery = "";
+let searchSource = "youtube";
 let isLoadingMore = false;
 let hasMoreResults = true;
 
@@ -685,139 +686,69 @@ window.addEventListener(
    ============================================================ */
 
 function savePlayerState() {
-
-    if (!audio) {
-        return;
-    }
-
+    if (!audio) return;
     const state = {
         src: audio.src || "",
-        currentTime:
-            Number(audio.currentTime || 0),
-
-        volume:
-            Number(audio.volume || 0.8),
-
-        title:
-            playerTitle?.textContent || "",
-
-        artist:
-            playerArtist?.textContent || "",
-
-        art:
-            playerArt?.src || "",
-
-        queueIndex:
-            Number.isInteger(
-                window.xrobHomeQueueIndex
-            )
-                ? window.xrobHomeQueueIndex
-                : -1
+        currentTime: Number(audio.currentTime || 0),
+        volume: Number(audio.volume || 0.8),
+        title: playerTitle?.textContent || "",
+        artist: playerArtist?.textContent || "",
+        art: playerArt?.src || "",
+        songId: audio.dataset.xrobSongId || currentSongId() || "",
+        source: currentPlayerSource || "",
+        queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
+        wasPlaying: !audio.paused,
     };
-
-    localStorage.setItem(
-        "xrob_music_player_state",
-        JSON.stringify(state)
-    );
+    try { localStorage.setItem("xrob_music_player_state", JSON.stringify(state)); } catch (_) {}
 }
-
 
 function restorePlayerState() {
-
-    if (!audio) {
-        return;
-    }
-
+    if (!audio) return;
     try {
+        const raw = localStorage.getItem("xrob_music_player_state");
+        if (!raw) return;
+        const state = JSON.parse(raw);
+        if (Number.isFinite(Number(state.volume))) {
+            audio.volume = Math.max(0, Math.min(1, Number(state.volume)));
+            if (volume) volume.value = audio.volume;
+        }
+        if (!state.src) return;
 
-        const raw =
-            localStorage.getItem(
-                "xrob_music_player_state"
-            );
-
-        if (!raw) {
-            return;
+        // Restore queue/source identity before loading the media so Next/Previous
+        // continue from the same queue after a browser refresh.
+        if (Array.isArray(enhancedQueue) && enhancedQueue.length && state.queueIndex >= 0) {
+            const savedId = String(state.songId || "");
+            const found = savedId ? enhancedQueue.findIndex(item => trackKey(item) === savedId || String(item.id || "") === savedId) : -1;
+            enhancedQueueIndex = found >= 0 ? found : Math.max(0, Math.min(Number(state.queueIndex) || 0, enhancedQueue.length - 1));
+            currentLibraryIndex = enhancedQueueIndex;
+            currentPlayerSource = "library";
+            saveEnhancedQueue();
+        } else if (state.source === "home" && Array.isArray(window.xrobHomeQueue) && window.xrobHomeQueue.length) {
+            currentPlayerSource = "home";
+            window.xrobHomeQueueIndex = Math.max(0, Math.min(Number(state.queueIndex) || 0, window.xrobHomeQueue.length - 1));
         }
 
-        const state =
-            JSON.parse(raw);
-
-        if (
-            state.volume !== undefined &&
-            Number.isFinite(
-                Number(state.volume)
-            )
-        ) {
-
-            audio.volume =
-                Number(state.volume);
-
-            if (volume) {
-                volume.value =
-                    Number(state.volume);
+        const restorePosition = () => {
+            if (Number.isFinite(Number(state.currentTime)) && Number.isFinite(audio.duration) && audio.duration > 0) {
+                audio.currentTime = Math.min(Math.max(0, Number(state.currentTime)), Math.max(0, audio.duration - 0.25));
             }
-        }
+            updateProgress();
+            if (state.wasPlaying) {
+                // Do not force autoplay on page load; modern browsers may block it.
+                updatePlayingState(false);
+            }
+        };
 
-        if (!state.src) {
-            return;
-        }
-
-        audio.src =
-            state.src;
-
+        audio.dataset.xrobSongId = String(state.songId || "");
+        updatePlayerInfo(state.title, state.artist, state.art);
+        if (player) player.style.display = "grid";
+        audio.addEventListener("loadedmetadata", restorePosition, { once: true });
+        audio.src = state.src;
         audio.load();
-
-        updatePlayerInfo(
-            state.title,
-            state.artist,
-            state.art
-        );
-
-        if (player) {
-            player.style.display =
-                "grid";
-        }
-
-        /*
-         * Restore position after metadata loads.
-         */
-        audio.addEventListener(
-            "loadedmetadata",
-            function restorePosition() {
-
-                if (
-                    Number.isFinite(
-                        Number(state.currentTime)
-                    )
-                ) {
-
-                    audio.currentTime =
-                        Math.min(
-                            Number(
-                                state.currentTime
-                            ),
-                            audio.duration || 0
-                        );
-                }
-
-                audio.removeEventListener(
-                    "loadedmetadata",
-                    restorePosition
-                );
-
-                updateProgress();
-            }
-        );
-
     } catch (error) {
-
-        console.warn(
-            "Could not restore player:",
-            error
-        );
+        console.warn("Could not restore player:", error);
     }
 }
-
 
 function formatSeconds(seconds) {
 
@@ -1192,6 +1123,8 @@ function toggleAudioStream(
     audio.removeAttribute("src");
 
     audio.dataset.xrobSongId = String(songId || "");
+    if (type) currentPlayerSource = type === "search" ? (searchSource === "library" ? "library" : "home") : type;
+    savePlayerState();
     audio.src = absoluteUrl;
 
     audio.load();
@@ -1880,7 +1813,7 @@ async function refreshLibraryCache() {
 
 
         rawLibraryFiles = data.files || [];
-        libraryPlaybackQueue = rawLibraryFiles;
+        libraryPlaybackQueue = enhancedQueue.length ? [...enhancedQueue] : rawLibraryFiles;
         libraryArtists = data.artists || [];
         libraryAlbums = data.albums || [];
         reconcileEnhancedQueue();
@@ -2062,8 +1995,6 @@ async function loadStats() {
             await response.json();
 
         applyLiveStats(stats);
-        const subsonicStatus = document.getElementById("subsonicStatusValue");
-        if (subsonicStatus && liveStats.tracks !== null) subsonicStatus.textContent = `${liveStats.tracks} tracks ready`;
 
     } catch (error) {
 
@@ -2489,7 +2420,7 @@ async function searchMusic() {
             await fetch(
                 `api/search?q=${
                     encodeURIComponent(query)
-                }&page=1`,
+                }&source=${encodeURIComponent(searchSource)}&page=1`,
                 {
                     cache: "no-store"
                 }
@@ -2554,6 +2485,7 @@ async function searchMusic() {
             "Loading results..."
         );
 
+        hasMoreResults = data.length >= 20;
         renderItems(data);
         // Refresh the local library cache in the background for the Library view,
         // without delaying the search results themselves.
@@ -2633,6 +2565,24 @@ function renderItems(items) {
 
             card.className =
                 "result-card";
+
+            if (searchSource === "library" || item.source === "library") {
+                const title = item.title || item.name || "Unknown Track";
+                const artist = item.artist || "Unknown Artist";
+                const album = item.album || "Unknown Album";
+                const thumb = String(item.cover || "");
+                card.dataset.libraryName = item.name || "";
+                card.innerHTML = `
+                    <div class="thumb-wrapper"><img src="${escapeHtml(thumb)}" alt="" loading="lazy">${item.duration_text ? `<span class="badge-duration">${escapeHtml(item.duration_text)}</span>` : ""}</div>
+                    <div class="track-info"><div class="track-title">${escapeHtml(title)}</div><div class="track-artist">👤 ${escapeHtml(artist)} · ${escapeHtml(album)}</div></div>
+                    <div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-download queue-local-btn">＋ Queue</button></div>`;
+                const play = card.querySelector(".btn-preview");
+                play?.addEventListener("click", e => { e.stopPropagation(); toggleAudioStream(play, item.stream || "", "library", title, artist, thumb, item.id || null); });
+                card.querySelector(".queue-local-btn")?.addEventListener("click", e => { e.stopPropagation(); addTrackToQueue({...item, name:item.name}, false); });
+                card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), {once:true});
+                results.appendChild(card);
+                return;
+            }
 
 
             const thumbnail =
@@ -2864,7 +2814,7 @@ async function loadMoreResults() {
                     encodeURIComponent(
                         currentQuery
                     )
-                }&page=${
+                }&source=${encodeURIComponent(searchSource)}&page=${
                     nextPage
                 }`,
                 {
@@ -2899,7 +2849,7 @@ async function loadMoreResults() {
         } else {
 
             currentPage = nextPage;
-
+            if (data.length < 20) hasMoreResults = false;
             renderItems(data);
         }
 
@@ -2926,6 +2876,17 @@ async function loadMoreResults() {
 
 
 function bindSearch() {
+    document.querySelectorAll("[data-search-source]").forEach(button => {
+        button.addEventListener("click", () => {
+            searchSource = button.dataset.searchSource || "youtube";
+            document.querySelectorAll("[data-search-source]").forEach(item => { item.classList.toggle("active", item === button); item.setAttribute("aria-selected", String(item === button)); });
+            const input = document.getElementById("query");
+            if (input) input.placeholder = searchSource === "library" ? "Search your local library..." : "Search YouTube music...";
+            const status = document.getElementById("statusMsg");
+            if (status) status.textContent = "";
+            if (input?.value.trim()) searchMusic();
+        });
+    });
 
     document
         .getElementById("searchBtn")
@@ -4962,7 +4923,16 @@ async function loadPlaylistsView(){
     const head=document.createElement("div"); head.className="catalog-detail-header"; head.innerHTML='<div><h3>Playlists</h3><p>Create manual or smart playlists.</p></div><button class="btn-preview" id="newPlaylistBtn"><i data-lucide="plus" aria-hidden="true"></i> New playlist</button>'; list.appendChild(head);
     rows.forEach(p=>{const c=document.createElement("article");c.className="catalog-card";c.innerHTML=`<div><strong>${escapeHtml(p.name)}</strong><span>${p.kind==='smart'?'Smart':'Manual'} · ${p.song_count} tracks</span></div><div class="btn-group"><button class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button class="btn-danger"><i data-lucide="trash-2" aria-hidden="true"></i> Delete</button></div>`;c.querySelector('.btn-preview').onclick=async()=>{const rr=await fetch(`api/playlists/${encodeURIComponent(p.id)}`);const full=await rr.json();setEnhancedQueue(full.tracks,0);playLibraryTrack(0);};c.querySelector('.btn-danger').onclick=async()=>{if(confirm(`Delete ${p.name}?`)){await fetch(`api/playlists/${encodeURIComponent(p.id)}`,{method:'DELETE'});loadPlaylistsView();}};list.appendChild(c);});
     renderLocalIcons();
-    document.getElementById("newPlaylistBtn").onclick=async()=>{const name=prompt("Playlist name","New Playlist");if(!name)return;const kind=confirm("Make this a smart playlist?\nOK = smart, Cancel = manual")?'smart':'manual';let rules={};if(kind==='smart'){const genre=prompt("Genre rule (optional)","");const artist=prompt("Artist rule (optional)","");if(genre)rules.genre=genre;if(artist)rules.artist=artist;}await fetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind,rules,song_ids:[]})});loadPlaylistsView();};
+    const newPlaylistButton = head.querySelector("#newPlaylistBtn");
+    newPlaylistButton?.addEventListener("click", async () => {
+        const name=prompt("Playlist name","New Playlist");
+        if(!name) return;
+        const kind=confirm("Make this a smart playlist?\nOK = smart, Cancel = manual") ? 'smart' : 'manual';
+        let rules={};
+        if(kind==='smart'){const genre=prompt("Genre rule (optional)","");const artist=prompt("Artist rule (optional)","");if(genre)rules.genre=genre;if(artist)rules.artist=artist;}
+        const response = await fetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind,rules,song_ids:[]})});
+        if (response.ok) loadPlaylistsView(); else showToast("❌ Could not create playlist");
+    });
 }
 
 let songEditorTracks = [];
@@ -5084,6 +5054,26 @@ async function loadDetailedLibraryStats() {
 
 let dailyMixTracks = [];
 let dailyMixVariant = Number(localStorage.getItem('xrob_daily_mix_variant') || 0);
+function installHomeSwipeScroller(element, itemSelector) {
+    if (!element || element.dataset.swipeReady === "true") return;
+    element.dataset.swipeReady = "true";
+    let startX = 0; let startY = 0; let tracking = false;
+    element.addEventListener("pointerdown", event => {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        startX = event.clientX; startY = event.clientY; tracking = true;
+    });
+    element.addEventListener("pointerup", event => {
+        if (!tracking) return;
+        tracking = false;
+        const dx = event.clientX - startX; const dy = event.clientY - startY;
+        if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.15) return;
+        const first = element.querySelector(itemSelector);
+        const amount = first ? first.getBoundingClientRect().width + 14 : element.clientWidth * 0.8;
+        element.scrollBy({left: dx < 0 ? amount : -amount, behavior: "smooth"});
+    });
+    element.addEventListener("pointercancel", () => { tracking = false; });
+}
+
 async function loadDailyMix(forceVariation = false) {
     const row = document.getElementById('dailyMixTracks'); if (!row) return;
     try {
@@ -5112,6 +5102,8 @@ function installEnhancedFeatures(){
     document.getElementById("dailyMixPlay")?.addEventListener("click", () => { if (!dailyMixTracks.length) return; setEnhancedQueue(dailyMixTracks, 0); currentPlayerSource="library"; playLibraryTrack(0); });
     loadDetailedLibraryStats();
     loadDailyMix();
+    installHomeSwipeScroller(document.getElementById("dailyMixTracks"), ".daily-mix-track");
+    installHomeSwipeScroller(document.getElementById("recentTracks"), ".recent-card");
     document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
@@ -5183,7 +5175,57 @@ function installEnhancedFeatures(){
         if(r.ok){ const label=pick.options[pick.selectedIndex]?.text||'Track'; showToast(`✅ ${label} added to editor`); await loadSongEditor(); }
         else { const d=await r.json().catch(()=>({})); showToast('❌ '+(d.detail||'Could not import track')); }
     });
-    document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{const r=await fetch('api/library/health');const d=await r.json();document.getElementById('healthContent').innerHTML=`<div class="health-summary"><strong>Unreadable: ${d.counts.unreadable}</strong><strong>Bad tags: ${d.counts.bad_tags}</strong><strong>Missing artwork: ${d.counts.missing_artwork}</strong><strong>Duplicate groups: ${d.counts.duplicates}</strong></div><pre>${escapeHtml(JSON.stringify(d,null,2))}</pre>`;document.getElementById('health-modal').hidden=false;});
+    async function loadLibraryHealth() {
+        const content = document.getElementById("healthContent");
+        if (!content) return;
+        content.innerHTML = '<div class="queue-empty">Checking library health…</div>';
+        try {
+            const r = await fetch("api/library/health", {cache:"no-store"});
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.detail || "Could not check library health");
+            const duplicates = Array.isArray(d.duplicates) ? d.duplicates : [];
+            content.innerHTML = `<div class="health-summary"><strong>Unreadable: ${d.counts?.unreadable || 0}</strong><strong>Bad tags: ${d.counts?.bad_tags || 0}</strong><strong>Missing artwork: ${d.counts?.missing_artwork || 0}</strong><strong>Duplicate groups: ${d.counts?.duplicates || 0}</strong><strong>Duplicate files: ${d.counts?.duplicate_files || 0}</strong></div>`;
+            if (duplicates.length) {
+                const section = document.createElement("section");
+                section.className = "duplicate-groups";
+                section.innerHTML = `<div class="catalog-section-heading"><h3>Duplicate files</h3><p>Review each group and delete only the copy you no longer need.</p></div>`;
+                duplicates.forEach((group) => {
+                    const card = document.createElement("article");
+                    card.className = "duplicate-group";
+                    card.innerHTML = `<div class="duplicate-group-head"><div><strong>${escapeHtml(group.title || "Duplicate track")}</strong><span>${escapeHtml(group.artist || "Unknown Artist")} · ${group.files.length} files</span></div></div><div class="duplicate-file-list"></div>`;
+                    const list = card.querySelector(".duplicate-file-list");
+                    group.files.forEach((file, index) => {
+                        const row = document.createElement("div");
+                        row.className = "duplicate-file-row";
+                        const size = Number(file.size || 0);
+                        const mb = size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(size / 1024)} KB`;
+                        row.innerHTML = `<div class="duplicate-file-copy"><strong>${escapeHtml(file.path)}</strong><span>${escapeHtml(file.album || "Unknown Album")} · ${escapeHtml(formatSeconds(file.duration || 0))}${index === 0 ? " · first found" : ""} · ${mb}</span></div><button type="button" class="btn-danger duplicate-delete-btn">Delete copy</button>`;
+                        row.querySelector("button")?.addEventListener("click", async () => {
+                            if (!confirm(`Delete duplicate file "${file.path}"?`)) return;
+                            const response = await fetch(`api/library/${encodeURIComponent(file.path).replace(/%2F/g, "/")}`, {method:"DELETE"});
+                            const result = await response.json().catch(() => ({}));
+                            if (!response.ok) { showToast("❌ " + (result.detail || "Could not delete duplicate")); return; }
+                            showToast("✅ Duplicate copy deleted");
+                            await refreshLibraryCache();
+                            renderLibraryView();
+                            await loadLibraryHealth();
+                        });
+                        list?.appendChild(row);
+                    });
+                    section.appendChild(card);
+                });
+                content.appendChild(section);
+            } else {
+                const empty = document.createElement("div");
+                empty.className = "queue-empty";
+                empty.textContent = "No duplicate groups found.";
+                content.appendChild(empty);
+            }
+        } catch (err) {
+            content.innerHTML = `<div class="queue-empty">${escapeHtml(err.message || "Library health unavailable")}</div>`;
+        }
+    }
+    document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{document.getElementById("health-modal").hidden=false;await loadLibraryHealth();});
 
     if(audio){
         audio.addEventListener('loadedmetadata',()=>{
