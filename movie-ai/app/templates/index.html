@@ -1,50 +1,281 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#060608">
-    <title>{% if page == 'detail' %}{{ detail.title }} — My Movie AI{% elif page == 'library' %}Local Library · My Movie AI{% else %}My Movie AI{% endif %}</title>
-    <link rel="icon" type="image/svg+xml" href="{{ ingress_path|default('') }}/static/favicon.svg">
-    <link rel="apple-touch-icon" href="{{ ingress_path|default('') }}/static/favicon.svg">
-    <link rel="stylesheet" href="{{ ingress_path|default('') }}/static/style.css">
-</head>
-<body data-ingress-path="{{ ingress_path|default('') }}" data-page="{{ page }}">
-<nav class="topbar app-topbar global-topbar">
-    <a class="brand" data-nav href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI">
-        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></span>
-        <span class="brand-copy"><strong>My Movie AI</strong><small>PRIVATE CINEMA</small></span>
-    </a>
-    <div class="global-nav" role="navigation" aria-label="Primary">
-        <a data-nav class="global-nav-link" data-route="recommendations" href="{{ ingress_path|default('') }}/recommendations"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg></span><span>Discover</span></a>
-        <a data-nav class="global-nav-link" data-route="library" href="{{ ingress_path|default('') }}/library"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg></span><span>Library</span></a>
-        <a data-nav class="global-nav-link" data-search-link href="{{ ingress_path|default('') }}/recommendations?search=1"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg></span><span>Search</span></a>
-    </div>
-    <div class="global-nav-right"><span class="server-pill"><i></i> LOCAL</span><button class="mobile-search-button" type="button" data-search-link aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg></button></div>
-</nav>
-<div id="app-root" class="route-view" data-page="{{ page }}">
-{% if page == 'recommendations' %}
 
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="theme-color"
+        content="#060608"
+    >
+
+    <title>
+        My Movie AI
+    </title>
+
+    <link
+        rel="icon"
+        type="image/svg+xml"
+        href="/static/favicon.svg"
+    >
+
+    <link
+        rel="apple-touch-icon"
+        href="/static/favicon.svg"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+
+
+<style>
+.drag-scroll-rail {
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: pan-y;
+}
+
+.drag-scroll-rail.is-dragging {
+    cursor: grabbing !important;
+    scroll-behavior: auto !important;
+    scroll-snap-type: none !important;
+}
+
+.drag-scroll-rail img {
+    -webkit-user-drag: none;
+    user-drag: none;
+    pointer-events: none;
+}
+</style>
+</head>
+
+<body data-ingress-path="{{ ingress_path|default('') }}">
 
 <div class="site-background"></div>
 
 
 
-<nav class="topbar app-topbar legacy-topbar">
+<nav class="topbar">
+
     <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
-        <div class="brand-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div>
-        <div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div>
+        <div class="brand-icon">🎬</div>
+        <div class="brand-text">
+            <strong>My Movie AI</strong>
+            <span>your personal cinema</span>
+        </div>
     </a>
-    <div class="topbar-nav">
-        <a class="app-nav-item active" href="{{ ingress_path|default('') }}/recommendations"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Discover</span></a>
-        <a class="app-nav-item" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg><span>Library</span></a>
-        <button type="button" id="open-search-button" class="app-nav-item nav-button"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button>
+
+    <div class="topbar-nav" aria-label="Primary navigation">
+        <a class="topbar-nav-link {% if not watched_page and not detail %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
+            <span class="nav-icon">⌂</span><span>Home</span>
+        </a>
+        <a class="topbar-nav-link {% if watched_page %}active{% endif %}" href="{{ ingress_path|default('') }}/watched">
+            <span class="nav-icon">✓</span><span>Already Watched</span>
+        </a>
     </div>
-    <div class="topbar-status"><span class="status-dot"></span><span>LOCAL SERVER</span></div>
+
+    <div class="topbar-actions">
+        <button type="button" id="open-search-button" class="topbar-search-button" aria-label="Open search" aria-expanded="false">
+            <span>🔎</span>
+            <strong>Search</strong>
+        </button>
+        <div class="topbar-status">
+            <span class="status-dot"></span>
+            Personal Library
+        </div>
+    </div>
+
 </nav>
 
 
 <main class="page">
+{% if detail %}
+
+    <section class="detail-hero"{% if detail.backdrop %} style="--detail-backdrop: url('{{ detail.backdrop }}')"{% endif %}>
+        <div class="detail-hero-overlay"></div>
+        <div class="detail-hero-content">
+            <div class="detail-poster-wrap">
+                {% if detail.poster %}
+                <img class="detail-poster" src="{{ detail.poster }}" alt="{{ detail.title }}">
+                {% else %}
+                <div class="detail-poster detail-poster-empty">🎬</div>
+                {% endif %}
+            </div>
+
+            <div class="detail-main">
+                <div class="detail-kicker">{{ "MOVIE" if media_type == "Movie" else "SERIES" }} • TMDB</div>
+                <div class="detail-title-row">
+                    <div>
+                        <h1>{{ detail.title }}</h1>
+                        {% if detail.tagline %}<p class="detail-tagline">{{ detail.tagline }}</p>{% endif %}
+                    </div>
+                    <div class="match-ring" style="--match-angle: {{ (detail.match_percentage / 100 * 360)|round(0) }}deg">
+                        <strong>{{ detail.match_percentage }}%</strong>
+                        <span>match</span>
+                    </div>
+                </div>
+
+                <div class="detail-meta">
+                    {% if detail.year %}<span>{{ detail.year }}</span>{% endif %}
+                    <span class="detail-rating">★ {{ "%.1f"|format(detail.vote_average) }}</span>
+                    {% if detail.status %}<span>{{ detail.status }}</span>{% endif %}
+                    {% if detail.runtime %}<span>{{ detail.runtime }} min</span>{% endif %}
+                    {% if detail.seasons %}<span>{{ detail.seasons }} seasons</span>{% endif %}
+                </div>
+
+                <div class="detail-genres">
+                    {% for genre in detail.genres %}
+                    <span>{{ genre }}</span>
+                    {% endfor %}
+                </div>
+
+                <p class="detail-overview">{{ detail.overview or "No description available." }}</p>
+
+                <div class="detail-actions">
+                    {% if detail.is_watched %}
+                    <div class="detail-watched-badge">✅ Already watched{% if detail.user_rating is not none %} • Your rating {{ "%.1f"|format(detail.user_rating) }}/10{% endif %}</div>
+                    {% else %}
+                    <form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watched-form">
+                        <input type="hidden" name="title" value="{{ detail.title }}">
+                        <input type="hidden" name="media_type" value="{{ media_type }}">
+                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
+                        <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required>
+                        <button type="submit">✅ Mark watched</button>
+                    </form>
+                    {% endif %}
+
+                    <form method="post" action="{{ ingress_path|default('') }}/watchlist/toggle">
+                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
+                        <input type="hidden" name="media_type" value="{{ media_type }}">
+                        <input type="hidden" name="title" value="{{ detail.title }}">
+                        <input type="hidden" name="year" value="{{ detail.year or '' }}">
+                        <input type="hidden" name="poster" value="{{ detail.poster or '' }}">
+                        <input type="hidden" name="backdrop" value="{{ detail.backdrop or '' }}">
+                        <input type="hidden" name="overview" value="{{ detail.overview or '' }}">
+                        <input type="hidden" name="vote_average" value="{{ detail.vote_average }}">
+                        <input type="hidden" name="remove" value="{{ 'true' if detail.is_watchlisted else 'false' }}">
+                        <button class="watchlist-button" type="submit">{{ "✓ In Watchlist" if detail.is_watchlisted else "+ Watchlist" }}</button>
+                    </form>
+
+                    <a class="tmdb-detail-button" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">Open TMDB ↗</a>
+                </div>
+
+                <div class="why-detail">
+                    <div class="why-detail-label">WHY YOU MAY LIKE IT</div>
+                    <p>Based on your current library and ratings, this title is estimated at <strong>{{ detail.match_percentage }}% compatibility</strong> with your taste.</p>
+                </div>
+
+                {% if detail.director %}
+                <div class="detail-director"><span>{{ "DIRECTOR" if media_type == "Movie" else "CREATED BY" }}</span><strong>{{ detail.director }}</strong></div>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    {% if detail.cast %}
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>Cast</h2><span>{{ detail.cast|length }} featured</span></div>
+        <div class="cast-rail">
+            {% for person in detail.cast %}
+            <div class="cast-card">
+                {% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty">👤</div>{% endif %}
+                <strong>{{ person.name }}</strong>
+                {% if person.character %}<span>{{ person.character }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if detail.similar %}
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>More like this</h2><span>TMDB similar titles</span></div>
+        <div class="similar-rail">
+            {% for item in detail.similar %}
+            <a class="similar-card" href="{{ ingress_path|default('') }}/title/{{ media_type }}/{{ item.tmdb_id }}">
+                {% if item.poster %}<img src="{{ item.poster }}" alt="{{ item.title }}">{% endif %}
+                <div class="similar-info">
+                    <strong>{{ item.title }}</strong>
+                    <span>{% if item.year %}{{ item.year }} • {% endif %}★ {{ "%.1f"|format(item.vote_average) }}</span>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+{% elif watched_page %}
+    <section class="already-watched-page">
+        <header class="watched-page-header">
+            <div>
+                <span class="watched-page-kicker">YOUR LIBRARY</span>
+                <h1>Already Watched</h1>
+                <p>Everything you've watched, rated and saved in your personal cinema.</p>
+            </div>
+            <div class="watched-page-count">
+                <strong>{{ movies|length }}</strong>
+                <span>Total watched</span>
+            </div>
+        </header>
+
+        <div class="watched-filter-bar" role="tablist">
+            <button class="watched-filter active" type="button" data-filter="all">All</button>
+            <button class="watched-filter" type="button" data-filter="Movie">Movies</button>
+            <button class="watched-filter" type="button" data-filter="Series">Series</button>
+        </div>
+
+        {% if movies %}
+        <section class="watched-section" data-watched-section>
+            <div class="watched-section-heading">
+                <h2>Recently watched</h2>
+                <span>{{ movies|length }} titles</span>
+            </div>
+            <div class="watched-grid">
+                {% for movie in movies %}
+                <article class="watched-card" data-media-type="{{ movie['type'] }}">
+                    <a href="{{ ingress_path|default('') }}/title/{{ movie['type'] }}/{{ movie['tmdb_id'] }}" class="watched-card-poster">
+                        {% if movie["poster"] %}
+                        <img src="{{ movie['poster'] }}" alt="{{ movie['title'] }}" loading="lazy">
+                        {% else %}
+                        <div class="poster-placeholder">{{ '🎬' if movie['type'] == 'Movie' else '📺' }}</div>
+                        {% endif %}
+                        <span class="watched-type-badge">{{ movie['type']|upper }}</span>
+                        <span class="watched-rating-badge">★ {{ "%.1f"|format(movie["rating"]) }}</span>
+                    </a>
+                    <div class="watched-card-body">
+                        <h3 title="{{ movie['title'] }}">{{ movie['title'] }}</h3>
+                        <div class="watched-card-meta">{% if movie['year'] %}{{ movie['year'] }}{% else %}Year unknown{% endif %}</div>
+                        <div class="watched-card-actions">
+                            {% if movie['tmdb_id'] %}
+                            <a href="{{ ingress_path|default('') }}/title/{{ movie['type'] }}/{{ movie['tmdb_id'] }}">Details</a>
+                            {% endif %}
+                            <form action="{{ ingress_path|default('') }}/delete/{{ movie['id'] }}" method="post" style="flex:1;display:flex;">
+                                <button type="submit">Remove</button>
+                            </form>
+                        </div>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+        {% else %}
+        <div class="watched-empty">
+            <div style="font-size:36px;margin-bottom:10px">🎬</div>
+            <strong>No watched titles yet</strong>
+            <p>Search for a movie or series and add it to your library.</p>
+        </div>
+        {% endif %}
+    </section>
+{% else %}
 
 
     <!-- ================================================== -->
@@ -1766,6 +1997,7 @@
 
     </footer>
 
+{% endif %}
 </main>
 
 
@@ -1850,9 +2082,6 @@ if (openSearchButton) {
         openSearchPanel
     );
 }
-
-window.openMovieAiSearch = openSearchPanel;
-if (new URLSearchParams(window.location.search).get("search") === "1") { setTimeout(openSearchPanel, 20); }
 
 if (closeSearchButton) {
     closeSearchButton.addEventListener(
@@ -2051,7 +2280,6 @@ const clearSearch =
 
 let searchTimer = null;
 let currentResults = [];
-let searchFilter = "All";
 let searchRequestSerial = 0;
 let activeSearchControllers = [];
 
@@ -2132,106 +2360,244 @@ if (titleInput) {
 /* PERFORM SEARCH */
 /* ========================================================= */
 
-async function performSearch(query) {
+async function performSearch(
+    query
+) {
     const requestSerial = ++searchRequestSerial;
-    activeSearchControllers.forEach(function (controller) { try { controller.abort(); } catch (_) {} });
+
+    activeSearchControllers.forEach(function (controller) {
+        try { controller.abort(); } catch (_) {}
+    });
     activeSearchControllers = [];
 
-    if (!titleInput || titleInput.value.trim() !== query) return;
+    if (!titleInput || titleInput.value.trim() !== query) {
+        return;
+    }
 
-    searchResults.innerHTML = `<div class="search-loading"><span class="loading-spinner"></span>Searching movies and series…</div>`;
+    searchResults.innerHTML = `
+        <div class="search-loading">
+            <span class="loading-spinner"></span>
+            Searching movies and series...
+        </div>
+    `;
+
     searchResults.classList.add("show");
 
+    const cacheBust = Date.now();
+
     try {
-        const response = await fetch(`${appUrl("/api/search")}?q=${encodeURIComponent(query)}&media_type=All&_=${Date.now()}`, {
-            cache: "no-store",
-            headers: { "Accept": "application/json" }
-        });
-        if (requestSerial !== searchRequestSerial || titleInput.value.trim() !== query) return;
-        if (!response.ok) throw new Error(`Search failed (${response.status})`);
-        const data = await response.json();
-        const incoming = Array.isArray(data.results) ? data.results : [];
+        const base = appUrl("/api/search");
+        const movieController = new AbortController();
+        const seriesController = new AbortController();
+        activeSearchControllers = [movieController, seriesController];
+
+        const [movieResponse, seriesResponse] =
+            await Promise.all([
+                fetch(
+                    `${base}?q=${encodeURIComponent(query)}&media_type=Movie&_=${cacheBust}`,
+                    { cache: "no-store", signal: movieController.signal }
+                ),
+                fetch(
+                    `${base}?q=${encodeURIComponent(query)}&media_type=Series&_=${cacheBust + 1}`,
+                    { cache: "no-store", signal: seriesController.signal }
+                )
+            ]);
+
+        if (requestSerial !== searchRequestSerial ||
+            !titleInput ||
+            titleInput.value.trim() !== query) {
+            return;
+        }
+
+        if (!movieResponse.ok || !seriesResponse.ok) {
+            throw new Error(
+                `Search failed (${movieResponse.status}/${seriesResponse.status})`
+            );
+        }
+
+        const [movieData, seriesData] =
+            await Promise.all([
+                movieResponse.json(),
+                seriesResponse.json()
+            ]);
+
+        /*
+         * Support both versions of the backend:
+         *   old: { results: [...] }
+         *   new: { movies: [...], series: [...] }
+         */
+        let movies = Array.isArray(movieData.results)
+            ? movieData.results
+            : Array.isArray(movieData.movies)
+                ? movieData.movies
+                : [];
+
+        let series = Array.isArray(seriesData.results)
+            ? seriesData.results
+            : Array.isArray(seriesData.series)
+                ? seriesData.series
+                : [];
+
+        movies = movies.map(item => ({
+            ...item,
+            media_type: "Movie"
+        }));
+
+        series = series.map(item => ({
+            ...item,
+            media_type: "Series"
+        }));
+
+        /* Remove accidental duplicate IDs within each type. */
         const seen = new Set();
-        currentResults = incoming.filter(item => {
+        currentResults = [...movies, ...series].filter(item => {
             const key = `${item.media_type}:${item.tmdb_id}`;
-            if (!item.tmdb_id || seen.has(key)) return false;
+            if (!item.tmdb_id || seen.has(key)) {
+                return false;
+            }
             seen.add(key);
             return true;
         });
+
         renderSearchResults(currentResults);
+
     } catch (error) {
-        if (error.name === "AbortError") return;
+
         console.error("Search error:", error);
-        searchResults.innerHTML = `<div class="search-empty">Unable to search TMDB.<small>${escapeHtml(error.message)}</small></div>`;
+
+        searchResults.innerHTML = `
+            <div class="search-empty">
+                Unable to search TMDB.
+                <small>${escapeHtml(error.message)}</small>
+            </div>
+        `;
     }
 }
 
 /* ========================================================= */
 /* RENDER SEARCH RESULTS */
+/* ========================================================= */
 
-function renderSearchResults(results) {
-    const filters = `
-        <div class="search-results-head">
-            <div class="search-filter-group">
-                <button type="button" class="search-filter-chip ${searchFilter === "All" ? "active" : ""}" data-search-filter="All">All <span>${results.length}</span></button>
-                <button type="button" class="search-filter-chip ${searchFilter === "Movie" ? "active" : ""}" data-search-filter="Movie">Movies <span>${results.filter(x => x.media_type === "Movie").length}</span></button>
-                <button type="button" class="search-filter-chip ${searchFilter === "Series" ? "active" : ""}" data-search-filter="Series">Series <span>${results.filter(x => x.media_type === "Series").length}</span></button>
+function renderSearchResults(
+    results
+) {
+
+    if (!results.length) {
+
+        searchResults.innerHTML = `
+            <div class="search-empty">
+                No movies or series found.
             </div>
-        </div>`;
+        `;
 
-    const filtered = searchFilter === "All" ? results : results.filter(item => item.media_type === searchFilter);
-
-    if (!filtered.length) {
-        searchResults.innerHTML = filters + `<div class="search-empty">No ${searchFilter === "Series" ? "series" : searchFilter === "Movie" ? "movies" : "titles"} found.</div>`;
-    } else {
-        searchResults.innerHTML = filters + filtered.map(function(item) {
-            const year = item.year || "";
-            const poster = item.poster || "";
-            const rating = Number(item.vote_average || 0).toFixed(1);
-            const isSeries = item.media_type === "Series";
-            const resultIndex = currentResults.indexOf(item);
-            const typeLabel = isSeries ? "Series" : "Movie";
-            const icon = isSeries ? "<svg viewBox='0 0 24 24'><rect x='4' y='6' width='16' height='12' rx='2'/><path d='m8 6 2-3m2 3 2-3m2 3 2-3'/><path d='m9 10 6 4-6 4z'/></svg>" : "<svg viewBox='0 0 24 24'><rect x='3' y='6' width='18' height='12' rx='2'/><path d='m9 6 2 3m2-3 2 3M9 18l2-3m2 3 2-3'/></svg>";
-            return `
-                <div class="search-result-item" data-index="${resultIndex}">
-                    <button type="button" class="search-result-main" aria-label="Select ${escapeHtml(item.title)}">
-                        <div class="search-result-poster">${poster ? `<img src="${poster}" alt="" loading="lazy">` : `<div class="search-result-placeholder">${isSeries ? "📺" : "🎬"}</div>`}</div>
-                        <div class="search-result-info">
-                            <strong>${escapeHtml(item.title)}</strong>
-                            <div class="search-result-meta">${year ? `<span>${year}</span><span>•</span>` : ""}<span class="search-type-badge ${isSeries ? "search-series" : "search-movie"}">${icon}<span>${typeLabel}</span></span><span>★ ${rating}</span></div>
-                            <p>${escapeHtml(item.overview || "No description available.")}</p>
-                        </div>
-                    </button>
-                    <button type="button" class="search-result-details" data-details-index="${resultIndex}"><svg viewBox="0 0 24 24"><path d="M12 17v.01M12 7v6"/><circle cx="12" cy="12" r="9"/></svg><span>Details</span></button>
-                </div>`;
-        }).join("");
+        return;
     }
 
-    searchResults.querySelectorAll("[data-search-filter]").forEach(button => {
-        button.addEventListener("click", () => {
-            searchFilter = button.dataset.searchFilter || "All";
-            renderSearchResults(currentResults);
-        });
-    });
+    searchResults.innerHTML = results.map(
+        function(item, index) {
 
-    searchResults.querySelectorAll(".search-result-main").forEach(button => {
-        button.addEventListener("click", () => {
-            const item = currentResults[Number(button.closest(".search-result-item").dataset.index)];
-            selectSearchResult(item);
-        });
-    });
+            const year = item.year || "";
+            const poster = item.poster || "";
+            const rating = Number(
+                item.vote_average || 0
+            ).toFixed(1);
 
-    searchResults.querySelectorAll(".search-result-details").forEach(button => {
-        button.addEventListener("click", (event) => {
-            event.stopPropagation();
-            const item = currentResults[Number(button.dataset.detailsIndex)];
-            if (!item || !item.tmdb_id) return;
-            const target = appUrl(`/title/${item.media_type}/${item.tmdb_id}`);
-            if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
-            else window.location.href = target;
-        });
-    });
+            const isSeries =
+                item.media_type === "Series";
+
+            return `
+                <button
+                    type="button"
+                    class="search-result-item"
+                    data-index="${index}"
+                >
+                    <div class="search-result-poster">
+                        ${
+                            poster
+                                ? `
+                                    <img
+                                        src="${poster}"
+                                        alt=""
+                                        loading="lazy"
+                                    >
+                                `
+                                : `
+                                    <div class="search-result-placeholder">
+                                        ${isSeries ? "📺" : "🎬"}
+                                    </div>
+                                `
+                        }
+                    </div>
+
+                    <div class="search-result-info">
+                        <strong>
+                            ${escapeHtml(item.title)}
+                        </strong>
+
+                        <div class="search-result-meta">
+                            ${
+                                year
+                                    ? `<span>${year}</span><span>•</span>`
+                                    : ""
+                            }
+
+                            <span class="search-type-badge ${
+                                isSeries
+                                    ? "search-series"
+                                    : "search-movie"
+                            }">
+                                ${
+                                    isSeries
+                                        ? "📺 SERIES"
+                                        : "🎬 MOVIE"
+                                }
+                            </span>
+
+                            <span>
+                                ★ ${rating}
+                            </span>
+                        </div>
+
+                        <p>
+                            ${escapeHtml(
+                                item.overview ||
+                                "No description available."
+                            )}
+                        </p>
+                    </div>
+
+                    <span class="search-result-arrow">
+                        →
+                    </span>
+                </button>
+            `;
+        }
+    ).join("");
+
+    document
+        .querySelectorAll(
+            ".search-result-item"
+        )
+        .forEach(
+            function(button) {
+
+                button.addEventListener(
+                    "click",
+                    function() {
+
+                        const index = Number(
+                            button.dataset.index
+                        );
+
+                        selectSearchResult(
+                            currentResults[index]
+                        );
+                    }
+                );
+            }
+        );
 }
+
 
 /* ========================================================= */
 /* SELECT RESULT */
@@ -2461,9 +2827,8 @@ document
                     const ingressPath =
                         document.body.dataset.ingressPath || "";
 
-                    const target = `${ingressPath}/title/${mediaType}/${tmdbId}`;
-                    if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
-                    else window.location.href = target;
+                    window.location.href =
+                        `${ingressPath}/title/${mediaType}/${tmdbId}`;
                 }
             );
 
@@ -2507,9 +2872,8 @@ document
                     const ingressPath =
                         document.body.dataset.ingressPath || "";
 
-                    const target = `${ingressPath}/title/${mediaType}/${tmdbId}?match=100`;
-                    if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
-                    else window.location.href = target;
+                    window.location.href =
+                        `${ingressPath}/title/${mediaType}/${tmdbId}?match=100`;
                 }
             );
 
@@ -2594,9 +2958,9 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
 
             if (!type || !id) return;
 
-            const target = appUrl(`/title/${type}/${id}`);
-            if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
-            else window.location.href = target;
+            window.location.href = appUrl(
+                `/title/${type}/${id}`
+            );
         }
 
         card.addEventListener("click", function(event) {
@@ -2812,9 +3176,9 @@ function createLiveWatchedCard(item) {
             return;
         }
 
-        const target = appUrl(`/title/${encodeURIComponent(mediaType)}/${encodeURIComponent(item.tmdb_id)}?match=100`);
-        if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
-        else window.location.href = target;
+        window.location.href = appUrl(
+            `/title/${encodeURIComponent(mediaType)}/${encodeURIComponent(item.tmdb_id)}?match=100`
+        );
     });
 
     return article;
@@ -3318,400 +3682,6 @@ document.addEventListener("submit", async function (event) {
 
 </script>
 
-
-{% elif page == 'library' %}
-
-<div class="site-background library-background"></div>
-
-<nav class="topbar app-topbar legacy-topbar">
-    <a class="brand" href="{{ ingress_path|default('') }}/recommendations"><div class="brand-icon"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div><div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div></a>
-    <div class="topbar-nav"><a class="app-nav-item" href="{{ ingress_path|default('') }}/recommendations"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Discover</span></a><a class="app-nav-item active" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg><span>Library</span></a></div>
-    <div class="topbar-status"><span class="status-dot"></span><span>LOCAL SERVER</span></div>
-</nav>
-
-<main class="media-library-page">
-    <section class="library-hero">
-        <div class="library-hero-glow"></div>
-        <div class="library-hero-content">
-            <div class="local-kicker">YOUR LOCAL CINEMA</div>
-            <h1>Your Library</h1>
-            <p>Every movie and episode on your Debian mini PC, streamed directly from your HDD across your local network.</p>
-            <div class="library-hero-actions">
-                <button id="scanButton" class="library-action primary">↻ Scan library</button>
-                <button id="refreshButton" class="library-action">Refresh</button>
-            </div>
-        </div>
-        <div class="library-hero-stats">
-            <div><strong id="countTotal">{{ counts.total }}</strong><span>Titles & episodes</span></div>
-            <div><strong id="countMovies">{{ counts.Movie }}</strong><span>Movies</span></div>
-            <div><strong id="countSeries">{{ counts.Series }}</strong><span>Episodes</span></div>
-        </div>
-    </section>
-
-    <section class="library-toolbar">
-        <div class="library-tabs" role="tablist" aria-label="Library filter">
-            <button class="library-tab active" data-filter="all">All</button>
-            <button class="library-tab" data-filter="Movie">Movies</button>
-            <button class="library-tab" data-filter="Series">TV Shows</button>
-        </div>
-        <label class="library-search"><span>⌕</span><input id="librarySearch" type="search" placeholder="Search your library…" autocomplete="off"></label>
-        <div class="local-notice compact">Storage: <strong>{{ media_root }}</strong></div>
-    </section>
-
-    <section class="library-rail" id="continueSection" hidden>
-        <div class="rail-heading"><div><span class="rail-kicker">PICK UP WHERE YOU LEFT OFF</span><h2>Continue Watching</h2></div></div>
-        <div id="continueGrid" class="media-card-grid continue-grid"></div>
-    </section>
-
-    <section class="library-rail" id="moviesSection">
-        <div class="rail-heading"><div><span class="rail-kicker">LOCAL MOVIES</span><h2>Movies</h2></div><span id="movieRailCount" class="rail-count"></span></div>
-        <div id="moviesGrid" class="media-card-grid"></div>
-    </section>
-
-    <section class="library-rail" id="seriesSection">
-        <div class="rail-heading"><div><span class="rail-kicker">LOCAL SERIES</span><h2>TV Shows</h2></div><span id="seriesRailCount" class="rail-count"></span></div>
-        <div id="seriesGrid" class="media-card-grid"></div>
-    </section>
-
-    <div id="libraryEmpty" class="library-empty-state" hidden>
-        <div class="empty-art">🎬</div>
-        <h2>Your local library is empty</h2>
-        <p>Put video files in <strong>/mnt/storage/media/movies</strong> or <strong>/mnt/storage/media/tv</strong>, then scan again.</p>
-        <button class="library-action primary" onclick="document.getElementById('scanButton').click()">Scan library</button>
-    </div>
-</main>
-
-<div id="playerModal" class="player-modal" hidden>
-    <div class="player-backdrop" data-close-player></div>
-    <div class="player-dialog" role="dialog" aria-modal="true" aria-label="Local media player">
-        <button class="player-close" type="button" data-close-player aria-label="Close player">×</button>
-        <div class="player-video-wrap"><video id="playerVideo" controls playsinline preload="metadata"></video></div>
-        <div class="player-info"><div><span id="playerKicker" class="rail-kicker"></span><h2 id="playerTitle"></h2><p id="playerMeta"></p></div></div>
-    </div>
-</div>
-
-<script>
-const base = document.body.dataset.ingressPath || '';
-const streamUrl = id => `${base}/api/library/${id}/stream`;
-const fmtSize = bytes => { if (!bytes) return ''; const u=['B','KB','MB','GB','TB']; const i=Math.min(Math.floor(Math.log(bytes)/Math.log(1024)),u.length-1); return `${(bytes/Math.pow(1024,i)).toFixed(i?1:0)} ${u[i]}`; };
-const escapeHtml = v => String(v ?? '').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-let allMedia = [], currentFilter = 'all', currentSearch = '';
-
-function episodeLabel(item){ return item.season ? `S${String(item.season).padStart(2,'0')}E${String(item.episode||0).padStart(2,'0')}` : 'Episode'; }
-function posterMarkup(item, label, series=false){
-    if(item.poster){
-        return `<div class="media-poster ${series?'series-poster':''}"><img src="${escapeHtml(item.poster)}" alt="${escapeHtml(label)}" loading="lazy"><span class="poster-shade"></span><span class="poster-icon">▶</span></div>`;
-    }
-    const seed = encodeURIComponent((item.title || 'Movie').slice(0,24));
-    return `<div class="media-poster ${series?'series-poster':''}" style="--poster-seed:'${seed}'"><div class="poster-noise"></div><span class="poster-icon">${series?'▣':'▶'}</span><span class="poster-title">${escapeHtml(label)}</span></div>`;
-}
-function movieCard(item){
-    const progress = Number(item.watched_position || 0);
-    const pct = item.duration_seconds ? Math.min(100, Math.round(progress / item.duration_seconds * 100)) : 0;
-    return `<article class="media-card" data-kind="Movie" data-title="${escapeHtml(item.title)}" data-id="${item.id}">
-        <button class="media-card-open" data-play-id="${item.id}" aria-label="Play ${escapeHtml(item.title)}">
-            ${posterMarkup(item,item.title)}
-            <span class="play-badge">▶</span>
-            ${pct>0?`<span class="progress-line"><i style="width:${pct}%"></i></span>`:''}
-        </button>
-        <div class="media-card-info"><h3>${escapeHtml(item.title)}</h3><p>${[item.year, item.vote_average ? '★ '+Number(item.vote_average).toFixed(1) : '', fmtSize(item.size_bytes)].filter(Boolean).join(' · ') || 'Local movie'}</p></div>
-    </article>`;
-}
-function seriesGroups(items){
-    const map = new Map();
-    items.forEach(item=>{ const key=item.title.toLowerCase(); if(!map.has(key)) map.set(key, {title:item.title, items:[]}); map.get(key).items.push(item); });
-    return [...map.values()].sort((a,b)=>a.title.localeCompare(b.title));
-}
-function seriesCard(group){
-    const first = [...group.items].sort((a,b)=>(a.season||0)-(b.season||0)||(a.episode||0)-(b.episode||0))[0];
-    const watched = group.items.filter(x=>Number(x.watched_position||0)>0).length;
-    return `<article class="media-card" data-kind="Series" data-title="${escapeHtml(group.title)}" data-id="${first.id}">
-        <button class="media-card-open" data-play-id="${first.id}" aria-label="Play ${escapeHtml(group.title)}">
-            ${posterMarkup(first,group.title,true)}<span class="play-badge">▶</span>
-        </button>
-        <div class="media-card-info"><h3>${escapeHtml(group.title)}</h3><p>${group.items.length} episode${group.items.length===1?'':'s'}${first.year?' · '+first.year:''}${first.vote_average?' · ★ '+Number(first.vote_average).toFixed(1):''}${watched?' · '+watched+' in progress':''}</p></div>
-    </article>`;
-}
-function matches(item){ return (currentFilter==='all'||item.media_type===currentFilter) && (!currentSearch || item.title.toLowerCase().includes(currentSearch)); }
-function emptyCard(text){ return `<div class="library-inline-empty"><span>✦</span><strong>${escapeHtml(text)}</strong></div>`; }
-function render(){
-    const visible=allMedia.filter(matches), movies=visible.filter(x=>x.media_type==='Movie'), series=visible.filter(x=>x.media_type==='Series'), groups=seriesGroups(series);
-    const continued=allMedia.filter(x=>Number(x.watched_position||0)>0).sort((a,b)=>(b.watched_at||'').localeCompare(a.watched_at||'')).slice(0,8);
-    document.getElementById('moviesGrid').innerHTML=movies.length?movies.map(movieCard).join(''):emptyCard(currentSearch?'No matching movies.':'No movies yet.');
-    document.getElementById('seriesGrid').innerHTML=groups.length?groups.map(seriesCard).join(''):emptyCard(currentSearch?'No matching TV shows.':'No TV shows yet.');
-    document.getElementById('movieRailCount').textContent=movies.length?`${movies.length} title${movies.length===1?'':'s'}`:'';
-    document.getElementById('seriesRailCount').textContent=groups.length?`${groups.length} show${groups.length===1?'':'s'}`:'';
-    const cont=document.getElementById('continueSection'); cont.hidden=!continued.length; document.getElementById('continueGrid').innerHTML=continued.map(movieCard).join('');
-    document.getElementById('moviesSection').hidden=currentFilter==='Series';
-    document.getElementById('seriesSection').hidden=currentFilter==='Movie';
-    document.getElementById('libraryEmpty').hidden=allMedia.length>0 || currentSearch.length>0;
-    bindPlayButtons();
-}
-async function load(){
-    try { const r=await fetch(`${base}/api/library`); const d=await r.json(); allMedia=d.results||[]; document.getElementById('countTotal').textContent=d.counts.total; document.getElementById('countMovies').textContent=d.counts.Movie; document.getElementById('countSeries').textContent=d.counts.Series; render(); }
-    catch(e){ console.error(e); }
-}
-function openPlayer(id){
-    const item=allMedia.find(x=>String(x.id)===String(id)); if(!item) return;
-    const video=document.getElementById('playerVideo'); video.src=streamUrl(item.id); video.currentTime=Number(item.watched_position||0);
-    document.getElementById('playerKicker').textContent=item.media_type==='Series'?`${episodeLabel(item)} · TV SHOW`:'LOCAL MOVIE';
-    document.getElementById('playerTitle').textContent=item.title;
-    document.getElementById('playerMeta').textContent=[item.year,item.file_name,fmtSize(item.size_bytes)].filter(Boolean).join(' · ');
-    document.getElementById('playerModal').hidden=false; document.body.classList.add('modal-open'); video.play().catch(()=>{});
-}
-function closePlayer(){ const m=document.getElementById('playerModal'),v=document.getElementById('playerVideo'); if(m.hidden)return; if(v.dataset.mediaId) saveProgress(v.dataset.mediaId,v.currentTime); v.pause();v.removeAttribute('src');v.load();m.hidden=true;document.body.classList.remove('modal-open'); }
-function bindPlayButtons(){ document.querySelectorAll('[data-play-id]').forEach(b=>b.onclick=()=>{document.getElementById('playerVideo').dataset.mediaId=b.dataset.playId;openPlayer(b.dataset.playId);}); }
-async function saveProgress(id,pos){try{const body=new URLSearchParams({position:String(pos)});await fetch(`${base}/api/library/${id}/progress`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});}catch(e){}}
-document.querySelectorAll('[data-close-player]').forEach(x=>x.addEventListener('click',closePlayer));
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closePlayer();});
-document.getElementById('playerVideo').addEventListener('timeupdate',e=>{const v=e.currentTarget;if(v.dataset.mediaId&&Math.floor(v.currentTime)%10===0)saveProgress(v.dataset.mediaId,v.currentTime);});
-document.querySelectorAll('.library-tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.library-tab').forEach(x=>x.classList.remove('active'));btn.classList.add('active');currentFilter=btn.dataset.filter;render();}));
-document.getElementById('librarySearch').addEventListener('input',e=>{currentSearch=e.target.value.trim().toLowerCase();render();});
-document.getElementById('refreshButton').addEventListener('click',load);
-document.getElementById('scanButton').addEventListener('click',async()=>{const b=document.getElementById('scanButton');b.disabled=true;b.textContent='Scanning…';try{await fetch(`${base}/api/library/scan`,{method:'POST'});await load();}finally{b.disabled=false;b.textContent='↻ Scan library';}});
-load();
-</script>
-
-{% elif page == 'detail' %}
-
-<div class="site-background"></div>
-
-<nav class="topbar app-topbar detail-topbar legacy-topbar">
-    <a class="brand" href="{{ ingress_path|default('') }}/recommendations"><div class="brand-icon"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div><div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div></a>
-    <div class="topbar-nav"><a class="app-nav-item" href="{{ ingress_path|default('') }}/recommendations"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Discover</span></a><a class="app-nav-item" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg><span>Library</span></a></div>
-    <a class="detail-back" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/><path d="M9 12h10"/></svg><span>Back to library</span></a>
-</nav>
-
-<main class="detail-page">
-    <section class="detail-hero"{% if detail.backdrop %} style="--detail-backdrop: url('{{ detail.backdrop }}')"{% endif %}>
-        <div class="detail-hero-overlay"></div>
-        <div class="detail-hero-content">
-            <div class="detail-poster-wrap">
-                {% if detail.poster %}
-                <img class="detail-poster" src="{{ detail.poster }}" alt="{{ detail.title }}">
-                {% else %}
-                <div class="detail-poster detail-poster-empty">🎬</div>
-                {% endif %}
-            </div>
-
-            <div class="detail-main">
-                <div class="detail-kicker">{{ "MOVIE" if media_type == "Movie" else "SERIES" }} • TMDB</div>
-                <div class="detail-title-row">
-                    <div>
-                        <h1>{{ detail.title }}</h1>
-                        {% if detail.tagline %}<p class="detail-tagline">{{ detail.tagline }}</p>{% endif %}
-                    </div>
-                    <div class="match-ring" style="--match-angle: {{ (detail.match_percentage / 100 * 360)|round(0) }}deg">
-                        <strong>{{ detail.match_percentage }}%</strong>
-                        <span>match</span>
-                    </div>
-                </div>
-
-                <div class="detail-meta">
-                    {% if detail.year %}<span>{{ detail.year }}</span>{% endif %}
-                    <span class="detail-rating">★ {{ "%.1f"|format(detail.vote_average) }}</span>
-                    {% if detail.status %}<span>{{ detail.status }}</span>{% endif %}
-                    {% if detail.runtime %}<span>{{ detail.runtime }} min</span>{% endif %}
-                    {% if detail.seasons %}<span>{{ detail.seasons }} seasons</span>{% endif %}
-                </div>
-
-                <div class="detail-genres">
-                    {% for genre in detail.genres %}
-                    <span>{{ genre }}</span>
-                    {% endfor %}
-                </div>
-
-                <p class="detail-overview">{{ detail.overview or "No description available." }}</p>
-
-                <div class="detail-actions">
-                    {% if detail.is_watched %}
-                    <div class="detail-watched-badge">✅ Already watched{% if detail.user_rating is not none %} • Your rating {{ "%.1f"|format(detail.user_rating) }}/10{% endif %}</div>
-                    {% else %}
-                    <form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watched-form">
-                        <input type="hidden" name="title" value="{{ detail.title }}">
-                        <input type="hidden" name="media_type" value="{{ media_type }}">
-                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
-                        <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required>
-                        <button type="submit">✅ Mark watched</button>
-                    </form>
-                    {% endif %}
-
-                    <form method="post" action="{{ ingress_path|default('') }}/watchlist/toggle">
-                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
-                        <input type="hidden" name="media_type" value="{{ media_type }}">
-                        <input type="hidden" name="title" value="{{ detail.title }}">
-                        <input type="hidden" name="year" value="{{ detail.year or '' }}">
-                        <input type="hidden" name="poster" value="{{ detail.poster or '' }}">
-                        <input type="hidden" name="backdrop" value="{{ detail.backdrop or '' }}">
-                        <input type="hidden" name="overview" value="{{ detail.overview or '' }}">
-                        <input type="hidden" name="vote_average" value="{{ detail.vote_average }}">
-                        <input type="hidden" name="remove" value="{{ 'true' if detail.is_watchlisted else 'false' }}">
-                        <button class="watchlist-button" type="submit">{{ "✓ In Watchlist" if detail.is_watchlisted else "+ Watchlist" }}</button>
-                    </form>
-
-                    <a class="tmdb-detail-button" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">Open TMDB ↗</a>
-                </div>
-
-                <div class="why-detail">
-                    <div class="why-detail-label">WHY YOU MAY LIKE IT</div>
-                    <p>Based on your current library and ratings, this title is estimated at <strong>{{ detail.match_percentage }}% compatibility</strong> with your taste.</p>
-                </div>
-
-                {% if detail.director %}
-                <div class="detail-director"><span>{{ "DIRECTOR" if media_type == "Movie" else "CREATED BY" }}</span><strong>{{ detail.director }}</strong></div>
-                {% endif %}
-            </div>
-        </div>
-    </section>
-
-    {% if detail.cast %}
-    <section class="detail-section">
-        <div class="detail-section-heading"><h2>Cast</h2><span>{{ detail.cast|length }} featured</span></div>
-        <div class="cast-rail">
-            {% for person in detail.cast %}
-            <div class="cast-card">
-                {% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty">👤</div>{% endif %}
-                <strong>{{ person.name }}</strong>
-                {% if person.character %}<span>{{ person.character }}</span>{% endif %}
-            </div>
-            {% endfor %}
-        </div>
-    </section>
-    {% endif %}
-
-    {% if detail.similar %}
-    <section class="detail-section">
-        <div class="detail-section-heading"><h2>More like this</h2><span>TMDB similar titles</span></div>
-        <div class="similar-rail">
-            {% for item in detail.similar %}
-            <a class="similar-card" href="{{ ingress_path|default('') }}/title/{{ media_type }}/{{ item.tmdb_id }}">
-                {% if item.poster %}<img src="{{ item.poster }}" alt="{{ item.title }}">{% endif %}
-                <div class="similar-info">
-                    <strong>{{ item.title }}</strong>
-                    <span>{% if item.year %}{{ item.year }} • {% endif %}★ {{ "%.1f"|format(item.vote_average) }}</span>
-                </div>
-            </a>
-            {% endfor %}
-        </div>
-    </section>
-    {% endif %}
-</main>
-
-<script>
-(function () {
-    const base = document.body.dataset.ingressPath || "";
-    document.querySelectorAll(".similar-card").forEach(function (card) {
-        const href = card.getAttribute("href") || "";
-        if (!href.startsWith("/app/") && base && href.startsWith("/title/")) {
-            card.setAttribute("href", base + href);
-        }
-    });
-})();
-</script>
-
-{% endif %}
-</div>
-<script id="global-navigation-script">
-(() => {
-    const body = document.body;
-    const root = document.getElementById("app-root");
-    const ingress = body.dataset.ingressPath || "";
-
-    function appUrl(path) {
-        if (!path) return ingress || "/";
-        if (path.startsWith(ingress + "/") || path === ingress) return path;
-        if (/^https?:\/\//i.test(path)) return path;
-        const clean = path.startsWith("/") ? path : `/${path}`;
-        return ingress ? `${ingress}${clean}` : clean;
-    }
-
-    function syncNav(path) {
-        const relative = path.replace(/^\/app/, "") || "/";
-        let active = relative.startsWith("/library") ? "library" : "recommendations";
-        document.querySelectorAll(".global-nav-link[data-route]").forEach(link => {
-            link.classList.toggle("active", link.dataset.route === active);
-        });
-    }
-
-    async function executeScripts(fragment) {
-        const scripts = Array.from(fragment.querySelectorAll("script:not(#global-navigation-script)"));
-        for (const oldScript of scripts) {
-            if (oldScript.src) {
-                await new Promise((resolve, reject) => {
-                    const script = document.createElement("script");
-                    script.src = oldScript.src;
-                    script.onload = resolve;
-                    script.onerror = reject;
-                    document.body.appendChild(script);
-                });
-            } else if (oldScript.textContent.trim()) {
-                try {
-                    new Function(oldScript.textContent)();
-                } catch (error) {
-                    console.error("Page script error", error);
-                }
-            }
-        }
-        document.dispatchEvent(new Event("DOMContentLoaded"));
-    }
-
-    async function navigate(url, push = true) {
-        const target = appUrl(url);
-        if (target === location.pathname + location.search) return;
-        body.classList.add("route-loading");
-        try {
-            const response = await fetch(target, { headers: { "X-Requested-With": "SPA" }, cache: "no-store" });
-            if (!response.ok) throw new Error(`Navigation failed: ${response.status}`);
-            const html = await response.text();
-            const doc = new DOMParser().parseFromString(html, "text/html");
-            const nextRoot = doc.getElementById("app-root");
-            if (!nextRoot) throw new Error("Page shell missing");
-            const current = document.getElementById("app-root");
-            current.replaceWith(nextRoot);
-            document.body.dataset.page = nextRoot.dataset.page || "";
-            document.title = doc.title || "My Movie AI";
-            if (push) history.pushState({ url: target }, "", target);
-            window.scrollTo({ top: 0, behavior: "instant" });
-            syncNav(target);
-            nextRoot.classList.add("route-enter");
-            await executeScripts(nextRoot);
-            const searchRequested = new URL(target, location.origin).searchParams.get("search") === "1";
-            if (searchRequested && typeof window.openMovieAiSearch === "function") window.openMovieAiSearch();
-            setTimeout(() => nextRoot.classList.remove("route-enter"), 260);
-        } catch (error) {
-            console.error(error);
-            location.href = target;
-        } finally {
-            body.classList.remove("route-loading");
-        }
-    }
-
-    window.movieAiNavigate = navigate;
-    syncNav(location.pathname + location.search);
-
-    document.addEventListener("click", (event) => {
-        const searchTrigger = event.target.closest("[data-search-link]");
-        if (searchTrigger) {
-            event.preventDefault();
-            const currentPage = document.body.dataset.page;
-            if (currentPage === "recommendations" && typeof window.openMovieAiSearch === "function") {
-                window.openMovieAiSearch();
-            } else {
-                navigate(searchTrigger.getAttribute("href") || "/recommendations?search=1");
-            }
-            return;
-        }
-        const link = event.target.closest("a[data-nav], #app-root a[href]");
-        if (!link) return;
-        const href = link.getAttribute("href") || "";
-        if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("javascript:") || link.target === "_blank" || href.includes("/static/") || href.includes("api/")) return;
-        if (/^https?:\/\//i.test(href) && !href.startsWith(location.origin)) return;
-        event.preventDefault();
-        navigate(href);
-    });
-
-    window.addEventListener("popstate", () => navigate(location.pathname + location.search, false));
-})();
-</script>
 </body>
+
 </html>
