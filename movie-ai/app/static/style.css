@@ -7164,3 +7164,67 @@ svg.app-svg-icon {
         top: 9px;
     }
 }
+
+/* Recommendation count setting */
+.settings-card-wide {
+    grid-column: 1 / -1;
+}
+.settings-control-content {
+    flex: 1;
+}
+.settings-limit-form {
+    margin-top: 12px;
+}
+.settings-limit-form label {
+    display: block;
+    margin-bottom: 7px;
+    color: #f3f3f5;
+    font-size: 11px;
+    font-weight: 800;
+}
+.settings-limit-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.settings-limit-row input {
+    width: 76px;
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid rgba(255,255,255,.11);
+    border-radius: 8px;
+    background: rgba(255,255,255,.045);
+    color: #fff;
+    font-size: 12px;
+}
+.settings-limit-row .primary-button {
+    min-width: 82px;
+    height: 36px;
+}
+.settings-help {
+    display: block;
+    margin-top: 7px;
+    color: #777681;
+    font-size: 9px;
+}
+.trending-watched-form {
+    width: 100%;
+    margin: 0;
+}
+.trending-watched-form input {
+    width: 48px;
+}
+.trending-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+.trending-actions .tmdb-button,
+.trending-actions .not-interested-form,
+.trending-actions .watched-inline {
+    width: 100%;
+}
+.trending-actions .watched-button,
+.trending-actions .not-interested-button {
+    min-height: 30px;
+}
