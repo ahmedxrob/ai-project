@@ -32,7 +32,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=20260919.17"
+        href="/static/style.css?v=20260919.18"
     >
 
 
@@ -240,33 +240,42 @@
 
         <div class="search-page-layout">
             <section class="search-page-search-card">
-                <div class="search-page-card-kicker">SEARCH TMDB</div>
+                <div class="search-page-card-kicker-row">
+                    <div>
+                        <div class="search-page-card-kicker">SEARCH TMDB</div>
+                        <div class="search-page-card-hint">Movies and Series, ranked together</div>
+                    </div>
+                    <span class="search-page-live-pill"><span></span> LIVE SEARCH</span>
+                </div>
                 <div class="search-page-input-wrap">
                     <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
-                    <input id="title" type="text" name="title" placeholder="Search a movie or series..." autocomplete="off" aria-label="Search movies and series">
+                    <input id="title" type="text" name="title" placeholder="Search movies, series, actors, or titles..." autocomplete="off" aria-label="Search movies and series">
                     <button type="button" id="clear-search" aria-label="Clear search">×</button>
                 </div>
+                <div class="search-page-search-tip"><span>Enter at least 2 characters</span><span>↵ Select</span><span>↗ Details</span></div>
                 <div id="search-results" class="search-page-results"></div>
             </section>
 
-            <aside class="search-page-preview-card" id="selected-preview">
-                <div class="selected-preview-empty">
-                    <div class="preview-empty-icon">{{ ui_icon("movie", "md") }}</div>
-                    <strong>Select a movie or series</strong>
-                    <span>Click a result to preview it. Use the arrow to open its full details.</span>
-                </div>
+            <aside class="search-page-side">
+                <section class="search-page-preview-card" id="selected-preview">
+                    <div class="selected-preview-empty">
+                        <div class="preview-empty-icon">{{ ui_icon("movie", "md") }}</div>
+                        <strong>Select a movie or series</strong>
+                        <span>Choose a result on the left to see artwork, rating, metadata, and a direct Details action.</span>
+                    </div>
+                </section>
+
+                <form action="/add" method="post" class="search-page-add-form" id="add-form" data-ajax-add="true">
+                    <input type="hidden" id="tmdb_id" name="tmdb_id" value="">
+                    <input type="hidden" id="media_type" name="media_type" value="">
+                    <div class="search-page-rating">
+                        <label for="rating">YOUR RATING</label>
+                        <div class="search-page-rating-input"><span>★</span><input id="rating" type="number" name="rating" min="0" max="10" step="0.1" placeholder="9.0" required><small>/10</small></div>
+                    </div>
+                    <button type="submit" class="primary-button" id="add-button"><span>Add to collection</span><span>→</span></button>
+                </form>
             </aside>
         </div>
-
-        <form action="/add" method="post" class="search-page-add-form" id="add-form" data-ajax-add="true">
-            <input type="hidden" id="tmdb_id" name="tmdb_id" value="">
-            <input type="hidden" id="media_type" name="media_type" value="">
-            <div class="search-page-rating">
-                <label for="rating">Your rating</label>
-                <div class="search-page-rating-input"><span>★</span><input id="rating" type="number" name="rating" min="0" max="10" step="0.1" placeholder="9.0" required><small>/10</small></div>
-            </div>
-            <button type="submit" class="primary-button" id="add-button"><span>Add to collection</span><span>→</span></button>
-        </form>
     </section>
 
 {% elif watched_page %}
@@ -792,7 +801,7 @@
             </div>
 
             <span>
-                {{ recommendation_limit|default(8) * 2 }} max
+                {{ recommendation_limit|default(8) }} max per section
             </span>
 
         </div>
@@ -1077,7 +1086,7 @@
             </div>
 
             <span>
-                {{ recommendation_limit|default(8) * 2 }} max
+                {{ recommendation_limit|default(8) }} max per section
             </span>
 
         </div>
@@ -2611,6 +2620,12 @@ function renderSelectedPreview(
                     TMDB #${item.tmdb_id}
                 </div>
 
+                <div class="selected-preview-actions">
+                    <a class="selected-preview-details-link" href="${appUrl(`/title/${encodeURIComponent(item.media_type)}/${encodeURIComponent(item.tmdb_id)}`)}">
+                        ${uiIcon("movie")} Open Details
+                    </a>
+                </div>
+
             </div>
         </div>
     `;
@@ -2849,9 +2864,13 @@ function bindHomeDetailCards(root) {
         card.addEventListener('click', function(event) {
             if (event.target.closest('.home-wishlist-button, a, button, form, input, select, textarea')) return;
             const rail = card.closest('.drag-scroll-rail');
-            if (rail && rail.dataset.dragged === '1') {
-                rail.dataset.dragged = '0';
-                return;
+            if (rail) {
+                const suppressUntil = Number(rail.dataset.suppressClickUntil || 0);
+                if (suppressUntil > Date.now()) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    return;
+                }
             }
             openHomeCardDetails(card);
         }, true);
@@ -3038,6 +3057,9 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
     if (window.bindHomeDetailCards) {
         window.bindHomeDetailCards(container);
     }
+    if (window.initRailDrag) {
+        window.initRailDrag(container);
+    }
 }
 
 async function loadLifetimeStatistics() {
@@ -3102,8 +3124,14 @@ if (recommendationLimitForm) {
     });
 }
 
-loadLifetimeStatistics();
-const lifetimeStatisticsTimer = setInterval(loadLifetimeStatistics, 5000);
+if (document.getElementById("header-watched-count")) {
+    loadLifetimeStatistics();
+    window.lifetimeStatisticsTimer = setInterval(function () {
+        if (document.visibilityState === "visible") {
+            loadLifetimeStatistics();
+        }
+    }, 15000);
+}
 
 
 async function loadTrendingNow() {
@@ -3770,8 +3798,19 @@ function initRailDrag(root) {
             } catch (_) {}
 
             if (wasDragging) {
-                // Browser fires a click after mouseup. Suppress only that click.
-                suppressClickUntil = Date.now() + 180;
+                // Browser fires a click after mouseup. Keep the suppression window
+                // on the rail so the card capture handler cannot clear it early.
+                suppressClickUntil = Date.now() + 220;
+                rail.dataset.suppressClickUntil = String(suppressClickUntil);
+                window.setTimeout(function () {
+                    if (Number(rail.dataset.suppressClickUntil || 0) <= Date.now()) {
+                        rail.dataset.suppressClickUntil = "0";
+                        rail.dataset.dragged = "0";
+                    }
+                }, 240);
+            } else {
+                rail.dataset.suppressClickUntil = "0";
+                rail.dataset.dragged = "0";
             }
         }
 
@@ -3786,10 +3825,10 @@ function initRailDrag(root) {
         });
 
         rail.addEventListener("click", function (event) {
-            if (Date.now() < suppressClickUntil || rail.dataset.dragged === "1") {
+            const until = Number(rail.dataset.suppressClickUntil || suppressClickUntil || 0);
+            if (until > Date.now()) {
                 event.preventDefault();
-                event.stopPropagation();
-                rail.dataset.dragged = "0";
+                event.stopImmediatePropagation();
             }
         });
     });
