@@ -4920,3 +4920,35 @@ body.modal-open{overflow:hidden}
 .player-modal[hidden]{display:none}.player-modal{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:30px}.player-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(14px)}.player-dialog{width:min(1100px,96vw);position:relative;z-index:1;border:1px solid rgba(255,255,255,.1);border-radius:16px;overflow:hidden;background:#0c0c10;box-shadow:0 30px 100px rgba(0,0,0,.65)}.player-close{position:absolute;right:12px;top:12px;z-index:3;width:35px;height:35px;border:0;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:23px;cursor:pointer}.player-video-wrap{background:#000;aspect-ratio:16/9}.player-video-wrap video{width:100%;height:100%;display:block}.player-info{padding:18px 22px 22px}.player-info h2{margin:4px 0 5px;font-size:24px;letter-spacing:-1px}.player-info p{margin:0;color:#777984;font-size:10px}
 @media(max-width:1100px){.media-card-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.library-hero{flex-direction:column;align-items:flex-start}.library-hero-stats{min-width:0}.local-notice.compact{display:none}}
 @media(max-width:700px){.media-library-page{width:94%}.library-hero{min-height:390px;padding-top:42px}.library-hero h1{font-size:49px;letter-spacing:-3px}.library-toolbar{top:62px;flex-wrap:wrap}.library-search{width:100%;order:3;margin-left:0}.media-card-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.continue-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.library-hero-stats{gap:13px}.library-hero-stats strong{font-size:23px}}
+
+/* TMDB-backed local library posters */
+.media-poster img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;z-index:0}
+.media-poster .poster-shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.04),rgba(0,0,0,.48));z-index:1}
+.media-poster .poster-icon{z-index:2}
+
+/* =========================================================
+   APP SHELL REDESIGN v3
+   ========================================================= */
+.topbar.app-topbar{height:76px;padding:0 38px;background:rgba(7,8,11,.72);border-bottom:1px solid rgba(255,255,255,.075);box-shadow:0 12px 40px rgba(0,0,0,.18)}
+.app-topbar .brand{text-decoration:none;color:inherit;min-width:240px}
+.app-topbar .brand-icon{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(145deg,#ff3341,#a90018);box-shadow:0 10px 30px rgba(229,9,20,.25)}
+.app-topbar .brand-icon svg,.app-nav-item svg,.detail-back svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.app-topbar .brand-text strong{font-size:15px;letter-spacing:-.2px}.app-topbar .brand-text span{font-size:8px;letter-spacing:1.8px;color:#7f818b}
+.topbar-nav{display:flex;align-items:center;gap:5px;padding:5px;border:1px solid rgba(255,255,255,.07);border-radius:16px;background:rgba(255,255,255,.035);box-shadow:inset 0 1px rgba(255,255,255,.035)}
+.app-nav-item{display:flex;align-items:center;gap:9px;height:42px;padding:0 16px;border-radius:12px;border:0;background:transparent;color:#898b96;text-decoration:none;font-size:12px;font-weight:800;cursor:pointer;transition:.2s ease}
+.app-nav-item:hover{color:#fff;background:rgba(255,255,255,.06);transform:translateY(-1px)}
+.app-nav-item.active{color:#fff;background:rgba(255,255,255,.09);box-shadow:0 5px 18px rgba(0,0,0,.2)}
+.app-nav-item.active svg{color:#ff4350}.nav-button{font-family:inherit}.topbar-status{padding:10px 13px;border:1px solid rgba(255,255,255,.06);border-radius:999px;background:rgba(255,255,255,.035);font-size:9px!important;font-weight:800;letter-spacing:1.2px;color:#777985!important}
+.library-action,.primary-button,.generate-button,.watchlist-button,.tmdb-detail-button,.detail-watched-form button,.remove-button{border:1px solid rgba(255,255,255,.09)!important;border-radius:12px!important;min-height:44px;padding:0 17px!important;font-weight:800!important;transition:.2s ease!important;cursor:pointer}
+.library-action:hover,.generate-button:hover,.watchlist-button:hover,.tmdb-detail-button:hover,.detail-watched-form button:hover,.remove-button:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.18)!important;background:rgba(255,255,255,.08)!important;box-shadow:0 12px 28px rgba(0,0,0,.24)}
+.library-action.primary,.primary-button{background:linear-gradient(135deg,#ef2637,#b50716)!important;border-color:rgba(255,90,100,.35)!important;box-shadow:0 10px 28px rgba(229,9,20,.18)}
+.library-tabs{padding:5px!important;border:1px solid rgba(255,255,255,.07);border-radius:14px;background:rgba(255,255,255,.035)}
+.library-tab{border-radius:10px!important;border:0!important;padding:10px 16px!important;background:transparent!important;color:#81838e!important;font-weight:800!important}.library-tab.active{background:rgba(255,255,255,.10)!important;color:#fff!important}
+.library-search{border:1px solid rgba(255,255,255,.08)!important;border-radius:13px!important;background:rgba(255,255,255,.045)!important;box-shadow:none!important}.library-search:focus-within{border-color:rgba(229,9,20,.5)!important;box-shadow:0 0 0 3px rgba(229,9,20,.08)!important}
+.library-search input{font-weight:600!important}
+.media-card,.library-card,.trending-card,.recommendation-card{border:1px solid rgba(255,255,255,.07)!important;background:linear-gradient(180deg,rgba(23,24,29,.82),rgba(12,13,16,.94))!important;box-shadow:0 16px 40px rgba(0,0,0,.22)!important;transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease!important}
+.media-card:hover,.library-card:hover,.trending-card:hover,.recommendation-card:hover{transform:translateY(-6px)!important;border-color:rgba(255,255,255,.16)!important;box-shadow:0 24px 55px rgba(0,0,0,.38)!important}
+.detail-back{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:#c9cad1;text-decoration:none;font-size:11px;font-weight:800}.detail-back:hover{background:rgba(255,255,255,.09);color:#fff}
+.search-result-item{transition:.18s ease!important;border:1px solid transparent!important}.search-result-item:hover{background:rgba(255,255,255,.07)!important;border-color:rgba(255,255,255,.08)!important;transform:translateX(3px)}
+.detail-section,.detail-main{position:relative}.detail-hero{border-bottom:1px solid rgba(255,255,255,.07)}
+@media(max-width:850px){.topbar.app-topbar{padding:0 16px}.app-topbar .brand-text span,.topbar-status{display:none!important}.app-topbar .brand{min-width:auto}.topbar-nav{margin-left:auto}.app-nav-item{padding:0 11px}.app-nav-item span{display:none}.app-nav-item svg{width:19px;height:19px}.library-toolbar{flex-wrap:wrap}.library-search{width:100%!important}}
