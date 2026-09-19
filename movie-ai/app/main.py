@@ -218,7 +218,7 @@ def get_env(name: str) -> str:
 
 MEDIA_ROOT = Path(get_env("MEDIA_ROOT") or "/mnt/storage/media").expanduser().resolve()
 MEDIA_MOVIES_ROOT = Path(get_env("MEDIA_MOVIES_ROOT") or str(MEDIA_ROOT / "movies")).expanduser().resolve()
-MEDIA_SERIES_ROOT = Path(get_env("MEDIA_SERIES_ROOT") or str(MEDIA_ROOT / "series")).expanduser().resolve()
+MEDIA_SERIES_ROOT = Path(get_env("MEDIA_SERIES_ROOT") or str(MEDIA_ROOT / "tv")).expanduser().resolve()
 MEDIA_EXTENSIONS = {
     ".mkv", ".mp4", ".m4v", ".webm", ".avi", ".mov", ".ts", ".m2ts",
 }
