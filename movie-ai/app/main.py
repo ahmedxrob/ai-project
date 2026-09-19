@@ -2460,6 +2460,68 @@ def watched_page(request: Request):
         context={
             "detail": None,
             "watched_page": True,
+            "wishlist_page": False,
+            "settings_page": False,
+            "wishlist_items": load_watchlist(),
+            "movies": movies,
+            "watched_movies": [item for item in movies if item["type"] == "Movie"],
+            "watched_series": [item for item in movies if item["type"] == "Series"],
+            "recommendations": None,
+            "recommendations_loading": False,
+            "recommendation_error": None,
+            "tmdb_discoveries": None,
+            "display_statistics": get_display_statistics(),
+            "lifetime_statistics": get_lifetime_statistics(),
+            "ingress_path": get_ingress_path(request),
+        },
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+# ============================================================
+# WISHLIST / SETTINGS PAGES
+# ============================================================
+
+@app.get("/wishlist")
+def wishlist_page(request: Request):
+    response = templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "detail": None,
+            "watched_page": False,
+            "wishlist_page": True,
+            "settings_page": False,
+            "wishlist_items": list(reversed(load_watchlist())),
+            "movies": get_all(),
+            "watched_movies": [item for item in get_all() if item["type"] == "Movie"],
+            "watched_series": [item for item in get_all() if item["type"] == "Series"],
+            "recommendations": None,
+            "recommendations_loading": False,
+            "recommendation_error": None,
+            "tmdb_discoveries": None,
+            "display_statistics": get_display_statistics(),
+            "lifetime_statistics": get_lifetime_statistics(),
+            "ingress_path": get_ingress_path(request),
+        },
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.get("/settings")
+def settings_page(request: Request):
+    movies = get_all()
+    response = templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "detail": None,
+            "watched_page": False,
+            "wishlist_page": False,
+            "settings_page": True,
+            "wishlist_items": load_watchlist(),
             "movies": movies,
             "watched_movies": [item for item in movies if item["type"] == "Movie"],
             "watched_series": [item for item in movies if item["type"] == "Series"],
@@ -2551,6 +2613,9 @@ def title_detail(
             "detail": detail,
             "media_type": media_type,
             "watched_page": False,
+            "wishlist_page": False,
+            "settings_page": False,
+            "wishlist_items": load_watchlist(),
             "movies": watched,
             "watched_movies": [item for item in watched if item["type"] == "Movie"],
             "watched_series": [item for item in watched if item["type"] == "Series"],
@@ -2611,21 +2676,29 @@ def watchlist_toggle(
 # ============================================================
 
 @app.get("/recommendations")
-def recommendations(request: Request, background_tasks: BackgroundTasks):
+def recommendations(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    refresh: bool = False,
+    fragment: str = "",
+):
+    """Render Home without throwing away an already-generated AI result.
+
+    refresh=1 explicitly starts a new recommendation job (used by Discover).
+    Normal Home navigation reuses the last ready result, so moving away and
+    back does not regenerate or shuffle the AI recommendations.
+    fragment=recommendations returns the same document but is used by the
+    client to replace only the recommendation region after background work
+    finishes, avoiding a full-page reload.
+    """
     global recommendation_state
 
     movies = get_all()
     watched_movies = [item for item in movies if item["type"] == "Movie"]
     watched_series = [item for item in movies if item["type"] == "Series"]
 
-    with recommendation_state_lock:
-        status = recommendation_state["status"]
-        data = recommendation_state["data"]
-        error = recommendation_state["error"]
-        tmdb_discoveries = recommendation_state.get("tmdb_data")
-
-        if status == "ready" and data is not None:
-            recommendations_data = data
+    if refresh:
+        with recommendation_state_lock:
             recommendation_state = {
                 "status": "idle",
                 "data": None,
@@ -2633,8 +2706,12 @@ def recommendations(request: Request, background_tasks: BackgroundTasks):
                 "tmdb_data": None,
                 "job_id": recommendation_state.get("job_id", 0),
             }
-        else:
-            recommendations_data = None
+
+    with recommendation_state_lock:
+        status = recommendation_state["status"]
+        recommendations_data = recommendation_state["data"]
+        error = recommendation_state["error"]
+        tmdb_discoveries = recommendation_state.get("tmdb_data")
 
     if recommendations_data is None:
         if tmdb_discoveries is None:
@@ -2656,31 +2733,27 @@ def recommendations(request: Request, background_tasks: BackgroundTasks):
                     job_id,
                 )
 
-        context = {
-            "movies": movies,
-            "watched_movies": watched_movies,
-            "watched_series": watched_series,
-            "recommendations": None,
-            "recommendations_loading": True,
-            "recommendation_error": error,
-            "tmdb_discoveries": tmdb_discoveries,
-            "display_statistics": get_display_statistics(),
-            "lifetime_statistics": get_lifetime_statistics(),
-            "ingress_path": get_ingress_path(request),
-        }
+        recommendations_loading = True
     else:
-        context = {
-            "movies": movies,
-            "watched_movies": watched_movies,
-            "watched_series": watched_series,
-            "recommendations": recommendations_data,
-            "recommendations_loading": False,
-            "recommendation_error": None,
-            "tmdb_discoveries": None,
-            "display_statistics": get_display_statistics(),
-            "lifetime_statistics": get_lifetime_statistics(),
-            "ingress_path": get_ingress_path(request),
-        }
+        tmdb_discoveries = None
+        recommendations_loading = False
+
+    context = {
+        "movies": movies,
+        "watched_page": False,
+        "wishlist_page": False,
+        "settings_page": False,
+        "wishlist_items": load_watchlist(),
+        "watched_movies": watched_movies,
+        "watched_series": watched_series,
+        "recommendations": recommendations_data,
+        "recommendations_loading": recommendations_loading,
+        "recommendation_error": error,
+        "tmdb_discoveries": tmdb_discoveries,
+        "display_statistics": get_display_statistics(),
+        "lifetime_statistics": get_lifetime_statistics(),
+        "ingress_path": get_ingress_path(request),
+    }
 
     response = templates.TemplateResponse(
         request=request,
