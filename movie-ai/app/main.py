@@ -2497,6 +2497,8 @@ def watched_page(request: Request):
             "watched_page": True,
             "wishlist_page": False,
             "settings_page": False,
+            "search_page": False,
+            "about_page": False,
             "wishlist_items": load_watchlist(),
             "movies": movies,
             "watched_movies": [item for item in movies if item["type"] == "Movie"],
@@ -2529,6 +2531,8 @@ def wishlist_page(request: Request):
             "watched_page": False,
             "wishlist_page": True,
             "settings_page": False,
+            "search_page": False,
+            "about_page": False,
             "wishlist_items": list(reversed(load_watchlist())),
             "movies": get_all(),
             "watched_movies": [item for item in get_all() if item["type"] == "Movie"],
@@ -2546,6 +2550,40 @@ def wishlist_page(request: Request):
     return response
 
 
+@app.get("/search")
+def search_page(request: Request):
+    movies = get_all()
+    response = templates.TemplateResponse(request=request, name="index.html", context={
+        "detail": None, "watched_page": False, "wishlist_page": False, "settings_page": False,
+        "search_page": True, "about_page": False, "wishlist_items": load_watchlist(), "movies": movies,
+        "watched_movies": [item for item in movies if item["type"] == "Movie"],
+        "watched_series": [item for item in movies if item["type"] == "Series"],
+        "recommendations": None, "recommendations_loading": False, "recommendation_error": None,
+        "tmdb_discoveries": None, "display_statistics": get_display_statistics(),
+        "lifetime_statistics": get_lifetime_statistics(), "recommendation_limit": get_recommendation_limit(),
+        "ingress_path": get_ingress_path(request),
+    })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.get("/about")
+def about_page(request: Request):
+    movies = get_all()
+    response = templates.TemplateResponse(request=request, name="index.html", context={
+        "detail": None, "watched_page": False, "wishlist_page": False, "settings_page": False,
+        "search_page": False, "about_page": True, "wishlist_items": load_watchlist(), "movies": movies,
+        "watched_movies": [item for item in movies if item["type"] == "Movie"],
+        "watched_series": [item for item in movies if item["type"] == "Series"],
+        "recommendations": None, "recommendations_loading": False, "recommendation_error": None,
+        "tmdb_discoveries": None, "display_statistics": get_display_statistics(),
+        "lifetime_statistics": get_lifetime_statistics(), "recommendation_limit": get_recommendation_limit(),
+        "ingress_path": get_ingress_path(request),
+    })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
 @app.get("/settings")
 def settings_page(request: Request):
     movies = get_all()
@@ -2557,6 +2595,8 @@ def settings_page(request: Request):
             "watched_page": False,
             "wishlist_page": False,
             "settings_page": True,
+            "search_page": False,
+            "about_page": False,
             "wishlist_items": load_watchlist(),
             "movies": movies,
             "watched_movies": [item for item in movies if item["type"] == "Movie"],
@@ -2696,6 +2736,8 @@ def title_detail(
             "watched_page": False,
             "wishlist_page": False,
             "settings_page": False,
+            "search_page": False,
+            "about_page": False,
             "wishlist_items": load_watchlist(),
             "movies": watched,
             "watched_movies": [item for item in watched if item["type"] == "Movie"],
@@ -2860,6 +2902,8 @@ def recommendations(
         "watched_page": False,
         "wishlist_page": False,
         "settings_page": False,
+        "search_page": False,
+        "about_page": False,
         "wishlist_items": load_watchlist(),
         "watched_movies": watched_movies,
         "watched_series": watched_series,
