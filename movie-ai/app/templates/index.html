@@ -4,7 +4,3478 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#060608">
-    <title>{% if page == 'detail' %}{{ detail.title }} — My Movie AI{% elif page == 'library' %}
+    <title>{% if page == 'detail' %}{{ detail.title }} — My Movie AI{% elif page == 'library' %}Local Library · My Movie AI{% else %}My Movie AI{% endif %}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ ingress_path|default('') }}/static/favicon.svg">
+    <link rel="apple-touch-icon" href="{{ ingress_path|default('') }}/static/favicon.svg">
+    <link rel="stylesheet" href="{{ ingress_path|default('') }}/static/style.css">
+</head>
+<body data-ingress-path="{{ ingress_path|default('') }}">
+{% if page == 'recommendations' %}
+
+
+<div class="site-background"></div>
+
+
+
+<nav class="topbar">
+
+    <div class="brand">
+
+        <div class="brand-icon">
+            🎬
+        </div>
+
+        <div class="brand-text">
+
+            <strong>
+                My Movie AI
+            </strong>
+
+            <span>
+                your personal cinema
+            </span>
+
+        </div>
+
+    </div>
+
+
+    <div class="topbar-actions">
+
+        <button
+            type="button"
+            id="open-search-button"
+            class="topbar-search-button"
+            aria-label="Open search"
+            aria-expanded="false"
+        >
+            <span>🔎</span>
+            <strong>Search</strong>
+        </button>
+
+        <a href="{{ ingress_path|default('') }}/library" class="topbar-search-button">
+            <span>▣</span>
+            <strong>Library</strong>
+        </a>
+
+        <div class="topbar-status">
+            <span class="status-dot"></span>
+            Personal Library
+        </div>
+
+    </div>
+
+</nav>
+
+
+<main class="page">
+
+
+    <!-- ================================================== -->
+    <!-- HERO -->
+    <!-- ================================================== -->
+
+    <section class="hero">
+
+        <div class="hero-content">
+
+            <div class="hero-kicker">
+                YOUR PRIVATE CINEMA
+            </div>
+
+            <h1>
+                What are you<br>
+                watching tonight?
+            </h1>
+
+            <p>
+                Track everything you've watched,
+                rate it, and let AI discover
+                your next favorite.
+            </p>
+            <div class="hero-stats">
+
+                <div class="stat">
+                    <strong id="header-watched-count">{{ lifetime_statistics.watched|default(0) }}</strong>
+                    <span>Watched</span>
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+                    <strong id="header-movies-count">{{ lifetime_statistics.movies|default(0) }}</strong>
+                    <span>Movies</span>
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+                    <strong id="header-series-count">{{ lifetime_statistics.series|default(0) }}</strong>
+                    <span>Series</span>
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+                    <strong id="header-recommendations-count">{{ lifetime_statistics.recommendations|default(0) }}</strong>
+                    <span>Recommendations</span>
+                </div>
+
+                <div class="stat-divider"></div>
+
+                <div class="stat">
+                    <strong id="header-ai-generated-count">{{ lifetime_statistics.ai_generated|default(0) }}</strong>
+                    <span>AI Generated</span>
+                </div>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- ADD WATCHED -->
+    <!-- ================================================== -->
+
+    <section class="panel add-panel search-panel" id="search-panel" aria-hidden="true">
+
+        <div class="panel-header">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    Add something you've watched
+                </h2>
+
+            </div>
+
+            <button
+                type="button"
+                id="close-search-button"
+                class="panel-close-button"
+                aria-label="Close search"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <form
+            action="/add"
+            method="post"
+            class="add-form"
+            id="add-form"
+            data-ajax-add="true"
+        >
+
+
+
+            <!-- SEARCH -->
+
+            <div class="field search-field">
+
+                <label for="title">
+                    Search title
+                </label>
+
+
+                <div class="search-input-wrap">
+
+                    <span class="search-icon">
+                        🔎
+                    </span>
+
+                    <input
+                        id="title"
+                        type="text"
+                        name="title"
+                        placeholder="Search Interstellar..."
+                        autocomplete="off"
+                        required
+                    >
+
+                    <button
+                        type="button"
+                        id="clear-search"
+                        class="clear-search"
+                        aria-label="Clear search"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                <div
+                    id="search-results"
+                    class="search-results"
+                ></div>
+
+            </div>
+
+
+            <!-- EXACT TMDB ID -->
+
+            <input
+                type="hidden"
+                id="tmdb_id"
+                name="tmdb_id"
+                value=""
+            >
+
+            <!-- AUTO-DETECTED TYPE -->
+
+            <input
+                type="hidden"
+                id="media_type"
+                name="media_type"
+                value=""
+            >
+
+
+            <!-- SELECTED PREVIEW -->
+
+            <div
+                id="selected-preview"
+                class="selected-preview"
+            >
+
+                <div class="selected-preview-empty">
+
+                    <div class="preview-empty-icon">
+                        🎬
+                    </div>
+
+                    <span>
+                        Search for a title and select
+                        a result to preview it here.
+                    </span>
+
+                </div>
+
+            </div>
+
+
+            <!-- RATING -->
+
+            <div class="field preview-rating-field">
+
+                <label for="rating">
+                    Your rating
+                </label>
+
+
+                <div class="input-rating">
+
+                    <span>
+                        ★
+                    </span>
+
+                    <input
+                        id="rating"
+                        type="number"
+                        name="rating"
+                        min="0"
+                        max="10"
+                        step="0.1"
+                        placeholder="9.5"
+                        required
+                    >
+
+                    <small>
+                        /10
+                    </small>
+
+                </div>
+
+            </div>
+
+
+            <button
+                type="submit"
+                class="primary-button"
+                id="add-button"
+            >
+
+                <span>
+                    Add to collection
+                </span>
+
+                <span>
+                    →
+                </span>
+
+            </button>
+
+        </form>
+
+
+        <div class="panel-hint">
+
+            Search TMDB and select the exact title
+            before saving it to your library.
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- DISCOVERY -->
+    <!-- ================================================== -->
+
+    <section class="recommend-control">
+
+        <div>
+
+            <span class="panel-label">
+                AI + TMDB DISCOVERY
+            </span>
+
+            <h2>
+                Find something new
+            </h2>
+
+            <p>
+                8 AI picks + 8 TMDB discoveries
+                for movies and series.
+            </p>
+
+        </div>
+
+
+        <a
+            href="/recommendations"
+            class="generate-button"
+        >
+
+            <span>
+                ✦
+            </span>
+
+            <strong>
+                Discover
+            </strong>
+
+            <span>
+                →
+            </span>
+
+        </a>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- TRENDING NOW -->
+    <!-- ================================================== -->
+
+    <section
+        class="trending-section"
+        id="trending-now"
+    >
+
+        <div class="section-heading trending-section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    RIGHT NOW ON TMDB
+                </span>
+
+                <h2>
+                    🔥 Trending Now
+                </h2>
+
+            </div>
+
+            <span>
+                Today
+            </span>
+
+        </div>
+
+
+        <div class="trending-source">
+
+            <div class="source-heading trending-movie-heading">
+
+                <div>
+                    <span class="source-icon">
+                        🎬
+                    </span>
+
+                    <div>
+                        <h3>Trending Movies</h3>
+                        <p>Most popular movie activity on TMDB today</p>
+                    </div>
+                </div>
+
+                <span class="source-count" id="trending-movie-count">
+                    —
+                </span>
+
+            </div>
+
+            <div
+                class="trending-grid"
+                id="trending-movies"
+            >
+                <div class="trending-loading">
+                    Loading today's trending movies...
+                </div>
+            </div>
+
+        </div>
+
+
+        <div class="trending-source trending-series-source">
+
+            <div class="source-heading trending-series-heading">
+
+                <div>
+                    <span class="source-icon">
+                        📺
+                    </span>
+
+                    <div>
+                        <h3>Trending Series</h3>
+                        <p>Most popular TV activity on TMDB today</p>
+                    </div>
+                </div>
+
+                <span class="source-count" id="trending-series-count">
+                    —
+                </span>
+
+            </div>
+
+            <div
+                class="trending-grid"
+                id="trending-series"
+            >
+                <div class="trending-loading">
+                    Loading today's trending series...
+                </div>
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- RECOMMENDATIONS -->
+    <!-- ================================================== -->
+
+    {% if recommendations or tmdb_discoveries %}
+
+    <section class="recommendations-section">
+
+
+        <!-- ================================================= -->
+        <!-- MOVIES -->
+        <!-- ================================================= -->
+
+        <div class="section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    MOVIE DISCOVERY
+                </span>
+
+                <h2>
+                    🎬 Movies
+                </h2>
+
+            </div>
+
+            <span>
+                16 total
+            </span>
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- AI MOVIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section">
+
+            <div class="source-heading ai-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🤖
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            AI Picks
+                        </h3>
+
+                        <p>
+                            Personalized from your ratings
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <span class="source-count">
+                    {{ recommendations.ai_movies|length if recommendations else 0 }}
+                </span>
+
+            </div>
+
+
+            {% if recommendations and recommendations.ai_movies %}
+
+            <div class="recommendation-grid">
+
+                {% for item in recommendations.ai_movies %}
+
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            🎬
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge ai-source">
+                            🤖 AI PICK
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(82) }}% MATCH
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline ajax-watched-form"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Movie"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form ajax-not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Movie"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            {% if recommendations_loading %}
+            <div class="ai-generation-loading">
+                <div class="ai-generation-spinner"></div>
+                <div>
+                    <strong>AI is creating your movie picks...</strong>
+                    <span>Gemini is analyzing your ratings and finding personalized matches.</span>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-recommendations">
+                No AI movie picks available.
+            </div>
+            {% endif %}
+
+            {% endif %}
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- TMDB MOVIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section tmdb-section">
+
+            <div class="source-heading tmdb-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🔵
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            TMDB Discoveries
+                        </h3>
+
+                        <p>
+                            Discoveries from TMDB
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <span class="source-count">
+                    {{ recommendations.tmdb_movies|length if recommendations else (tmdb_discoveries.movies|length) }}
+                </span>
+
+            </div>
+
+
+            {% if (recommendations and recommendations.tmdb_movies) or (not recommendations and tmdb_discoveries.movies) %}
+
+            <div class="recommendation-grid">
+
+                {% for item in (recommendations.tmdb_movies if recommendations else tmdb_discoveries.movies) %}
+
+                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            🎬
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge tmdb-source">
+                            🔵 TMDB
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(72) }}% MATCH
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline ajax-watched-form"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Movie"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form ajax-not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Movie"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            <div class="empty-recommendations">
+                No TMDB movie discoveries available.
+            </div>
+
+            {% endif %}
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- SERIES -->
+        <!-- ================================================= -->
+
+        <div class="section-heading series-main-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    SERIES DISCOVERY
+                </span>
+
+                <h2>
+                    📺 Series
+                </h2>
+
+            </div>
+
+            <span>
+                16 total
+            </span>
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- AI SERIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section">
+
+            <div class="source-heading ai-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🤖
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            AI Picks
+                        </h3>
+
+                        <p>
+                            Personalized from your ratings
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <span class="source-count">
+                    {{ recommendations.ai_series|length if recommendations else 0 }}
+                </span>
+
+            </div>
+
+
+            {% if recommendations and recommendations.ai_series %}
+
+            <div class="recommendation-grid">
+
+                {% for item in recommendations.ai_series %}
+
+                <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            📺
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge ai-source">
+                            🤖 AI PICK
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(82) }}% MATCH
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline ajax-watched-form"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Series"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form ajax-not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Series"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            {% if recommendations_loading %}
+            <div class="ai-generation-loading">
+                <div class="ai-generation-spinner"></div>
+                <div>
+                    <strong>AI is creating your series picks...</strong>
+                    <span>Gemini is analyzing your ratings and finding personalized matches.</span>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-recommendations">
+                No AI series picks available.
+            </div>
+            {% endif %}
+
+            {% endif %}
+
+        </div>
+
+
+        <!-- ================================================= -->
+        <!-- TMDB SERIES -->
+        <!-- ================================================= -->
+
+        <div class="source-section tmdb-section">
+
+            <div class="source-heading tmdb-heading">
+
+                <div>
+
+                    <span class="source-icon">
+                        🔵
+                    </span>
+
+                    <div>
+
+                        <h3>
+                            TMDB Discoveries
+                        </h3>
+
+                        <p>
+                            Discoveries from TMDB
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <span class="source-count">
+                    {{ recommendations.tmdb_series|length if recommendations else (tmdb_discoveries.series|length) }}
+                </span>
+
+            </div>
+
+
+            {% if (recommendations and recommendations.tmdb_series) or (not recommendations and tmdb_discoveries.series) %}
+
+            <div class="recommendation-grid">
+
+                {% for item in (recommendations.tmdb_series if recommendations else tmdb_discoveries.series) %}
+
+                <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}">
+
+                    <div class="recommendation-poster">
+
+                        {% if item.poster %}
+
+                        <img
+                            src="{{ item.poster }}"
+                            alt="{{ item.title }}"
+                            loading="lazy"
+                        >
+
+                        {% else %}
+
+                        <div class="poster-placeholder">
+                            📺
+                        </div>
+
+                        {% endif %}
+
+
+                        <div class="poster-overlay"></div>
+
+
+                        <div class="source-badge tmdb-source">
+                            🔵 TMDB
+                        </div>
+
+                        <div class="match-badge">
+                            {{ item.match_percentage|default(72) }}% MATCH
+                        </div>
+
+                    </div>
+
+
+                    <div class="recommendation-content">
+
+                        <h3>
+                            {{ item.title }}
+                        </h3>
+
+
+                        <div class="recommendation-meta">
+
+                            {% if item.year %}
+
+                            <span>
+                                {{ item.year }}
+                            </span>
+
+                            <span>
+                                •
+                            </span>
+
+                            {% endif %}
+
+
+                            <span class="tmdb-rating">
+                                ★ {{ "%.1f"|format(item.vote_average) }}
+                            </span>
+
+                        </div>
+
+
+                        {% if item.overview %}
+
+                        <p class="recommendation-overview">
+                            {{ item.overview }}
+                        </p>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="why-button"
+                            onclick="toggleWhy(this)"
+                        >
+                            💡 Why this?
+                        </button>
+
+
+                        <div class="why-panel">
+                            {{ item.reason }}
+                        </div>
+
+
+                        <div class="recommendation-actions">
+
+                            <a
+                                href="{{ item.tmdb_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="tmdb-button"
+                            >
+                                🎬 TMDB
+                            </a>
+
+
+                            <form
+                                action="/recommendation/watched"
+                                method="post"
+                                class="watched-inline ajax-watched-form"
+                            >
+
+                                <input
+                                    type="hidden"
+                                    name="title"
+                                    value="{{ item.title }}"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="media_type"
+                                    value="Series"
+                                >
+
+                                <input
+                                    type="hidden"
+                                    name="tmdb_id"
+                                    value="{{ item.tmdb_id }}"
+                                >
+
+                                <input
+                                    type="number"
+                                    name="rating"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value="8"
+                                    required
+                                >
+
+                                <button
+                                    type="submit"
+                                    class="watched-button"
+                                >
+                                    ✅ Watched
+                                </button>
+
+                            </form>
+
+                        </div>
+
+
+                        <form
+                            action="/recommendation/not-interested"
+                            method="post"
+                            class="not-interested-form ajax-not-interested-form"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="title"
+                                value="{{ item.title }}"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="media_type"
+                                value="Series"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="tmdb_id"
+                                value="{{ item.tmdb_id }}"
+                            >
+
+                            <button
+                                type="submit"
+                                class="not-interested-button"
+                            >
+                                ✕ Not interested
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                </article>
+
+                {% endfor %}
+
+            </div>
+
+            {% else %}
+
+            <div class="empty-recommendations">
+                No TMDB series discoveries available.
+            </div>
+
+            {% endif %}
+
+        </div>
+
+    </section>
+
+    {% endif %}
+
+
+    <!-- ================================================== -->
+    <!-- WATCHED MOVIES -->
+    <!-- ================================================== -->
+
+    <section class="library-section" id="watched-movies-section">
+
+        <div class="section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    🎬 Watched Movies
+                </h2>
+
+            </div>
+
+            <span id="watched-movies-count">
+                {{ watched_movies|length }}
+            </span>
+
+        </div>
+
+
+        {% if watched_movies %}
+
+        <div class="library-grid" id="watched-movies-grid">
+
+            {% for movie in watched_movies %}
+
+            <article
+                class="library-card library-clickable"
+                data-media-type="Movie"
+                data-tmdb-id="{{ movie['tmdb_id'] }}"
+            >
+
+                <div class="library-poster">
+
+                    {% if movie["poster"] %}
+
+                    <img
+                        src="{{ movie['poster'] }}"
+                        alt="{{ movie['title'] }}"
+                        loading="lazy"
+                    >
+
+                    {% else %}
+
+                    <div class="poster-placeholder">
+                        🎬
+                    </div>
+
+                    {% endif %}
+
+                </div>
+
+
+                <div class="library-content">
+
+                    <h3>
+                        {{ movie["title"] }}
+                    </h3>
+
+
+                    <div class="library-meta">
+
+                        {% if movie["year"] %}
+
+                        <span>
+                            {{ movie["year"] }}
+                        </span>
+
+                        <span>
+                            •
+                        </span>
+
+                        {% endif %}
+
+
+                        <span class="user-rating">
+                            ★ {{ "%.1f"|format(movie["rating"]) }}/10
+                        </span>
+
+                    </div>
+
+
+                    {% if movie["overview"] %}
+
+                    <p>
+                        {{ movie["overview"] }}
+                    </p>
+
+                    {% endif %}
+
+
+                    <form
+                        action="/delete/{{ movie['id'] }}"
+                        method="post"
+                    >
+
+                        <button
+                            type="submit"
+                            class="remove-button"
+                        >
+                            Remove
+                        </button>
+
+                    </form>
+
+                </div>
+
+            </article>
+
+            {% endfor %}
+
+        </div>
+
+
+        {% else %}
+
+        <div class="empty-library">
+            No watched movies yet.
+        </div>
+
+        {% endif %}
+
+    </section>
+
+
+    <!-- ================================================== -->
+    <!-- WATCHED SERIES -->
+    <!-- ================================================== -->
+
+    <section class="library-section" id="watched-series-section">
+
+        <div class="section-heading">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    📺 Watched Series
+                </h2>
+
+            </div>
+
+            <span id="watched-series-count">
+                {{ watched_series|length }}
+            </span>
+
+        </div>
+
+
+        {% if watched_series %}
+
+        <div class="library-grid" id="watched-series-grid">
+
+            {% for movie in watched_series %}
+
+            <article
+                class="library-card library-clickable"
+                data-media-type="Series"
+                data-tmdb-id="{{ movie['tmdb_id'] }}"
+            >
+
+                <div class="library-poster">
+
+                    {% if movie["poster"] %}
+
+                    <img
+                        src="{{ movie['poster'] }}"
+                        alt="{{ movie['title'] }}"
+                        loading="lazy"
+                    >
+
+                    {% else %}
+
+                    <div class="poster-placeholder">
+                        📺
+                    </div>
+
+                    {% endif %}
+
+                </div>
+
+
+                <div class="library-content">
+
+                    <h3>
+                        {{ movie["title"] }}
+                    </h3>
+
+
+                    <div class="library-meta">
+
+                        {% if movie["year"] %}
+
+                        <span>
+                            {{ movie["year"] }}
+                        </span>
+
+                        <span>
+                            •
+                        </span>
+
+                        {% endif %}
+
+
+                        <span class="user-rating">
+                            ★ {{ "%.1f"|format(movie["rating"]) }}/10
+                        </span>
+
+                    </div>
+
+
+                    {% if movie["overview"] %}
+
+                    <p>
+                        {{ movie["overview"] }}
+                    </p>
+
+                    {% endif %}
+
+
+                    <form
+                        action="/delete/{{ movie['id'] }}"
+                        method="post"
+                    >
+
+                        <button
+                            type="submit"
+                            class="remove-button"
+                        >
+                            Remove
+                        </button>
+
+                    </form>
+
+                </div>
+
+            </article>
+
+            {% endfor %}
+
+        </div>
+
+
+        {% else %}
+
+        <div class="empty-library">
+            No watched series yet.
+        </div>
+
+        {% endif %}
+
+    </section>
+
+
+    <footer>
+
+        <span>
+            My Movie AI
+        </span>
+
+        <span>
+            •
+        </span>
+
+        <span>
+            Recommendations powered by Gemini + TMDB
+        </span>
+
+    </footer>
+
+</main>
+
+
+<script>
+
+/* ========================================================= */
+/* APP / INGRESS URL HELPER */
+/* ========================================================= */
+
+const appBase =
+    document.body.dataset.ingressPath || "";
+
+function appUrl(path) {
+
+    const cleanPath = path.startsWith("/")
+        ? path
+        : `/${path}`;
+
+    if (appBase && (path === appBase || path.startsWith(appBase + "/"))) {
+        return path;
+    }
+
+    return appBase
+        ? `${appBase}${cleanPath}`
+        : cleanPath;
+}
+
+
+/* ========================================================= */
+/* SEARCH PANEL + SCROLL POSITION */
+/* ========================================================= */
+
+const searchPanel =
+    document.getElementById("search-panel");
+
+const openSearchButton =
+    document.getElementById("open-search-button");
+
+const closeSearchButton =
+    document.getElementById("close-search-button");
+
+
+function openSearchPanel() {
+
+    if (!searchPanel) return;
+
+    searchPanel.classList.add("is-open");
+    searchPanel.setAttribute("aria-hidden", "false");
+
+    if (openSearchButton) {
+        openSearchButton.setAttribute(
+            "aria-expanded",
+            "true"
+        );
+    }
+
+    document.body.classList.add("search-panel-open");
+}
+
+
+function closeSearchPanel() {
+
+    if (!searchPanel) return;
+
+    searchPanel.classList.remove("is-open");
+    searchPanel.setAttribute("aria-hidden", "true");
+
+    if (openSearchButton) {
+        openSearchButton.setAttribute(
+            "aria-expanded",
+            "false"
+        );
+    }
+
+    document.body.classList.remove("search-panel-open");
+}
+
+
+if (openSearchButton) {
+    openSearchButton.addEventListener(
+        "click",
+        openSearchPanel
+    );
+}
+
+if (closeSearchButton) {
+    closeSearchButton.addEventListener(
+        "click",
+        closeSearchPanel
+    );
+}
+
+
+/* Close the entire search panel when clicking outside it. */
+document.addEventListener(
+    "click",
+    function (event) {
+
+        if (!searchPanel) {
+            return;
+        }
+
+        if (!searchPanel.classList.contains("is-open")) {
+            return;
+        }
+
+        const clickedInsidePanel =
+            event.target.closest("#search-panel");
+
+        const clickedOpenButton =
+            event.target.closest("#open-search-button");
+
+        if (!clickedInsidePanel && !clickedOpenButton) {
+            closeSearchPanel();
+        }
+    }
+);
+
+
+/* Never reopen the search panel after a refresh. */
+if (window.history && "scrollRestoration" in window.history) {
+    window.history.scrollRestoration = "manual";
+}
+
+window.addEventListener(
+    "pageshow",
+    function () {
+        closeSearchPanel();
+        window.scrollTo(0, 0);
+    }
+);
+
+
+/* ========================================================= */
+/* AI STATUS POLLING */
+/* ========================================================= */
+
+{% if recommendations_loading %}
+
+async function checkAIRecommendationStatus() {
+
+    try {
+
+        const response =
+            await fetch(
+                appUrl("/api/recommendations/status"),
+                {
+                    cache: "no-store",
+                    headers: {
+                        "Accept": "application/json"
+                    }
+                }
+            );
+
+        if (!response.ok) {
+            return;
+        }
+
+        const data = await response.json();
+
+        if (data.status === "ready") {
+            window.location.reload();
+            return;
+        }
+
+        if (data.status === "error") {
+            document
+                .querySelectorAll(".ai-generation-loading strong")
+                .forEach(function (element) {
+                    element.textContent =
+                        "AI recommendations could not be generated.";
+                });
+
+            document
+                .querySelectorAll(".ai-generation-loading span")
+                .forEach(function (element) {
+                    element.textContent =
+                        "TMDB content is still available. Try Discover again.";
+                });
+
+            document
+                .querySelectorAll(".ai-generation-spinner")
+                .forEach(function (element) {
+                    element.style.animationPlayState = "paused";
+                    element.style.borderTopColor = "#e50914";
+                });
+
+            return;
+        }
+
+    } catch (error) {
+
+        console.error(
+            "AI recommendation status error:",
+            error
+        );
+
+    }
+}
+
+checkAIRecommendationStatus();
+
+const recommendationStatusTimer =
+    setInterval(
+        checkAIRecommendationStatus,
+        1500
+    );
+
+{% endif %}
+
+
+
+/* ========================================================= */
+/* INGRESS-SAFE INTERNAL LINKS / FORMS */
+/* ========================================================= */
+
+document.addEventListener(
+    "DOMContentLoaded",
+    function () {
+
+        document
+            .querySelectorAll("a[href^='/'], form[action^='/']")
+            .forEach(function (element) {
+
+                const attribute =
+                    element.tagName === "FORM"
+                        ? "action"
+                        : "href";
+
+                const value =
+                    element.getAttribute(attribute);
+
+                if (!value || value.startsWith("/static/")) {
+                    return;
+                }
+
+                element.setAttribute(
+                    attribute,
+                    appUrl(value)
+                );
+            });
+    }
+);
+
+
+/* ========================================================= */
+/* SEARCH ELEMENTS */
+/* ========================================================= */
+
+const titleInput =
+    document.getElementById(
+        "title"
+    );
+
+const mediaType =
+    document.getElementById(
+        "media_type"
+    );
+
+const tmdbIdInput =
+    document.getElementById(
+        "tmdb_id"
+    );
+
+const searchResults =
+    document.getElementById(
+        "search-results"
+    );
+
+const selectedPreview =
+    document.getElementById(
+        "selected-preview"
+    );
+
+const clearSearch =
+    document.getElementById(
+        "clear-search"
+    );
+
+
+let searchTimer = null;
+let currentResults = [];
+let searchRequestSerial = 0;
+let activeSearchControllers = [];
+
+
+/* ========================================================= */
+/* SAFE HTML */
+/* ========================================================= */
+
+function escapeHtml(
+    value
+) {
+
+    const div =
+        document.createElement(
+            "div"
+        );
+
+    div.textContent =
+        value || "";
+
+    return div.innerHTML;
+}
+
+
+/* ========================================================= */
+/* SEARCH INPUT */
+/* ========================================================= */
+
+if (titleInput) {
+
+    titleInput.addEventListener(
+        "input",
+        function () {
+
+            const query =
+                titleInput.value.trim();
+
+            tmdbIdInput.value =
+                "";
+
+            if (
+                query.length < 2
+            ) {
+
+                searchResults.innerHTML =
+                    "";
+
+                searchResults.classList.remove(
+                    "show"
+                );
+
+                return;
+            }
+
+
+            clearTimeout(
+                searchTimer
+            );
+
+
+            searchTimer =
+                setTimeout(
+                    function () {
+
+                        performSearch(
+                            query
+                        );
+
+                    },
+                    300
+                );
+        }
+    );
+}
+
+
+/* ========================================================= */
+/* PERFORM SEARCH */
+/* ========================================================= */
+
+async function performSearch(
+    query
+) {
+    const requestSerial = ++searchRequestSerial;
+
+    activeSearchControllers.forEach(function (controller) {
+        try { controller.abort(); } catch (_) {}
+    });
+    activeSearchControllers = [];
+
+    if (!titleInput || titleInput.value.trim() !== query) {
+        return;
+    }
+
+    searchResults.innerHTML = `
+        <div class="search-loading">
+            <span class="loading-spinner"></span>
+            Searching movies and series...
+        </div>
+    `;
+
+    searchResults.classList.add("show");
+
+    const cacheBust = Date.now();
+
+    try {
+        const base = appUrl("/api/search");
+        const movieController = new AbortController();
+        const seriesController = new AbortController();
+        activeSearchControllers = [movieController, seriesController];
+
+        const [movieResponse, seriesResponse] =
+            await Promise.all([
+                fetch(
+                    `${base}?q=${encodeURIComponent(query)}&media_type=Movie&_=${cacheBust}`,
+                    { cache: "no-store", signal: movieController.signal }
+                ),
+                fetch(
+                    `${base}?q=${encodeURIComponent(query)}&media_type=Series&_=${cacheBust + 1}`,
+                    { cache: "no-store", signal: seriesController.signal }
+                )
+            ]);
+
+        if (requestSerial !== searchRequestSerial ||
+            !titleInput ||
+            titleInput.value.trim() !== query) {
+            return;
+        }
+
+        if (!movieResponse.ok || !seriesResponse.ok) {
+            throw new Error(
+                `Search failed (${movieResponse.status}/${seriesResponse.status})`
+            );
+        }
+
+        const [movieData, seriesData] =
+            await Promise.all([
+                movieResponse.json(),
+                seriesResponse.json()
+            ]);
+
+        /*
+         * Support both versions of the backend:
+         *   old: { results: [...] }
+         *   new: { movies: [...], series: [...] }
+         */
+        let movies = Array.isArray(movieData.results)
+            ? movieData.results
+            : Array.isArray(movieData.movies)
+                ? movieData.movies
+                : [];
+
+        let series = Array.isArray(seriesData.results)
+            ? seriesData.results
+            : Array.isArray(seriesData.series)
+                ? seriesData.series
+                : [];
+
+        movies = movies.map(item => ({
+            ...item,
+            media_type: "Movie"
+        }));
+
+        series = series.map(item => ({
+            ...item,
+            media_type: "Series"
+        }));
+
+        /* Remove accidental duplicate IDs within each type. */
+        const seen = new Set();
+        currentResults = [...movies, ...series].filter(item => {
+            const key = `${item.media_type}:${item.tmdb_id}`;
+            if (!item.tmdb_id || seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+
+        renderSearchResults(currentResults);
+
+    } catch (error) {
+
+        console.error("Search error:", error);
+
+        searchResults.innerHTML = `
+            <div class="search-empty">
+                Unable to search TMDB.
+                <small>${escapeHtml(error.message)}</small>
+            </div>
+        `;
+    }
+}
+
+/* ========================================================= */
+/* RENDER SEARCH RESULTS */
+/* ========================================================= */
+
+function renderSearchResults(
+    results
+) {
+
+    if (!results.length) {
+
+        searchResults.innerHTML = `
+            <div class="search-empty">
+                No movies or series found.
+            </div>
+        `;
+
+        return;
+    }
+
+    searchResults.innerHTML = results.map(
+        function(item, index) {
+
+            const year = item.year || "";
+            const poster = item.poster || "";
+            const rating = Number(
+                item.vote_average || 0
+            ).toFixed(1);
+
+            const isSeries =
+                item.media_type === "Series";
+
+            return `
+                <button
+                    type="button"
+                    class="search-result-item"
+                    data-index="${index}"
+                >
+                    <div class="search-result-poster">
+                        ${
+                            poster
+                                ? `
+                                    <img
+                                        src="${poster}"
+                                        alt=""
+                                        loading="lazy"
+                                    >
+                                `
+                                : `
+                                    <div class="search-result-placeholder">
+                                        ${isSeries ? "📺" : "🎬"}
+                                    </div>
+                                `
+                        }
+                    </div>
+
+                    <div class="search-result-info">
+                        <strong>
+                            ${escapeHtml(item.title)}
+                        </strong>
+
+                        <div class="search-result-meta">
+                            ${
+                                year
+                                    ? `<span>${year}</span><span>•</span>`
+                                    : ""
+                            }
+
+                            <span class="search-type-badge ${
+                                isSeries
+                                    ? "search-series"
+                                    : "search-movie"
+                            }">
+                                ${
+                                    isSeries
+                                        ? "📺 SERIES"
+                                        : "🎬 MOVIE"
+                                }
+                            </span>
+
+                            <span>
+                                ★ ${rating}
+                            </span>
+                        </div>
+
+                        <p>
+                            ${escapeHtml(
+                                item.overview ||
+                                "No description available."
+                            )}
+                        </p>
+                    </div>
+
+                    <span class="search-result-arrow">
+                        →
+                    </span>
+                </button>
+            `;
+        }
+    ).join("");
+
+    document
+        .querySelectorAll(
+            ".search-result-item"
+        )
+        .forEach(
+            function(button) {
+
+                button.addEventListener(
+                    "click",
+                    function() {
+
+                        const index = Number(
+                            button.dataset.index
+                        );
+
+                        selectSearchResult(
+                            currentResults[index]
+                        );
+                    }
+                );
+            }
+        );
+}
+
+
+/* ========================================================= */
+/* SELECT RESULT */
+/* ========================================================= */
+
+function selectSearchResult(
+    item
+) {
+
+    if (!item) {
+        return;
+    }
+
+    tmdbIdInput.value =
+        item.tmdb_id || "";
+
+    titleInput.value =
+        item.title || "";
+
+    if (mediaType) {
+        mediaType.value =
+            item.media_type === "Series"
+                ? "Series"
+                : "Movie";
+    }
+
+    searchResults.classList.remove(
+        "show"
+    );
+
+    renderSelectedPreview(
+        item
+    );
+}
+
+
+/* ========================================================= */
+/* SELECTED PREVIEW */
+/* ========================================================= */
+
+function renderSelectedPreview(
+    item
+) {
+
+    const poster = item.poster || "";
+    const year = item.year || "";
+    const rating = Number(
+        item.vote_average || 0
+    ).toFixed(1);
+
+    const isSeries =
+        item.media_type === "Series";
+
+    selectedPreview.innerHTML = `
+        <div class="selected-preview-card">
+
+            <div class="selected-preview-poster">
+                ${
+                    poster
+                        ? `
+                            <img
+                                src="${poster}"
+                                alt="${escapeHtml(item.title)}"
+                            >
+                        `
+                        : `
+                            <div class="selected-preview-placeholder">
+                                ${isSeries ? "📺" : "🎬"}
+                            </div>
+                        `
+                }
+            </div>
+
+            <div class="selected-preview-info">
+
+                <div class="selected-preview-label">
+                    SELECTED TITLE
+                </div>
+
+                <h3>
+                    ${escapeHtml(item.title)}
+                </h3>
+
+                <div class="selected-preview-meta">
+                    ${
+                        year
+                            ? `<span>${year}</span><span>•</span>`
+                            : ""
+                    }
+
+                    <span>
+                        ${isSeries ? "📺 Series" : "🎬 Movie"}
+                    </span>
+
+                    <span class="selected-tmdb-rating">
+                        ★ ${rating}
+                    </span>
+                </div>
+
+                <p>
+                    ${escapeHtml(
+                        item.overview ||
+                        "No description available."
+                    )}
+                </p>
+
+                <div class="selected-preview-badge">
+                    ${
+                        isSeries
+                            ? "📺 SERIES"
+                            : "🎬 MOVIE"
+                    }
+                    <span>•</span>
+                    TMDB #${item.tmdb_id}
+                </div>
+
+            </div>
+        </div>
+    `;
+}
+
+
+/* ========================================================= */
+/* CLEAR SEARCH */
+/* ========================================================= */
+
+if (clearSearch) {
+
+    clearSearch.addEventListener(
+        "click",
+        function () {
+
+            titleInput.value =
+                "";
+
+            tmdbIdInput.value =
+                "";
+
+            searchResults.innerHTML =
+                "";
+
+            searchResults.classList.remove(
+                "show"
+            );
+
+
+            selectedPreview.innerHTML = `
+
+                <div
+                    class="selected-preview-empty"
+                >
+
+                    <div
+                        class="preview-empty-icon"
+                    >
+                        🎬
+                    </div>
+
+                    <span>
+                        Search for a title and
+                        select a result to preview
+                        it here.
+                    </span>
+
+                </div>
+
+            `;
+        }
+    );
+}
+
+
+/* ========================================================= */
+/* CLOSE SEARCH WHEN CLICKING OUTSIDE */
+/* ========================================================= */
+
+document.addEventListener(
+    "click",
+    function (event) {
+
+        if (!searchPanel || !searchPanel.classList.contains("is-open")) {
+            return;
+        }
+
+        if (
+            !event.target.closest("#search-panel") &&
+            !event.target.closest("#open-search-button")
+        ) {
+            closeSearchPanel();
+        }
+    }
+);
+
+
+/* ========================================================= */
+/* OPEN RECOMMENDATION DETAIL PAGE */
+/* ========================================================= */
+document
+    .querySelectorAll(
+        ".recommendation-clickable"
+    )
+    .forEach(
+        function (card) {
+
+            card.addEventListener(
+                "click",
+                function (event) {
+
+                    if (
+                        event.target.closest(
+                            "a, button, form, input, select"
+                        )
+                    ) {
+                        return;
+                    }
+
+                    const mediaType =
+                        card.dataset.mediaType;
+
+                    const tmdbId =
+                        card.dataset.tmdbId;
+
+                    if (!mediaType || !tmdbId) {
+                        return;
+                    }
+
+                    const ingressPath =
+                        document.body.dataset.ingressPath || "";
+
+                    window.location.href =
+                        `${ingressPath}/title/${mediaType}/${tmdbId}`;
+                }
+            );
+
+        }
+    );
+
+
+/* ========================================================= */
+/* OPEN WATCHED LIBRARY DETAIL PAGE */
+/* ========================================================= */
+document
+    .querySelectorAll(
+        ".library-clickable"
+    )
+    .forEach(
+        function (card) {
+
+            card.addEventListener(
+                "click",
+                function (event) {
+
+                    /* The Remove button/form must keep working normally. */
+                    if (
+                        event.target.closest(
+                            "button, form, input, select, a"
+                        )
+                    ) {
+                        return;
+                    }
+
+                    const mediaType =
+                        card.dataset.mediaType;
+
+                    const tmdbId =
+                        card.dataset.tmdbId;
+
+                    if (!mediaType || !tmdbId) {
+                        return;
+                    }
+
+                    const ingressPath =
+                        document.body.dataset.ingressPath || "";
+
+                    window.location.href =
+                        `${ingressPath}/title/${mediaType}/${tmdbId}?match=100`;
+                }
+            );
+
+        }
+    );
+
+
+/* ========================================================= */
+/* TRENDING NOW */
+/* ========================================================= */
+
+function escapeHtml(value) {
+    const div = document.createElement("div");
+    div.textContent = value ?? "";
+    return div.innerHTML;
+}
+
+function renderTrendingRail(items, containerId, countId, mediaType) {
+    const container = document.getElementById(containerId);
+    const count = document.getElementById(countId);
+
+    if (!container) return;
+
+    if (count) {
+        count.textContent = items.length;
+    }
+
+    if (!items.length) {
+        container.innerHTML = `
+            <div class="trending-empty">
+                Nothing available right now.
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = items.map(function(item) {
+        const title = escapeHtml(item.title);
+        const overview = escapeHtml(item.overview || "");
+        const year = item.year ? escapeHtml(item.year) : "";
+        const rating = Number(item.vote_average || 0).toFixed(1);
+        const poster = item.poster
+            ? `<img src="${escapeHtml(item.poster)}" alt="${title}" loading="lazy">`
+            : `<div class="poster-placeholder">${mediaType === "Movie" ? "🎬" : "📺"}</div>`;
+
+        return `
+            <article
+                class="trending-card"
+                data-media-type="${mediaType}"
+                data-tmdb-id="${item.tmdb_id}"
+                tabindex="0"
+                role="link"
+                aria-label="Open ${title}"
+            >
+                <div class="trending-poster">
+                    ${poster}
+                    <div class="trending-poster-overlay"></div>
+                    <div class="trending-badge">🔥 TRENDING</div>
+                    <div class="trending-rank">
+                        #${items.indexOf(item) + 1}
+                    </div>
+                </div>
+
+                <div class="trending-content">
+                    <h3>${title}</h3>
+
+                    <div class="trending-meta">
+                        ${year ? `<span>${year}</span><span>•</span>` : ""}
+                        <span class="trending-rating">★ ${rating}</span>
+                    </div>
+
+                    ${overview ? `<p>${overview}</p>` : ""}
+                </div>
+            </article>
+        `;
+    }).join("");
+
+    container.querySelectorAll(".trending-card").forEach(function(card) {
+        function openCard() {
+            const type = card.dataset.mediaType;
+            const id = card.dataset.tmdbId;
+
+            if (!type || !id) return;
+
+            window.location.href = appUrl(
+                `/title/${type}/${id}`
+            );
+        }
+
+        card.addEventListener("click", function(event) {
+            if (event.target.closest("a, button, form, input, select")) return;
+            openCard();
+        });
+
+        card.addEventListener("keydown", function(event) {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openCard();
+            }
+        });
+    });
+}
+
+async function loadLifetimeStatistics() {
+    try {
+        const response = await fetch(
+            appUrl('/api/lifetime-statistics'),
+            {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/json' }
+            }
+        );
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const elements = {
+            watched: document.getElementById('header-watched-count'),
+            movies: document.getElementById('header-movies-count'),
+            series: document.getElementById('header-series-count'),
+            recommendations: document.getElementById('header-recommendations-count'),
+            ai_generated: document.getElementById('header-ai-generated-count')
+        };
+
+        Object.keys(elements).forEach(function (key) {
+            if (elements[key]) {
+                elements[key].textContent = String(data[key] ?? 0);
+            }
+        });
+    } catch (error) {
+        console.error('Lifetime statistics load error:', error);
+    }
+}
+
+loadLifetimeStatistics();
+const lifetimeStatisticsTimer = setInterval(loadLifetimeStatistics, 5000);
+
+
+async function loadTrendingNow() {
+    try {
+        const response = await fetch(
+            appUrl("/api/trending"),
+            {
+                cache: "no-store",
+                headers: {
+                    "Accept": "application/json"
+                }
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `Trending request failed: ${response.status}`
+            );
+        }
+
+        const data = await response.json();
+
+        renderTrendingRail(
+            data.movies || [],
+            "trending-movies",
+            "trending-movie-count",
+            "Movie"
+        );
+
+        renderTrendingRail(
+            data.series || [],
+            "trending-series",
+            "trending-series-count",
+            "Series"
+        );
+
+        await loadLifetimeStatistics();
+
+    } catch (error) {
+
+        console.error(
+            "Trending load error:",
+            error
+        );
+
+        const movieRail = document.getElementById(
+            "trending-movies"
+        );
+
+        const seriesRail = document.getElementById(
+            "trending-series"
+        );
+
+        const message = `
+            <div class="trending-empty">
+                Trending is temporarily unavailable.
+            </div>
+        `;
+
+        if (movieRail) movieRail.innerHTML = message;
+        if (seriesRail) seriesRail.innerHTML = message;
+    }
+}
+
+loadTrendingNow();
+
+
+/* ========================================================= */
+/* WHY */
+/* ========================================================= */
+
+function toggleWhy(
+    button
+) {
+
+    const panel =
+        button.nextElementSibling;
+
+
+    if (!panel) {
+        return;
+    }
+
+
+    panel.classList.toggle(
+        "show"
+    );
+
+
+    if (
+        panel.classList.contains(
+            "show"
+        )
+    ) {
+
+        button.innerText =
+            "▲ Hide why";
+
+    } else {
+
+        button.innerText =
+            "💡 Why this?";
+
+    }
+}
+
+
+
+/* ========================================================= */
+/* LIVE WATCHED LIBRARY HELPERS                              */
+/* ========================================================= */
+
+function createLiveWatchedCard(item) {
+    const article = document.createElement("article");
+
+    article.className = "library-card library-clickable live-watched-card";
+    article.dataset.mediaType = item.media_type || "Movie";
+    article.dataset.tmdbId = item.tmdb_id || "";
+
+    const mediaType = item.media_type || "Movie";
+    const icon = mediaType === "Movie" ? "🎬" : "📺";
+    const year = item.year ? String(item.year) : "";
+    const rating = Number(item.rating || 0).toFixed(1);
+    const poster = item.poster || "";
+    const overview = item.overview || "";
+    const title = item.title || "";
+
+    article.innerHTML = `
+        <div class="library-poster">
+            ${poster
+                ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}" loading="lazy">`
+                : `<div class="poster-placeholder">${icon}</div>`
+            }
+        </div>
+
+        <div class="library-content">
+            <h3>${escapeHtml(title)}</h3>
+
+            <div class="library-meta">
+                ${year ? `<span>${escapeHtml(year)}</span><span>•</span>` : ""}
+                <span class="user-rating">★ ${rating}/10</span>
+            </div>
+
+            ${overview
+                ? `<p>${escapeHtml(overview)}</p>`
+                : ""
+            }
+
+            <form action="${item.id ? appUrl(`/delete/${encodeURIComponent(item.id)}`) : "#"}" method="post" data-live-delete-form>
+                <button type="submit" class="remove-button" ${item.id ? "" : "disabled"}>
+                    Remove
+                </button>
+            </form>
+        </div>
+    `;
+
+    /* Clicking the library card opens the existing detail page. */
+    article.addEventListener("click", function (event) {
+        if (event.target.closest("form, button, a, input")) {
+            return;
+        }
+
+        if (!item.tmdb_id) {
+            return;
+        }
+
+        window.location.href = appUrl(
+            `/title/${encodeURIComponent(mediaType)}/${encodeURIComponent(item.tmdb_id)}?match=100`
+        );
+    });
+
+    return article;
+}
+
+function addLiveWatchedCard(item) {
+    if (!item || !item.media_type) {
+        return;
+    }
+
+    const gridId =
+        item.media_type === "Series"
+            ? "watched-series-grid"
+            : "watched-movies-grid";
+
+    const sectionId =
+        item.media_type === "Series"
+            ? "watched-series-section"
+            : "watched-movies-section";
+
+    let grid = document.getElementById(gridId);
+    const section = document.getElementById(sectionId);
+
+    if (!grid && section) {
+        grid = document.createElement("div");
+        grid.className = "library-grid";
+        grid.id = gridId;
+
+        const empty = section.querySelector(".empty-library");
+        if (empty) {
+            empty.remove();
+        }
+
+        section.appendChild(grid);
+    }
+
+    if (!grid) {
+        return;
+    }
+
+    /* Avoid duplicates if the title already exists in the visible library. */
+    if (item.tmdb_id) {
+        const existing = grid.querySelector(
+            `.library-clickable[data-tmdb-id="${CSS.escape(String(item.tmdb_id))}"]`
+        );
+
+        if (existing) {
+            return;
+        }
+    }
+
+    const card = createLiveWatchedCard(item);
+
+    /* If the section was previously empty, remove its placeholder. */
+    const empty = section?.querySelector(".empty-library");
+    if (empty) {
+        empty.remove();
+    }
+
+    grid.prepend(card);
+
+    const countElement = document.getElementById(
+        item.media_type === "Series"
+            ? "watched-series-count"
+            : "watched-movies-count"
+    );
+
+    if (countElement) {
+        const current = Number(countElement.textContent.trim()) || 0;
+        countElement.textContent = String(current + 1);
+    }
+}
+
+function removeLiveRecommendationFromWatch(card) {
+    if (!card) {
+        return;
+    }
+
+    const grid = card.closest(".recommendation-grid");
+    const sourceSection = grid?.closest(".source-section");
+    const count = sourceSection?.querySelector(".source-count");
+
+    card.style.transition =
+        "opacity .25s ease, transform .25s ease, max-height .25s ease";
+    card.style.opacity = "0";
+    card.style.transform = "scale(.94) translateY(8px)";
+
+    setTimeout(() => {
+        card.remove();
+    }, 250);
+
+    if (count) {
+        const current = Number(count.textContent.trim()) || 0;
+        count.textContent = String(Math.max(0, current - 1));
+    }
+
+    setTimeout(function () {
+        if (typeof loadLifetimeStatistics === "function") {
+            loadLifetimeStatistics();
+        }
+    }, 275);
+}
+
+/* ========================================================= */
+/* AJAX ADD + WATCHED ACTIONS                               */
+/* ========================================================= */
+
+function showToast(message, type = "success") {
+    let toast = document.getElementById("movie-ai-toast");
+
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "movie-ai-toast";
+        toast.className = "movie-ai-toast";
+        document.body.appendChild(toast);
+    }
+
+    toast.className = `movie-ai-toast ${type}`;
+    toast.textContent = message;
+
+    requestAnimationFrame(() => {
+        toast.classList.add("show");
+    });
+
+    clearTimeout(window.movieAiToastTimer);
+    window.movieAiToastTimer = setTimeout(() => {
+        toast.classList.remove("show");
+    }, 2200);
+}
+
+
+
+/* ADD FROM SEARCH WITHOUT RELOADING */
+
+const addForm = document.getElementById("add-form");
+
+if (addForm) {
+    addForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
+
+        const submitButton = addForm.querySelector(".primary-button");
+        const originalText = submitButton ? submitButton.innerHTML : "";
+
+        if (submitButton) {
+            submitButton.disabled = true;
+            submitButton.innerHTML = `
+                <span>Adding to library...</span>
+                <span>✓</span>
+            `;
+        }
+
+        try {
+            const response = await fetch(
+                appUrl("/api/add"),
+                {
+                    method: "POST",
+                    body: new FormData(addForm),
+                    headers: { "Accept": "application/json" }
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                throw new Error(data.error || "Unable to add title.");
+            }
+
+            addLiveWatchedCard(data.item);
+
+            showToast(`✓ ${data.item?.title || titleInput.value} added to your library`);
+            loadLifetimeStatistics();
+
+            titleInput.value = "";
+            tmdbIdInput.value = "";
+
+            if (searchResults) {
+                searchResults.innerHTML = "";
+                searchResults.classList.remove("show");
+            }
+
+            if (selectedPreview) {
+                selectedPreview.innerHTML = `
+                    <div class="selected-preview-empty">
+                        <div class="preview-empty-icon">✓</div>
+                        <span>Added successfully. Search for another title.</span>
+                    </div>
+                `;
+            }
+
+            const ratingInput = document.getElementById("rating");
+            if (ratingInput) ratingInput.value = "";
+
+        } catch (error) {
+            console.error("AJAX add error:", error);
+            showToast(error.message || "Unable to add title.", "error");
+        } finally {
+            if (submitButton) {
+                submitButton.disabled = false;
+                submitButton.innerHTML = originalText;
+            }
+        }
+    });
+}
+
+
+/* MARK RECOMMENDATION AS WATCHED WITHOUT RELOADING */
+
+document.addEventListener("submit", async function (event) {
+
+    const form = event.target.closest(".ajax-watched-form");
+
+    if (!form) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const card = form.closest(".recommendation-card");
+    const button = form.querySelector(".watched-button");
+    const originalText = button ? button.textContent : "✅ Watched";
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = "Saving...";
+    }
+
+    try {
+        const response = await fetch(
+            appUrl("/api/recommendation/watched"),
+            {
+                method: "POST",
+                body: new FormData(form),
+                headers: { "Accept": "application/json" }
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(
+                data.error || "Unable to save watched title."
+            );
+        }
+
+        addLiveWatchedCard({
+            title: data.title || form.querySelector('[name="title"]')?.value || "Title",
+            tmdb_id: data.tmdb_id || Number(form.querySelector('[name="tmdb_id"]')?.value || 0) || null,
+            media_type: data.media_type || form.querySelector('[name="media_type"]')?.value || "Movie",
+            rating: Number(form.querySelector('[name="rating"]')?.value || 0),
+            poster: data.poster || "",
+            year: data.year || null,
+            overview: data.overview || ""
+        });
+
+        removeLiveRecommendationFromWatch(card);
+
+        showToast(`✓ ${data.title || "Title"} added to watched`);
+        loadLifetimeStatistics();
+
+    } catch (error) {
+        console.error("AJAX watched error:", error);
+        showToast(
+            error.message || "Unable to save watched title.",
+            "error"
+        );
+
+        if (button) {
+            button.disabled = false;
+            button.textContent = originalText;
+        }
+    }
+});
+
+
+
+/* ========================================================= */
+/* AJAX NOT INTERESTED — SAME FLOW AS WATCHED                  */
+/* ========================================================= */
+
+document.addEventListener("submit", async function (event) {
+
+    const form = event.target.closest(".ajax-not-interested-form");
+
+    if (!form) {
+        return;
+    }
+
+    /* Stop the browser from navigating to the JSON/redirect response. */
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const card = form.closest(".recommendation-card");
+    const button = form.querySelector(".not-interested-button");
+
+    if (!card || !button) {
+        return;
+    }
+
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Removing...";
+
+    try {
+
+        /*
+         * Use the SAME form action already present in the HTML.
+         * This keeps the normal database endpoint intact and works
+         * whether the backend returns JSON or a redirect.
+         */
+        const action = form.getAttribute("action") || "/recommendation/not-interested";
+
+        const response = await fetch(
+            appUrl(action),
+            {
+                method: "POST",
+                body: new FormData(form),
+                headers: {
+                    "Accept": "application/json, text/html;q=0.9, */*;q=0.8"
+                },
+                cache: "no-store",
+                redirect: "follow"
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `Not interested request failed: ${response.status}`
+            );
+        }
+
+        /*
+         * The current backend may return JSON, while an older backend
+         * may return the normal 303 redirect. Either is a successful
+         * database operation, so do not require JSON here.
+         */
+        let title = form.querySelector('[name="title"]')?.value || "Title";
+
+        const contentType =
+            response.headers.get("content-type") || "";
+
+        if (contentType.includes("application/json")) {
+            try {
+                const data = await response.json();
+
+                if (data && data.ok === false) {
+                    throw new Error(
+                        data.error || "Unable to mark title as not interested."
+                    );
+                }
+
+                title = data?.title || title;
+            } catch (jsonError) {
+                /* Successful HTTP response: keep the generic title. */
+                console.debug(
+                    "Not interested JSON parse skipped:",
+                    jsonError
+                );
+            }
+        }
+
+        /* EXACT SAME removal function used by Watched. */
+        removeLiveRecommendationFromWatch(card);
+
+        showToast(
+            `✕ ${title} removed from recommendations`
+        );
+
+    } catch (error) {
+
+        console.error(
+            "AJAX not-interested error:",
+            error
+        );
+
+        button.disabled = false;
+        button.textContent = originalText;
+
+        showToast(
+            error.message ||
+            "Unable to mark title as not interested.",
+            "error"
+        );
+    }
+
+}, true);
+
+
+/* ========================================================= */
+/* MOUSE / TOUCH DRAG FOR HORIZONTAL STREAMING RAILS        */
+/* ========================================================= */
+
+(function initRailDrag() {
+
+    const rails = document.querySelectorAll(
+        ".recommendation-grid, .trending-grid"
+    );
+
+    rails.forEach(function (rail) {
+
+        let isDown = false;
+        let isDragging = false;
+        let startX = 0;
+        let startScrollLeft = 0;
+        let activePointerId = null;
+        let suppressClickUntil = 0;
+
+        rail.classList.add("drag-scroll-rail");
+
+        function isControl(target) {
+            return !!target.closest(
+                "a, button, form, input, select, textarea, option"
+            );
+        }
+
+        function beginDrag(event) {
+            if (isControl(event.target)) return;
+
+            if (event.pointerType === "mouse" && event.button !== 0) {
+                return;
+            }
+
+            isDown = true;
+            isDragging = false;
+            activePointerId = event.pointerId;
+            startX = event.clientX;
+            startScrollLeft = rail.scrollLeft;
+
+            rail.classList.add("is-dragging");
+
+            try {
+                rail.setPointerCapture(event.pointerId);
+            } catch (_) {}
+        }
+
+        function moveDrag(event) {
+            if (!isDown || event.pointerId !== activePointerId) {
+                return;
+            }
+
+            const delta = event.clientX - startX;
+
+            if (Math.abs(delta) < 6 && !isDragging) {
+                return;
+            }
+
+            isDragging = true;
+
+            // Move the rail exactly with the pointer.
+            rail.scrollLeft = startScrollLeft - delta;
+
+            if (event.cancelable) {
+                event.preventDefault();
+            }
+        }
+
+        function endDrag(event) {
+            if (!isDown) return;
+            if (
+                activePointerId !== null &&
+                event.pointerId !== undefined &&
+                event.pointerId !== activePointerId
+            ) {
+                return;
+            }
+
+            const wasDragging = isDragging;
+
+            isDown = false;
+            isDragging = false;
+            activePointerId = null;
+            rail.classList.remove("is-dragging");
+
+            try {
+                if (event.pointerId !== undefined && rail.hasPointerCapture(event.pointerId)) {
+                    rail.releasePointerCapture(event.pointerId);
+                }
+            } catch (_) {}
+
+            if (wasDragging) {
+                // Browser fires a click after mouseup. Suppress only that click.
+                suppressClickUntil = Date.now() + 180;
+            }
+        }
+
+        rail.addEventListener("pointerdown", beginDrag);
+        rail.addEventListener("pointermove", moveDrag, { passive: false });
+        rail.addEventListener("pointerup", endDrag);
+        rail.addEventListener("pointercancel", endDrag);
+
+        // Extra safety for browsers that stop dispatching pointer events
+        // while leaving the rail.
+        document.addEventListener("pointerup", endDrag);
+
+        rail.addEventListener("click", function (event) {
+            if (Date.now() < suppressClickUntil) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        }, true);
+    });
+})();
+
+</script>
+
+
+{% elif page == 'library' %}
 
 <div class="site-background library-background"></div>
 
