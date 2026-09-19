@@ -258,6 +258,9 @@ def _parse_media_filename(path: Path, media_type: str):
 def scan_local_media():
     found = []
     roots = [("Movie", MEDIA_MOVIES_ROOT), ("Series", MEDIA_SERIES_ROOT)]
+    metadata_cache = {}
+    token_available = bool(get_env("TMDB_TOKEN"))
+
     for media_type, root in roots:
         if not root.exists() or not root.is_dir():
             continue
@@ -266,21 +269,48 @@ def scan_local_media():
                 continue
             try:
                 stat = path.stat()
-                title, year, season, episode = _parse_media_filename(path, media_type)
-                item = upsert_media_file({
+                parsed_title, year, season, episode = _parse_media_filename(path, media_type)
+                item_data = {
                     "media_type": media_type,
-                    "title": title,
+                    "title": parsed_title,
+                    "original_title": parsed_title,
                     "year": year,
                     "season": season,
                     "episode": episode,
                     "file_path": str(path.resolve()),
                     "file_name": path.name,
                     "size_bytes": stat.st_size,
-                })
+                    "metadata_status": "unmatched" if token_available else "no_token",
+                }
+
+                if token_available:
+                    cache_key = (media_type, parsed_title.casefold(), year)
+                    if cache_key not in metadata_cache:
+                        metadata_cache[cache_key] = tmdb_search(parsed_title, media_type, year=year)
+                    match = metadata_cache[cache_key]
+                    if match:
+                        item_data.update({
+                            "title": match["title"],
+                            "year": match.get("year") or year,
+                            "poster": match.get("poster"),
+                            "backdrop": match.get("backdrop"),
+                            "overview": match.get("overview", ""),
+                            "vote_average": match.get("vote_average", 0),
+                            "tmdb_id": match.get("tmdb_id"),
+                            "metadata_status": "matched",
+                            "metadata_error": None,
+                        })
+                    else:
+                        item_data["metadata_status"] = "unmatched"
+                        item_data["metadata_error"] = "No confident TMDB match"
+
+                item = upsert_media_file(item_data)
                 if item:
                     found.append(item)
             except OSError as error:
                 print(f"Media scan skipped {path}: {error}")
+            except Exception as error:
+                print(f"Media metadata skipped {path}: {error}")
     return found
 
 
@@ -2040,6 +2070,47 @@ def api_local_media_stream(media_id: int, request: Request):
         return JSONResponse({"error": "Media file is unavailable"}, status_code=404)
 
     return _media_stream_response(path, request)
+
+
+# ============================================================
+# TMDB DETAIL PAGE
+# ============================================================
+
+@app.get("/title/{media_type}/{tmdb_id}")
+def title_detail_page(request: Request, media_type: str, tmdb_id: int, match: int = 0):
+    if media_type not in ("Movie", "Series"):
+        return JSONResponse({"error": "media_type must be Movie or Series"}, status_code=400)
+
+    detail = tmdb_get_detail_page(tmdb_id, media_type)
+    if not detail:
+        return JSONResponse({"error": "TMDB details unavailable"}, status_code=404)
+
+    watched = None
+    for row in get_all():
+        if row.get("type") != media_type:
+            continue
+        try:
+            if row.get("tmdb_id") is not None and int(row.get("tmdb_id")) == int(tmdb_id):
+                watched = row
+                break
+        except (TypeError, ValueError):
+            continue
+
+    detail["is_watched"] = watched is not None
+    detail["user_rating"] = watched.get("rating") if watched else None
+    detail["is_watchlisted"] = is_in_watchlist(media_type, tmdb_id)
+    detail["match_percentage"] = max(0, min(100, int(match or 0)))
+
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "page": "detail",
+            "detail": detail,
+            "media_type": media_type,
+            "ingress_path": get_ingress_path(request),
+        },
+    )
 
 
 # ============================================================
