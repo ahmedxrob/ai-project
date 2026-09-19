@@ -11,8 +11,7 @@ startup: application
 boot: auto
 init: false
 
-webui: "http://[HOST]:[PORT:8099]/"
-
+webui: "http://[HOST]:[PORT:8099]/recommendations"
 panel_icon: mdi:movie-open
 panel_title: My Movie AI
 panel_admin: false
