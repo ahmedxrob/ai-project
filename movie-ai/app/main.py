@@ -216,7 +216,7 @@ def get_env(name: str) -> str:
 # LOCAL MEDIA LIBRARY
 # ============================================================
 
-MEDIA_ROOT = Path(get_env("MEDIA_ROOT") or "/media").expanduser().resolve()
+MEDIA_ROOT = Path(get_env("MEDIA_ROOT") or "/mnt/storage/media").expanduser().resolve()
 MEDIA_MOVIES_ROOT = Path(get_env("MEDIA_MOVIES_ROOT") or str(MEDIA_ROOT / "movies")).expanduser().resolve()
 MEDIA_SERIES_ROOT = Path(get_env("MEDIA_SERIES_ROOT") or str(MEDIA_ROOT / "series")).expanduser().resolve()
 MEDIA_EXTENSIONS = {
@@ -1986,8 +1986,9 @@ def generate_recommendations(
 def local_library_page(request: Request):
     return templates.TemplateResponse(
         request=request,
-        name="library.html",
+        name="index.html",
         context={
+            "page": "library",
             "media": get_media_files(),
             "counts": media_counts(),
             "media_root": str(MEDIA_ROOT),
@@ -2647,8 +2648,9 @@ def title_detail(
 
     response = templates.TemplateResponse(
         request=request,
-        name="detail.html",
+        name="index.html",
         context={
+            "page": "detail",
             "detail": detail,
             "media_type": media_type,
             "ingress_path": get_ingress_path(request),
@@ -2748,6 +2750,7 @@ def recommendations(request: Request, background_tasks: BackgroundTasks):
                 )
 
         context = {
+            "page": "recommendations",
             "movies": movies,
             "watched_movies": watched_movies,
             "watched_series": watched_series,
@@ -2761,6 +2764,7 @@ def recommendations(request: Request, background_tasks: BackgroundTasks):
         }
     else:
         context = {
+            "page": "recommendations",
             "movies": movies,
             "watched_movies": watched_movies,
             "watched_series": watched_series,
