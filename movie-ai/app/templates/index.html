@@ -17,54 +17,17 @@
 
 
 
-<nav class="topbar">
-
-    <div class="brand">
-
-        <div class="brand-icon">
-            🎬
-        </div>
-
-        <div class="brand-text">
-
-            <strong>
-                My Movie AI
-            </strong>
-
-            <span>
-                your personal cinema
-            </span>
-
-        </div>
-
+<nav class="topbar app-topbar">
+    <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
+        <div class="brand-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div>
+        <div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div>
+    </a>
+    <div class="topbar-nav">
+        <a class="app-nav-item active" href="{{ ingress_path|default('') }}/recommendations"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Discover</span></a>
+        <a class="app-nav-item" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg><span>Library</span></a>
+        <button type="button" id="open-search-button" class="app-nav-item nav-button"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button>
     </div>
-
-
-    <div class="topbar-actions">
-
-        <button
-            type="button"
-            id="open-search-button"
-            class="topbar-search-button"
-            aria-label="Open search"
-            aria-expanded="false"
-        >
-            <span>🔎</span>
-            <strong>Search</strong>
-        </button>
-
-        <a href="{{ ingress_path|default('') }}/library" class="topbar-search-button">
-            <span>▣</span>
-            <strong>Library</strong>
-        </a>
-
-        <div class="topbar-status">
-            <span class="status-dot"></span>
-            Personal Library
-        </div>
-
-    </div>
-
+    <div class="topbar-status"><span class="status-dot"></span><span>LOCAL SERVER</span></div>
 </nav>
 
 
@@ -3479,15 +3442,10 @@ document.addEventListener("submit", async function (event) {
 
 <div class="site-background library-background"></div>
 
-<nav class="topbar">
-    <div class="brand">
-        <div class="brand-icon">🎬</div>
-        <div class="brand-text"><strong>My Movie AI</strong><span>your personal cinema</span></div>
-    </div>
-    <div class="topbar-actions">
-        <a class="topbar-search-button" href="{{ ingress_path|default('') }}/recommendations"><span>✦</span><strong>Discover</strong></a>
-        <a class="topbar-search-button active" href="{{ ingress_path|default('') }}/library"><span>▣</span><strong>Library</strong></a>
-    </div>
+<nav class="topbar app-topbar">
+    <a class="brand" href="{{ ingress_path|default('') }}/recommendations"><div class="brand-icon"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div><div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div></a>
+    <div class="topbar-nav"><a class="app-nav-item" href="{{ ingress_path|default('') }}/recommendations"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Discover</span></a><a class="app-nav-item active" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg><span>Library</span></a></div>
+    <div class="topbar-status"><span class="status-dot"></span><span>LOCAL SERVER</span></div>
 </nav>
 
 <main class="media-library-page">
@@ -3560,6 +3518,9 @@ let allMedia = [], currentFilter = 'all', currentSearch = '';
 
 function episodeLabel(item){ return item.season ? `S${String(item.season).padStart(2,'0')}E${String(item.episode||0).padStart(2,'0')}` : 'Episode'; }
 function posterMarkup(item, label, series=false){
+    if(item.poster){
+        return `<div class="media-poster ${series?'series-poster':''}"><img src="${escapeHtml(item.poster)}" alt="${escapeHtml(label)}" loading="lazy"><span class="poster-shade"></span><span class="poster-icon">▶</span></div>`;
+    }
     const seed = encodeURIComponent((item.title || 'Movie').slice(0,24));
     return `<div class="media-poster ${series?'series-poster':''}" style="--poster-seed:'${seed}'"><div class="poster-noise"></div><span class="poster-icon">${series?'▣':'▶'}</span><span class="poster-title">${escapeHtml(label)}</span></div>`;
 }
@@ -3572,7 +3533,7 @@ function movieCard(item){
             <span class="play-badge">▶</span>
             ${pct>0?`<span class="progress-line"><i style="width:${pct}%"></i></span>`:''}
         </button>
-        <div class="media-card-info"><h3>${escapeHtml(item.title)}</h3><p>${[item.year,fmtSize(item.size_bytes)].filter(Boolean).join(' · ') || 'Local movie'}</p></div>
+        <div class="media-card-info"><h3>${escapeHtml(item.title)}</h3><p>${[item.year, item.vote_average ? '★ '+Number(item.vote_average).toFixed(1) : '', fmtSize(item.size_bytes)].filter(Boolean).join(' · ') || 'Local movie'}</p></div>
     </article>`;
 }
 function seriesGroups(items){
@@ -3587,7 +3548,7 @@ function seriesCard(group){
         <button class="media-card-open" data-play-id="${first.id}" aria-label="Play ${escapeHtml(group.title)}">
             ${posterMarkup(first,group.title,true)}<span class="play-badge">▶</span>
         </button>
-        <div class="media-card-info"><h3>${escapeHtml(group.title)}</h3><p>${group.items.length} episode${group.items.length===1?'':'s'}${watched?' · '+watched+' in progress':''}</p></div>
+        <div class="media-card-info"><h3>${escapeHtml(group.title)}</h3><p>${group.items.length} episode${group.items.length===1?'':'s'}${first.year?' · '+first.year:''}${first.vote_average?' · ★ '+Number(first.vote_average).toFixed(1):''}${watched?' · '+watched+' in progress':''}</p></div>
     </article>`;
 }
 function matches(item){ return (currentFilter==='all'||item.media_type===currentFilter) && (!currentSearch || item.title.toLowerCase().includes(currentSearch)); }
@@ -3634,15 +3595,10 @@ load();
 
 <div class="site-background"></div>
 
-<nav class="topbar detail-topbar">
-    <div class="brand">
-        <div class="brand-icon">🎬</div>
-        <div class="brand-text">
-            <strong>My Movie AI</strong>
-            <span>your personal cinema</span>
-        </div>
-    </div>
-    <a class="detail-back" href="{{ ingress_path|default('') }}/recommendations">← Back to picks</a>
+<nav class="topbar app-topbar detail-topbar">
+    <a class="brand" href="{{ ingress_path|default('') }}/recommendations"><div class="brand-icon"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div><div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div></a>
+    <div class="topbar-nav"><a class="app-nav-item" href="{{ ingress_path|default('') }}/recommendations"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Discover</span></a><a class="app-nav-item" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg><span>Library</span></a></div>
+    <a class="detail-back" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/><path d="M9 12h10"/></svg><span>Back to library</span></a>
 </nav>
 
 <main class="detail-page">
