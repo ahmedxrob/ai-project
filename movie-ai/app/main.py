@@ -90,6 +90,29 @@ TMDB_SERIES_TARGET = 8
 RECENT_HISTORY_LIMIT = 12
 
 WATCHLIST_FILE = Path("/data/watchlist.json")
+APP_SETTINGS_FILE = Path("/data/app_settings.json")
+DEFAULT_RECOMMENDATION_LIMIT = 8
+MIN_RECOMMENDATION_LIMIT = 1
+MAX_RECOMMENDATION_LIMIT = 20
+
+def load_app_settings():
+    defaults = {"recommendation_limit": DEFAULT_RECOMMENDATION_LIMIT}
+    try:
+        if APP_SETTINGS_FILE.exists():
+            data = json.loads(APP_SETTINGS_FILE.read_text(encoding="utf-8"))
+            value = int(data.get("recommendation_limit", DEFAULT_RECOMMENDATION_LIMIT))
+            defaults["recommendation_limit"] = max(MIN_RECOMMENDATION_LIMIT, min(MAX_RECOMMENDATION_LIMIT, value))
+    except Exception as error:
+        print(f"App settings load error: {error}")
+    return defaults
+
+def save_app_settings(settings):
+    APP_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    APP_SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+def get_recommendation_limit():
+    return int(load_app_settings().get("recommendation_limit", DEFAULT_RECOMMENDATION_LIMIT))
+
 recommendation_state = {
     "status": "idle",
     "data": None,
@@ -1616,6 +1639,8 @@ def generate_recommendations(
         "AI + TMDB engine..."
     )
 
+    recommendation_limit = get_recommendation_limit()
+
     watched_movie_ids = {
         item["tmdb_id"]
         for item in watched
@@ -1711,13 +1736,9 @@ def generate_recommendations(
             ai_series
         )
 
-        ai_movies = ai_movies[
-            :AI_MOVIES_TARGET
-        ]
+        ai_movies = ai_movies[:recommendation_limit]
 
-        ai_series = ai_series[
-            :AI_SERIES_TARGET
-        ]
+        ai_series = ai_series[:recommendation_limit]
 
         print(
             f"AI movies: "
@@ -1775,13 +1796,9 @@ def generate_recommendations(
         },
     )
 
-    tmdb_movies = tmdb_movies[
-        :TMDB_MOVIES_TARGET
-    ]
+    tmdb_movies = tmdb_movies[:recommendation_limit]
 
-    tmdb_series = tmdb_series[
-        :TMDB_SERIES_TARGET
-    ]
+    tmdb_series = tmdb_series[:recommendation_limit]
 
     new_ai_movies = 0
     new_ai_series = 0
@@ -2480,6 +2497,7 @@ def watched_page(request: Request):
             "tmdb_discoveries": None,
             "display_statistics": get_display_statistics(),
             "lifetime_statistics": get_lifetime_statistics(),
+            "recommendation_limit": get_recommendation_limit(),
             "ingress_path": get_ingress_path(request),
         },
     )
@@ -2544,6 +2562,29 @@ def settings_page(request: Request):
     )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
+
+
+# ============================================================
+# APP SETTINGS API
+# ============================================================
+
+@app.get("/api/settings")
+def api_get_settings():
+    settings = load_app_settings()
+    return JSONResponse({"ok": True, **settings})
+
+
+@app.post("/api/settings")
+def api_update_settings(recommendation_limit: int = Form(...)):
+    try:
+        value = int(recommendation_limit)
+    except Exception:
+        value = DEFAULT_RECOMMENDATION_LIMIT
+    value = max(MIN_RECOMMENDATION_LIMIT, min(MAX_RECOMMENDATION_LIMIT, value))
+    settings = load_app_settings()
+    settings["recommendation_limit"] = value
+    save_app_settings(settings)
+    return JSONResponse({"ok": True, **settings})
 
 
 # ============================================================
