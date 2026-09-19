@@ -194,6 +194,10 @@ def toggle_watchlist_item(item):
     return not item.get("remove", False)
 
 
+templates.env.globals["is_in_watchlist"] = is_in_watchlist
+templates.env.globals["watchlist_key"] = watchlist_key
+
+
 # ============================================================
 # ENVIRONMENT
 # ============================================================
@@ -1922,6 +1926,10 @@ def get_trending_titles(media_type, limit=8):
             normalized["reason"] = (
                 "Trending on TMDB right now."
             )
+            normalized["is_watchlisted"] = is_in_watchlist(
+                media_type,
+                tmdb_id,
+            )
 
             output.append(normalized)
             seen.add(tmdb_id)
@@ -2639,6 +2647,42 @@ def title_detail(
 # ============================================================
 # WATCHLIST TOGGLE
 # ============================================================
+
+@app.post("/api/watchlist/toggle")
+def api_watchlist_toggle(
+    tmdb_id: int = Form(...),
+    media_type: str = Form(...),
+    title: str = Form(...),
+    year: Optional[int] = Form(None),
+    poster: Optional[str] = Form(None),
+    backdrop: Optional[str] = Form(None),
+    overview: Optional[str] = Form(""),
+    vote_average: float = Form(0),
+    remove: bool = Form(False),
+):
+    if media_type not in ("Movie", "Series"):
+        return JSONResponse({"ok": False, "error": "Invalid media type."}, status_code=400)
+
+    saved = toggle_watchlist_item({
+        "tmdb_id": tmdb_id,
+        "media_type": media_type,
+        "title": title,
+        "year": year,
+        "poster": poster,
+        "backdrop": backdrop,
+        "overview": overview or "",
+        "vote_average": vote_average,
+        "remove": remove,
+    })
+
+    return JSONResponse({
+        "ok": True,
+        "saved": saved,
+        "tmdb_id": tmdb_id,
+        "media_type": media_type,
+        "title": title,
+    })
+
 
 @app.post("/watchlist/toggle")
 def watchlist_toggle(
