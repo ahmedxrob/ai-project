@@ -37,7 +37,6 @@ let currentLibraryIndex = -1;
 
 let currentPage = 1;
 let currentQuery = "";
-let searchSource = "youtube";
 let isLoadingMore = false;
 let hasMoreResults = true;
 
@@ -1123,7 +1122,7 @@ function toggleAudioStream(
     audio.removeAttribute("src");
 
     audio.dataset.xrobSongId = String(songId || "");
-    if (type) currentPlayerSource = type === "search" ? (searchSource === "library" ? "library" : "home") : type;
+    if (type) currentPlayerSource = type === "search" ? "home" : type;
     savePlayerState();
     audio.src = absoluteUrl;
 
@@ -2420,7 +2419,7 @@ async function searchMusic() {
             await fetch(
                 `api/search?q=${
                     encodeURIComponent(query)
-                }&source=${encodeURIComponent(searchSource)}&page=1`,
+                }&source=youtube&page=1`,
                 {
                     cache: "no-store"
                 }
@@ -2566,7 +2565,7 @@ function renderItems(items) {
             card.className =
                 "result-card";
 
-            if (searchSource === "library" || item.source === "library") {
+            if (item.source === "library") {
                 const title = item.title || item.name || "Unknown Track";
                 const artist = item.artist || "Unknown Artist";
                 const album = item.album || "Unknown Album";
@@ -2814,7 +2813,7 @@ async function loadMoreResults() {
                     encodeURIComponent(
                         currentQuery
                     )
-                }&source=${encodeURIComponent(searchSource)}&page=${
+                }&source=youtube&page=${
                     nextPage
                 }`,
                 {
@@ -2876,25 +2875,12 @@ async function loadMoreResults() {
 
 
 function bindSearch() {
-    document.querySelectorAll("[data-search-source]").forEach(button => {
-        button.addEventListener("click", () => {
-            searchSource = button.dataset.searchSource || "youtube";
-            document.querySelectorAll("[data-search-source]").forEach(item => { item.classList.toggle("active", item === button); item.setAttribute("aria-selected", String(item === button)); });
-            const input = document.getElementById("query");
-            if (input) input.placeholder = searchSource === "library" ? "Search your local library..." : "Search YouTube music...";
-            const status = document.getElementById("statusMsg");
-            if (status) status.textContent = "";
-            if (input?.value.trim()) searchMusic();
-        });
-    });
-
     document
         .getElementById("searchBtn")
         ?.addEventListener(
             "click",
             searchMusic
         );
-
 
     document
         .getElementById("query")
@@ -5054,24 +5040,72 @@ async function loadDetailedLibraryStats() {
 
 let dailyMixTracks = [];
 let dailyMixVariant = Number(localStorage.getItem('xrob_daily_mix_variant') || 0);
-function installHomeSwipeScroller(element, itemSelector) {
-    if (!element || element.dataset.swipeReady === "true") return;
-    element.dataset.swipeReady = "true";
-    let startX = 0; let startY = 0; let tracking = false;
-    element.addEventListener("pointerdown", event => {
-        if (event.pointerType === "mouse" && event.button !== 0) return;
-        startX = event.clientX; startY = event.clientY; tracking = true;
+function installHomeShelfSwipe(containerId) {
+    const row = document.getElementById(containerId);
+    if (!row || row.dataset.swipeBound === "true") return;
+    row.dataset.swipeBound = "true";
+    let pointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let startScrollLeft = 0;
+    let dragging = false;
+    let moved = false;
+    let suppressClick = false;
+    const finish = (event) => {
+        if (pointerId !== null && event.pointerId !== pointerId) return;
+        const activePointerId = pointerId;
+        pointerId = null;
+        if (dragging && activePointerId !== null && row.hasPointerCapture?.(activePointerId)) {
+            try { row.releasePointerCapture(activePointerId); } catch (_) {}
+        }
+        row.classList.remove("is-swipe-dragging");
+        if (moved) {
+            suppressClick = true;
+            window.setTimeout(() => { suppressClick = false; }, 120);
+        }
+        dragging = false;
+        moved = false;
+    };
+    row.addEventListener("pointerdown", (event) => {
+        if (!event.isPrimary || event.button !== 0) return;
+        pointerId = event.pointerId;
+        startX = event.clientX;
+        startY = event.clientY;
+        startScrollLeft = row.scrollLeft;
+        dragging = false;
+        moved = false;
+        try { row.setPointerCapture(pointerId); } catch (_) {}
     });
-    element.addEventListener("pointerup", event => {
-        if (!tracking) return;
-        tracking = false;
-        const dx = event.clientX - startX; const dy = event.clientY - startY;
-        if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.15) return;
-        const first = element.querySelector(itemSelector);
-        const amount = first ? first.getBoundingClientRect().width + 14 : element.clientWidth * 0.8;
-        element.scrollBy({left: dx < 0 ? amount : -amount, behavior: "smooth"});
+    row.addEventListener("pointermove", (event) => {
+        if (pointerId !== event.pointerId) return;
+        const dx = event.clientX - startX;
+        const dy = event.clientY - startY;
+        if (!dragging) {
+            if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+            if (Math.abs(dy) > Math.abs(dx)) { finish(event); return; }
+            dragging = true;
+            row.classList.add("is-swipe-dragging");
+        }
+        if (!dragging) return;
+        moved = Math.abs(dx) >= 12;
+        row.scrollLeft = startScrollLeft - dx;
+        event.preventDefault();
     });
-    element.addEventListener("pointercancel", () => { tracking = false; });
+    row.addEventListener("pointerup", finish);
+    row.addEventListener("pointercancel", finish);
+    row.addEventListener("lostpointercapture", (event) => {
+        if (pointerId === event.pointerId) finish(event);
+    });
+    row.addEventListener("click", (event) => {
+        if (!suppressClick) return;
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+}
+
+function installHomeShelfSwipes() {
+    installHomeShelfSwipe("dailyMixTracks");
+    installHomeShelfSwipe("recentTracks");
 }
 
 async function loadDailyMix(forceVariation = false) {
@@ -5102,8 +5136,7 @@ function installEnhancedFeatures(){
     document.getElementById("dailyMixPlay")?.addEventListener("click", () => { if (!dailyMixTracks.length) return; setEnhancedQueue(dailyMixTracks, 0); currentPlayerSource="library"; playLibraryTrack(0); });
     loadDetailedLibraryStats();
     loadDailyMix();
-    installHomeSwipeScroller(document.getElementById("dailyMixTracks"), ".daily-mix-track");
-    installHomeSwipeScroller(document.getElementById("recentTracks"), ".recent-card");
+    installHomeShelfSwipes();
     document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
