@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="/static/style.css?v=299" rel="stylesheet"/>
+  <link href="/static/style.css?v=300" rel="stylesheet"/>
   <link href="/static/icon.png" rel="icon" type="image/png"/>
   <link href="/static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -177,7 +177,7 @@
           </button>
          </div>
         </div>
-        <div class="daily-mix-track-row" id="dailyMixTracks">
+        <div class="home-swipe-row daily-mix-track-row" id="dailyMixTracks" aria-label="Daily Mix tracks">
         </div>
        </section>
        <!-- RECENTLY ADDED -->
@@ -205,7 +205,7 @@
           Loading Recently Added&hellip;
          </div>
         </div>
-        <div class="recent-grid" id="recentTracks">
+        <div class="home-swipe-row recent-grid" id="recentTracks" aria-label="Recently Added tracks">
         </div>
        </section>
       </div>
@@ -223,8 +223,12 @@
          Find music, preview it, and save it to your library.
         </p>
        </div>
+       <div class="search-source-tabs" role="tablist" aria-label="Search source">
+        <button type="button" class="search-source-tab active" data-search-source="youtube" role="tab" aria-selected="true"><i data-lucide="play" aria-hidden="true"></i> YouTube</button>
+        <button type="button" class="search-source-tab" data-search-source="library" role="tab" aria-selected="false"><i data-lucide="library" aria-hidden="true"></i> My Library</button>
+       </div>
        <div class="search-card page-section">
-        <input autocomplete="off" id="query" placeholder="Search track, artist, or album..." spellcheck="false" type="search"/>
+        <input autocomplete="off" id="query" placeholder="Search YouTube music..." spellcheck="false" type="search"/>
         <button id="searchBtn" type="button">
          <i aria-hidden="true" data-lucide="search">
          </i>
@@ -1196,7 +1200,7 @@
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="/static/app.js?v=293">
+  <script src="/static/app.js?v=294">
   </script>
 
 
