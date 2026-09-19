@@ -4,6 +4,8 @@ import random
 import time
 import requests
 import threading
+import hashlib
+from urllib.parse import urlparse
 
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from pydantic import BaseModel
 from rapidfuzz import fuzz
@@ -28,6 +31,7 @@ except ImportError:
     types = None
 
 from app.database import (
+    DATA_DIR,
     init_database,
     get_all,
     add_movie,
@@ -37,12 +41,16 @@ from app.database import (
     add_not_interested,
     get_not_interested_ids,
     get_display_statistics,
-    set_recommendation_statistics,
-    set_trending_statistics,
     set_display_statistics,
     get_lifetime_statistics,
     increment_lifetime_recommendations,
     increment_lifetime_trending,
+    get_tmdb_cache,
+    set_tmdb_cache,
+    get_latest_recommendation_job,
+    start_recommendation_job,
+    update_recommendation_job,
+    is_current_recommendation_job,
 )
 
 
@@ -89,8 +97,8 @@ TMDB_SERIES_TARGET = 8
 
 RECENT_HISTORY_LIMIT = 12
 
-WATCHLIST_FILE = Path("/data/watchlist.json")
-APP_SETTINGS_FILE = Path("/data/app_settings.json")
+WATCHLIST_FILE = DATA_DIR / "watchlist.json"
+APP_SETTINGS_FILE = DATA_DIR / "app_settings.json"
 DEFAULT_RECOMMENDATION_LIMIT = 8
 MIN_RECOMMENDATION_LIMIT = 1
 MAX_RECOMMENDATION_LIMIT = 20
@@ -115,16 +123,15 @@ def save_app_settings(settings):
 def get_recommendation_limit():
     return int(load_app_settings().get("recommendation_limit", DEFAULT_RECOMMENDATION_LIMIT))
 
-recommendation_state = {
-    "status": "idle",
-    "data": None,
-    "error": None,
-    "tmdb_data": None,
-    "job_id": 0,
-}
-
-recommendation_state_lock = threading.Lock()
 watchlist_lock = threading.Lock()
+
+# A single HTTP session gives TMDB requests connection reuse plus bounded retries.
+TMDB_CACHE_SEARCH_TTL = 45
+TMDB_CACHE_TRENDING_TTL = 300
+TMDB_CACHE_DETAILS_TTL = 3600
+
+_tmdb_session = None
+_tmdb_session_lock = threading.Lock()
 
 
 # ============================================================
@@ -132,37 +139,34 @@ watchlist_lock = threading.Lock()
 # ============================================================
 
 def run_recommendation_job(prefetched_tmdb=None, job_id=None):
-    global recommendation_state
-
     try:
-        print("Background AI recommendation job started...")
+        print(f"Background AI recommendation job started: {job_id}")
         movies = get_all()
         result = generate_recommendations(movies, prefetched_tmdb=prefetched_tmdb)
 
-        set_display_statistics(
-            ai_movies=len(result.get("ai_movies", [])),
-            ai_series=len(result.get("ai_series", [])),
-            tmdb_movies=len(result.get("tmdb_movies", [])),
-            tmdb_series=len(result.get("tmdb_series", [])),
-            trending_movies=0,
-            trending_series=0,
-        )
+        # A newer job may already have superseded this one. Do not let an older
+        # result overwrite the live homepage statistics.
+        if is_current_recommendation_job(job_id):
+            set_display_statistics(
+                ai_movies=len(result.get("ai_movies", [])),
+                ai_series=len(result.get("ai_series", [])),
+                tmdb_movies=len(result.get("tmdb_movies", [])),
+                tmdb_series=len(result.get("tmdb_series", [])),
+                trending_movies=0,
+                trending_series=0,
+            )
+            update_recommendation_job(job_id, "ready", data=result)
+        else:
+            update_recommendation_job(
+                job_id,
+                "superseded",
+                error="Superseded by a newer recommendation job.",
+            )
 
-        with recommendation_state_lock:
-            if recommendation_state.get("job_id") != job_id:
-                print("Ignoring stale recommendation job result.")
-                return
-            recommendation_state["data"] = result
-            recommendation_state["error"] = None
-            recommendation_state["status"] = "ready"
-
-        print("Background AI recommendation job finished.")
+        print(f"Background AI recommendation job finished: {job_id}")
     except Exception as error:
         print(f"Background AI recommendation error: {error}")
-        with recommendation_state_lock:
-            if recommendation_state.get("job_id") == job_id:
-                recommendation_state["status"] = "error"
-                recommendation_state["error"] = str(error)
+        update_recommendation_job(job_id, "error", error=str(error))
 
 
 # ============================================================
@@ -226,6 +230,51 @@ def toggle_watchlist_item(item):
 
 templates.env.globals["is_in_watchlist"] = is_in_watchlist
 templates.env.globals["watchlist_key"] = watchlist_key
+
+
+# ============================================================
+# REQUEST SAFETY
+# ============================================================
+
+class SameOriginMutationMiddleware(BaseHTTPMiddleware):
+    """Block browser cross-site POST/PUT/PATCH/DELETE requests.
+
+    Direct clients without Origin/Referer headers remain supported. This is a
+    CSRF hardening layer, not an authentication system.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origin = (request.headers.get("origin") or "").strip()
+            referer = (request.headers.get("referer") or "").strip()
+            if origin or referer:
+                expected = request.url.hostname
+                allowed = True
+                for candidate in (origin, referer):
+                    if not candidate:
+                        continue
+                    try:
+                        parsed = urlparse(candidate)
+                        candidate_host = parsed.hostname
+                        candidate_port = parsed.port
+                    except ValueError:
+                        allowed = False
+                        break
+                    if candidate_host != expected:
+                        allowed = False
+                        break
+                    if candidate_port and candidate_port != request.url.port:
+                        allowed = False
+                        break
+                if not allowed:
+                    return JSONResponse(
+                        {"ok": False, "error": "Cross-origin mutation blocked."},
+                        status_code=403,
+                    )
+        return await call_next(request)
+
+
+app.add_middleware(SameOriginMutationMiddleware)
 
 
 # ============================================================
@@ -646,6 +695,43 @@ def get_ai_recommendations(watched):
 
 
 # ============================================================
+# TMDB HTTP + CACHE
+# ============================================================
+
+def get_tmdb_session():
+    global _tmdb_session
+    with _tmdb_session_lock:
+        if _tmdb_session is None:
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            retry = Retry(
+                total=3,
+                connect=3,
+                read=3,
+                status=3,
+                backoff_factor=0.4,
+                status_forcelist=(429, 500, 502, 503, 504),
+                allowed_methods=frozenset({"GET"}),
+                respect_retry_after_header=True,
+                raise_on_status=False,
+            )
+            adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=20)
+            _tmdb_session = requests.Session()
+            _tmdb_session.mount("https://", adapter)
+            _tmdb_session.mount("http://", adapter)
+        return _tmdb_session
+
+
+def tmdb_cache_key(endpoint, params):
+    normalized_params = []
+    for key, value in sorted((params or {}).items()):
+        normalized_params.append((str(key), str(value)))
+    raw = json.dumps({"endpoint": endpoint, "params": normalized_params}, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+# ============================================================
 # TMDB REQUEST
 # ============================================================
 
@@ -653,25 +739,29 @@ def tmdb_request(
     endpoint,
     token,
     params=None,
+    cache_ttl=TMDB_CACHE_SEARCH_TTL,
 ):
-
     headers = {
-        "Authorization":
-            f"Bearer {token}",
-        "accept":
-            "application/json",
+        "Authorization": f"Bearer {token}",
+        "accept": "application/json",
     }
+    params = params or {}
+    cache_key = tmdb_cache_key(endpoint, params)
+    cached = get_tmdb_cache(cache_key) if cache_ttl else None
+    if cached is not None:
+        return cached
 
-    response = requests.get(
+    response = get_tmdb_session().get(
         endpoint,
         headers=headers,
-        params=params or {},
-        timeout=12,
+        params=params,
+        timeout=(5, 20),
     )
-
     response.raise_for_status()
-
-    return response.json()
+    payload = response.json()
+    if cache_ttl:
+        set_tmdb_cache(cache_key, payload, cache_ttl)
+    return payload
 
 
 # ============================================================
@@ -826,283 +916,84 @@ def normalise_tmdb_result(
 # TMDB EXACT SEARCH
 # ============================================================
 
+def normalise_search_title(value):
+    import re
+    value = (value or "").casefold().strip()
+    value = re.sub(r"[^\w\s]", " ", value, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", value).strip()
+
+
 def tmdb_search(
     title,
     media_type,
     year=None,
+    allow_fuzzy=False,
 ):
-
-    token = get_env(
-        "TMDB_TOKEN"
-    )
-
-    if not token:
+    token = get_env("TMDB_TOKEN")
+    if not token or media_type not in ("Movie", "Series"):
         return None
 
     endpoint = (
         "https://api.themoviedb.org/3/search/"
         f"{'movie' if media_type == 'Movie' else 'tv'}"
     )
-
     params = {
-        "query":
-            title,
-        "language":
-            "en-US",
-        "include_adult":
-            "false",
+        "query": title,
+        "language": "en-US",
+        "include_adult": "false",
     }
-
     if year:
-
-        if media_type == "Movie":
-
-            params["year"] = year
-
-        else:
-
-            params[
-                "first_air_date_year"
-            ] = year
+        params["year" if media_type == "Movie" else "first_air_date_year"] = year
 
     try:
-
-        data = tmdb_request(
-            endpoint,
-            token,
-            params,
-        )
-
-        results = data.get(
-            "results",
-            [],
-        )
-
-        if not results:
-            return None
-
-        requested = (
-            title
-            .strip()
-            .lower()
-        )
-
-        best = None
-        best_score = -1
-
-        for result in results[:20]:
-
-            if media_type == "Movie":
-
-                result_title = result.get(
-                    "title",
-                    "",
-                )
-
-                date = result.get(
-                    "release_date",
-                    "",
-                )
-
-            else:
-
-                result_title = result.get(
-                    "name",
-                    "",
-                )
-
-                date = result.get(
-                    "first_air_date",
-                    "",
-                )
-
-            if not result_title:
-                continue
-
-            normalized = (
-                result_title
-                .strip()
-                .lower()
-            )
-
-            if (
-                requested ==
-                normalized
-            ):
-
-                score = 100
-
-            else:
-
-                ratio = fuzz.ratio(
-                    requested,
-                    normalized,
-                )
-
-                token_score = (
-                    fuzz.token_sort_ratio(
-                        requested,
-                        normalized,
-                    )
-                )
-
-                score = max(
-                    ratio,
-                    token_score * 0.95,
-                )
-
-            if year and date:
-
-                try:
-
-                    result_year = int(
-                        date[:4]
-                    )
-
-                    if result_year == year:
-                        score += 20
-
-                except (
-                    ValueError,
-                    TypeError,
-                ):
-
-                    pass
-
-            if score > best_score:
-
-                best_score = score
-                best = result
-
-        if not best:
-            return None
-
-        threshold = 86 if len(requested) <= 4 else 82
-        if best_score < threshold:
-            return None
-
-        return normalise_tmdb_result(
-            best,
-            media_type,
-        )
-
-    except Exception as error:
-
-        print(
-            f"TMDB search error "
-            f"for '{title}': {error}"
-        )
-
+        data = tmdb_request(endpoint, token, params, cache_ttl=TMDB_CACHE_SEARCH_TTL)
+    except requests.RequestException as error:
+        print(f"TMDB {media_type.lower()} search error: {error}")
         return None
+
+    results = data.get("results", [])
+    if not results:
+        return None
+
+    requested = normalise_search_title(title)
+    best = None
+    best_score = -1
+
+    for result in results[:20]:
+        result_title = result.get("title", "") if media_type == "Movie" else result.get("name", "")
+        if not result_title:
+            continue
+        normalized = normalise_search_title(result_title)
+        score = 100 if requested == normalized else fuzz.ratio(requested, normalized)
+
+        date = result.get("release_date", "") if media_type == "Movie" else result.get("first_air_date", "")
+        result_year = None
+        if date:
+            try:
+                result_year = int(date[:4])
+            except (TypeError, ValueError):
+                pass
+
+        year_bonus = 8 if year and result_year == int(year) else 0
+        adjusted = score + year_bonus
+        if adjusted > best_score:
+            best_score = adjusted
+            best = result
+
+    # User-entered additions must never silently bind to a merely similar title.
+    # AI verification can explicitly opt into a stricter fuzzy threshold.
+    if best is None:
+        return None
+    threshold = 100 if not allow_fuzzy else 93
+    if best_score < threshold:
+        return None
+
+    return normalise_tmdb_result(best, media_type)
 
 
 # ============================================================
 # LIVE TMDB SEARCH
 # ============================================================
-
-def tmdb_live_search(
-    query,
-    media_type,
-):
-
-    token = get_env(
-        "TMDB_TOKEN"
-    )
-
-    if not token:
-        return []
-
-    query = query.strip()
-
-    if not query:
-        return []
-
-    endpoint = (
-        "https://api.themoviedb.org/3/search/"
-        f"{'movie' if media_type == 'Movie' else 'tv'}"
-    )
-
-    try:
-
-        data = tmdb_request(
-            endpoint,
-            token,
-            {
-                "query":
-                    query,
-                "language":
-                    "en-US",
-                "include_adult":
-                    "false",
-                "page":
-                    1,
-            },
-        )
-
-        results = data.get(
-            "results",
-            [],
-        )
-
-        output = []
-
-        for item in results[:8]:
-
-            normalized = (
-                normalise_tmdb_result(
-                    item,
-                    media_type,
-                )
-            )
-
-            if not normalized.get(
-                "tmdb_id"
-            ):
-                continue
-
-            output.append(
-                {
-                    "tmdb_id":
-                        normalized["tmdb_id"],
-
-                    "title":
-                        normalized["title"],
-
-                    "year":
-                        normalized["year"],
-
-                    "poster":
-                        normalized["poster"],
-
-                    "overview":
-                        normalized["overview"],
-
-                    "vote_average":
-                        normalized[
-                            "vote_average"
-                        ],
-
-                    "tmdb_url":
-                        normalized[
-                            "tmdb_url"
-                        ],
-
-                    "media_type":
-                        media_type,
-                }
-            )
-
-        return output
-
-    except Exception as error:
-
-        print(
-            f"TMDB live search error: "
-            f"{error}"
-        )
-
-        return []
-
 
 # ============================================================
 # TMDB DETAILS
@@ -1135,6 +1026,7 @@ def tmdb_get_details(
                 "language":
                     "en-US"
             },
+            cache_ttl=TMDB_CACHE_DETAILS_TTL,
         )
 
         return normalise_tmdb_result(
@@ -1175,6 +1067,7 @@ def tmdb_get_detail_page(tmdb_id, media_type):
                 "language": "en-US",
                 "append_to_response": "credits,similar",
             },
+            cache_ttl=TMDB_CACHE_DETAILS_TTL,
         )
 
         base = normalise_tmdb_result(data, media_type)
@@ -1249,6 +1142,7 @@ def verify_recommendation(
         item.title,
         media_type,
         item.year,
+        allow_fuzzy=True,
     )
 
     if not result:
@@ -1502,6 +1396,7 @@ def tmdb_fallback(
                     "vote_count.gte":
                         50,
                 },
+                cache_ttl=TMDB_CACHE_TRENDING_TTL,
             )
 
             return (
@@ -1910,6 +1805,7 @@ def get_trending_titles(media_type, limit=None):
             endpoint,
             token,
             {"language": "en-US"},
+            cache_ttl=TMDB_CACHE_TRENDING_TTL,
         )
 
         watched_ids = {
@@ -2025,26 +1921,6 @@ def api_display_statistics():
     return get_display_statistics()
 
 
-@app.post("/api/display-statistics")
-def api_display_statistics_sync(
-    ai_movies: int = Form(0),
-    ai_series: int = Form(0),
-    tmdb_movies: int = Form(0),
-    tmdb_series: int = Form(0),
-    trending_movies: int = Form(0),
-    trending_series: int = Form(0),
-):
-    set_display_statistics(
-        ai_movies=ai_movies,
-        ai_series=ai_series,
-        tmdb_movies=tmdb_movies,
-        tmdb_series=tmdb_series,
-        trending_movies=trending_movies,
-        trending_series=trending_series,
-    )
-    return get_display_statistics()
-
-
 # ============================================================
 # LIVE SEARCH API
 # ============================================================
@@ -2054,31 +1930,17 @@ def api_search(
     q: str = "",
     media_type: str = "",
 ):
-    """Search movies and TV series independently, then merge the results.
-
-    TMDB's /search/multi endpoint can return a movie-heavy first page for
-    mixed queries. Using the dedicated movie + tv endpoints guarantees that
-    each media type gets its own result budget before we merge the two lists.
-    """
-
+    """Search movies and series independently, then merge stable buckets."""
     q = q.strip()
-
     if len(q) < 2:
-        return {
-            "results": [],
-            "movies": [],
-            "series": [],
-        }
+        return {"results": [], "movies": [], "series": []}
 
     token = get_env("TMDB_TOKEN")
-
     if not token:
-        return {
-            "results": [],
-            "movies": [],
-            "series": [],
-            "error": "TMDB_TOKEN is not configured.",
-        }
+        return JSONResponse(
+            {"results": [], "movies": [], "series": [], "error": "TMDB_TOKEN is not configured."},
+            status_code=503,
+        )
 
     requested_type = media_type if media_type in ("Movie", "Series") else ""
 
@@ -2096,8 +1958,9 @@ def api_search(
                     "include_adult": "false",
                     "page": 1,
                 },
+                cache_ttl=TMDB_CACHE_SEARCH_TTL,
             )
-        except Exception as error:
+        except requests.RequestException as error:
             print(f"TMDB {kind.lower()} live search error: {error}")
             return []
 
@@ -2117,39 +1980,24 @@ def api_search(
                 break
         return output
 
-    try:
-        if requested_type:
-            if requested_type == "Movie":
-                movies, series = search_type("Movie"), []
-            else:
-                movies, series = [], search_type("Series")
-        else:
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                movie_future = executor.submit(search_type, "Movie")
-                series_future = executor.submit(search_type, "Series")
-                movies = movie_future.result()
-                series = series_future.result()
+    if requested_type:
+        movies = search_type("Movie") if requested_type == "Movie" else []
+        series = search_type("Series") if requested_type == "Series" else []
+    else:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            movie_future = executor.submit(search_type, "Movie")
+            series_future = executor.submit(search_type, "Series")
+            movies = movie_future.result()
+            series = series_future.result()
 
-        # Movies and series keep independent slots in the UI.
-        movies = movies[:10]
-        series = series[:10]
-        combined = movies + series
-
-        return {
-            "results": combined,
-            "movies": movies,
-            "series": series,
-            "media_type": requested_type or None,
-        }
-
-    except Exception as error:
-        print(f"TMDB independent search error: {error}")
-        return {
-            "results": [],
-            "movies": [],
-            "series": [],
-            "error": "TMDB search failed. Please try again.",
-        }
+    movies = movies[:10]
+    series = series[:10]
+    return {
+        "results": movies + series,
+        "movies": movies,
+        "series": series,
+        "media_type": requested_type or None,
+    }
 
 
 # ============================================================
@@ -2169,11 +2017,11 @@ def add(
 
     if (
         not title
+        or len(title) > 300
         or not 0 <= rating <= 10
-        or media_type not in (
-            "Movie",
-            "Series",
-        )
+        or media_type not in ("Movie", "Series")
+        or not tmdb_id
+        or tmdb_id <= 0
     ):
 
         return app_redirect(
@@ -2183,21 +2031,10 @@ def add(
 
     tmdb_data = None
 
-    # Exact selected TMDB title.
-    if tmdb_id:
+    tmdb_data = tmdb_get_details(tmdb_id, media_type)
 
-        tmdb_data = tmdb_get_details(
-            tmdb_id,
-            media_type,
-        )
-
-    # Fallback for manually typed titles.
     if not tmdb_data:
-
-        tmdb_data = tmdb_search(
-            title,
-            media_type,
-        )
+        return app_redirect(request, "search")
 
     if tmdb_data:
 
@@ -2235,19 +2072,6 @@ def add(
                 tmdb_data.get(
                     "tmdb_id"
                 ),
-        )
-
-    else:
-
-        add_movie(
-            title=
-                title,
-
-            rating=
-                rating,
-
-            media_type=
-                media_type,
         )
 
     return app_redirect(
@@ -2308,56 +2132,34 @@ def api_add(
 
     if (
         not title
+        or len(title) > 300
         or not 0 <= rating <= 10
         or media_type not in ("Movie", "Series")
+        or not tmdb_id
+        or tmdb_id <= 0
     ):
-        return {
-            "ok": False,
-            "error": "Invalid title, rating or media type."
-        }
+        return JSONResponse(
+            {"ok": False, "error": "Invalid title, rating, media type, or TMDB selection."},
+            status_code=422,
+        )
 
     tmdb_data = None
 
-    if tmdb_id:
-        tmdb_data = tmdb_get_details(
-            tmdb_id,
-            media_type,
-        )
-
+    tmdb_data = tmdb_get_details(tmdb_id, media_type)
     if not tmdb_data:
-        tmdb_data = tmdb_search(
-            title,
-            media_type,
-        )
+        return JSONResponse({"ok": False, "error": "The selected TMDB title could not be verified."}, status_code=422)
 
-    if tmdb_data:
-        canonical = tmdb_data
-        add_movie(
-            title=canonical["title"],
-            rating=rating,
-            media_type=media_type,
-            poster=canonical.get("poster"),
-            backdrop=canonical.get("backdrop"),
-            year=canonical.get("year"),
-            overview=canonical.get("overview"),
-            tmdb_id=canonical.get("tmdb_id"),
-        )
-    else:
-        add_movie(
-            title=title,
-            rating=rating,
-            media_type=media_type,
-            tmdb_id=tmdb_id,
-        )
-        canonical = {
-            "title": title,
-            "tmdb_id": tmdb_id,
-            "year": None,
-            "poster": None,
-            "overview": "",
-            "vote_average": 0,
-            "tmdb_url": None,
-        }
+    canonical = tmdb_data
+    add_movie(
+        title=canonical["title"],
+        rating=rating,
+        media_type=media_type,
+        poster=canonical.get("poster"),
+        backdrop=canonical.get("backdrop"),
+        year=canonical.get("year"),
+        overview=canonical.get("overview"),
+        tmdb_id=canonical.get("tmdb_id"),
+    )
 
     library_row = find_library_row(
         canonical.get("tmdb_id") or tmdb_id,
@@ -2414,6 +2216,7 @@ def api_recommendation_watched(
                 endpoint,
                 token,
                 {"language": "en-US"},
+                cache_ttl=TMDB_CACHE_DETAILS_TTL,
             )
 
             tmdb_data = normalise_tmdb_result(
@@ -2629,8 +2432,6 @@ def api_update_settings(
     background_tasks: BackgroundTasks,
     recommendation_limit: int = Form(...),
 ):
-    global recommendation_state
-
     try:
         value = int(recommendation_limit)
     except Exception:
@@ -2644,17 +2445,8 @@ def api_update_settings(
 
     refreshed = value != previous_value
     if refreshed:
-        movies = get_all()
-        with recommendation_state_lock:
-            job_id = recommendation_state.get("job_id", 0) + 1
-            recommendation_state = {
-                "status": "loading",
-                "data": None,
-                "error": None,
-                "tmdb_data": None,
-                "job_id": job_id,
-            }
-        background_tasks.add_task(run_recommendation_job, None, job_id)
+        job = start_recommendation_job(force=True)
+        background_tasks.add_task(run_recommendation_job, None, job["id"])
 
     return JSONResponse({"ok": True, "refreshed": refreshed, **settings})
 
@@ -2775,8 +2567,16 @@ def api_watchlist_toggle(
     vote_average: float = Form(0),
     remove: bool = Form(False),
 ):
-    if media_type not in ("Movie", "Series"):
-        return JSONResponse({"ok": False, "error": "Invalid media type."}, status_code=400)
+    title = title.strip()
+    if (
+        media_type not in ("Movie", "Series")
+        or tmdb_id <= 0
+        or not title
+        or len(title) > 300
+        or not 0 <= vote_average <= 10
+        or (year is not None and not 1800 <= year <= 2200)
+    ):
+        return JSONResponse({"ok": False, "error": "Invalid watchlist item."}, status_code=422)
 
     saved = toggle_watchlist_item({
         "tmdb_id": tmdb_id,
@@ -2841,59 +2641,27 @@ def recommendations(
     refresh: bool = False,
     fragment: str = "",
 ):
-    """Render Home without throwing away an already-generated AI result.
-
-    refresh=1 explicitly starts a new recommendation job (used by Discover).
-    Normal Home navigation reuses the last ready result, so moving away and
-    back does not regenerate or shuffle the AI recommendations.
-    fragment=recommendations returns the same document but is used by the
-    client to replace only the recommendation region after background work
-    finishes, avoiding a full-page reload.
-    """
-    global recommendation_state
-
+    """Render the homepage from the persistent recommendation job record."""
     movies = get_all()
     watched_movies = [item for item in movies if item["type"] == "Movie"]
     watched_series = [item for item in movies if item["type"] == "Series"]
 
+    job = get_latest_recommendation_job()
     if refresh:
-        with recommendation_state_lock:
-            recommendation_state = {
-                "status": "idle",
-                "data": None,
-                "error": None,
-                "tmdb_data": None,
-                "job_id": recommendation_state.get("job_id", 0),
-            }
-
-    with recommendation_state_lock:
-        status = recommendation_state["status"]
-        recommendations_data = recommendation_state["data"]
-        error = recommendation_state["error"]
-        tmdb_discoveries = recommendation_state.get("tmdb_data")
-
-    if recommendations_data is None:
-        if tmdb_discoveries is None:
-            tmdb_discoveries = tmdb_fallback(movies)
-
-        with recommendation_state_lock:
-            if recommendation_state["status"] != "loading":
-                job_id = recommendation_state.get("job_id", 0) + 1
-                recommendation_state = {
-                    "status": "loading",
-                    "data": None,
-                    "error": None,
-                    "tmdb_data": tmdb_discoveries,
-                    "job_id": job_id,
-                }
-                background_tasks.add_task(
-                    run_recommendation_job,
-                    tmdb_discoveries,
-                    job_id,
-                )
-
-        recommendations_loading = True
+        tmdb_discoveries = tmdb_fallback(movies)
+        job = start_recommendation_job(force=True, tmdb_data=tmdb_discoveries)
+        background_tasks.add_task(run_recommendation_job, tmdb_discoveries, job["id"])
+    elif job is None:
+        tmdb_discoveries = tmdb_fallback(movies)
+        job = start_recommendation_job(force=False, tmdb_data=tmdb_discoveries)
+        background_tasks.add_task(run_recommendation_job, tmdb_discoveries, job["id"])
     else:
+        tmdb_discoveries = job.get("tmdb_data")
+
+    recommendations_data = job.get("data") if job else None
+    recommendations_loading = bool(job and job.get("status") == "loading" and recommendations_data is None)
+    error = job.get("error") if job else None
+    if job and job.get("status") == "ready":
         tmdb_discoveries = None
         recommendations_loading = False
 
@@ -2917,28 +2685,24 @@ def recommendations(
         "ingress_path": get_ingress_path(request),
     }
 
-    response = templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context=context,
-    )
+    response = templates.TemplateResponse(request=request, name="index.html", context=context)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
 
 
-# ============================================================
-# RECOMMENDATION STATUS
-# ============================================================
-
 @app.get("/api/recommendations/status")
 def recommendation_status():
-    with recommendation_state_lock:
-        return {
-            "status": recommendation_state["status"],
-            "error": recommendation_state["error"],
-        }
+    job = get_latest_recommendation_job()
+    if not job:
+        return {"status": "idle", "error": None}
+    return {
+        "status": job["status"],
+        "error": job["error"],
+        "job_id": job["id"],
+        "updated_at": job["updated_at"],
+    }
 
 
 # ============================================================
@@ -2955,6 +2719,15 @@ def recommendation_watched(
     media_type: str = Form(...),
     tmdb_id: int = Form(...),
 ):
+
+    title = title.strip()
+    if (
+        not title or len(title) > 300
+        or not 0 <= rating <= 10
+        or media_type not in ("Movie", "Series")
+        or tmdb_id <= 0
+    ):
+        return JSONResponse({"ok": False, "error": "Invalid watched item."}, status_code=422)
 
     token = get_env(
         "TMDB_TOKEN"
@@ -2979,6 +2752,7 @@ def recommendation_watched(
                     "language":
                         "en-US",
                 },
+                cache_ttl=TMDB_CACHE_DETAILS_TTL,
             )
 
             tmdb_data = (
@@ -3069,6 +2843,14 @@ def recommendation_not_interested(
     tmdb_id: int = Form(...),
 ):
 
+    title = title.strip()
+    if (
+        not title or len(title) > 300
+        or media_type not in ("Movie", "Series")
+        or tmdb_id <= 0
+    ):
+        return JSONResponse({"ok": False, "error": "Invalid recommendation item."}, status_code=422)
+
     add_not_interested(
         tmdb_id=
             tmdb_id,
@@ -3117,6 +2899,10 @@ def api_recommendation_not_interested(
     tmdb_id: int = Form(...),
 ):
 
+    title = title.strip()
+    if not title or len(title) > 300 or tmdb_id <= 0:
+        return JSONResponse({"ok": False, "error": "Invalid recommendation item."}, status_code=422)
+
     if media_type not in ("Movie", "Series"):
         return JSONResponse(
             {
@@ -3157,9 +2943,10 @@ def delete(
     movie_id: int,
 ):
 
-    delete_movie(
-        movie_id
-    )
+    if movie_id <= 0:
+        return JSONResponse({"ok": False, "error": "Invalid library item."}, status_code=422)
+
+    delete_movie(movie_id)
 
     return app_redirect(
         request,
