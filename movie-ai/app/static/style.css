@@ -6442,3 +6442,120 @@ body {
 .watched-type-badge,
 .watched-rating-badge,
 .watched-play-badge { z-index: 3; }
+
+/* =========================================================
+   HARD ICON SIZE GUARDRAIL
+   Any inline SVG that does not already have a component-specific
+   size is constrained to its surrounding text size. This prevents
+   browser intrinsic SVG sizing from ever creating giant icons.
+   ========================================================= */
+svg {
+    box-sizing: border-box;
+    width: 1em;
+    height: 1em;
+    min-width: 1em;
+    min-height: 1em;
+    max-width: 1em;
+    max-height: 1em;
+    flex: 0 0 auto;
+    vertical-align: middle;
+}
+
+/* Component-specific icon containers remain responsible for their own
+   visual size; this simply prevents their SVG from escaping the box. */
+.icon,
+[class*="icon"],
+[class*="-icon"] {
+    overflow: hidden;
+}
+
+.brand-icon,
+.nav-icon,
+.search-icon,
+.panel-icon,
+.source-icon,
+.section-title-icon,
+.watched-hero-icon,
+.watched-empty-icon,
+.watched-play-badge,
+.search-result-group-icon,
+.search-result-arrow,
+.topbar-icon-button,
+.panel-close-button,
+.preview-empty-icon {
+    overflow: hidden;
+}
+
+.brand-icon svg,
+.nav-icon svg,
+.search-icon svg,
+.panel-icon svg,
+.source-icon svg,
+.section-title-icon svg,
+.watched-hero-icon svg,
+.watched-empty-icon svg,
+.watched-play-badge svg,
+.search-result-group-icon svg,
+.search-result-arrow svg,
+.topbar-icon-button svg,
+.panel-close-button svg,
+.preview-empty-icon svg {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+/* Prevent bare SVGs used in text/buttons/cards from becoming large. */
+button > svg,
+a > svg,
+span > svg,
+label > svg,
+h2 > svg,
+h3 > svg,
+h4 > svg {
+    width: 1em;
+    height: 1em;
+    min-width: 1em;
+    min-height: 1em;
+    max-width: 1em;
+    max-height: 1em;
+}
+
+/* Keep poster artwork itself unaffected by the icon guardrail. */
+img {
+    box-sizing: border-box;
+}
+
+/* FINAL INNER-ICON CAPS
+   These are intentionally explicit so container size never becomes icon size. */
+.brand-icon svg { width: 21px !important; height: 21px !important; min-width: 21px !important; min-height: 21px !important; max-width: 21px !important; max-height: 21px !important; }
+.nav-icon svg { width: 18px !important; height: 18px !important; min-width: 18px !important; min-height: 18px !important; max-width: 18px !important; max-height: 18px !important; }
+.search-icon svg { width: 18px !important; height: 18px !important; min-width: 18px !important; min-height: 18px !important; max-width: 18px !important; max-height: 18px !important; }
+.panel-icon svg { width: 17px !important; height: 17px !important; min-width: 17px !important; min-height: 17px !important; max-width: 17px !important; max-height: 17px !important; }
+.source-icon svg { width: 16px !important; height: 16px !important; min-width: 16px !important; min-height: 16px !important; max-width: 16px !important; max-height: 16px !important; }
+.section-title-icon svg { width: 18px !important; height: 18px !important; min-width: 18px !important; min-height: 18px !important; max-width: 18px !important; max-height: 18px !important; }
+.watched-hero-icon svg { width: 24px !important; height: 24px !important; min-width: 24px !important; min-height: 24px !important; max-width: 24px !important; max-height: 24px !important; }
+.watched-empty-icon svg { width: 20px !important; height: 20px !important; min-width: 20px !important; min-height: 20px !important; max-width: 20px !important; max-height: 20px !important; }
+.watched-play-badge svg { width: 14px !important; height: 14px !important; min-width: 14px !important; min-height: 14px !important; max-width: 14px !important; max-height: 14px !important; }
+.search-result-group-icon svg { width: 16px !important; height: 16px !important; min-width: 16px !important; min-height: 16px !important; max-width: 16px !important; max-height: 16px !important; }
+.search-result-arrow svg { width: 15px !important; height: 15px !important; min-width: 15px !important; min-height: 15px !important; max-width: 15px !important; max-height: 15px !important; }
+.topbar-icon-button svg { width: 16px !important; height: 16px !important; min-width: 16px !important; min-height: 16px !important; max-width: 16px !important; max-height: 16px !important; }
+.panel-close-button svg { width: 14px !important; height: 14px !important; min-width: 14px !important; min-height: 14px !important; max-width: 14px !important; max-height: 14px !important; }
+.preview-empty-icon svg { width: 20px !important; height: 20px !important; min-width: 20px !important; min-height: 20px !important; max-width: 20px !important; max-height: 20px !important; }
+
+/* Dynamic card icons are always compact too. */
+.library-card svg,
+.recommendation-card svg,
+.trending-card svg,
+.source-card svg,
+.search-result-card svg {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    max-width: 16px;
+    max-height: 16px;
+}
