@@ -68,43 +68,54 @@
     <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
         <span class="brand-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="4" width="18" height="16" rx="3"></rect>
-                <path d="m9 8 6 4-6 4V8Z"></path>
+                <rect x="3" y="4" width="18" height="16" rx="4"></rect>
+                <path d="m10 8 6 4-6 4V8Z"></path>
             </svg>
         </span>
         <span class="brand-text">
             <strong>My Movie AI</strong>
-            <span>your personal cinema</span>
+            <span>Personal cinema</span>
         </span>
     </a>
 
     <div class="topbar-nav" aria-label="Primary navigation">
-        <a class="topbar-nav-link {% if request.url.path.endswith('/recommendations') or request.url.path == '/' %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
+        <a class="topbar-nav-link {% if not watched_page and not detail %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
             <span class="nav-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7"></path><path d="M5 9v11h14V9"></path><path d="M9 20v-6h6v6"></path></svg>
             </span>
             <span>Home</span>
         </a>
+        {% if watched_page or detail %}
+        <a class="topbar-nav-link" href="{{ ingress_path|default('') }}/recommendations?open_search=1" aria-label="Open search">
+            <span class="nav-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
+            </span>
+            <span>Search</span>
+        </a>
+        {% else %}
+        <button type="button" id="open-search-button" class="topbar-nav-link topbar-nav-button" aria-label="Open search" aria-expanded="false">
+            <span class="nav-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
+            </span>
+            <span>Search</span>
+        </button>
+        {% endif %}
         <a class="topbar-nav-link {% if watched_page %}active{% endif %}" href="{{ ingress_path|default('') }}/watched">
             <span class="nav-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.2A8.1 8.1 0 1 1 17.6 5"></path><path d="m20 4-1 5h-5"></path><path d="m9 11 2 2 4-4"></path></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h12A2.5 2.5 0 0 1 20.5 6v12A2.5 2.5 0 0 1 18 20.5H6A2.5 2.5 0 0 1 3.5 18V6A2.5 2.5 0 0 1 6 3.5Z"></path><path d="m9 8 6 4-6 4V8Z"></path></svg>
             </span>
-            <span>Already Watched</span>
+            <span>Watched</span>
         </a>
     </div>
 
     <div class="topbar-actions">
-        <button type="button" id="open-search-button" class="topbar-search-button" aria-label="Open search" aria-expanded="false">
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
-            <strong>Search</strong>
-        </button>
-        <a class="topbar-icon-button" href="{{ ingress_path|default('') }}/watched" aria-label="Open watched library" title="Already Watched">
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16.5A1.5 1.5 0 0 1 18.5 21H6.5A2.5 2.5 0 0 1 4 18.5v-13Z"></path><path d="M8 7h8M8 11h8M8 15h5"></path></svg>
-        </a>
         <div class="topbar-status">
             <span class="status-dot"></span>
-            Personal Library
+            Private library
         </div>
+        <a class="topbar-icon-button" href="{{ ingress_path|default('') }}/watched" aria-label="Already watched" title="Already watched">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h13A1.5 1.5 0 0 1 19.5 6v12A1.5 1.5 0 0 1 18 19.5H6A2.5 2.5 0 0 1 3.5 17V6A1.5 1.5 0 0 1 5 4.5Z"></path><path d="M7.5 8h7M7.5 11.5h7M7.5 15h4"></path></svg>
+        </a>
     </div>
 </nav>
 
@@ -227,70 +238,107 @@
 
 {% elif watched_page %}
     <section class="already-watched-page">
-        <header class="watched-page-header">
-            <div>
-                <span class="watched-page-kicker">YOUR LIBRARY</span>
-                <h1>Already Watched</h1>
-                <p>Everything you've watched, rated and saved in your personal cinema.</p>
+        <header class="watched-hero-card">
+            <div class="watched-hero-copy">
+                <div class="watched-hero-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 3.5h12A2.5 2.5 0 0 1 20.5 6v12A2.5 2.5 0 0 1 18 20.5H6A2.5 2.5 0 0 1 3.5 18V6A2.5 2.5 0 0 1 6 3.5Z"></path>
+                        <path d="m10 8 6 4-6 4V8Z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <span class="watched-page-kicker">YOUR LIBRARY</span>
+                    <h1>Already Watched</h1>
+                    <p>Your personal watch history, with your ratings and direct links back to every title.</p>
+                </div>
             </div>
-            <div class="watched-page-count">
-                <strong>{{ movies|length }}</strong>
-                <span>Total watched</span>
+
+            <div class="watched-hero-stats" aria-label="Watch statistics">
+                <div class="watched-stat"><strong>{{ movies|length }}</strong><span>Total</span></div>
+                <div class="watched-stat"><strong>{{ watched_movies|length }}</strong><span>Movies</span></div>
+                <div class="watched-stat"><strong>{{ watched_series|length }}</strong><span>Series</span></div>
             </div>
         </header>
 
-        <div class="watched-filter-bar" role="tablist">
-            <button class="watched-filter active" type="button" data-filter="all">All</button>
-            <button class="watched-filter" type="button" data-filter="Movie">Movies</button>
-            <button class="watched-filter" type="button" data-filter="Series">Series</button>
+        <div class="watched-toolbar">
+            <div>
+                <span class="watched-toolbar-label">WATCH HISTORY</span>
+                <strong id="watched-visible-count">{{ movies|length }} titles</strong>
+            </div>
+            <div class="watched-filter-bar" role="tablist" aria-label="Filter watched titles">
+                <button class="watched-filter active" type="button" data-filter="all" role="tab" aria-selected="true">All</button>
+                <button class="watched-filter" type="button" data-filter="Movie" role="tab" aria-selected="false">Movies <span>{{ watched_movies|length }}</span></button>
+                <button class="watched-filter" type="button" data-filter="Series" role="tab" aria-selected="false">Series <span>{{ watched_series|length }}</span></button>
+            </div>
         </div>
 
         {% if movies %}
-        <section class="watched-section" data-watched-section>
-            <div class="watched-section-heading">
-                <h2>Recently watched</h2>
-                <span>{{ movies|length }} titles</span>
-            </div>
-            <div class="watched-grid">
-                {% for movie in movies %}
-                <article class="watched-card" data-media-type="{{ movie['type'] }}">
-                    <a href="{{ ingress_path|default('') }}/title/{{ movie['type'] }}/{{ movie['tmdb_id'] }}" class="watched-card-poster">
-                        {% if movie["poster"] %}
-                        <img src="{{ movie['poster'] }}" alt="{{ movie['title'] }}" loading="lazy">
+        <div class="watched-grid" id="watched-grid">
+            {% for movie in movies %}
+            <article class="watched-card watched-card-clickable" data-media-type="{{ movie['type'] }}" data-tmdb-id="{{ movie['tmdb_id'] or '' }}" tabindex="0" role="link" aria-label="Open details for {{ movie['title'] }}">
+                <div class="watched-card-poster">
+                    {% if movie["poster"] %}
+                    <img src="{{ movie['poster'] }}" alt="{{ movie['title'] }}" loading="lazy">
+                    {% else %}
+                    <div class="poster-placeholder watched-poster-placeholder">
+                        {% if movie['type'] == 'Movie' %}
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3.2 4v8l6-4-6-4Z"></path></svg>
                         {% else %}
-                        <div class="poster-placeholder">{{ '🎬' if movie['type'] == 'Movie' else '📺' }}</div>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 5v4M16 5v4M4 9h16"></path></svg>
                         {% endif %}
-                        <span class="watched-type-badge">{{ movie['type']|upper }}</span>
-                        <span class="watched-rating-badge">★ {{ "%.1f"|format(movie["rating"]) }}</span>
-                    </a>
-                    <div class="watched-card-body">
-                        <h3 title="{{ movie['title'] }}">{{ movie['title'] }}</h3>
-                        <div class="watched-card-meta">{% if movie['year'] %}{{ movie['year'] }}{% else %}Year unknown{% endif %}</div>
-                        <div class="watched-card-actions">
-                            {% if movie['tmdb_id'] %}
-                            <a href="{{ ingress_path|default('') }}/title/{{ movie['type'] }}/{{ movie['tmdb_id'] }}">Details</a>
-                            {% endif %}
-                            <form action="{{ ingress_path|default('') }}/delete/{{ movie['id'] }}" method="post" style="flex:1;display:flex;">
-                                <button type="submit">Remove</button>
-                            </form>
-                        </div>
                     </div>
-                </article>
-                {% endfor %}
+                    {% endif %}
+                    <div class="watched-card-shade"></div>
+                    <span class="watched-type-badge">{{ movie['type']|upper }}</span>
+                    <span class="watched-rating-badge">★ {{ "%.1f"|format(movie["rating"]) }}</span>
+                    <span class="watched-play-badge" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="m9 7 9 5-9 5V7Z"></path></svg>
+                    </span>
+                </div>
+
+                <div class="watched-card-body">
+                    <h3 title="{{ movie['title'] }}">{{ movie['title'] }}</h3>
+                    <div class="watched-card-meta">
+                        {% if movie['year'] %}<span>{{ movie['year'] }}</span>{% endif %}
+                        <span>{{ 'Movie' if movie['type'] == 'Movie' else 'Series' }}</span>
+                    </div>
+                    <div class="watched-card-footer">
+                        <span>Open details</span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13"></path><path d="m13 6 6 6-6 6"></path></svg>
+                    </div>
+                    <div class="watched-card-actions">
+                        {% if movie['tmdb_id'] %}
+                        <a class="watched-details-link" href="{{ ingress_path|default('') }}/title/{{ movie['type'] }}/{{ movie['tmdb_id'] }}">Details</a>
+                        {% endif %}
+                        <form action="{{ ingress_path|default('') }}/delete/{{ movie['id'] }}" method="post">
+                            <button type="submit">Remove</button>
+                        </form>
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        <div class="watched-empty" id="watched-empty-filtered" hidden>
+            <div class="watched-empty-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="m9 12 2 2 4-4"></path></svg>
             </div>
-        </section>
+            <strong>No titles in this filter</strong>
+            <p>Switch to All or choose another media type.</p>
+        </div>
         {% else %}
         <div class="watched-empty">
-            <div style="font-size:36px;margin-bottom:10px">🎬</div>
-            <strong>No watched titles yet</strong>
-            <p>Search for a movie or series and add it to your library.</p>
+            <div class="watched-empty-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path><path d="m10 8 6 4-6 4V8Z"></path></svg>
+            </div>
+            <strong>Your watch history is empty</strong>
+            <p>Use Search in the top bar to find a movie or series and add it to your library.</p>
+            <button type="button" class="watched-empty-search" data-open-search>Open search</button>
         </div>
         {% endif %}
     </section>
 {% else %}
 
 
-    <!-- ================================================== -->
     <!-- HERO -->
     <!-- ================================================== -->
 
@@ -2102,6 +2150,12 @@ if (closeSearchButton) {
     );
 }
 
+// Open the search overlay when arriving from another page through the topbar.
+if (searchPanel && new URLSearchParams(window.location.search).get("open_search") === "1") {
+    openSearchPanel();
+    history.replaceState({}, document.title, window.location.pathname);
+}
+
 
 /* Close the entire search panel when clicking outside it. */
 document.addEventListener(
@@ -2467,47 +2521,69 @@ function renderSearchResults(
     if (!results.length) {
         searchResults.innerHTML = `
             <div class="search-empty">
-                No movies or series found.
+                <strong>No movies or series found.</strong>
+                <small>Try a different title or spelling.</small>
             </div>
         `;
         return;
     }
 
-    searchResults.innerHTML = results.map(function(item, index) {
-        const year = item.year || "";
-        const poster = item.poster || "";
-        const rating = Number(item.vote_average || 0).toFixed(1);
-        const isSeries = item.media_type === "Series";
+    const movies = results.filter(item => item.media_type === "Movie");
+    const series = results.filter(item => item.media_type === "Series");
+
+    function renderGroup(items, label, icon) {
+        if (!items.length) return "";
         return `
-            <article
-                class="search-result-item search-result-card"
-                data-index="${index}"
-                tabindex="0"
-                role="link"
-                aria-label="Open details for ${escapeHtml(item.title || "title")}"
-            >
-                <div class="search-result-poster">
-                    ${poster
-                        ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(item.title || "")}" loading="lazy">`
-                        : `<div class="search-result-placeholder">${isSeries ? "TV" : "MOVIE"}</div>`}
+            <section class="search-result-group">
+                <div class="search-result-group-heading">
+                    <span class="search-result-group-icon" aria-hidden="true">${icon}</span>
+                    <strong>${label}</strong>
+                    <span>${items.length}</span>
                 </div>
-                <div class="search-result-info">
-                    <div class="search-result-topline">
-                        <strong>${escapeHtml(item.title)}</strong>
-                        <span class="search-type-badge ${isSeries ? "search-series" : "search-movie"}">${isSeries ? "SERIES" : "MOVIE"}</span>
-                    </div>
-                    <div class="search-result-meta">
-                        ${year ? `<span>${year}</span><span>•</span>` : ""}
-                        <span>★ ${rating}</span>
-                    </div>
-                    <p>${escapeHtml(item.overview || "No description available.")}</p>
+                <div class="search-result-group-list">
+                    ${items.map(function(item) {
+                        const index = currentResults.indexOf(item);
+                        const year = item.year || "";
+                        const poster = item.poster || "";
+                        const rating = Number(item.vote_average || 0).toFixed(1);
+                        const isSeries = item.media_type === "Series";
+                        return `
+                            <article
+                                class="search-result-item search-result-card"
+                                data-index="${index}"
+                                tabindex="0"
+                                role="link"
+                                aria-label="Open details for ${escapeHtml(item.title || "title")}"\n                            >
+                                <div class="search-result-poster">
+                                    ${poster
+                                        ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(item.title || "")}" loading="lazy">`
+                                        : `<div class="search-result-placeholder">${isSeries ? "TV" : "MOVIE"}</div>`}
+                                </div>
+                                <div class="search-result-info">
+                                    <div class="search-result-topline">
+                                        <strong>${escapeHtml(item.title)}</strong>
+                                        <span class="search-type-badge ${isSeries ? "search-series" : "search-movie"}">${isSeries ? "SERIES" : "MOVIE"}</span>
+                                    </div>
+                                    <div class="search-result-meta">
+                                        ${year ? `<span>${year}</span><span>•</span>` : ""}
+                                        <span>★ ${rating}</span>
+                                    </div>
+                                    <p>${escapeHtml(item.overview || "No description available.")}</p>
+                                </div>
+                                <span class="search-result-arrow" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"></path><path d="m13 6 6 6-6 6"></path></svg>
+                                </span>
+                            </article>
+                        `;
+                    }).join("")}
                 </div>
-                <span class="search-result-arrow" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"></path><path d="m13 6 6 6-6 6"></path></svg>
-                </span>
-            </article>
+            </section>
         `;
-    }).join("");
+    }
+
+    searchResults.innerHTML =
+        renderGroup(movies, "Movies", "🎬") +
+        renderGroup(series, "Series", "▣");
 
     searchResults.querySelectorAll(".search-result-card").forEach(function(card) {
         function openDetails() {
@@ -2527,7 +2603,6 @@ function renderSearchResults(
         });
     });
 }
-
 
 /* ========================================================= */
 /* SELECT RESULT */
@@ -2698,6 +2773,75 @@ if (clearSearch) {
         }
     );
 }
+
+
+/* ========================================================= */
+/* ALREADY WATCHED PAGE INTERACTIONS */
+/* ========================================================= */
+
+const watchedGrid = document.getElementById("watched-grid");
+const watchedVisibleCount = document.getElementById("watched-visible-count");
+const watchedEmptyFiltered = document.getElementById("watched-empty-filtered");
+
+if (watchedGrid) {
+    const watchedCards = Array.from(
+        watchedGrid.querySelectorAll(".watched-card-clickable")
+    );
+
+    document.querySelectorAll(".watched-filter").forEach(function(button) {
+        button.addEventListener("click", function() {
+            const filter = button.dataset.filter || "all";
+
+            document.querySelectorAll(".watched-filter").forEach(function(other) {
+                other.classList.toggle("active", other === button);
+                other.setAttribute("aria-selected", other === button ? "true" : "false");
+            });
+
+            let visible = 0;
+            watchedCards.forEach(function(card) {
+                const matches = filter === "all" || card.dataset.mediaType === filter;
+                card.hidden = !matches;
+                if (matches) visible += 1;
+            });
+
+            if (watchedVisibleCount) {
+                watchedVisibleCount.textContent = `${visible} ${visible === 1 ? "title" : "titles"}`;
+            }
+            if (watchedEmptyFiltered) {
+                watchedEmptyFiltered.hidden = visible !== 0;
+            }
+        });
+    });
+
+    watchedCards.forEach(function(card) {
+        function openWatchedDetails() {
+            const type = card.dataset.mediaType;
+            const id = card.dataset.tmdbId;
+            if (!type || !id) return;
+            window.location.href = appUrl(`/title/${type}/${id}?match=100`);
+        }
+
+        card.addEventListener("click", function(event) {
+            if (event.target.closest("a, button, form, input, select")) return;
+            openWatchedDetails();
+        });
+
+        card.addEventListener("keydown", function(event) {
+            if (event.key === "Enter" || event.key === " ") {
+                if (event.target.closest("a, button, form, input, select")) return;
+                event.preventDefault();
+                openWatchedDetails();
+            }
+        });
+    });
+}
+
+document.querySelectorAll("[data-open-search]").forEach(function(button) {
+    button.addEventListener("click", function() {
+        const opener = document.getElementById("open-search-button");
+        if (opener) opener.click();
+    });
+});
 
 
 /* ========================================================= */
