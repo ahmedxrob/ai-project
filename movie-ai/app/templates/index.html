@@ -32,7 +32,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css"
+        href="/static/style.css?v=20260919.4"
     >
 
 
@@ -3456,7 +3456,7 @@ if (addForm) {
             if (selectedPreview) {
                 selectedPreview.innerHTML = `
                     <div class="selected-preview-empty">
-                        <div class="preview-empty-icon">✓</div>
+                        <div class="preview-empty-icon">{{ ui_icon("check", "md") }}</div>
                         <span>Added successfully. Search for another title.</span>
                     </div>
                 `;
