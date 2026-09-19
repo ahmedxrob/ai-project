@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="{{ ingress_path|default('') }}/static/style.css">
 </head>
 <body data-ingress-path="{{ ingress_path|default('') }}" data-page="{{ 'detail' if detail else page|default('recommendations') }}">
-<div class="site-background"></div>
+<div class="site-background" style="--app-background: url('{{ ingress_path|default('') }}/static/background.jpg')"></div>
 
 <nav class="topbar app-topbar{% if detail %} detail-topbar{% endif %}">
   <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
@@ -571,7 +571,7 @@
 
 
                             <form
-                                action="/recommendation/watched"
+                                action="{{ ingress_path|default('') }}/recommendation/watched"
                                 method="post"
                                 class="watched-inline ajax-watched-form"
                             >
@@ -617,7 +617,7 @@
 
 
                         <form
-                            action="/recommendation/not-interested"
+                            action="{{ ingress_path|default('') }}/recommendation/not-interested"
                             method="post"
                             class="not-interested-form ajax-not-interested-form"
                         >
@@ -820,7 +820,7 @@
 
 
                             <form
-                                action="/recommendation/watched"
+                                action="{{ ingress_path|default('') }}/recommendation/watched"
                                 method="post"
                                 class="watched-inline ajax-watched-form"
                             >
@@ -866,7 +866,7 @@
 
 
                         <form
-                            action="/recommendation/not-interested"
+                            action="{{ ingress_path|default('') }}/recommendation/not-interested"
                             method="post"
                             class="not-interested-form ajax-not-interested-form"
                         >
@@ -1084,7 +1084,7 @@
 
 
                             <form
-                                action="/recommendation/watched"
+                                action="{{ ingress_path|default('') }}/recommendation/watched"
                                 method="post"
                                 class="watched-inline ajax-watched-form"
                             >
@@ -1130,7 +1130,7 @@
 
 
                         <form
-                            action="/recommendation/not-interested"
+                            action="{{ ingress_path|default('') }}/recommendation/not-interested"
                             method="post"
                             class="not-interested-form ajax-not-interested-form"
                         >
@@ -1333,7 +1333,7 @@
 
 
                             <form
-                                action="/recommendation/watched"
+                                action="{{ ingress_path|default('') }}/recommendation/watched"
                                 method="post"
                                 class="watched-inline ajax-watched-form"
                             >
@@ -1379,7 +1379,7 @@
 
 
                         <form
-                            action="/recommendation/not-interested"
+                            action="{{ ingress_path|default('') }}/recommendation/not-interested"
                             method="post"
                             class="not-interested-form ajax-not-interested-form"
                         >
