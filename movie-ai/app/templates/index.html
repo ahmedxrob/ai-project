@@ -64,36 +64,48 @@
 
 
 
-<nav class="topbar">
-
+<nav class="topbar" aria-label="Main navigation">
     <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
-        <div class="brand-icon">🎬</div>
-        <div class="brand-text">
+        <span class="brand-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="3"></rect>
+                <path d="m9 8 6 4-6 4V8Z"></path>
+            </svg>
+        </span>
+        <span class="brand-text">
             <strong>My Movie AI</strong>
             <span>your personal cinema</span>
-        </div>
+        </span>
     </a>
 
     <div class="topbar-nav" aria-label="Primary navigation">
-        <a class="topbar-nav-link {% if not watched_page and not detail %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
-            <span class="nav-icon">⌂</span><span>Home</span>
+        <a class="topbar-nav-link {% if request.url.path.endswith('/recommendations') or request.url.path == '/' %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
+            <span class="nav-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7"></path><path d="M5 9v11h14V9"></path><path d="M9 20v-6h6v6"></path></svg>
+            </span>
+            <span>Home</span>
         </a>
         <a class="topbar-nav-link {% if watched_page %}active{% endif %}" href="{{ ingress_path|default('') }}/watched">
-            <span class="nav-icon">✓</span><span>Already Watched</span>
+            <span class="nav-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.2A8.1 8.1 0 1 1 17.6 5"></path><path d="m20 4-1 5h-5"></path><path d="m9 11 2 2 4-4"></path></svg>
+            </span>
+            <span>Already Watched</span>
         </a>
     </div>
 
     <div class="topbar-actions">
         <button type="button" id="open-search-button" class="topbar-search-button" aria-label="Open search" aria-expanded="false">
-            <span>🔎</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
             <strong>Search</strong>
         </button>
+        <a class="topbar-icon-button" href="{{ ingress_path|default('') }}/watched" aria-label="Open watched library" title="Already Watched">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16.5A1.5 1.5 0 0 1 18.5 21H6.5A2.5 2.5 0 0 1 4 18.5v-13Z"></path><path d="M8 7h8M8 11h8M8 15h5"></path></svg>
+        </a>
         <div class="topbar-status">
             <span class="status-dot"></span>
             Personal Library
         </div>
     </div>
-
 </nav>
 
 
@@ -2387,21 +2399,13 @@ async function performSearch(
 
     try {
         const base = appUrl("/api/search");
-        const movieController = new AbortController();
-        const seriesController = new AbortController();
-        activeSearchControllers = [movieController, seriesController];
+        const controller = new AbortController();
+        activeSearchControllers = [controller];
 
-        const [movieResponse, seriesResponse] =
-            await Promise.all([
-                fetch(
-                    `${base}?q=${encodeURIComponent(query)}&media_type=Movie&_=${cacheBust}`,
-                    { cache: "no-store", signal: movieController.signal }
-                ),
-                fetch(
-                    `${base}?q=${encodeURIComponent(query)}&media_type=Series&_=${cacheBust + 1}`,
-                    { cache: "no-store", signal: seriesController.signal }
-                )
-            ]);
+        const response = await fetch(
+            `${base}?q=${encodeURIComponent(query)}&_=${cacheBust}`,
+            { cache: "no-store", signal: controller.signal }
+        );
 
         if (requestSerial !== searchRequestSerial ||
             !titleInput ||
@@ -2409,52 +2413,31 @@ async function performSearch(
             return;
         }
 
-        if (!movieResponse.ok || !seriesResponse.ok) {
-            throw new Error(
-                `Search failed (${movieResponse.status}/${seriesResponse.status})`
-            );
+        if (!response.ok) {
+            throw new Error(`Search failed (${response.status})`);
         }
 
-        const [movieData, seriesData] =
-            await Promise.all([
-                movieResponse.json(),
-                seriesResponse.json()
-            ]);
+        const data = await response.json();
 
-        /*
-         * Support both versions of the backend:
-         *   old: { results: [...] }
-         *   new: { movies: [...], series: [...] }
-         */
-        let movies = Array.isArray(movieData.results)
-            ? movieData.results
-            : Array.isArray(movieData.movies)
-                ? movieData.movies
+        let movies = Array.isArray(data.movies)
+            ? data.movies
+            : Array.isArray(data.results)
+                ? data.results.filter(item => item.media_type !== "Series")
                 : [];
 
-        let series = Array.isArray(seriesData.results)
-            ? seriesData.results
-            : Array.isArray(seriesData.series)
-                ? seriesData.series
+        let series = Array.isArray(data.series)
+            ? data.series
+            : Array.isArray(data.results)
+                ? data.results.filter(item => item.media_type === "Series")
                 : [];
 
-        movies = movies.map(item => ({
-            ...item,
-            media_type: "Movie"
-        }));
+        movies = movies.map(item => ({ ...item, media_type: "Movie" }));
+        series = series.map(item => ({ ...item, media_type: "Series" }));
 
-        series = series.map(item => ({
-            ...item,
-            media_type: "Series"
-        }));
-
-        /* Remove accidental duplicate IDs within each type. */
         const seen = new Set();
         currentResults = [...movies, ...series].filter(item => {
             const key = `${item.media_type}:${item.tmdb_id}`;
-            if (!item.tmdb_id || seen.has(key)) {
-                return false;
-            }
+            if (!item.tmdb_id || seen.has(key)) return false;
             seen.add(key);
             return true;
         });
@@ -2481,121 +2464,68 @@ async function performSearch(
 function renderSearchResults(
     results
 ) {
-
     if (!results.length) {
-
         searchResults.innerHTML = `
             <div class="search-empty">
                 No movies or series found.
             </div>
         `;
-
         return;
     }
 
-    searchResults.innerHTML = results.map(
-        function(item, index) {
-
-            const year = item.year || "";
-            const poster = item.poster || "";
-            const rating = Number(
-                item.vote_average || 0
-            ).toFixed(1);
-
-            const isSeries =
-                item.media_type === "Series";
-
-            return `
-                <button
-                    type="button"
-                    class="search-result-item"
-                    data-index="${index}"
-                >
-                    <div class="search-result-poster">
-                        ${
-                            poster
-                                ? `
-                                    <img
-                                        src="${poster}"
-                                        alt=""
-                                        loading="lazy"
-                                    >
-                                `
-                                : `
-                                    <div class="search-result-placeholder">
-                                        ${isSeries ? "📺" : "🎬"}
-                                    </div>
-                                `
-                        }
+    searchResults.innerHTML = results.map(function(item, index) {
+        const year = item.year || "";
+        const poster = item.poster || "";
+        const rating = Number(item.vote_average || 0).toFixed(1);
+        const isSeries = item.media_type === "Series";
+        return `
+            <article
+                class="search-result-item search-result-card"
+                data-index="${index}"
+                tabindex="0"
+                role="link"
+                aria-label="Open details for ${escapeHtml(item.title || "title")}"
+            >
+                <div class="search-result-poster">
+                    ${poster
+                        ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(item.title || "")}" loading="lazy">`
+                        : `<div class="search-result-placeholder">${isSeries ? "TV" : "MOVIE"}</div>`}
+                </div>
+                <div class="search-result-info">
+                    <div class="search-result-topline">
+                        <strong>${escapeHtml(item.title)}</strong>
+                        <span class="search-type-badge ${isSeries ? "search-series" : "search-movie"}">${isSeries ? "SERIES" : "MOVIE"}</span>
                     </div>
-
-                    <div class="search-result-info">
-                        <strong>
-                            ${escapeHtml(item.title)}
-                        </strong>
-
-                        <div class="search-result-meta">
-                            ${
-                                year
-                                    ? `<span>${year}</span><span>•</span>`
-                                    : ""
-                            }
-
-                            <span class="search-type-badge ${
-                                isSeries
-                                    ? "search-series"
-                                    : "search-movie"
-                            }">
-                                ${
-                                    isSeries
-                                        ? "📺 SERIES"
-                                        : "🎬 MOVIE"
-                                }
-                            </span>
-
-                            <span>
-                                ★ ${rating}
-                            </span>
-                        </div>
-
-                        <p>
-                            ${escapeHtml(
-                                item.overview ||
-                                "No description available."
-                            )}
-                        </p>
+                    <div class="search-result-meta">
+                        ${year ? `<span>${year}</span><span>•</span>` : ""}
+                        <span>★ ${rating}</span>
                     </div>
+                    <p>${escapeHtml(item.overview || "No description available.")}</p>
+                </div>
+                <span class="search-result-arrow" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"></path><path d="m13 6 6 6-6 6"></path></svg>
+                </span>
+            </article>
+        `;
+    }).join("");
 
-                    <span class="search-result-arrow">
-                        →
-                    </span>
-                </button>
-            `;
+    searchResults.querySelectorAll(".search-result-card").forEach(function(card) {
+        function openDetails() {
+            const item = currentResults[Number(card.dataset.index)];
+            if (!item || !item.tmdb_id || !item.media_type) return;
+            window.location.href = appUrl(
+                `/title/${encodeURIComponent(item.media_type)}/${encodeURIComponent(item.tmdb_id)}`
+            );
         }
-    ).join("");
 
-    document
-        .querySelectorAll(
-            ".search-result-item"
-        )
-        .forEach(
-            function(button) {
-
-                button.addEventListener(
-                    "click",
-                    function() {
-
-                        const index = Number(
-                            button.dataset.index
-                        );
-
-                        selectSearchResult(
-                            currentResults[index]
-                        );
-                    }
-                );
+        card.addEventListener("click", openDetails);
+        card.addEventListener("keydown", function(event) {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openDetails();
             }
-        );
+        });
+    });
 }
 
 
