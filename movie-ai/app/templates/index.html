@@ -52,7 +52,6 @@
 {% elif name == 'fire' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a7 7 0 0 0 7-7c0-4.2-3.1-6.4-4.2-9.2-.4 2.5-1.8 3.5-3 4.4-.2-2-1-3.7-2.5-5.2C9.1 8.8 5 11 5 14a7 7 0 0 0 7 7Z"></path></svg>
 {% elif name == 'refresh' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-13.7-5.7L4 7.6"></path><path d="M4 4v3.6h3.6"></path><path d="M4 13a8 8 0 0 0 13.7 5.7L20 16.4"></path><path d="M20 20v-3.6h-3.6"></path></svg>
 {% elif name == 'heart' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 8.7c0 5.1-8.8 10.2-8.8 10.2S3.2 13.8 3.2 8.7A4.7 4.7 0 0 1 12 6a4.7 4.7 0 0 1 8.8 2.7Z"></path></svg>
-{% elif name == 'search' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
 {% elif name == 'settings' %}<svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"></path><circle cx="9" cy="7" r="2"></circle><path d="M5 17h14"></path><circle cx="15" cy="17" r="2"></circle></svg>
 {% endif %}
 </span>
@@ -65,17 +64,7 @@
 
 
 
-<nav class="topbar{% if search_page|default(false) %} topbar--search-mode{% endif %}" aria-label="Main navigation">
-{% if search_page|default(false) %}
-    <div class="topbar-search-mode">
-        <a class="topbar-search-back" href="{{ ingress_path|default('') }}/recommendations" aria-label="Back to Home">{{ ui_icon('close') }}</a>
-        <div class="topbar-search-field">
-            <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
-            <input id="topbar-search-input" type="search" placeholder="Search movies and series..." autocomplete="off" aria-label="Search movies and series">
-            <span class="topbar-search-status">SEARCH</span>
-        </div>
-    </div>
-{% else %}
+<nav class="topbar" aria-label="Main navigation">
     <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
         <span class="brand-icon" aria-hidden="true">
             <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -90,12 +79,14 @@
     </a>
 
     <div class="topbar-nav" aria-label="Primary navigation">
-        <a class="topbar-nav-link {% if not watched_page and not detail and not wishlist_page and not settings_page %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
+        <a class="topbar-nav-link {% if not watched_page and not detail and not wishlist_page and not settings_page and not search_page|default(false) and not about_page|default(false) %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
             <span class="nav-icon" aria-hidden="true">{{ ui_icon('movie') }}</span>
             <span>Home</span>
         </a>
-        <a class="topbar-nav-link" href="{{ ingress_path|default('') }}/search" aria-label="Search movies and series">
-            <span class="nav-icon" aria-hidden="true">{{ ui_icon('search') }}</span>
+        <a class="topbar-nav-link {% if search_page|default(false) %}active{% endif %}" href="{{ ingress_path|default('') }}/search" aria-label="Search movies and series">
+            <span class="nav-icon" aria-hidden="true">
+                <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
+            </span>
             <span>Search</span>
         </a>
         <a class="topbar-nav-link {% if watched_page %}active{% endif %}" href="{{ ingress_path|default('') }}/watched">
@@ -105,7 +96,7 @@
     </div>
 
     <div class="topbar-actions">
-        {% if not watched_page and not detail and not wishlist_page and not settings_page and not about_page|default(false) %}
+        {% if not watched_page and not detail and not wishlist_page and not settings_page and not search_page|default(false) and not about_page|default(false) %}
         <a class="topbar-icon-button topbar-refresh-button" href="{{ ingress_path|default('') }}/recommendations?refresh=1" aria-label="Refresh recommendations" title="Refresh recommendations">
             {{ ui_icon('refresh') }}
         </a>
@@ -117,82 +108,66 @@
             {{ ui_icon('settings') }}
         </a>
     </div>
-{% endif %}
 </nav>
 
 
 <main class="page">
 {% if detail %}
-    <section class="detail-page-premium">
-        <div class="detail-backdrop{% if detail.backdrop %} has-backdrop{% endif %}"{% if detail.backdrop %} style="--detail-backdrop: url('{{ detail.backdrop }}')"{% endif %}></div>
-        <div class="detail-backdrop-wash"></div>
 
-        <div class="detail-top-row">
-            <a class="detail-nav-back" href="{{ ingress_path|default('') }}/recommendations">{{ ui_icon('close') }}<span>Back to Home</span></a>
-            <span class="detail-type-pill">{{ 'MOVIE' if media_type == 'Movie' else 'SERIES' }} <span>•</span> TMDB</span>
-        </div>
+    <section class="detail-hero"{% if detail.backdrop %} style="--detail-backdrop: url('{{ detail.backdrop }}')"{% endif %}>
+        <div class="detail-hero-overlay"></div>
+        <div class="detail-hero-content">
+            <div class="detail-poster-wrap">
+                {% if detail.poster %}
+                <img class="detail-poster" src="{{ detail.poster }}" alt="{{ detail.title }}">
+                {% else %}
+                <div class="detail-poster detail-poster-empty media-fallback-icon">FILM</div>
+                {% endif %}
+            </div>
 
-        <div class="detail-premium-main">
-            <aside class="detail-art-column">
-                <div class="detail-poster-card">
-                    {% if detail.poster %}
-                    <img class="detail-poster-premium" src="{{ detail.poster }}" alt="{{ detail.title }}">
-                    {% else %}
-                    <div class="detail-poster-premium detail-poster-empty-premium">{{ ui_icon('movie','lg') }}</div>
-                    {% endif %}
-                    <div class="detail-poster-glow"></div>
-                </div>
-                <div class="detail-art-caption">
-                    <span>{{ 'Movie' if media_type == 'Movie' else 'Series' }}</span>
-                    {% if detail.tmdb_id %}<span>TMDB #{{ detail.tmdb_id }}</span>{% endif %}
-                </div>
-            </aside>
-
-            <article class="detail-info-card">
-                <div class="detail-eyebrow">{{ 'MOVIE' if media_type == 'Movie' else 'SERIES' }} <span>•</span> {{ detail.year or 'NEW RELEASE' }}</div>
-                <div class="detail-heading-row">
-                    <div class="detail-heading-copy">
+            <div class="detail-main">
+                <div class="detail-kicker">{{ "MOVIE" if media_type == "Movie" else "SERIES" }} • TMDB</div>
+                <div class="detail-title-row">
+                    <div>
                         <h1>{{ detail.title }}</h1>
-                        {% if detail.tagline %}<p class="detail-tagline-premium">{{ detail.tagline }}</p>{% endif %}
+                        {% if detail.tagline %}<p class="detail-tagline">{{ detail.tagline }}</p>{% endif %}
                     </div>
-                    <div class="detail-match-card" style="--match-angle: {{ (detail.match_percentage / 100 * 360)|round(0) }}deg">
+                    <div class="match-ring" style="--match-angle: {{ (detail.match_percentage / 100 * 360)|round(0) }}deg">
                         <strong>{{ detail.match_percentage }}%</strong>
                         <span>match</span>
                     </div>
                 </div>
 
-                <div class="detail-chip-row">
-                    {% if detail.vote_average %}<span class="detail-chip detail-chip-rating">★ {{ '%.1f'|format(detail.vote_average) }}</span>{% endif %}
-                    {% if detail.runtime %}<span class="detail-chip">{{ detail.runtime }} min</span>{% endif %}
-                    {% if detail.seasons %}<span class="detail-chip">{{ detail.seasons }} seasons</span>{% endif %}
-                    {% if detail.status %}<span class="detail-chip">{{ detail.status }}</span>{% endif %}
+                <div class="detail-meta">
+                    {% if detail.year %}<span>{{ detail.year }}</span>{% endif %}
+                    <span class="detail-rating">★ {{ "%.1f"|format(detail.vote_average) }}</span>
+                    {% if detail.status %}<span>{{ detail.status }}</span>{% endif %}
+                    {% if detail.runtime %}<span>{{ detail.runtime }} min</span>{% endif %}
+                    {% if detail.seasons %}<span>{{ detail.seasons }} seasons</span>{% endif %}
                 </div>
 
-                {% if detail.genres %}
-                <div class="detail-genre-row">
-                    {% for genre in detail.genres %}<span>{{ genre }}</span>{% endfor %}
-                </div>
-                {% endif %}
-
-                <div class="detail-story-block">
-                    <span class="detail-label">OVERVIEW</span>
-                    <p>{{ detail.overview or 'No description available.' }}</p>
+                <div class="detail-genres">
+                    {% for genre in detail.genres %}
+                    <span>{{ genre }}</span>
+                    {% endfor %}
                 </div>
 
-                <div class="detail-action-row">
+                <p class="detail-overview">{{ detail.overview or "No description available." }}</p>
+
+                <div class="detail-actions">
                     {% if detail.is_watched %}
-                    <div class="detail-state-chip detail-state-watched">{{ ui_icon('check') }}<span>Watched{% if detail.user_rating is not none %} • {{ '%.1f'|format(detail.user_rating) }}/10{% endif %}</span></div>
+                    <div class="detail-watched-badge">{{ ui_icon("check") }}Already watched{% if detail.user_rating is not none %} • Your rating {{ "%.1f"|format(detail.user_rating) }}/10{% endif %}</div>
                     {% else %}
-                    <form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watch-form-premium">
+                    <form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watched-form">
                         <input type="hidden" name="title" value="{{ detail.title }}">
                         <input type="hidden" name="media_type" value="{{ media_type }}">
                         <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
-                        <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required aria-label="Your rating">
-                        <button type="submit">{{ ui_icon('check') }}<span>Mark watched</span></button>
+                        <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required>
+                        <button type="submit">{{ ui_icon("check") }}Mark watched</button>
                     </form>
                     {% endif %}
 
-                    <form method="post" action="{{ ingress_path|default('') }}/watchlist/toggle" class="detail-action-form">
+                    <form method="post" action="{{ ingress_path|default('') }}/watchlist/toggle">
                         <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
                         <input type="hidden" name="media_type" value="{{ media_type }}">
                         <input type="hidden" name="title" value="{{ detail.title }}">
@@ -202,31 +177,31 @@
                         <input type="hidden" name="overview" value="{{ detail.overview or '' }}">
                         <input type="hidden" name="vote_average" value="{{ detail.vote_average }}">
                         <input type="hidden" name="remove" value="{{ 'true' if detail.is_watchlisted else 'false' }}">
-                        <button class="detail-watchlist-premium{% if detail.is_watchlisted %} is-saved{% endif %}" type="submit">{{ ui_icon('heart') }}<span>{{ 'In Wishlist' if detail.is_watchlisted else 'Add to Wishlist' }}</span></button>
+                        <button class="watchlist-button" type="submit">{{ "✓ In Watchlist" if detail.is_watchlisted else "+ Watchlist" }}</button>
                     </form>
 
-                    <a class="detail-tmdb-premium" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">{{ ui_icon('tmdb') }}<span>TMDB</span>↗</a>
+                    <a class="tmdb-detail-button" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">Open TMDB ↗</a>
                 </div>
 
-                <div class="detail-why-card">
-                    <div class="detail-why-icon">{{ ui_icon('ai') }}</div>
-                    <div><span>WHY THIS MATCHES</span><p>Your current library and ratings suggest <strong>{{ detail.match_percentage }}% compatibility</strong> with your taste.</p></div>
+                <div class="why-detail">
+                    <div class="why-detail-label">WHY YOU MAY LIKE IT</div>
+                    <p>Based on your current library and ratings, this title is estimated at <strong>{{ detail.match_percentage }}% compatibility</strong> with your taste.</p>
                 </div>
 
                 {% if detail.director %}
-                <div class="detail-credit-row"><span>{{ 'DIRECTOR' if media_type == 'Movie' else 'CREATED BY' }}</span><strong>{{ detail.director }}</strong></div>
+                <div class="detail-director"><span>{{ "DIRECTOR" if media_type == "Movie" else "CREATED BY" }}</span><strong>{{ detail.director }}</strong></div>
                 {% endif %}
-            </article>
+            </div>
         </div>
     </section>
 
     {% if detail.cast %}
-    <section class="detail-section-premium">
-        <div class="detail-section-heading-premium"><div><span class="utility-kicker">CAST</span><h2>People you will see</h2></div><span>{{ detail.cast|length }} featured</span></div>
-        <div class="cast-rail-premium">
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>Cast</h2><span>{{ detail.cast|length }} featured</span></div>
+        <div class="cast-rail">
             {% for person in detail.cast %}
-            <div class="cast-card-premium">
-                {% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty-premium">{{ ui_icon('user','md') }}</div>{% endif %}
+            <div class="cast-card">
+                {% if person.photo %}<img class="media-image" src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty">{{ ui_icon("user", "lg") }}</div>{% endif %}
                 <strong>{{ person.name }}</strong>
                 {% if person.character %}<span>{{ person.character }}</span>{% endif %}
             </div>
@@ -236,13 +211,16 @@
     {% endif %}
 
     {% if detail.similar %}
-    <section class="detail-section-premium">
-        <div class="detail-section-heading-premium"><div><span class="utility-kicker">DISCOVER NEXT</span><h2>More like this</h2></div><span>TMDB similar titles</span></div>
-        <div class="similar-rail-premium">
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>More like this</h2><span>TMDB similar titles</span></div>
+        <div class="similar-rail">
             {% for item in detail.similar %}
-            <a class="similar-card-premium" href="{{ ingress_path|default('') }}/title/{{ media_type }}/{{ item.tmdb_id }}">
-                {% if item.poster %}<img src="{{ item.poster }}" alt="{{ item.title }}">{% else %}<div class="similar-empty-premium">{{ ui_icon('movie','md') }}</div>{% endif %}
-                <div class="similar-info-premium"><strong>{{ item.title }}</strong><span>{% if item.year %}{{ item.year }} • {% endif %}★ {{ '%.1f'|format(item.vote_average) }}</span></div>
+            <a class="similar-card" href="{{ ingress_path|default('') }}/title/{{ media_type }}/{{ item.tmdb_id }}">
+                {% if item.poster %}<img class="media-image" src="{{ item.poster }}" alt="{{ item.title }}">{% endif %}
+                <div class="similar-info">
+                    <strong>{{ item.title }}</strong>
+                    <span>{% if item.year %}{{ item.year }} • {% endif %}★ {{ "%.1f"|format(item.vote_average) }}</span>
+                </div>
             </a>
             {% endfor %}
         </div>
@@ -271,7 +249,7 @@
                 </div>
                 <div class="search-page-input-wrap">
                     <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
-                    <input id="title" type="text" name="title" placeholder="Search movies, series, actors, or titles..." autocomplete="off" aria-label="Search movies and series">
+                    <input id="title" type="text" name="title" placeholder="Search movies, series, or titles..." autocomplete="off" aria-label="Search movies and series">
                     <button type="button" id="clear-search" aria-label="Clear search">×</button>
                 </div>
                 <div class="search-page-search-tip"><span>Enter at least 2 characters</span><span>↵ Select</span><span>↗ Details</span></div>
@@ -294,7 +272,7 @@
                         <label for="rating">YOUR RATING</label>
                         <div class="search-page-rating-input"><span>★</span><input id="rating" type="number" name="rating" min="0" max="10" step="0.1" placeholder="9.0" required><small>/10</small></div>
                     </div>
-                    <button type="submit" class="primary-button" id="add-button"><span>Add to collection</span><span>→</span></button>
+                    <button type="submit" class="primary-button" id="add-button" disabled aria-disabled="true"><span>Add to collection</span><span>→</span></button>
                 </form>
             </aside>
         </div>
@@ -393,7 +371,7 @@
             </div>
             <strong>Your watch history is empty</strong>
             <p>Use Search in the top bar to find a movie or series and add it to your library.</p>
-            <button type="button" class="watched-empty-search" data-open-search>Open search</button>
+            <a class="watched-empty-search" href="{{ ingress_path|default('') }}/search">Open search</a>
         </div>
         {% endif %}
     </section>
@@ -549,14 +527,14 @@
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong id="header-recommendations-count">{{ display_statistics.recommendations|default(0) }}</strong>
+                    <strong id="header-recommendations-count">{{ lifetime_statistics.recommendations|default(0) }}</strong>
                     <span>Recommendations</span>
                 </div>
 
                 <div class="stat-divider"></div>
 
                 <div class="stat">
-                    <strong id="header-ai-generated-count">{{ display_statistics.ai_generated|default(0) }}</strong>
+                    <strong id="header-ai-generated-count">{{ lifetime_statistics.ai_generated|default(0) }}</strong>
                     <span>AI Generated</span>
                 </div>
 
@@ -565,199 +543,6 @@
         </div>
 
     </section>
-
-
-    <!-- ================================================== -->
-    <!-- ADD WATCHED -->
-    <!-- ================================================== -->
-
-{% if not search_page|default(false) %}
-    <section class="panel add-panel search-panel" id="search-panel" aria-hidden="true">
-
-        <div class="panel-header search-panel-header">
-
-            <div>
-
-                <span class="panel-label">
-                    YOUR LIBRARY
-                </span>
-
-                <h2>
-                    Search movies &amp; series
-                </h2>
-                <p class="search-panel-subtitle">Find a title, preview it, and add it to your library with a rating.</p>
-
-            </div>
-
-            <button
-                type="button"
-                id="close-search-button"
-                class="panel-close-button"
-                aria-label="Close search"
-            >
-                <svg class="app-svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
-            </button>
-
-        </div>
-
-
-        <form
-            action="/add"
-            method="post"
-            class="add-form"
-            id="add-form"
-            data-ajax-add="true"
-        >
-
-
-
-            <!-- SEARCH -->
-
-            <div class="field search-field">
-
-                <label for="title">
-                    Search title
-                </label>
-
-
-                <div class="search-input-wrap">
-
-                    <span class="search-icon app-inline-icon" aria-hidden="true">
-                        <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
-                    </span>
-
-                    <input
-                        id="title"
-                        type="text"
-                        name="title"
-                        placeholder="Search Interstellar..."
-                        autocomplete="off"
-                        required
-                    >
-
-                    <button
-                        type="button"
-                        id="clear-search"
-                        class="clear-search"
-                        aria-label="Clear search"
-                    >
-                        ×
-                    </button>
-
-                </div>
-
-
-                <div
-                    id="search-results"
-                    class="search-results"
-                ></div>
-
-            </div>
-
-
-            <!-- EXACT TMDB ID -->
-
-            <input
-                type="hidden"
-                id="tmdb_id"
-                name="tmdb_id"
-                value=""
-            >
-
-            <!-- AUTO-DETECTED TYPE -->
-
-            <input
-                type="hidden"
-                id="media_type"
-                name="media_type"
-                value=""
-            >
-
-
-            <!-- SELECTED PREVIEW -->
-
-            <div
-                id="selected-preview"
-                class="selected-preview"
-            >
-
-                <div class="selected-preview-empty">
-
-                    <div class="preview-empty-icon"><svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m10 8 6 4-6 4V8Z"></path></svg></div>
-
-                    <span>
-                        Search for a title and select
-                        a result to preview it here.
-                    </span>
-
-                </div>
-
-            </div>
-
-
-            <!-- RATING -->
-
-            <div class="field preview-rating-field">
-
-                <label for="rating">
-                    Your rating
-                </label>
-
-
-                <div class="input-rating">
-
-                    <span>
-                        ★
-                    </span>
-
-                    <input
-                        id="rating"
-                        type="number"
-                        name="rating"
-                        min="0"
-                        max="10"
-                        step="0.1"
-                        placeholder="9.5"
-                        required
-                    >
-
-                    <small>
-                        /10
-                    </small>
-
-                </div>
-
-            </div>
-
-
-            <button
-                type="submit"
-                class="primary-button"
-                id="add-button"
-            >
-
-                <span>
-                    Add to collection
-                </span>
-
-                <span>
-                    →
-                </span>
-
-            </button>
-
-        </form>
-
-
-        <div class="panel-hint">
-
-            Search TMDB and select the exact title
-            before saving it to your library.
-
-        </div>
-
-    </section>
-{% endif %}
 
 
     <!-- ================================================= -->
@@ -1951,117 +1736,16 @@ function appUrl(path) {
 
 
 /* ========================================================= */
-/* SEARCH PANEL + SCROLL POSITION */
+/* PAGE SCROLL POSITION */
 /* ========================================================= */
 
-const searchPanel =
-    document.getElementById("search-panel");
-
-const openSearchButton =
-    document.getElementById("open-search-button");
-
-const closeSearchButton =
-    document.getElementById("close-search-button");
-
-
-function openSearchPanel() {
-
-    if (!searchPanel) return;
-
-    searchPanel.classList.add("is-open");
-    searchPanel.setAttribute("aria-hidden", "false");
-
-    if (openSearchButton) {
-        openSearchButton.setAttribute(
-            "aria-expanded",
-            "true"
-        );
-    }
-
-    document.body.classList.add("search-panel-open");
-}
-
-
-function closeSearchPanel() {
-
-    if (!searchPanel) return;
-
-    searchPanel.classList.remove("is-open");
-    searchPanel.setAttribute("aria-hidden", "true");
-
-    if (openSearchButton) {
-        openSearchButton.setAttribute(
-            "aria-expanded",
-            "false"
-        );
-    }
-
-    document.body.classList.remove("search-panel-open");
-}
-
-
-if (openSearchButton) {
-    openSearchButton.addEventListener(
-        "click",
-        openSearchPanel
-    );
-}
-
-if (closeSearchButton) {
-    closeSearchButton.addEventListener(
-        "click",
-        closeSearchPanel
-    );
-}
-
-// Open the search overlay when arriving from another page through the topbar.
-const openSearchRequested = new URLSearchParams(window.location.search).get("open_search") === "1";
-if (searchPanel && openSearchRequested) {
-    openSearchPanel();
-    history.replaceState({}, document.title, window.location.pathname);
-}
-
-
-/* Close the entire search panel when clicking outside it. */
-document.addEventListener(
-    "click",
-    function (event) {
-
-        if (!searchPanel) {
-            return;
-        }
-
-        if (!searchPanel.classList.contains("is-open")) {
-            return;
-        }
-
-        const clickedInsidePanel =
-            event.target.closest("#search-panel");
-
-        const clickedOpenButton =
-            event.target.closest("#open-search-button");
-
-        if (!clickedInsidePanel && !clickedOpenButton) {
-            closeSearchPanel();
-        }
-    }
-);
-
-
-/* Never reopen the search panel after a refresh. */
 if (window.history && "scrollRestoration" in window.history) {
     window.history.scrollRestoration = "manual";
 }
 
-window.addEventListener(
-    "pageshow",
-    function () {
-        if (!openSearchRequested) {
-            closeSearchPanel();
-        }
-        window.scrollTo(0, 0);
-    }
-);
+window.addEventListener("pageshow", function () {
+    window.scrollTo(0, 0);
+});
 
 
 /* ========================================================= */
@@ -2252,6 +1936,14 @@ let currentResults = [];
 let searchRequestSerial = 0;
 let activeSearchControllers = [];
 
+function setAddFormEnabled(enabled) {
+    const addButton = document.getElementById("add-button");
+    if (!addButton) return;
+    const valid = Boolean(enabled && tmdbIdInput?.value && mediaType?.value);
+    addButton.disabled = !valid;
+    addButton.setAttribute("aria-disabled", valid ? "false" : "true");
+}
+
 
 /* ========================================================= */
 /* SAFE HTML */
@@ -2292,6 +1984,7 @@ if (titleInput) {
             if (mediaType) {
                 mediaType.value = "";
             }
+            setAddFormEnabled(false);
 
             if (
                 query.length < 2
@@ -2539,7 +2232,7 @@ function selectSearchResult(
     item
 ) {
 
-    if (!item) {
+    if (!item || !["Movie", "Series"].includes(item.media_type) || !item.tmdb_id) {
         return;
     }
 
@@ -2555,6 +2248,7 @@ function selectSearchResult(
                 ? "Series"
                 : "Movie";
     }
+    setAddFormEnabled(true);
 
     searchResults.classList.remove(
         "show"
@@ -2677,6 +2371,7 @@ if (clearSearch) {
             if (mediaType) {
                 mediaType.value = "";
             }
+            setAddFormEnabled(false);
 
             searchResults.innerHTML =
                 "";
@@ -2772,36 +2467,6 @@ if (watchedGrid) {
         });
     });
 }
-
-document.querySelectorAll("[data-open-search]").forEach(function(button) {
-    button.addEventListener("click", function() {
-        const opener = document.getElementById("open-search-button");
-        if (opener) opener.click();
-    });
-});
-
-
-/* ========================================================= */
-/* CLOSE SEARCH WHEN CLICKING OUTSIDE */
-/* ========================================================= */
-
-document.addEventListener(
-    "click",
-    function (event) {
-
-        if (!searchPanel || !searchPanel.classList.contains("is-open")) {
-            return;
-        }
-
-        if (
-            !event.target.closest("#search-panel") &&
-            !event.target.closest("#open-search-button")
-        ) {
-            closeSearchPanel();
-        }
-    }
-);
-
 
 /* ========================================================= */
 /* QUICK HOME WISHLIST — NO PAGE RELOAD */
@@ -3090,13 +2755,17 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
 
 async function loadLifetimeStatistics() {
     try {
-        const [lifeResponse, displayResponse] = await Promise.all([
-            fetch(appUrl('/api/lifetime-statistics'), { cache: 'no-store', headers: { 'Accept': 'application/json' } }),
-            fetch(appUrl('/api/display-statistics'), { cache: 'no-store', headers: { 'Accept': 'application/json' } })
-        ]);
-        if (!lifeResponse.ok || !displayResponse.ok) return;
-        const life = await lifeResponse.json();
-        const display = await displayResponse.json();
+        const response = await fetch(
+            appUrl('/api/lifetime-statistics'),
+            {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/json' }
+            }
+        );
+
+        if (!response.ok) return;
+
+        const data = await response.json();
         const elements = {
             watched: document.getElementById('header-watched-count'),
             movies: document.getElementById('header-movies-count'),
@@ -3104,18 +2773,14 @@ async function loadLifetimeStatistics() {
             recommendations: document.getElementById('header-recommendations-count'),
             ai_generated: document.getElementById('header-ai-generated-count')
         };
-        const values = {
-            watched: life.watched,
-            movies: life.movies,
-            series: life.series,
-            recommendations: display.recommendations,
-            ai_generated: display.ai_generated
-        };
+
         Object.keys(elements).forEach(function (key) {
-            if (elements[key]) elements[key].textContent = String(values[key] ?? 0);
+            if (elements[key]) {
+                elements[key].textContent = String(data[key] ?? 0);
+            }
         });
     } catch (error) {
-        console.error('Header statistics load error:', error);
+        console.error('Lifetime statistics load error:', error);
     }
 }
 
@@ -3516,6 +3181,8 @@ if (addForm) {
 
             titleInput.value = "";
             tmdbIdInput.value = "";
+            if (mediaType) mediaType.value = "";
+            setAddFormEnabled(false);
 
             if (searchResults) {
                 searchResults.innerHTML = "";
