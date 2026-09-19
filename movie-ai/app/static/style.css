@@ -7114,3 +7114,53 @@ svg.app-svg-icon {
         max-height: 14px !important;
     }
 }
+
+
+/* ============================================================
+   HOME REORGANIZATION: TRENDING CARD ACTIONS
+   ============================================================ */
+.trending-card .home-wishlist-button {
+    left: 12px;
+    top: 12px;
+    z-index: 12;
+}
+
+.trending-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.trending-actions .tmdb-button,
+.trending-actions .not-interested-form,
+.trending-actions .not-interested-button {
+    margin: 0;
+}
+
+.trending-actions .tmdb-button,
+.trending-actions .not-interested-button {
+    min-height: 30px;
+    padding: 0 9px;
+    font-size: 9px;
+}
+
+.trending-why-button {
+    margin-top: 9px;
+}
+
+.trending-why-panel {
+    margin-top: 7px;
+}
+
+@media (max-width: 600px) {
+    .trending-actions {
+        gap: 6px;
+    }
+
+    .trending-card .home-wishlist-button {
+        left: 9px;
+        top: 9px;
+    }
+}
