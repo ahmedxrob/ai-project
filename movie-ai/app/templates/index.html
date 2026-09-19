@@ -83,21 +83,12 @@
             <span class="nav-icon" aria-hidden="true">{{ ui_icon('movie') }}</span>
             <span>Home</span>
         </a>
-        {% if watched_page or detail or wishlist_page or settings_page %}
-        <a class="topbar-nav-link" href="{{ ingress_path|default('') }}/recommendations?open_search=1" aria-label="Open search">
+        <a class="topbar-nav-link {% if search_page|default(false) %}active{% endif %}" href="{{ ingress_path|default('') }}/search" aria-label="Search movies and series">
             <span class="nav-icon" aria-hidden="true">
                 <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
             </span>
             <span>Search</span>
         </a>
-        {% else %}
-        <button type="button" id="open-search-button" class="topbar-nav-link topbar-nav-button" aria-label="Open search" aria-expanded="false">
-            <span class="nav-icon" aria-hidden="true">
-                <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
-            </span>
-            <span>Search</span>
-        </button>
-        {% endif %}
         <a class="topbar-nav-link {% if watched_page %}active{% endif %}" href="{{ ingress_path|default('') }}/watched">
             <span class="nav-icon" aria-hidden="true">{{ ui_icon('check') }}</span>
             <span>Watched</span>
@@ -105,7 +96,7 @@
     </div>
 
     <div class="topbar-actions">
-        {% if not watched_page and not detail and not wishlist_page and not settings_page %}
+        {% if not watched_page and not detail and not wishlist_page and not settings_page and not search_page|default(false) and not about_page|default(false) %}
         <a class="topbar-icon-button topbar-refresh-button" href="{{ ingress_path|default('') }}/recommendations?refresh=1" aria-label="Refresh recommendations" title="Refresh recommendations">
             {{ ui_icon('refresh') }}
         </a>
@@ -235,6 +226,48 @@
         </div>
     </section>
     {% endif %}
+
+{% elif search_page %}
+    <section class="search-page-fullscreen">
+        <header class="search-page-hero">
+            <div class="search-page-hero-copy">
+                <span class="utility-kicker">DISCOVERY SEARCH</span>
+                <h1>Find movies &amp; series</h1>
+                <p>Search both media types at once, preview the exact title, rate it, or open its full Details page.</p>
+            </div>
+            <div class="search-page-hero-mark" aria-hidden="true"><svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg></div>
+        </header>
+
+        <div class="search-page-layout">
+            <section class="search-page-search-card">
+                <div class="search-page-card-kicker">SEARCH TMDB</div>
+                <div class="search-page-input-wrap">
+                    <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
+                    <input id="title" type="text" name="title" placeholder="Search a movie or series..." autocomplete="off" aria-label="Search movies and series">
+                    <button type="button" id="clear-search" aria-label="Clear search">×</button>
+                </div>
+                <div id="search-results" class="search-page-results"></div>
+            </section>
+
+            <aside class="search-page-preview-card" id="selected-preview">
+                <div class="selected-preview-empty">
+                    <div class="preview-empty-icon">{{ ui_icon("movie", "md") }}</div>
+                    <strong>Select a movie or series</strong>
+                    <span>Click a result to preview it. Use the arrow to open its full details.</span>
+                </div>
+            </aside>
+        </div>
+
+        <form action="/add" method="post" class="search-page-add-form" id="add-form" data-ajax-add="true">
+            <input type="hidden" id="tmdb_id" name="tmdb_id" value="">
+            <input type="hidden" id="media_type" name="media_type" value="">
+            <div class="search-page-rating">
+                <label for="rating">Your rating</label>
+                <div class="search-page-rating-input"><span>★</span><input id="rating" type="number" name="rating" min="0" max="10" step="0.1" placeholder="9.0" required><small>/10</small></div>
+            </div>
+            <button type="submit" class="primary-button" id="add-button"><span>Add to collection</span><span>→</span></button>
+        </form>
+    </section>
 
 {% elif watched_page %}
     <section class="already-watched-page">
@@ -390,84 +423,51 @@
     <section class="utility-page settings-page">
         <header class="utility-hero settings-hero-premium">
             <div class="utility-hero-copy">
-                <span class="utility-kicker">APP CONTROL CENTER</span>
+                <span class="utility-kicker">APP SETTINGS</span>
                 <h1>Settings</h1>
-                <p>Shape how your personal cinema behaves, how much discovery appears on Home, and how the app is organized.</p>
-                <div class="settings-hero-meta">
-                    <span class="settings-status-dot"></span>
-                    <span>Preferences are saved automatically to this app</span>
-                    <span class="settings-meta-separator">•</span>
-                    <strong>{{ recommendation_limit|default(8) }} cards / section</strong>
-                </div>
+                <p>Control your Home discovery volume and keep your personal preferences persistent across restarts.</p>
+                <div class="settings-hero-meta"><span class="settings-status-dot"></span><span>Saved for this app</span><span class="settings-meta-separator">•</span><strong>{{ recommendation_limit|default(8) }} cards / section</strong></div>
             </div>
             <div class="utility-hero-icon settings-hero-mark">{{ ui_icon('settings', 'md') }}</div>
         </header>
 
         <div class="settings-grid settings-grid-premium">
-            <section class="settings-card">
-                <div class="settings-card-icon">{{ ui_icon('refresh') }}</div>
-                <div><h2>Recommendations</h2><p>AI results stay available when you return Home. Use the refresh icon in the top bar when you want a new set.</p></div>
-            </section>
-            <section class="settings-card">
-                <div class="settings-card-icon">{{ ui_icon('heart') }}</div>
-                <div><h2>Wishlist</h2><p>Saved titles are kept separately from Already Watched so your Home page stays focused on discovery.</p></div>
-            </section>
-            <section class="settings-card">
-                <div class="settings-card-icon">{{ ui_icon('check') }}</div>
-                <div><h2>Library</h2><p>{{ lifetime_statistics.watched|default(0) }} watched titles are currently in your library: {{ lifetime_statistics.movies|default(0) }} movies and {{ lifetime_statistics.series|default(0) }} series.</p></div>
-            </section>
-            <section class="settings-card settings-card-wide">
+            <section class="settings-card settings-card-wide settings-primary-control">
                 <div class="settings-card-icon">{{ ui_icon('refresh') }}</div>
                 <div class="settings-control-content">
-                    <h2>Home result count</h2>
-                    <p>Choose how many cards appear in every Home Movie and Series section: Trending, AI Picks, and TMDB Discoveries.</p>
+                    <span class="settings-section-kicker">HOME DISCOVERY</span>
+                    <h2>Cards per section</h2>
+                    <p>Controls Trending, AI Picks, and TMDB Discoveries for Movies and Series.</p>
                     <form id="recommendation-limit-form" class="settings-limit-form">
-                        <label for="recommendation-limit">Cards per section</label>
-                        <div class="settings-limit-row">
-                            <input id="recommendation-limit" name="recommendation_limit" type="number" min="1" max="20" step="1" value="{{ recommendation_limit|default(8) }}">
-                            <button type="submit" class="primary-button">Save</button>
-                        </div>
-                        <span class="settings-help">1–20 cards per section. This controls Trending, AI Picks, and TMDB Discoveries for both Movies and Series.</span>
+                        <label for="recommendation-limit">Result count</label>
+                        <div class="settings-limit-row"><input id="recommendation-limit" name="recommendation_limit" type="number" min="1" max="20" step="1" value="{{ recommendation_limit|default(8) }}"><button type="submit" class="primary-button">Save settings</button></div>
+                        <span class="settings-help">1–20 cards per section. A changed value automatically refreshes Home discovery.</span>
                     </form>
                 </div>
             </section>
-            <section class="settings-card">
-                <div class="settings-card-icon">{{ ui_icon('movie') }}</div>
-                <div><h2>Navigation</h2><p>Use the top bar for Home, Search, Watched, Wishlist, Settings, and recommendation refresh.</p></div>
-            </section>
-
-            <section class="settings-card settings-card-wide about-settings-card">
-                <div class="settings-about-mark">{{ ui_icon('spark', 'md') }}</div>
-                <div class="settings-about-content">
-                    <div class="settings-card-kicker">ABOUT THIS APP</div>
-                    <div class="settings-about-head">
-                        <div>
-                            <h2>My Movie AI</h2>
-                            <p class="settings-about-lead">A private movie and series discovery workspace built around your watch history, ratings, wishlist, and personal recommendations.</p>
-                        </div>
-                        <span class="settings-version-pill">Personal Cinema</span>
-                    </div>
-                    <div class="settings-about-grid">
-                        <div>
-                            <strong>Discovery</strong>
-                            <span>Trending, AI Picks, and TMDB Discoveries stay in one consistent Home experience.</span>
-                        </div>
-                        <div>
-                            <strong>Your library</strong>
-                            <span>Watched titles, ratings, and wishlist items remain separate so each page has a clear purpose.</span>
-                        </div>
-                        <div>
-                            <strong>Responsive by design</strong>
-                            <span>The same controls adapt across desktop and smaller screens without changing the workflow.</span>
-                        </div>
-                    </div>
-                    <div class="settings-about-footer">
-                        <span>Tip: change the Home result count above and the discovery sections refresh automatically.</span>
-                        <a href="{{ ingress_path|default('') }}/recommendations" class="settings-home-link">Return Home →</a>
-                    </div>
-                </div>
-            </section>
+            <section class="settings-card"><div class="settings-card-icon">{{ ui_icon('heart') }}</div><div><span class="settings-section-kicker">WISHLIST</span><h2>Saved separately</h2><p>{{ wishlist_items|length }} titles currently saved.</p><a href="{{ ingress_path|default('') }}/wishlist" class="settings-inline-link">Open Wishlist →</a></div></section>
+            <section class="settings-card"><div class="settings-card-icon">{{ ui_icon('check') }}</div><div><span class="settings-section-kicker">WATCHED</span><h2>Your library</h2><p>{{ lifetime_statistics.watched|default(0) }} watched titles across Movies and Series.</p><a href="{{ ingress_path|default('') }}/watched" class="settings-inline-link">Open Watched →</a></div></section>
+            <section class="settings-card"><div class="settings-card-icon">{{ ui_icon('spark') }}</div><div><span class="settings-section-kicker">INFORMATION</span><h2>About the app</h2><p>Learn how discovery, library, wishlist, and live updates work together.</p><a href="{{ ingress_path|default('') }}/about" class="settings-inline-link">Open About →</a></div></section>
         </div>
+    </section>
+
+{% elif about_page %}
+    <section class="utility-page about-page">
+        <header class="utility-hero about-hero">
+            <div class="utility-hero-copy">
+                <span class="utility-kicker">ABOUT MY MOVIE AI</span>
+                <h1>Your personal cinema workspace</h1>
+                <p>A private Movie and Series discovery app built around your ratings, watch history, wishlist, and personalized recommendations.</p>
+            </div>
+            <div class="utility-hero-icon about-hero-mark">{{ ui_icon('spark', 'md') }}</div>
+        </header>
+        <div class="about-grid-premium">
+            <section class="about-card-premium"><div class="about-card-icon">{{ ui_icon('spark') }}</div><div><span class="about-kicker">DISCOVERY</span><h2>One Home for everything</h2><p>Trending, AI Picks, and TMDB Discoveries share one consistent experience for both Movies and Series.</p></div></section>
+            <section class="about-card-premium"><div class="about-card-icon">{{ ui_icon('heart') }}</div><div><span class="about-kicker">YOUR LIBRARY</span><h2>Wishlist + Watched</h2><p>Wishlist is for future picks, while Watched is your rated viewing history.</p></div></section>
+            <section class="about-card-premium"><div class="about-card-icon">{{ ui_icon('movie') }}</div><div><span class="about-kicker">MEDIA</span><h2>Movies and Series</h2><p>Search and Details preserve the correct media type from discovery through your library.</p></div></section>
+            <section class="about-card-premium"><div class="about-card-icon">{{ ui_icon('refresh') }}</div><div><span class="about-kicker">LIVE EXPERIENCE</span><h2>Updates in place</h2><p>AI results arrive without a full page reload, and saved settings survive an app restart.</p></div></section>
+        </div>
+        <div class="about-footer-card"><div><strong>Built for a personal cinema workflow.</strong><span>Change Home result counts in Settings or use Refresh when you want a fresh discovery set.</span></div><a href="{{ ingress_path|default('') }}/settings" class="settings-home-link">Open Settings →</a></div>
     </section>
 
 {% else %}
@@ -540,6 +540,7 @@
     <!-- ADD WATCHED -->
     <!-- ================================================== -->
 
+{% if not search_page|default(false) %}
     <section class="panel add-panel search-panel" id="search-panel" aria-hidden="true">
 
         <div class="panel-header search-panel-header">
@@ -725,7 +726,7 @@
         </div>
 
     </section>
-
+{% endif %}
 
 
     <!-- ================================================= -->
@@ -2084,6 +2085,9 @@ async function checkAIRecommendationStatus() {
                     if (window.bindHomeDetailCards) {
                         window.bindHomeDetailCards(document.getElementById("recommendations-live-region") || document);
                     }
+                    if (window.initRailDrag) {
+                        window.initRailDrag(document.getElementById("recommendations-live-region") || document);
+                    }
                 }
             } catch (error) {
                 console.error("In-place recommendation update failed:", error);
@@ -2134,10 +2138,7 @@ async function checkAIRecommendationStatus() {
 checkAIRecommendationStatus();
 
 window.recommendationStatusTimer =
-    setInterval(
-        checkAIRecommendationStatus,
-        1500
-    );
+    setInterval(checkAIRecommendationStatus, 2200);
 
 {% endif %}
 
@@ -2252,6 +2253,10 @@ if (titleInput) {
 
             tmdbIdInput.value =
                 "";
+
+            if (mediaType) {
+                mediaType.value = "";
+            }
 
             if (
                 query.length < 2
@@ -2461,20 +2466,32 @@ function renderSearchResults(
     );
 
     searchResults.querySelectorAll(".search-result-card").forEach(function(card) {
-        function openDetails() {
-            const item = currentResults[Number(card.dataset.index)];
-            if (!item || !item.tmdb_id || !item.media_type) return;
-            window.location.href = appUrl(
-                `/title/${encodeURIComponent(item.media_type)}/${encodeURIComponent(item.tmdb_id)}`
-            );
+        function itemForCard() {
+            return currentResults[Number(card.dataset.index)];
         }
-
-        card.addEventListener("click", openDetails);
-        card.addEventListener("keydown", function(event) {
-            if (event.key === "Enter" || event.key === " ") {
+        function openDetails() {
+            const item = itemForCard();
+            if (!item || !item.tmdb_id || !item.media_type) return;
+            window.location.href = appUrl(`/title/${encodeURIComponent(item.media_type)}/${encodeURIComponent(item.tmdb_id)}`);
+        }
+        card.addEventListener("click", function(event) {
+            if (event.target.closest(".search-result-arrow")) return;
+            const item = itemForCard();
+            if (item) selectSearchResult(item);
+        });
+        const arrow = card.querySelector(".search-result-arrow");
+        if (arrow) {
+            arrow.addEventListener("click", function(event) {
                 event.preventDefault();
+                event.stopPropagation();
                 openDetails();
-            }
+            });
+        }
+        card.addEventListener("keydown", function(event) {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            const item = itemForCard();
+            if (item) selectSearchResult(item);
         });
     });
 }
@@ -2615,6 +2632,10 @@ if (clearSearch) {
 
             tmdbIdInput.value =
                 "";
+
+            if (mediaType) {
+                mediaType.value = "";
+            }
 
             searchResults.innerHTML =
                 "";
@@ -3657,13 +3678,12 @@ document.addEventListener("submit", async function (event) {
 /* MOUSE / TOUCH DRAG FOR HORIZONTAL STREAMING RAILS        */
 /* ========================================================= */
 
-(function initRailDrag() {
-
-    const rails = document.querySelectorAll(
-        ".recommendation-grid, .trending-grid"
-    );
-
+function initRailDrag(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    const rails = scope.querySelectorAll(".recommendation-grid, .trending-grid");
     rails.forEach(function (rail) {
+        if (rail.dataset.dragInitialized === "1") return;
+        rail.dataset.dragInitialized = "1";
 
         let isDown = false;
         let isDragging = false;
@@ -3773,7 +3793,9 @@ document.addEventListener("submit", async function (event) {
             }
         });
     });
-})();
+}
+window.initRailDrag = initRailDrag;
+initRailDrag(document);
 
 </script>
 
