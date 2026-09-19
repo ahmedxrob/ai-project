@@ -182,6 +182,25 @@ def init_database():
             ON watched(type, title COLLATE NOCASE)
             WHERE tmdb_id IS NULL
         ''')
+        # Older releases may already contain duplicate history entries.
+        # Collapse those records before adding the new DB-enforced uniqueness.
+        connection.execute('''
+            DELETE FROM recommendation_history
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM recommendation_history
+                GROUP BY type, tmdb_id
+            )
+        ''')
+        connection.execute('''
+            DELETE FROM not_interested
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM not_interested
+                GROUP BY type, tmdb_id
+            )
+        ''')
+
         connection.execute('''
             CREATE UNIQUE INDEX IF NOT EXISTS ux_recommendation_history_media
             ON recommendation_history(type, tmdb_id)
