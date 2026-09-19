@@ -118,6 +118,12 @@ def init_database():
             video_codec TEXT,
             audio_codec TEXT,
             poster TEXT,
+            backdrop TEXT,
+            overview TEXT,
+            vote_average REAL NOT NULL DEFAULT 0,
+            original_title TEXT,
+            metadata_status TEXT NOT NULL DEFAULT 'unmatched',
+            metadata_error TEXT,
             tmdb_id INTEGER,
             watched_position REAL NOT NULL DEFAULT 0,
             watched_at DATETIME,
@@ -125,6 +131,20 @@ def init_database():
             last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    media_columns = connection.execute('PRAGMA table_info(media_files)').fetchall()
+    media_existing = {column['name'] for column in media_columns}
+    media_new_columns = {
+        'backdrop': 'TEXT',
+        'overview': 'TEXT',
+        'vote_average': 'REAL NOT NULL DEFAULT 0',
+        'original_title': 'TEXT',
+        'metadata_status': "TEXT NOT NULL DEFAULT 'unmatched'",
+        'metadata_error': 'TEXT',
+    }
+    for column_name, column_type in media_new_columns.items():
+        if column_name not in media_existing:
+            connection.execute(f'ALTER TABLE media_files ADD COLUMN {column_name} {column_type}')
 
     connection.execute('''
         CREATE TABLE IF NOT EXISTS display_statistics (
@@ -670,11 +690,11 @@ def increment_lifetime_trending(media_type, tmdb_ids):
 
 def upsert_media_file(item):
     connection = get_connection()
-    connection.execute('''
-        INSERT INTO media_files (
+    connection.execute('''        INSERT INTO media_files (
             media_type, title, year, season, episode, file_path, file_name,
-            size_bytes, duration_seconds, video_codec, audio_codec, poster, tmdb_id, last_seen
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            size_bytes, duration_seconds, video_codec, audio_codec, poster, backdrop,
+            overview, vote_average, original_title, metadata_status, metadata_error, tmdb_id, last_seen
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(file_path) DO UPDATE SET
             media_type=excluded.media_type,
             title=excluded.title,
@@ -686,17 +706,25 @@ def upsert_media_file(item):
             duration_seconds=excluded.duration_seconds,
             video_codec=excluded.video_codec,
             audio_codec=excluded.audio_codec,
-            poster=excluded.poster,
+            poster=COALESCE(excluded.poster, media_files.poster),
+            backdrop=COALESCE(excluded.backdrop, media_files.backdrop),
+            overview=COALESCE(excluded.overview, media_files.overview),
+            vote_average=CASE WHEN excluded.vote_average > 0 THEN excluded.vote_average ELSE media_files.vote_average END,
+            original_title=COALESCE(excluded.original_title, media_files.original_title),
+            metadata_status=COALESCE(excluded.metadata_status, media_files.metadata_status),
+            metadata_error=excluded.metadata_error,
             tmdb_id=COALESCE(excluded.tmdb_id, media_files.tmdb_id),
             last_seen=CURRENT_TIMESTAMP
     ''', (
-        item.get("media_type"), item.get("title"), item.get("year"),
-        item.get("season"), item.get("episode"), item.get("file_path"),
-        item.get("file_name"), item.get("size_bytes", 0), item.get("duration_seconds"),
-        item.get("video_codec"), item.get("audio_codec"), item.get("poster"), item.get("tmdb_id")
+        item.get('media_type'), item.get('title'), item.get('year'),
+        item.get('season'), item.get('episode'), item.get('file_path'),
+        item.get('file_name'), item.get('size_bytes', 0), item.get('duration_seconds'),
+        item.get('video_codec'), item.get('audio_codec'), item.get('poster'), item.get('backdrop'),
+        item.get('overview'), item.get('vote_average', 0), item.get('original_title'),
+        item.get('metadata_status', 'unmatched'), item.get('metadata_error'), item.get('tmdb_id')
     ))
     connection.commit()
-    row = connection.execute("SELECT * FROM media_files WHERE file_path = ?", (item.get("file_path"),)).fetchone()
+    row = connection.execute('SELECT * FROM media_files WHERE file_path = ?', (item.get('file_path'),)).fetchone()
     connection.close()
     return dict(row) if row else None
 
