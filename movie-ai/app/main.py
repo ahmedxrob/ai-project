@@ -1968,15 +1968,16 @@ def api_trending():
     """Return separate current trending movie and TV rails."""
 
     with ThreadPoolExecutor(max_workers=2) as executor:
+        trending_limit = get_recommendation_limit()
         movie_future = executor.submit(
             get_trending_titles,
             "Movie",
-            8,
+            trending_limit,
         )
         series_future = executor.submit(
             get_trending_titles,
             "Series",
-            8,
+            trending_limit,
         )
 
         movies = movie_future.result()
