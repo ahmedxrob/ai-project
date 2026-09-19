@@ -7003,7 +7003,7 @@ svg.app-svg-icon {
     .watched-card-body { padding:11px; }
     .watched-card-body h3 { font-size:12px; }
 }
-\n
+
 /* ============================================================
    HOME CARD WISHLIST CONTROL
    ============================================================ */
@@ -7356,4 +7356,62 @@ svg.app-svg-icon {
 .settings-limit-form button {
     min-width: 92px;
     border-radius: 10px;
+}
+
+/* ============================================================
+   RELIABLE HOME CARD NAVIGATION
+   ============================================================ */
+.recommendation-card,
+.trending-card {
+    position: relative;
+    isolation: isolate;
+}
+
+.card-open-link {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: block;
+    border-radius: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.card-open-link:focus-visible {
+    outline: 2px solid rgba(255,255,255,.72);
+    outline-offset: 3px;
+}
+
+.recommendation-poster,
+.recommendation-content,
+.trending-poster,
+.trending-content {
+    position: relative;
+    z-index: 2;
+}
+
+.recommendation-card .home-wishlist-button,
+.recommendation-card .source-badge,
+.recommendation-card .match-badge,
+.trending-card .home-wishlist-button,
+.trending-card .trending-badge,
+.trending-card .trending-rank {
+    z-index: 7 !important;
+}
+
+.recommendation-card .recommendation-actions,
+.recommendation-card .why-button,
+.trending-card .trending-actions,
+.trending-card .why-button {
+    z-index: 7 !important;
+}
+
+.recommendation-card .recommendation-actions *,
+.trending-card .trending-actions *,
+.recommendation-card .why-button,
+.trending-card .why-button,
+.recommendation-card .home-wishlist-button,
+.trending-card .home-wishlist-button {
+    position: relative;
+    z-index: 8;
 }
