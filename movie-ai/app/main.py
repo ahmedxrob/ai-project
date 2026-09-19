@@ -2073,47 +2073,6 @@ def api_local_media_stream(media_id: int, request: Request):
 
 
 # ============================================================
-# TMDB DETAIL PAGE
-# ============================================================
-
-@app.get("/title/{media_type}/{tmdb_id}")
-def title_detail_page(request: Request, media_type: str, tmdb_id: int, match: int = 0):
-    if media_type not in ("Movie", "Series"):
-        return JSONResponse({"error": "media_type must be Movie or Series"}, status_code=400)
-
-    detail = tmdb_get_detail_page(tmdb_id, media_type)
-    if not detail:
-        return JSONResponse({"error": "TMDB details unavailable"}, status_code=404)
-
-    watched = None
-    for row in get_all():
-        if row.get("type") != media_type:
-            continue
-        try:
-            if row.get("tmdb_id") is not None and int(row.get("tmdb_id")) == int(tmdb_id):
-                watched = row
-                break
-        except (TypeError, ValueError):
-            continue
-
-    detail["is_watched"] = watched is not None
-    detail["user_rating"] = watched.get("rating") if watched else None
-    detail["is_watchlisted"] = is_in_watchlist(media_type, tmdb_id)
-    detail["match_percentage"] = max(0, min(100, int(match or 0)))
-
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
-            "page": "detail",
-            "detail": detail,
-            "media_type": media_type,
-            "ingress_path": get_ingress_path(request),
-        },
-    )
-
-
-# ============================================================
 # HOME
 #
 # Opening the normal URL automatically starts discovery.
@@ -2288,34 +2247,66 @@ def api_display_statistics_sync(
 @app.get("/api/search")
 def api_search(
     q: str = "",
-    media_type: str = "",
+    media_type: str = "All",
 ):
-    """Search exactly one media type. The frontend calls this twice,
-    once for Movie and once for Series, then combines the results."""
+    """Search TMDB for movies and/or TV in one consistent response.
 
+    media_type may be Movie, Series, or All. All is the frontend default so
+    series can never disappear simply because the client requested only one
+    branch of the search API.
+    """
     q = q.strip()
+    requested_type = (media_type or "All").strip().title()
 
     if len(q) < 2:
-        return {"results": []}
-
-    if media_type not in ("Movie", "Series"):
         return {
             "results": [],
-            "error": "media_type must be Movie or Series",
+            "movies": [],
+            "series": [],
+            "media_type": requested_type,
         }
 
-    results = tmdb_live_search(
-        q,
-        media_type,
-    )
+    if requested_type not in ("Movie", "Series", "All"):
+        return {
+            "results": [],
+            "movies": [],
+            "series": [],
+            "media_type": "All",
+            "error": "media_type must be Movie, Series, or All",
+        }
 
-    # Ensure every item explicitly carries its media type.
-    for item in results:
-        item["media_type"] = media_type
+    def do_search(kind):
+        results = tmdb_live_search(q, kind)
+        for item in results:
+            item["media_type"] = kind
+        return results
+
+    if requested_type == "All":
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            movie_future = executor.submit(do_search, "Movie")
+            series_future = executor.submit(do_search, "Series")
+            movies = movie_future.result()
+            series = series_future.result()
+    else:
+        results = do_search(requested_type)
+        movies = results if requested_type == "Movie" else []
+        series = results if requested_type == "Series" else []
+
+    combined = movies + series
+    seen = set()
+    deduped = []
+    for item in combined:
+        key = f"{item.get('media_type')}:{item.get('tmdb_id')}"
+        if not item.get("tmdb_id") or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
 
     return {
-        "results": results,
-        "media_type": media_type,
+        "results": deduped,
+        "movies": movies,
+        "series": series,
+        "media_type": requested_type,
     }
 
 
@@ -2660,7 +2651,12 @@ def title_detail(
     tmdb_id: int,
     match: Optional[int] = None,
 ):
-    if media_type not in ("Movie", "Series"):
+    media_type_key = str(media_type or "").strip().lower()
+    if media_type_key in ("movie", "movies"):
+        media_type = "Movie"
+    elif media_type_key in ("series", "tv", "show", "shows"):
+        media_type = "Series"
+    else:
         return app_redirect(request, "recommendations")
 
     detail = tmdb_get_detail_page(
