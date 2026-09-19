@@ -430,6 +430,21 @@
                 <div class="settings-card-icon">{{ ui_icon('check') }}</div>
                 <div><h2>Library</h2><p>{{ lifetime_statistics.watched|default(0) }} watched titles are currently in your library: {{ lifetime_statistics.movies|default(0) }} movies and {{ lifetime_statistics.series|default(0) }} series.</p></div>
             </section>
+            <section class="settings-card settings-card-wide">
+                <div class="settings-card-icon">{{ ui_icon('refresh') }}</div>
+                <div class="settings-control-content">
+                    <h2>Home result count</h2>
+                    <p>Choose how many AI and TMDB cards appear in each Movie and Series section on Home.</p>
+                    <form id="recommendation-limit-form" class="settings-limit-form">
+                        <label for="recommendation-limit">Cards per section</label>
+                        <div class="settings-limit-row">
+                            <input id="recommendation-limit" name="recommendation_limit" type="number" min="1" max="20" step="1" value="{{ recommendation_limit|default(8) }}">
+                            <button type="submit" class="primary-button">Save</button>
+                        </div>
+                        <span class="settings-help">1–20 cards. Refresh Home after saving to generate the new amount.</span>
+                    </form>
+                </div>
+            </section>
             <section class="settings-card">
                 <div class="settings-card-icon">{{ ui_icon('movie') }}</div>
                 <div><h2>Navigation</h2><p>Use the top bar for Home, Search, Watched, Wishlist, Settings, and recommendation refresh.</p></div>
@@ -2880,7 +2895,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
 
         return `
             <article
-                class="trending-card"
+                class="trending-card recommendation-clickable"
                 data-media-type="${mediaType}"
                 data-tmdb-id="${item.tmdb_id}"
                 tabindex="0"
@@ -2928,6 +2943,14 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
                             rel="noopener noreferrer"
                             class="tmdb-button"
                         >{{ ui_icon("tmdb") }}TMDB</a>
+
+                        <form action="/recommendation/watched" method="post" class="watched-inline ajax-watched-form trending-watched-form">
+                            <input type="hidden" name="title" value="${title}">
+                            <input type="hidden" name="media_type" value="${mediaType}">
+                            <input type="hidden" name="tmdb_id" value="${item.tmdb_id}">
+                            <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required aria-label="Your rating">
+                            <button type="submit" class="watched-button">{{ ui_icon("check") }}Watched</button>
+                        </form>
 
                         <form action="/recommendation/not-interested" method="post" class="not-interested-form ajax-not-interested-form">
                             <input type="hidden" name="title" value="${title}">
@@ -2995,6 +3018,33 @@ async function loadLifetimeStatistics() {
     } catch (error) {
         console.error('Lifetime statistics load error:', error);
     }
+}
+
+const recommendationLimitForm = document.getElementById("recommendation-limit-form");
+if (recommendationLimitForm) {
+    recommendationLimitForm.addEventListener("submit", async function(event) {
+        event.preventDefault();
+        const button = recommendationLimitForm.querySelector("button[type=submit]");
+        const originalText = button ? button.textContent : "Save";
+        if (button) { button.disabled = true; button.textContent = "Saving..."; }
+        try {
+            const response = await fetch(appUrl("/api/settings"), {
+                method: "POST",
+                body: new FormData(recommendationLimitForm),
+                headers: { "Accept": "application/json" },
+                cache: "no-store"
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) throw new Error(data.error || "Unable to save settings.");
+            const input = document.getElementById("recommendation-limit");
+            if (input) input.value = data.recommendation_limit;
+            showToast(`✓ Home will show ${data.recommendation_limit} cards per section`);
+        } catch (error) {
+            showToast(error.message || "Unable to save settings.", "error");
+        } finally {
+            if (button) { button.disabled = false; button.textContent = originalText; }
+        }
+    });
 }
 
 loadLifetimeStatistics();
@@ -3399,7 +3449,7 @@ document.addEventListener("submit", async function (event) {
     event.preventDefault();
     event.stopPropagation();
 
-    const card = form.closest(".recommendation-card");
+    const card = form.closest(".recommendation-card, .trending-card");
     const button = form.querySelector(".watched-button");
     const originalText = button ? button.innerHTML : uiIcon("check") + "Watched";
 
