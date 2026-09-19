@@ -5905,3 +5905,157 @@ body.search-panel-open {
     .watched-filter { flex: 1; }
     .watched-grid { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
 }
+
+
+/* =========================================================
+   FINAL UI NORMALIZATION / ICON SAFETY
+   ========================================================= */
+
+img, svg { max-inline-size: 100%; }
+
+.section-heading h2,
+.source-heading h3 { display: inline-flex; align-items: center; gap: 8px; }
+
+.section-title-icon,
+.section-title-icon svg {
+    width: 18px !important;
+    height: 18px !important;
+    min-width: 18px !important;
+    max-width: 18px !important;
+    min-height: 18px !important;
+    max-height: 18px !important;
+    display: inline-grid;
+    place-items: center;
+}
+
+.search-icon,
+.search-icon svg {
+    width: 16px !important;
+    height: 16px !important;
+    max-width: 16px !important;
+    max-height: 16px !important;
+    display: inline-grid;
+    place-items: center;
+    font-size: 0 !important;
+    line-height: 0 !important;
+}
+
+.source-icon,
+.source-icon svg {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    max-width: 28px !important;
+    min-height: 28px !important;
+    max-height: 28px !important;
+    display: grid;
+    place-items: center;
+    font-size: 0 !important;
+    line-height: 0 !important;
+}
+
+.search-result-group-icon,
+.search-result-group-icon svg {
+    width: 18px !important;
+    height: 18px !important;
+    min-width: 18px !important;
+    max-width: 18px !important;
+    min-height: 18px !important;
+    max-height: 18px !important;
+    display: grid;
+    place-items: center;
+    font-size: 0 !important;
+    line-height: 0 !important;
+}
+
+.preview-empty-icon,
+.preview-empty-icon svg,
+.selected-preview-placeholder,
+.poster-placeholder {
+    max-width: 42px;
+    max-height: 42px;
+}
+
+.preview-empty-icon svg {
+    width: 32px !important;
+    height: 32px !important;
+    max-width: 32px !important;
+    max-height: 32px !important;
+}
+
+.watched-hero-icon,
+.watched-hero-icon svg,
+.watched-empty-icon,
+.watched-empty-icon svg {
+    box-sizing: border-box;
+}
+
+.watched-empty-icon svg {
+    width: 28px !important;
+    height: 28px !important;
+    max-width: 28px !important;
+    max-height: 28px !important;
+}
+
+.watched-card img,
+.search-result-poster img,
+.recommendation-poster img,
+.trending-poster img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+button svg,
+a svg,
+span svg {
+    flex: 0 0 auto;
+}
+
+/* Keep typography/icon glyph fallbacks compact when an emoji fallback remains. */
+.source-icon,
+.search-result-group-icon,
+.preview-empty-icon,
+.watched-empty-icon,
+.watched-play-badge,
+.watched-type-badge,
+.watched-rating-badge {
+    overflow: hidden;
+}
+
+@media (max-width: 920px) {
+    .topbar { padding-inline: 16px; }
+    .brand-icon { width: 38px !important; height: 38px !important; min-width: 38px !important; }
+    .brand-icon svg { width: 19px !important; height: 19px !important; }
+}
+
+
+/* Compact media fallbacks: never let fallback text/emoji dominate a card. */
+.media-fallback-icon {
+    display: grid !important;
+    place-items: center !important;
+    font-size: 11px !important;
+    font-weight: 900 !important;
+    letter-spacing: .10em !important;
+    line-height: 1 !important;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.32);
+}
+
+.poster-placeholder,
+.selected-preview-placeholder {
+    font-size: 11px !important;
+    font-weight: 900 !important;
+    letter-spacing: .10em !important;
+    line-height: 1 !important;
+}
+
+.detail-poster-empty {
+    font-size: 12px !important;
+    font-weight: 900 !important;
+    letter-spacing: .12em !important;
+}
+
+.watched-card-poster .poster-placeholder {
+    font-size: 11px !important;
+}
