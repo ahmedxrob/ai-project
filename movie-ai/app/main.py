@@ -2019,7 +2019,12 @@ def api_search(
     q: str = "",
     media_type: str = "",
 ):
-    """Search TMDB for movies and TV series in one authoritative request."""
+    """Search movies and TV series independently, then merge the results.
+
+    TMDB's /search/multi endpoint can return a movie-heavy first page for
+    mixed queries. Using the dedicated movie + tv endpoints guarantees that
+    each media type gets its own result budget before we merge the two lists.
+    """
 
     q = q.strip()
 
@@ -2042,62 +2047,55 @@ def api_search(
 
     requested_type = media_type if media_type in ("Movie", "Series") else ""
 
-    try:
-        data = tmdb_request(
-            "https://api.themoviedb.org/3/search/multi",
-            token,
-            {
-                "query": q,
-                "language": "en-US",
-                "include_adult": "false",
-                "page": 1,
-            },
+    def search_type(kind):
+        endpoint = "https://api.themoviedb.org/3/search/" + (
+            "movie" if kind == "Movie" else "tv"
         )
-
-        movies = []
-        series = []
-        seen = set()
-
-        for item in data.get("results", []):
-            tmdb_media_type = item.get("media_type")
-
-            if tmdb_media_type == "movie":
-                normalized_type = "Movie"
-            elif tmdb_media_type == "tv":
-                normalized_type = "Series"
-            else:
-                # Ignore people and any unsupported TMDB result types.
-                continue
-
-            if requested_type and normalized_type != requested_type:
-                continue
-
-            tmdb_id = item.get("id")
-            if not tmdb_id:
-                continue
-
-            key = f"{normalized_type}:{tmdb_id}"
-            if key in seen:
-                continue
-
-            normalized = normalise_tmdb_result(
-                item,
-                normalized_type,
+        try:
+            data = tmdb_request(
+                endpoint,
+                token,
+                {
+                    "query": q,
+                    "language": "en-US",
+                    "include_adult": "false",
+                    "page": 1,
+                },
             )
+        except Exception as error:
+            print(f"TMDB {kind.lower()} live search error: {error}")
+            return []
 
+        output = []
+        seen = set()
+        for item in data.get("results", []):
+            tmdb_id = item.get("id")
+            if not tmdb_id or tmdb_id in seen:
+                continue
+            normalized = normalise_tmdb_result(item, kind)
             if not normalized.get("title"):
                 continue
+            normalized["media_type"] = kind
+            seen.add(tmdb_id)
+            output.append(normalized)
+            if len(output) >= 10:
+                break
+        return output
 
-            normalized["media_type"] = normalized_type
-            seen.add(key)
-
-            if normalized_type == "Movie":
-                movies.append(normalized)
+    try:
+        if requested_type:
+            if requested_type == "Movie":
+                movies, series = search_type("Movie"), []
             else:
-                series.append(normalized)
+                movies, series = [], search_type("Series")
+        else:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                movie_future = executor.submit(search_type, "Movie")
+                series_future = executor.submit(search_type, "Series")
+                movies = movie_future.result()
+                series = series_future.result()
 
-        # Keep a useful amount of each media type so one type cannot
-        # crowd the other out of the search panel.
+        # Movies and series keep independent slots in the UI.
         movies = movies[:10]
         series = series[:10]
         combined = movies + series
@@ -2110,7 +2108,7 @@ def api_search(
         }
 
     except Exception as error:
-        print(f"TMDB multi search error: {error}")
+        print(f"TMDB independent search error: {error}")
         return {
             "results": [],
             "movies": [],
