@@ -130,7 +130,7 @@
                 {% if detail.poster %}
                 <img class="detail-poster" src="{{ detail.poster }}" alt="{{ detail.title }}">
                 {% else %}
-                <div class="detail-poster detail-poster-empty">🎬</div>
+                <div class="detail-poster detail-poster-empty media-fallback-icon">FILM</div>
                 {% endif %}
             </div>
 
@@ -455,8 +455,8 @@
 
                 <div class="search-input-wrap">
 
-                    <span class="search-icon">
-                        🔎
+                    <span class="search-icon app-inline-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
                     </span>
 
                     <input
@@ -516,9 +516,7 @@
 
                 <div class="selected-preview-empty">
 
-                    <div class="preview-empty-icon">
-                        🎬
-                    </div>
+                    <div class="preview-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m10 8 6 4-6 4V8Z"></path></svg></div>
 
                     <span>
                         Search for a title and select
@@ -657,9 +655,7 @@
                     RIGHT NOW ON TMDB
                 </span>
 
-                <h2>
-                    🔥 Trending Now
-                </h2>
+                <h2><span class="section-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a6 6 0 0 0 5.7-7.9c-.7 2-2 3.1-3.6 3.7.5-2.8-.5-5.2-2.7-7.8-.2 3.2-1.8 4.8-3.2 6.1A5.8 5.8 0 0 0 12 21Z"></path></svg></span>Trending Now</h2>
 
             </div>
 
@@ -675,9 +671,7 @@
             <div class="source-heading trending-movie-heading">
 
                 <div>
-                    <span class="source-icon">
-                        🎬
-                    </span>
+                    <span class="source-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m10 8 6 4-6 4V8Z"></path></svg></span>
 
                     <div>
                         <h3>Trending Movies</h3>
@@ -708,9 +702,7 @@
             <div class="source-heading trending-series-heading">
 
                 <div>
-                    <span class="source-icon">
-                        📺
-                    </span>
+                    <span class="source-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 5v4M16 5v4M4 9h16"></path></svg></span>
 
                     <div>
                         <h3>Trending Series</h3>
@@ -759,9 +751,7 @@
                     MOVIE DISCOVERY
                 </span>
 
-                <h2>
-                    🎬 Movies
-                </h2>
+                <h2><span class="section-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m10 8 6 4-6 4V8Z"></path></svg></span>Movies</h2>
 
             </div>
 
@@ -782,9 +772,7 @@
 
                 <div>
 
-                    <span class="source-icon">
-                        🤖
-                    </span>
+                    <span class="source-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="6" width="14" height="12" rx="3"></rect><path d="M9 3v3M15 3v3M8.5 11h.01M15.5 11h.01M9 15h6"></path></svg></span>
 
                     <div>
 
@@ -1031,9 +1019,7 @@
 
                 <div>
 
-                    <span class="source-icon">
-                        🔵
-                    </span>
+                    <span class="source-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="7"></circle></svg></span>
 
                     <div>
 
@@ -1272,9 +1258,7 @@
                     SERIES DISCOVERY
                 </span>
 
-                <h2>
-                    📺 Series
-                </h2>
+                <h2><span class="section-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 5v4M16 5v4M4 9h16"></path></svg></span>Series</h2>
 
             </div>
 
@@ -1295,9 +1279,7 @@
 
                 <div>
 
-                    <span class="source-icon">
-                        🤖
-                    </span>
+                    <span class="source-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="6" width="14" height="12" rx="3"></rect><path d="M9 3v3M15 3v3M8.5 11h.01M15.5 11h.01M9 15h6"></path></svg></span>
 
                     <div>
 
@@ -1544,9 +1526,7 @@
 
                 <div>
 
-                    <span class="source-icon">
-                        🔵
-                    </span>
+                    <span class="source-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="7"></circle></svg></span>
 
                     <div>
 
@@ -2582,8 +2562,16 @@ function renderSearchResults(
     }
 
     searchResults.innerHTML =
-        renderGroup(movies, "Movies", "🎬") +
-        renderGroup(series, "Series", "▣");
+        renderGroup(
+        movies,
+        "Movies",
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m10 8 6 4-6 4V8Z"></path></svg>'
+    ) +
+    renderGroup(
+        series,
+        "Series",
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 5v4M16 5v4M4 9h16"></path></svg>'
+    );
 
     searchResults.querySelectorAll(".search-result-card").forEach(function(card) {
         function openDetails() {
@@ -2991,7 +2979,7 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
         const rating = Number(item.vote_average || 0).toFixed(1);
         const poster = item.poster
             ? `<img src="${escapeHtml(item.poster)}" alt="${title}" loading="lazy">`
-            : `<div class="poster-placeholder">${mediaType === "Movie" ? "🎬" : "📺"}</div>`;
+            : `<div class="poster-placeholder media-fallback-icon">${mediaType === "Movie" ? "FILM" : "TV"}</div>`;
 
         return `
             <article
@@ -3204,7 +3192,7 @@ function createLiveWatchedCard(item) {
     article.dataset.tmdbId = item.tmdb_id || "";
 
     const mediaType = item.media_type || "Movie";
-    const icon = mediaType === "Movie" ? "🎬" : "📺";
+    const icon = mediaType === "Movie" ? "FILM" : "TV";
     const year = item.year ? String(item.year) : "";
     const rating = Number(item.rating || 0).toFixed(1);
     const poster = item.poster || "";
