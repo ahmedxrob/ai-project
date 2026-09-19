@@ -2019,12 +2019,7 @@ def api_search(
     q: str = "",
     media_type: str = "",
 ):
-    """Search movies and/or series in one request.
-
-    When media_type is omitted, both TMDB movie and TV endpoints are
-    queried and returned separately so the client cannot accidentally
-    lose the series results because of two competing requests.
-    """
+    """Search TMDB for movies and TV series in one authoritative request."""
 
     q = q.strip()
 
@@ -2035,34 +2030,93 @@ def api_search(
             "series": [],
         }
 
-    if media_type in ("Movie", "Series"):
-        results = tmdb_live_search(q, media_type)
-        for item in results:
-            item["media_type"] = media_type
-        return {
-            "results": results,
-            "media_type": media_type,
-        }
+    token = get_env("TMDB_TOKEN")
 
-    if media_type:
+    if not token:
         return {
             "results": [],
             "movies": [],
             "series": [],
-            "error": "media_type must be Movie or Series when supplied",
+            "error": "TMDB_TOKEN is not configured.",
         }
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        movie_future = executor.submit(tmdb_live_search, q, "Movie")
-        series_future = executor.submit(tmdb_live_search, q, "Series")
-        movies = movie_future.result()
-        series = series_future.result()
+    requested_type = media_type if media_type in ("Movie", "Series") else ""
 
-    return {
-        "results": movies + series,
-        "movies": movies,
-        "series": series,
-    }
+    try:
+        data = tmdb_request(
+            "https://api.themoviedb.org/3/search/multi",
+            token,
+            {
+                "query": q,
+                "language": "en-US",
+                "include_adult": "false",
+                "page": 1,
+            },
+        )
+
+        movies = []
+        series = []
+        seen = set()
+
+        for item in data.get("results", []):
+            tmdb_media_type = item.get("media_type")
+
+            if tmdb_media_type == "movie":
+                normalized_type = "Movie"
+            elif tmdb_media_type == "tv":
+                normalized_type = "Series"
+            else:
+                # Ignore people and any unsupported TMDB result types.
+                continue
+
+            if requested_type and normalized_type != requested_type:
+                continue
+
+            tmdb_id = item.get("id")
+            if not tmdb_id:
+                continue
+
+            key = f"{normalized_type}:{tmdb_id}"
+            if key in seen:
+                continue
+
+            normalized = normalise_tmdb_result(
+                item,
+                normalized_type,
+            )
+
+            if not normalized.get("title"):
+                continue
+
+            normalized["media_type"] = normalized_type
+            seen.add(key)
+
+            if normalized_type == "Movie":
+                movies.append(normalized)
+            else:
+                series.append(normalized)
+
+        # Keep a useful amount of each media type so one type cannot
+        # crowd the other out of the search panel.
+        movies = movies[:10]
+        series = series[:10]
+        combined = movies + series
+
+        return {
+            "results": combined,
+            "movies": movies,
+            "series": series,
+            "media_type": requested_type or None,
+        }
+
+    except Exception as error:
+        print(f"TMDB multi search error: {error}")
+        return {
+            "results": [],
+            "movies": [],
+            "series": [],
+            "error": "TMDB search failed. Please try again.",
+        }
 
 
 # ============================================================
