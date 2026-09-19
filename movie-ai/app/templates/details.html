@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#060608">
+    <title>{{ detail.title }} — My Movie AI</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/detail.css">
+</head>
+<body data-ingress-path="{{ ingress_path|default('') }}">
+<div class="site-background"></div>
+
+<nav class="topbar detail-topbar">
+    <div class="brand">
+        <div class="brand-icon">🎬</div>
+        <div class="brand-text">
+            <strong>My Movie AI</strong>
+            <span>your personal cinema</span>
+        </div>
+    </div>
+    <a class="detail-back" href="{{ ingress_path|default('') }}/recommendations">← Back to picks</a>
+</nav>
+
+<main class="detail-page">
+    <section class="detail-hero"{% if detail.backdrop %} style="--detail-backdrop: url('{{ detail.backdrop }}')"{% endif %}>
+        <div class="detail-hero-overlay"></div>
+        <div class="detail-hero-content">
+            <div class="detail-poster-wrap">
+                {% if detail.poster %}
+                <img class="detail-poster" src="{{ detail.poster }}" alt="{{ detail.title }}">
+                {% else %}
+                <div class="detail-poster detail-poster-empty">🎬</div>
+                {% endif %}
+            </div>
+
+            <div class="detail-main">
+                <div class="detail-kicker">{{ "MOVIE" if media_type == "Movie" else "SERIES" }} • TMDB</div>
+                <div class="detail-title-row">
+                    <div>
+                        <h1>{{ detail.title }}</h1>
+                        {% if detail.tagline %}<p class="detail-tagline">{{ detail.tagline }}</p>{% endif %}
+                    </div>
+                    <div class="match-ring" style="--match-angle: {{ (detail.match_percentage / 100 * 360)|round(0) }}deg">
+                        <strong>{{ detail.match_percentage }}%</strong>
+                        <span>match</span>
+                    </div>
+                </div>
+
+                <div class="detail-meta">
+                    {% if detail.year %}<span>{{ detail.year }}</span>{% endif %}
+                    <span class="detail-rating">★ {{ "%.1f"|format(detail.vote_average) }}</span>
+                    {% if detail.status %}<span>{{ detail.status }}</span>{% endif %}
+                    {% if detail.runtime %}<span>{{ detail.runtime }} min</span>{% endif %}
+                    {% if detail.seasons %}<span>{{ detail.seasons }} seasons</span>{% endif %}
+                </div>
+
+                <div class="detail-genres">
+                    {% for genre in detail.genres %}
+                    <span>{{ genre }}</span>
+                    {% endfor %}
+                </div>
+
+                <p class="detail-overview">{{ detail.overview or "No description available." }}</p>
+
+                <div class="detail-actions">
+                    {% if detail.is_watched %}
+                    <div class="detail-watched-badge">✅ Already watched{% if detail.user_rating is not none %} • Your rating {{ "%.1f"|format(detail.user_rating) }}/10{% endif %}</div>
+                    {% else %}
+                    <form method="post" action="{{ ingress_path|default('') }}/recommendation/watched" class="detail-watched-form">
+                        <input type="hidden" name="title" value="{{ detail.title }}">
+                        <input type="hidden" name="media_type" value="{{ media_type }}">
+                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
+                        <input type="number" name="rating" min="0" max="10" step="0.1" value="8" required>
+                        <button type="submit">✅ Mark watched</button>
+                    </form>
+                    {% endif %}
+
+                    <form method="post" action="{{ ingress_path|default('') }}/watchlist/toggle">
+                        <input type="hidden" name="tmdb_id" value="{{ detail.tmdb_id }}">
+                        <input type="hidden" name="media_type" value="{{ media_type }}">
+                        <input type="hidden" name="title" value="{{ detail.title }}">
+                        <input type="hidden" name="year" value="{{ detail.year or '' }}">
+                        <input type="hidden" name="poster" value="{{ detail.poster or '' }}">
+                        <input type="hidden" name="backdrop" value="{{ detail.backdrop or '' }}">
+                        <input type="hidden" name="overview" value="{{ detail.overview or '' }}">
+                        <input type="hidden" name="vote_average" value="{{ detail.vote_average }}">
+                        <input type="hidden" name="remove" value="{{ 'true' if detail.is_watchlisted else 'false' }}">
+                        <button class="watchlist-button" type="submit">{{ "✓ In Watchlist" if detail.is_watchlisted else "+ Watchlist" }}</button>
+                    </form>
+
+                    <a class="tmdb-detail-button" href="{{ detail.tmdb_url }}" target="_blank" rel="noopener noreferrer">Open TMDB ↗</a>
+                </div>
+
+                <div class="why-detail">
+                    <div class="why-detail-label">WHY YOU MAY LIKE IT</div>
+                    <p>Based on your current library and ratings, this title is estimated at <strong>{{ detail.match_percentage }}% compatibility</strong> with your taste.</p>
+                </div>
+
+                {% if detail.director %}
+                <div class="detail-director"><span>{{ "DIRECTOR" if media_type == "Movie" else "CREATED BY" }}</span><strong>{{ detail.director }}</strong></div>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    {% if detail.cast %}
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>Cast</h2><span>{{ detail.cast|length }} featured</span></div>
+        <div class="cast-rail">
+            {% for person in detail.cast %}
+            <div class="cast-card">
+                {% if person.photo %}<img src="{{ person.photo }}" alt="{{ person.name }}">{% else %}<div class="cast-empty">👤</div>{% endif %}
+                <strong>{{ person.name }}</strong>
+                {% if person.character %}<span>{{ person.character }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if detail.similar %}
+    <section class="detail-section">
+        <div class="detail-section-heading"><h2>More like this</h2><span>TMDB similar titles</span></div>
+        <div class="similar-rail">
+            {% for item in detail.similar %}
+            <a class="similar-card" href="{{ ingress_path|default('') }}/title/{{ media_type }}/{{ item.tmdb_id }}">
+                {% if item.poster %}<img src="{{ item.poster }}" alt="{{ item.title }}">{% endif %}
+                <div class="similar-info">
+                    <strong>{{ item.title }}</strong>
+                    <span>{% if item.year %}{{ item.year }} • {% endif %}★ {{ "%.1f"|format(item.vote_average) }}</span>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</main>
+
+<script>
+(function () {
+    const base = document.body.dataset.ingressPath || "";
+    document.querySelectorAll(".similar-card").forEach(function (card) {
+        const href = card.getAttribute("href") || "";
+        if (!href.startsWith("/app/") && base && href.startsWith("/title/")) {
+            card.setAttribute("href", base + href);
+        }
+    });
+})();
+</script>
+</body>
+</html>
