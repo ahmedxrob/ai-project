@@ -4,8 +4,6 @@ import random
 import time
 import requests
 import threading
-import re
-import mimetypes
 
 from pathlib import Path
 
@@ -13,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 from fastapi import FastAPI, Request, Form, BackgroundTasks
-from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
@@ -45,11 +43,6 @@ from app.database import (
     get_lifetime_statistics,
     increment_lifetime_recommendations,
     increment_lifetime_trending,
-    upsert_media_file,
-    get_media_files,
-    get_media_file,
-    update_media_progress,
-    media_counts,
 )
 
 
@@ -210,165 +203,6 @@ def get_env(name: str) -> str:
         name,
         ""
     ).strip()
-
-
-# ============================================================
-# LOCAL MEDIA LIBRARY
-# ============================================================
-
-MEDIA_ROOT = Path(get_env("MEDIA_ROOT") or "/mnt/storage/media").expanduser().resolve()
-MEDIA_MOVIES_ROOT = Path(get_env("MEDIA_MOVIES_ROOT") or str(MEDIA_ROOT / "movies")).expanduser().resolve()
-MEDIA_SERIES_ROOT = Path(get_env("MEDIA_SERIES_ROOT") or str(MEDIA_ROOT / "tv")).expanduser().resolve()
-MEDIA_EXTENSIONS = {
-    ".mkv", ".mp4", ".m4v", ".webm", ".avi", ".mov", ".ts", ".m2ts",
-}
-
-
-def _safe_media_path(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
-
-
-def _parse_media_filename(path: Path, media_type: str):
-    stem = path.stem.replace(".", " ").replace("_", " ").strip()
-    year_match = re.search(r"(?:^|\D)((?:19|20)\d{2})(?:\D|$)", stem)
-    year = int(year_match.group(1)) if year_match else None
-
-    season = episode = None
-    if media_type == "Series":
-        episode_match = re.search(r"[Ss](\d{1,2})[ ._-]?[Ee](\d{1,3})", stem)
-        if episode_match:
-            season = int(episode_match.group(1))
-            episode = int(episode_match.group(2))
-            title = stem[:episode_match.start()].strip(" -._")
-        else:
-            title = path.parent.name.replace(".", " ").replace("_", " ").strip()
-    else:
-        title = stem
-        if year_match:
-            title = stem[:year_match.start()].strip(" -._")
-
-    title = re.sub(r"\s+", " ", title).strip() or path.stem
-    return title, year, season, episode
-
-
-def scan_local_media():
-    found = []
-    roots = [("Movie", MEDIA_MOVIES_ROOT), ("Series", MEDIA_SERIES_ROOT)]
-    metadata_cache = {}
-    token_available = bool(get_env("TMDB_TOKEN"))
-
-    for media_type, root in roots:
-        if not root.exists() or not root.is_dir():
-            continue
-        for path in root.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in MEDIA_EXTENSIONS:
-                continue
-            try:
-                stat = path.stat()
-                parsed_title, year, season, episode = _parse_media_filename(path, media_type)
-                item_data = {
-                    "media_type": media_type,
-                    "title": parsed_title,
-                    "original_title": parsed_title,
-                    "year": year,
-                    "season": season,
-                    "episode": episode,
-                    "file_path": str(path.resolve()),
-                    "file_name": path.name,
-                    "size_bytes": stat.st_size,
-                    "metadata_status": "unmatched" if token_available else "no_token",
-                }
-
-                if token_available:
-                    cache_key = (media_type, parsed_title.casefold(), year)
-                    if cache_key not in metadata_cache:
-                        metadata_cache[cache_key] = tmdb_search(parsed_title, media_type, year=year)
-                    match = metadata_cache[cache_key]
-                    if match:
-                        item_data.update({
-                            "title": match["title"],
-                            "year": match.get("year") or year,
-                            "poster": match.get("poster"),
-                            "backdrop": match.get("backdrop"),
-                            "overview": match.get("overview", ""),
-                            "vote_average": match.get("vote_average", 0),
-                            "tmdb_id": match.get("tmdb_id"),
-                            "metadata_status": "matched",
-                            "metadata_error": None,
-                        })
-                    else:
-                        item_data["metadata_status"] = "unmatched"
-                        item_data["metadata_error"] = "No confident TMDB match"
-
-                item = upsert_media_file(item_data)
-                if item:
-                    found.append(item)
-            except OSError as error:
-                print(f"Media scan skipped {path}: {error}")
-            except Exception as error:
-                print(f"Media metadata skipped {path}: {error}")
-    return found
-
-
-def _media_stream_response(path: Path, request: Request):
-    size = path.stat().st_size
-    range_header = request.headers.get("range")
-    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-
-    if not range_header:
-        def iterator():
-            with path.open("rb") as handle:
-                while True:
-                    chunk = handle.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-        return StreamingResponse(iterator(), media_type=content_type, headers={
-            "Content-Length": str(size),
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "no-cache",
-        })
-
-    match = re.match(r"bytes=(\d*)-(\d*)", range_header.strip())
-    if not match:
-        return JSONResponse({"error": "Invalid range"}, status_code=416)
-
-    start_text, end_text = match.groups()
-    if start_text:
-        start = int(start_text)
-        end = int(end_text) if end_text else size - 1
-    else:
-        length = int(end_text or 0)
-        start = max(0, size - length)
-        end = size - 1
-
-    if start >= size or start > end:
-        return StreamingResponse(iter(()), status_code=416, headers={"Content-Range": f"bytes */{size}"})
-
-    end = min(end, size - 1)
-    length = end - start + 1
-
-    def ranged_iterator():
-        with path.open("rb") as handle:
-            handle.seek(start)
-            remaining = length
-            while remaining:
-                chunk = handle.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
-
-    return StreamingResponse(ranged_iterator(), status_code=206, media_type=content_type, headers={
-        "Content-Length": str(length),
-        "Content-Range": f"bytes {start}-{end}/{size}",
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "no-cache",
-    })
 
 
 # ============================================================
@@ -2009,70 +1843,6 @@ def generate_recommendations(
 
 
 # ============================================================
-# LOCAL MEDIA LIBRARY ROUTES
-# ============================================================
-
-@app.get("/library")
-def local_library_page(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
-            "page": "library",
-            "media": get_media_files(),
-            "counts": media_counts(),
-            "media_root": str(MEDIA_ROOT),
-            "movies_root": str(MEDIA_MOVIES_ROOT),
-            "series_root": str(MEDIA_SERIES_ROOT),
-            "ingress_path": get_ingress_path(request),
-        },
-    )
-
-
-@app.get("/api/library")
-def api_local_library(media_type: str = ""):
-    if media_type and media_type not in ("Movie", "Series"):
-        return {"error": "media_type must be Movie or Series", "results": []}
-    return {"results": get_media_files(media_type or None), "counts": media_counts()}
-
-
-@app.post("/api/library/scan")
-def api_scan_local_library():
-    results = scan_local_media()
-    return {"scanned": len(results), "counts": media_counts(), "results": results}
-
-
-@app.get("/api/library/{media_id}")
-def api_local_media(media_id: int):
-    item = get_media_file(media_id)
-    if not item:
-        return JSONResponse({"error": "Media not found"}, status_code=404)
-    return item
-
-
-@app.post("/api/library/{media_id}/progress")
-def api_local_media_progress(media_id: int, position: float = Form(0)):
-    if not get_media_file(media_id):
-        return JSONResponse({"error": "Media not found"}, status_code=404)
-    update_media_progress(media_id, position)
-    return {"ok": True, "position": max(0.0, float(position or 0))}
-
-
-@app.get("/api/library/{media_id}/stream")
-def api_local_media_stream(media_id: int, request: Request):
-    item = get_media_file(media_id)
-    if not item:
-        return JSONResponse({"error": "Media not found"}, status_code=404)
-
-    path = Path(item["file_path"]).resolve()
-    root = MEDIA_MOVIES_ROOT if item["media_type"] == "Movie" else MEDIA_SERIES_ROOT
-    if not _safe_media_path(path, root) or not path.is_file():
-        return JSONResponse({"error": "Media file is unavailable"}, status_code=404)
-
-    return _media_stream_response(path, request)
-
-
-# ============================================================
 # HOME
 #
 # Opening the normal URL automatically starts discovery.
@@ -2247,66 +2017,34 @@ def api_display_statistics_sync(
 @app.get("/api/search")
 def api_search(
     q: str = "",
-    media_type: str = "All",
+    media_type: str = "",
 ):
-    """Search TMDB for movies and/or TV in one consistent response.
+    """Search exactly one media type. The frontend calls this twice,
+    once for Movie and once for Series, then combines the results."""
 
-    media_type may be Movie, Series, or All. All is the frontend default so
-    series can never disappear simply because the client requested only one
-    branch of the search API.
-    """
     q = q.strip()
-    requested_type = (media_type or "All").strip().title()
 
     if len(q) < 2:
+        return {"results": []}
+
+    if media_type not in ("Movie", "Series"):
         return {
             "results": [],
-            "movies": [],
-            "series": [],
-            "media_type": requested_type,
+            "error": "media_type must be Movie or Series",
         }
 
-    if requested_type not in ("Movie", "Series", "All"):
-        return {
-            "results": [],
-            "movies": [],
-            "series": [],
-            "media_type": "All",
-            "error": "media_type must be Movie, Series, or All",
-        }
+    results = tmdb_live_search(
+        q,
+        media_type,
+    )
 
-    def do_search(kind):
-        results = tmdb_live_search(q, kind)
-        for item in results:
-            item["media_type"] = kind
-        return results
-
-    if requested_type == "All":
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            movie_future = executor.submit(do_search, "Movie")
-            series_future = executor.submit(do_search, "Series")
-            movies = movie_future.result()
-            series = series_future.result()
-    else:
-        results = do_search(requested_type)
-        movies = results if requested_type == "Movie" else []
-        series = results if requested_type == "Series" else []
-
-    combined = movies + series
-    seen = set()
-    deduped = []
-    for item in combined:
-        key = f"{item.get('media_type')}:{item.get('tmdb_id')}"
-        if not item.get("tmdb_id") or key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
+    # Ensure every item explicitly carries its media type.
+    for item in results:
+        item["media_type"] = media_type
 
     return {
-        "results": deduped,
-        "movies": movies,
-        "series": series,
-        "media_type": requested_type,
+        "results": results,
+        "media_type": media_type,
     }
 
 
@@ -2641,6 +2379,35 @@ def api_recommendation_watched(
 
 
 # ============================================================
+# ALREADY WATCHED
+# ============================================================
+
+@app.get("/watched")
+def watched_page(request: Request):
+    movies = get_all()
+    response = templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "detail": None,
+            "watched_page": True,
+            "movies": movies,
+            "watched_movies": [item for item in movies if item["type"] == "Movie"],
+            "watched_series": [item for item in movies if item["type"] == "Series"],
+            "recommendations": None,
+            "recommendations_loading": False,
+            "recommendation_error": None,
+            "tmdb_discoveries": None,
+            "display_statistics": get_display_statistics(),
+            "lifetime_statistics": get_lifetime_statistics(),
+            "ingress_path": get_ingress_path(request),
+        },
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+# ============================================================
 # TITLE DETAIL PAGE
 # ============================================================
 
@@ -2651,12 +2418,7 @@ def title_detail(
     tmdb_id: int,
     match: Optional[int] = None,
 ):
-    media_type_key = str(media_type or "").strip().lower()
-    if media_type_key in ("movie", "movies"):
-        media_type = "Movie"
-    elif media_type_key in ("series", "tv", "show", "shows"):
-        media_type = "Series"
-    else:
+    if media_type not in ("Movie", "Series"):
         return app_redirect(request, "recommendations")
 
     detail = tmdb_get_detail_page(
@@ -2717,9 +2479,18 @@ def title_detail(
         request=request,
         name="index.html",
         context={
-            "page": "detail",
             "detail": detail,
             "media_type": media_type,
+            "watched_page": False,
+            "movies": watched,
+            "watched_movies": [item for item in watched if item["type"] == "Movie"],
+            "watched_series": [item for item in watched if item["type"] == "Series"],
+            "recommendations": None,
+            "recommendations_loading": False,
+            "recommendation_error": None,
+            "tmdb_discoveries": None,
+            "display_statistics": get_display_statistics(),
+            "lifetime_statistics": get_lifetime_statistics(),
             "ingress_path": get_ingress_path(request),
         },
     )
@@ -2817,7 +2588,6 @@ def recommendations(request: Request, background_tasks: BackgroundTasks):
                 )
 
         context = {
-            "page": "recommendations",
             "movies": movies,
             "watched_movies": watched_movies,
             "watched_series": watched_series,
@@ -2831,7 +2601,6 @@ def recommendations(request: Request, background_tasks: BackgroundTasks):
         }
     else:
         context = {
-            "page": "recommendations",
             "movies": movies,
             "watched_movies": watched_movies,
             "watched_series": watched_series,
