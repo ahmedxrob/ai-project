@@ -124,6 +124,7 @@ recommendation_state = {
 }
 
 recommendation_state_lock = threading.Lock()
+watchlist_lock = threading.Lock()
 
 
 # ============================================================
@@ -182,10 +183,12 @@ def load_watchlist():
 def save_watchlist(items):
     try:
         WATCHLIST_FILE.parent.mkdir(parents=True, exist_ok=True)
-        WATCHLIST_FILE.write_text(
+        temp_file = WATCHLIST_FILE.with_suffix(".tmp")
+        temp_file.write_text(
             json.dumps(items, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        temp_file.replace(WATCHLIST_FILE)
     except Exception as error:
         print(f"Watchlist save error: {error}")
 
@@ -200,23 +203,25 @@ def is_in_watchlist(media_type, tmdb_id):
 
 
 def toggle_watchlist_item(item):
-    items = load_watchlist()
-    key = watchlist_key(item["media_type"], item["tmdb_id"])
-    items = [x for x in items if x.get("key") != key]
-    if not item.get("remove", False):
-        items.append({
-            "key": key,
-            "tmdb_id": item["tmdb_id"],
-            "media_type": item["media_type"],
-            "title": item.get("title", ""),
-            "year": item.get("year"),
-            "poster": item.get("poster"),
-            "backdrop": item.get("backdrop"),
-            "overview": item.get("overview", ""),
-            "vote_average": item.get("vote_average", 0),
-        })
-    save_watchlist(items)
-    return not item.get("remove", False)
+    # Serialize quick toggles so two rapid clicks cannot overwrite each other.
+    with watchlist_lock:
+        items = load_watchlist()
+        key = watchlist_key(item["media_type"], item["tmdb_id"])
+        items = [x for x in items if x.get("key") != key]
+        if not item.get("remove", False):
+            items.append({
+                "key": key,
+                "tmdb_id": item["tmdb_id"],
+                "media_type": item["media_type"],
+                "title": item.get("title", ""),
+                "year": item.get("year"),
+                "poster": item.get("poster"),
+                "backdrop": item.get("backdrop"),
+                "overview": item.get("overview", ""),
+                "vote_average": item.get("vote_average", 0),
+            })
+        save_watchlist(items)
+        return not item.get("remove", False)
 
 
 templates.env.globals["is_in_watchlist"] = is_in_watchlist
@@ -1872,7 +1877,6 @@ def generate_recommendations(
 # ============================================================
 
 @app.get("/")
-@app.get("//")
 def home(request: Request):
 
     return app_redirect(
@@ -1885,8 +1889,11 @@ def home(request: Request):
 # TRENDING NOW
 # ============================================================
 
-def get_trending_titles(media_type, limit=8):
+def get_trending_titles(media_type, limit=None):
     """Return current TMDB daily trending titles, excluding watched/rejected items."""
+
+    if limit is None:
+        limit = get_recommendation_limit()
 
     token = get_env("TMDB_TOKEN")
 
