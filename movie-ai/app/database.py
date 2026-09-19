@@ -107,17 +107,77 @@ def init_database():
             )
         ''')
 
-        connection.execute('''
-            CREATE TABLE IF NOT EXISTS recommendation_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                status TEXT NOT NULL CHECK(status IN ('loading', 'ready', 'error', 'superseded')),
-                data_json TEXT,
-                tmdb_data_json TEXT,
-                error TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        # Recommendation jobs were introduced after older releases had already
+        # created a table with a different primary-key column name. SQLite's
+        # CREATE TABLE IF NOT EXISTS does not migrate an existing table, so
+        # normalize that legacy schema before any code queries the canonical
+        # `id` column.
+        jobs_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='recommendation_jobs'"
+        ).fetchone()
+        if jobs_table:
+            legacy_columns = {row['name'] for row in connection.execute('PRAGMA table_info(recommendation_jobs)').fetchall()}
+            if 'id' not in legacy_columns:
+                connection.execute('ALTER TABLE recommendation_jobs RENAME TO recommendation_jobs_legacy')
+                connection.execute('''
+                    CREATE TABLE recommendation_jobs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        status TEXT NOT NULL CHECK(status IN ('loading', 'ready', 'error', 'superseded')),
+                        data_json TEXT,
+                        tmdb_data_json TEXT,
+                        error TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                legacy = {row['name'] for row in connection.execute('PRAGMA table_info(recommendation_jobs_legacy)').fetchall()}
+
+                def legacy_expr(*names, default='NULL'):
+                    for name in names:
+                        if name in legacy:
+                            return f'legacy.{name}'
+                    return default
+
+                status_expr = legacy_expr('status', 'state', default="'ready'")
+                data_expr = legacy_expr('data_json', 'data', 'results_json')
+                tmdb_expr = legacy_expr('tmdb_data_json', 'tmdb_json')
+                error_expr = legacy_expr('error', 'error_message')
+                created_expr = legacy_expr('created_at', 'created', default='CURRENT_TIMESTAMP')
+                updated_expr = legacy_expr('updated_at', 'updated', default=created_expr)
+                connection.execute(f'''
+                    INSERT INTO recommendation_jobs (status, data_json, tmdb_data_json, error, created_at, updated_at)
+                    SELECT {status_expr}, {data_expr}, {tmdb_expr}, {error_expr}, {created_expr}, {updated_expr}
+                    FROM recommendation_jobs_legacy AS legacy
+                ''')
+                connection.execute('DROP TABLE recommendation_jobs_legacy')
+            else:
+                # Add fields introduced by the persistent-job implementation if
+                # an intermediate release created a partial table.
+                required_job_columns = {
+                    'status': "TEXT NOT NULL DEFAULT 'ready'",
+                    'data_json': 'TEXT',
+                    'tmdb_data_json': 'TEXT',
+                    'error': 'TEXT',
+                    'created_at': 'DATETIME',
+                    'updated_at': 'DATETIME',
+                }
+                for column_name, column_type in required_job_columns.items():
+                    if column_name not in legacy_columns:
+                        connection.execute(
+                            f'ALTER TABLE recommendation_jobs ADD COLUMN {column_name} {column_type}'
+                        )
+        else:
+            connection.execute('''
+                CREATE TABLE recommendation_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    status TEXT NOT NULL CHECK(status IN ('loading', 'ready', 'error', 'superseded')),
+                    data_json TEXT,
+                    tmdb_data_json TEXT,
+                    error TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
 
         connection.execute('''
             CREATE TABLE IF NOT EXISTS tmdb_cache (
