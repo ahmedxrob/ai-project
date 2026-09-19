@@ -79,7 +79,7 @@
     </a>
 
     <div class="topbar-nav" aria-label="Primary navigation">
-        <a class="topbar-nav-link {% if not watched_page and not detail and not wishlist_page and not settings_page and not search_page|default(false) and not about_page|default(false) %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
+        <a class="topbar-nav-link {% if not watched_page and not detail and not wishlist_page and not settings_page %}active{% endif %}" href="{{ ingress_path|default('') }}/recommendations">
             <span class="nav-icon" aria-hidden="true">{{ ui_icon('movie') }}</span>
             <span>Home</span>
         </a>
@@ -249,7 +249,7 @@
                 </div>
                 <div class="search-page-input-wrap">
                     <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
-                    <input id="title" type="text" name="title" placeholder="Search movies, series, or titles..." autocomplete="off" aria-label="Search movies and series">
+                    <input id="title" type="text" name="title" placeholder="Search movies, series, actors, or titles..." autocomplete="off" aria-label="Search movies and series">
                     <button type="button" id="clear-search" aria-label="Clear search">×</button>
                 </div>
                 <div class="search-page-search-tip"><span>Enter at least 2 characters</span><span>↵ Select</span><span>↗ Details</span></div>
@@ -272,7 +272,7 @@
                         <label for="rating">YOUR RATING</label>
                         <div class="search-page-rating-input"><span>★</span><input id="rating" type="number" name="rating" min="0" max="10" step="0.1" placeholder="9.0" required><small>/10</small></div>
                     </div>
-                    <button type="submit" class="primary-button" id="add-button" disabled aria-disabled="true"><span>Add to collection</span><span>→</span></button>
+                    <button type="submit" class="primary-button" id="add-button"><span>Add to collection</span><span>→</span></button>
                 </form>
             </aside>
         </div>
@@ -371,7 +371,7 @@
             </div>
             <strong>Your watch history is empty</strong>
             <p>Use Search in the top bar to find a movie or series and add it to your library.</p>
-            <a class="watched-empty-search" href="{{ ingress_path|default('') }}/search">Open search</a>
+            <button type="button" class="watched-empty-search" data-open-search>Open search</button>
         </div>
         {% endif %}
     </section>
@@ -543,6 +543,199 @@
         </div>
 
     </section>
+
+
+    <!-- ================================================== -->
+    <!-- ADD WATCHED -->
+    <!-- ================================================== -->
+
+{% if not search_page|default(false) %}
+    <section class="panel add-panel search-panel" id="search-panel" aria-hidden="true">
+
+        <div class="panel-header search-panel-header">
+
+            <div>
+
+                <span class="panel-label">
+                    YOUR LIBRARY
+                </span>
+
+                <h2>
+                    Search movies &amp; series
+                </h2>
+                <p class="search-panel-subtitle">Find a title, preview it, and add it to your library with a rating.</p>
+
+            </div>
+
+            <button
+                type="button"
+                id="close-search-button"
+                class="panel-close-button"
+                aria-label="Close search"
+            >
+                <svg class="app-svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+            </button>
+
+        </div>
+
+
+        <form
+            action="/add"
+            method="post"
+            class="add-form"
+            id="add-form"
+            data-ajax-add="true"
+        >
+
+
+
+            <!-- SEARCH -->
+
+            <div class="field search-field">
+
+                <label for="title">
+                    Search title
+                </label>
+
+
+                <div class="search-input-wrap">
+
+                    <span class="search-icon app-inline-icon" aria-hidden="true">
+                        <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
+                    </span>
+
+                    <input
+                        id="title"
+                        type="text"
+                        name="title"
+                        placeholder="Search Interstellar..."
+                        autocomplete="off"
+                        required
+                    >
+
+                    <button
+                        type="button"
+                        id="clear-search"
+                        class="clear-search"
+                        aria-label="Clear search"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                <div
+                    id="search-results"
+                    class="search-results"
+                ></div>
+
+            </div>
+
+
+            <!-- EXACT TMDB ID -->
+
+            <input
+                type="hidden"
+                id="tmdb_id"
+                name="tmdb_id"
+                value=""
+            >
+
+            <!-- AUTO-DETECTED TYPE -->
+
+            <input
+                type="hidden"
+                id="media_type"
+                name="media_type"
+                value=""
+            >
+
+
+            <!-- SELECTED PREVIEW -->
+
+            <div
+                id="selected-preview"
+                class="selected-preview"
+            >
+
+                <div class="selected-preview-empty">
+
+                    <div class="preview-empty-icon"><svg class="app-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m10 8 6 4-6 4V8Z"></path></svg></div>
+
+                    <span>
+                        Search for a title and select
+                        a result to preview it here.
+                    </span>
+
+                </div>
+
+            </div>
+
+
+            <!-- RATING -->
+
+            <div class="field preview-rating-field">
+
+                <label for="rating">
+                    Your rating
+                </label>
+
+
+                <div class="input-rating">
+
+                    <span>
+                        ★
+                    </span>
+
+                    <input
+                        id="rating"
+                        type="number"
+                        name="rating"
+                        min="0"
+                        max="10"
+                        step="0.1"
+                        placeholder="9.5"
+                        required
+                    >
+
+                    <small>
+                        /10
+                    </small>
+
+                </div>
+
+            </div>
+
+
+            <button
+                type="submit"
+                class="primary-button"
+                id="add-button"
+            >
+
+                <span>
+                    Add to collection
+                </span>
+
+                <span>
+                    →
+                </span>
+
+            </button>
+
+        </form>
+
+
+        <div class="panel-hint">
+
+            Search TMDB and select the exact title
+            before saving it to your library.
+
+        </div>
+
+    </section>
+{% endif %}
 
 
     <!-- ================================================= -->
@@ -1736,16 +1929,117 @@ function appUrl(path) {
 
 
 /* ========================================================= */
-/* PAGE SCROLL POSITION */
+/* SEARCH PANEL + SCROLL POSITION */
 /* ========================================================= */
 
+const searchPanel =
+    document.getElementById("search-panel");
+
+const openSearchButton =
+    document.getElementById("open-search-button");
+
+const closeSearchButton =
+    document.getElementById("close-search-button");
+
+
+function openSearchPanel() {
+
+    if (!searchPanel) return;
+
+    searchPanel.classList.add("is-open");
+    searchPanel.setAttribute("aria-hidden", "false");
+
+    if (openSearchButton) {
+        openSearchButton.setAttribute(
+            "aria-expanded",
+            "true"
+        );
+    }
+
+    document.body.classList.add("search-panel-open");
+}
+
+
+function closeSearchPanel() {
+
+    if (!searchPanel) return;
+
+    searchPanel.classList.remove("is-open");
+    searchPanel.setAttribute("aria-hidden", "true");
+
+    if (openSearchButton) {
+        openSearchButton.setAttribute(
+            "aria-expanded",
+            "false"
+        );
+    }
+
+    document.body.classList.remove("search-panel-open");
+}
+
+
+if (openSearchButton) {
+    openSearchButton.addEventListener(
+        "click",
+        openSearchPanel
+    );
+}
+
+if (closeSearchButton) {
+    closeSearchButton.addEventListener(
+        "click",
+        closeSearchPanel
+    );
+}
+
+// Open the search overlay when arriving from another page through the topbar.
+const openSearchRequested = new URLSearchParams(window.location.search).get("open_search") === "1";
+if (searchPanel && openSearchRequested) {
+    openSearchPanel();
+    history.replaceState({}, document.title, window.location.pathname);
+}
+
+
+/* Close the entire search panel when clicking outside it. */
+document.addEventListener(
+    "click",
+    function (event) {
+
+        if (!searchPanel) {
+            return;
+        }
+
+        if (!searchPanel.classList.contains("is-open")) {
+            return;
+        }
+
+        const clickedInsidePanel =
+            event.target.closest("#search-panel");
+
+        const clickedOpenButton =
+            event.target.closest("#open-search-button");
+
+        if (!clickedInsidePanel && !clickedOpenButton) {
+            closeSearchPanel();
+        }
+    }
+);
+
+
+/* Never reopen the search panel after a refresh. */
 if (window.history && "scrollRestoration" in window.history) {
     window.history.scrollRestoration = "manual";
 }
 
-window.addEventListener("pageshow", function () {
-    window.scrollTo(0, 0);
-});
+window.addEventListener(
+    "pageshow",
+    function () {
+        if (!openSearchRequested) {
+            closeSearchPanel();
+        }
+        window.scrollTo(0, 0);
+    }
+);
 
 
 /* ========================================================= */
@@ -1936,14 +2230,6 @@ let currentResults = [];
 let searchRequestSerial = 0;
 let activeSearchControllers = [];
 
-function setAddFormEnabled(enabled) {
-    const addButton = document.getElementById("add-button");
-    if (!addButton) return;
-    const valid = Boolean(enabled && tmdbIdInput?.value && mediaType?.value);
-    addButton.disabled = !valid;
-    addButton.setAttribute("aria-disabled", valid ? "false" : "true");
-}
-
 
 /* ========================================================= */
 /* SAFE HTML */
@@ -1984,7 +2270,6 @@ if (titleInput) {
             if (mediaType) {
                 mediaType.value = "";
             }
-            setAddFormEnabled(false);
 
             if (
                 query.length < 2
@@ -2232,7 +2517,7 @@ function selectSearchResult(
     item
 ) {
 
-    if (!item || !["Movie", "Series"].includes(item.media_type) || !item.tmdb_id) {
+    if (!item) {
         return;
     }
 
@@ -2248,7 +2533,6 @@ function selectSearchResult(
                 ? "Series"
                 : "Movie";
     }
-    setAddFormEnabled(true);
 
     searchResults.classList.remove(
         "show"
@@ -2371,7 +2655,6 @@ if (clearSearch) {
             if (mediaType) {
                 mediaType.value = "";
             }
-            setAddFormEnabled(false);
 
             searchResults.innerHTML =
                 "";
@@ -2467,6 +2750,36 @@ if (watchedGrid) {
         });
     });
 }
+
+document.querySelectorAll("[data-open-search]").forEach(function(button) {
+    button.addEventListener("click", function() {
+        const opener = document.getElementById("open-search-button");
+        if (opener) opener.click();
+    });
+});
+
+
+/* ========================================================= */
+/* CLOSE SEARCH WHEN CLICKING OUTSIDE */
+/* ========================================================= */
+
+document.addEventListener(
+    "click",
+    function (event) {
+
+        if (!searchPanel || !searchPanel.classList.contains("is-open")) {
+            return;
+        }
+
+        if (
+            !event.target.closest("#search-panel") &&
+            !event.target.closest("#open-search-button")
+        ) {
+            closeSearchPanel();
+        }
+    }
+);
+
 
 /* ========================================================= */
 /* QUICK HOME WISHLIST — NO PAGE RELOAD */
@@ -3181,8 +3494,6 @@ if (addForm) {
 
             titleInput.value = "";
             tmdbIdInput.value = "";
-            if (mediaType) mediaType.value = "";
-            setAddFormEnabled(false);
 
             if (searchResults) {
                 searchResults.innerHTML = "";
