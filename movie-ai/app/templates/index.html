@@ -32,7 +32,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=20260919.18"
+        href="/static/style.css?v=20260919.19"
     >
 
 
@@ -2050,6 +2050,10 @@ window.addEventListener(
 
 async function checkAIRecommendationStatus() {
 
+    if (document.visibilityState !== "visible") {
+        return;
+    }
+
     try {
 
         const response =
@@ -2147,7 +2151,7 @@ async function checkAIRecommendationStatus() {
 checkAIRecommendationStatus();
 
 window.recommendationStatusTimer =
-    setInterval(checkAIRecommendationStatus, 2200);
+    setInterval(checkAIRecommendationStatus, 3200);
 
 {% endif %}
 
@@ -3722,6 +3726,7 @@ function initRailDrag(root) {
 
         rail.classList.add("drag-scroll-rail");
         rail.dataset.dragged = "0";
+        rail.style.touchAction = "pan-x pinch-zoom";
 
         function isControl(target) {
             return !!target.closest(
