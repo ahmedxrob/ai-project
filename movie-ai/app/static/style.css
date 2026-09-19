@@ -6059,3 +6059,386 @@ span svg {
 .watched-card-poster .poster-placeholder {
     font-size: 11px !important;
 }
+
+
+/* =========================================================
+   FINAL CROSS-PAGE VISUAL CONSISTENCY PASS
+   Keep every icon vector-based, bounded, aligned and consistent.
+   ========================================================= */
+
+:root {
+    --ui-icon-xs: 11px;
+    --ui-icon-sm: 13px;
+    --ui-icon-md: 16px;
+    --ui-icon-lg: 20px;
+}
+
+body {
+    overflow-x: hidden;
+}
+
+.ui-inline-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--ui-icon-sm);
+    height: var(--ui-icon-sm);
+    min-width: var(--ui-icon-sm);
+    max-width: var(--ui-icon-sm);
+    min-height: var(--ui-icon-sm);
+    max-height: var(--ui-icon-sm);
+    flex: 0 0 auto;
+    line-height: 0;
+    vertical-align: -2px;
+    overflow: hidden;
+}
+
+.ui-inline-icon--sm {
+    width: var(--ui-icon-sm);
+    height: var(--ui-icon-sm);
+    min-width: var(--ui-icon-sm);
+    max-width: var(--ui-icon-sm);
+    min-height: var(--ui-icon-sm);
+    max-height: var(--ui-icon-sm);
+}
+
+.ui-inline-icon--md {
+    width: var(--ui-icon-md);
+    height: var(--ui-icon-md);
+    min-width: var(--ui-icon-md);
+    max-width: var(--ui-icon-md);
+    min-height: var(--ui-icon-md);
+    max-height: var(--ui-icon-md);
+}
+
+.ui-inline-icon--lg {
+    width: var(--ui-icon-lg);
+    height: var(--ui-icon-lg);
+    min-width: var(--ui-icon-lg);
+    max-width: var(--ui-icon-lg);
+    min-height: var(--ui-icon-lg);
+    max-height: var(--ui-icon-lg);
+}
+
+.ui-inline-icon svg {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    min-height: 0 !important;
+    max-height: 100% !important;
+    flex: 0 0 auto;
+}
+
+/* Inline icon usage inside headings/buttons/badges must never change line-height. */
+.section-heading h2 .ui-inline-icon,
+.source-heading h3 .ui-inline-icon,
+.why-button .ui-inline-icon,
+.tmdb-button .ui-inline-icon,
+.watched-button .ui-inline-icon,
+.not-interested-button .ui-inline-icon,
+.detail-watched-badge .ui-inline-icon,
+.detail-watched-form button .ui-inline-icon,
+.generate-button .ui-inline-icon,
+.trending-badge .ui-inline-icon {
+    vertical-align: -2px;
+}
+
+/* Remove residual emoji-sized fallbacks from all media placeholders. */
+.poster-placeholder,
+.selected-preview-placeholder,
+.search-result-placeholder,
+.cast-empty,
+.source-icon {
+    font-size: 0 !important;
+    line-height: 0 !important;
+}
+
+.cast-empty {
+    display: grid !important;
+    place-items: center !important;
+}
+
+.cast-empty .ui-inline-icon {
+    color: rgba(255,255,255,.42);
+}
+
+.cast-empty .ui-inline-icon--lg {
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    max-width: 20px;
+    min-height: 20px;
+    max-height: 20px;
+}
+
+.recommendation-poster .poster-placeholder,
+.library-poster .poster-placeholder,
+.selected-preview-placeholder {
+    display: grid !important;
+    place-items: center !important;
+}
+
+/* Consistent media placeholder mark sizes. */
+.recommendation-poster .poster-placeholder .ui-inline-icon,
+.library-poster .poster-placeholder .ui-inline-icon,
+.selected-preview-placeholder .ui-inline-icon,
+.watched-card-poster .watched-poster-placeholder .ui-inline-icon {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+}
+
+/* Avoid wide/competing hero layouts on small screens. */
+.hero,
+.hero-content,
+.hero-stats,
+.page,
+.recommend-control,
+.recommendations-section,
+.source-section,
+.tmdb-section,
+.library-section {
+    min-width: 0;
+    max-width: 100%;
+}
+
+@media (max-width: 620px) {
+    .page {
+        width: 100%;
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-bottom: 58px;
+    }
+
+    .hero {
+        min-height: 0;
+        padding: 34px 4px 40px;
+    }
+
+    .hero-content {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+    }
+
+    .hero h1 {
+        max-width: 100%;
+        font-size: clamp(34px, 10vw, 48px);
+        letter-spacing: -2.6px;
+        overflow-wrap: anywhere;
+    }
+
+    .hero p {
+        max-width: 100%;
+        margin-top: 16px;
+        font-size: 12px;
+        line-height: 1.55;
+    }
+
+    .hero-stats {
+        width: 100%;
+        max-width: 100%;
+        gap: 0;
+        margin-top: 22px;
+        align-items: stretch;
+        overflow: hidden;
+    }
+
+    .stat {
+        min-width: 0;
+        flex: 1 1 0;
+        padding-right: 6px;
+    }
+
+    .stat strong {
+        font-size: 18px;
+        line-height: 1;
+    }
+
+    .stat span {
+        max-width: 100%;
+        font-size: 7px;
+        line-height: 1.2;
+        letter-spacing: .65px;
+        overflow-wrap: anywhere;
+    }
+
+    .stat-divider {
+        width: 1px;
+        height: 26px;
+        flex: 0 0 1px;
+        margin: 0 6px 0 0;
+    }
+
+    .recommend-control {
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    .recommendation-grid {
+        gap: 12px !important;
+        padding-left: 2px !important;
+        padding-right: 2px !important;
+    }
+
+    .recommendation-card {
+        flex-basis: 190px !important;
+        width: 190px !important;
+        min-width: 190px !important;
+    }
+
+    .trending-loading,
+    .trending-empty {
+        min-height: 150px;
+    }
+
+    .search-panel.is-open {
+        width: calc(100vw - 16px);
+    }
+
+    .watched-hero-icon {
+        width: 52px;
+        height: 52px;
+        min-width: 52px;
+        max-width: 52px;
+        min-height: 52px;
+        max-height: 52px;
+        border-radius: 15px;
+    }
+
+    .watched-hero-icon svg {
+        width: 22px;
+        height: 22px;
+        max-width: 22px;
+        max-height: 22px;
+    }
+}
+
+/* Keep the watched hero/card proportions aligned with the main app. */
+.watched-hero-icon,
+.watched-empty-icon,
+.watched-play-badge,
+.topbar-icon-button,
+.brand-icon,
+.panel-icon,
+.source-icon {
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.watched-hero-icon svg,
+.watched-empty-icon svg,
+.watched-play-badge svg,
+.topbar-icon-button svg,
+.brand-icon svg,
+.panel-icon svg,
+.source-icon svg {
+    display: block;
+    flex: 0 0 auto;
+}
+
+/* Remove visual duplication: the right-side watched utility stays compact. */
+.topbar-icon-button {
+    width: 38px !important;
+    min-width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+}
+
+.topbar-icon-button svg {
+    width: 16px !important;
+    height: 16px !important;
+    max-width: 16px !important;
+    max-height: 16px !important;
+}
+
+/* Headings use the same icon baseline as the navigation. */
+.section-heading h2 .ui-inline-icon--md {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    max-width: 16px;
+    min-height: 16px;
+    max-height: 16px;
+}
+
+.section-heading h2 .ui-inline-icon--lg,
+.section-heading h2 .ui-inline-icon--lg svg {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    max-width: 18px;
+    min-height: 18px;
+    max-height: 18px;
+}
+
+
+/* Final size guardrails for previously patched components. */
+.recommendation-loader-logo {
+    font-size: 0 !important;
+}
+.recommendation-loader-logo .ui-inline-icon,
+.recommendation-loader-logo svg {
+    width: 24px !important;
+    height: 24px !important;
+    max-width: 24px !important;
+    max-height: 24px !important;
+}
+
+.panel-close-button {
+    font-size: 0 !important;
+    position: relative;
+}
+.panel-close-button svg {
+    width: 14px !important;
+    height: 14px !important;
+    max-width: 14px !important;
+    max-height: 14px !important;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+}
+
+.detail-poster-empty {
+    font-size: 0 !important;
+}
+
+/* Keep source, search and group icon containers visually balanced. */
+.source-icon {
+    border-radius: 9px;
+}
+.source-icon svg,
+.search-result-group-icon svg {
+    width: 16px !important;
+    height: 16px !important;
+    max-width: 16px !important;
+    max-height: 16px !important;
+}
+
+/* Cards, rows and headings share one compact icon rhythm. */
+.library-card svg,
+.recommendation-card svg,
+.trending-card svg,
+.source-card svg,
+.search-result-card svg {
+    flex: 0 0 auto;
+}
+
+/* Placeholder artwork sits above the card backdrop but below media badges. */
+.watched-card-poster { background: linear-gradient(145deg, #1a1a20, #101015); }
+.watched-poster-placeholder {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    color: rgba(255,255,255,.30);
+}
+.watched-card-shade { z-index: 2; }
+.watched-type-badge,
+.watched-rating-badge,
+.watched-play-badge { z-index: 3; }
