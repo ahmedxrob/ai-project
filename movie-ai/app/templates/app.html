@@ -14,7 +14,7 @@
 
 <nav class="topbar app-topbar{% if detail %} detail-topbar{% endif %}">
   <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
-    <div class="brand-icon">🎬</div>
+    <div class="brand-icon"><img src="{{ ingress_path|default('') }}/static/favicon.svg" alt=""></div>
     <div class="brand-text"><strong>My Movie AI</strong><span>your personal cinema</span></div>
   </a>
   <div class="app-nav" aria-label="Primary navigation">
