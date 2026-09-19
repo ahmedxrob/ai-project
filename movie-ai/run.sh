@@ -1,8 +1,16 @@
 #!/bin/sh
+set -eu
 
-TMDB_TOKEN="$(python -c "import json; print(json.load(open('/data/options.json')).get('tmdb_token',''))")"
+OPTIONS_FILE="${OPTIONS_FILE:-/data/options.json}"
 
-GEMINI_API_KEY="$(python -c "import json; print(json.load(open('/data/options.json')).get('gemini_api_key',''))")"
+if [ -f "$OPTIONS_FILE" ]; then
+    TMDB_TOKEN="$(python -c "import json; print(json.load(open('$OPTIONS_FILE')).get('tmdb_token',''))")"
+    GEMINI_API_KEY="$(python -c "import json; print(json.load(open('$OPTIONS_FILE')).get('gemini_api_key',''))")"
+else
+    TMDB_TOKEN="${TMDB_TOKEN:-}"
+    GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+    echo "INFO: $OPTIONS_FILE not found; using environment variables."
+fi
 
 export TMDB_TOKEN
 export GEMINI_API_KEY
@@ -19,6 +27,4 @@ else
     echo "WARNING: Gemini API key is not configured"
 fi
 
-exec python -m uvicorn app.main:app \
-    --host 0.0.0.0 \
-    --port 8099
+exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8099
