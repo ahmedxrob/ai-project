@@ -9,7 +9,20 @@
     <link rel="apple-touch-icon" href="{{ ingress_path|default('') }}/static/favicon.svg">
     <link rel="stylesheet" href="{{ ingress_path|default('') }}/static/style.css">
 </head>
-<body data-ingress-path="{{ ingress_path|default('') }}">
+<body data-ingress-path="{{ ingress_path|default('') }}" data-page="{{ page }}">
+<nav class="topbar app-topbar global-topbar">
+    <a class="brand" data-nav href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></span>
+        <span class="brand-copy"><strong>My Movie AI</strong><small>PRIVATE CINEMA</small></span>
+    </a>
+    <div class="global-nav" role="navigation" aria-label="Primary">
+        <a data-nav class="global-nav-link" data-route="recommendations" href="{{ ingress_path|default('') }}/recommendations"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg></span><span>Discover</span></a>
+        <a data-nav class="global-nav-link" data-route="library" href="{{ ingress_path|default('') }}/library"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg></span><span>Library</span></a>
+        <a data-nav class="global-nav-link" data-search-link href="{{ ingress_path|default('') }}/recommendations?search=1"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg></span><span>Search</span></a>
+    </div>
+    <div class="global-nav-right"><span class="server-pill"><i></i> LOCAL</span><button class="mobile-search-button" type="button" data-search-link aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg></button></div>
+</nav>
+<div id="app-root" class="route-view" data-page="{{ page }}">
 {% if page == 'recommendations' %}
 
 
@@ -17,7 +30,7 @@
 
 
 
-<nav class="topbar app-topbar">
+<nav class="topbar app-topbar legacy-topbar">
     <a class="brand" href="{{ ingress_path|default('') }}/recommendations" aria-label="My Movie AI home">
         <div class="brand-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div>
         <div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div>
@@ -1838,6 +1851,9 @@ if (openSearchButton) {
     );
 }
 
+window.openMovieAiSearch = openSearchPanel;
+if (new URLSearchParams(window.location.search).get("search") === "1") { setTimeout(openSearchPanel, 20); }
+
 if (closeSearchButton) {
     closeSearchButton.addEventListener(
         "click",
@@ -2035,6 +2051,7 @@ const clearSearch =
 
 let searchTimer = null;
 let currentResults = [];
+let searchFilter = "All";
 let searchRequestSerial = 0;
 let activeSearchControllers = [];
 
@@ -2115,244 +2132,106 @@ if (titleInput) {
 /* PERFORM SEARCH */
 /* ========================================================= */
 
-async function performSearch(
-    query
-) {
+async function performSearch(query) {
     const requestSerial = ++searchRequestSerial;
-
-    activeSearchControllers.forEach(function (controller) {
-        try { controller.abort(); } catch (_) {}
-    });
+    activeSearchControllers.forEach(function (controller) { try { controller.abort(); } catch (_) {} });
     activeSearchControllers = [];
 
-    if (!titleInput || titleInput.value.trim() !== query) {
-        return;
-    }
+    if (!titleInput || titleInput.value.trim() !== query) return;
 
-    searchResults.innerHTML = `
-        <div class="search-loading">
-            <span class="loading-spinner"></span>
-            Searching movies and series...
-        </div>
-    `;
-
+    searchResults.innerHTML = `<div class="search-loading"><span class="loading-spinner"></span>Searching movies and series…</div>`;
     searchResults.classList.add("show");
 
-    const cacheBust = Date.now();
-
     try {
-        const base = appUrl("/api/search");
-        const movieController = new AbortController();
-        const seriesController = new AbortController();
-        activeSearchControllers = [movieController, seriesController];
-
-        const [movieResponse, seriesResponse] =
-            await Promise.all([
-                fetch(
-                    `${base}?q=${encodeURIComponent(query)}&media_type=Movie&_=${cacheBust}`,
-                    { cache: "no-store", signal: movieController.signal }
-                ),
-                fetch(
-                    `${base}?q=${encodeURIComponent(query)}&media_type=Series&_=${cacheBust + 1}`,
-                    { cache: "no-store", signal: seriesController.signal }
-                )
-            ]);
-
-        if (requestSerial !== searchRequestSerial ||
-            !titleInput ||
-            titleInput.value.trim() !== query) {
-            return;
-        }
-
-        if (!movieResponse.ok || !seriesResponse.ok) {
-            throw new Error(
-                `Search failed (${movieResponse.status}/${seriesResponse.status})`
-            );
-        }
-
-        const [movieData, seriesData] =
-            await Promise.all([
-                movieResponse.json(),
-                seriesResponse.json()
-            ]);
-
-        /*
-         * Support both versions of the backend:
-         *   old: { results: [...] }
-         *   new: { movies: [...], series: [...] }
-         */
-        let movies = Array.isArray(movieData.results)
-            ? movieData.results
-            : Array.isArray(movieData.movies)
-                ? movieData.movies
-                : [];
-
-        let series = Array.isArray(seriesData.results)
-            ? seriesData.results
-            : Array.isArray(seriesData.series)
-                ? seriesData.series
-                : [];
-
-        movies = movies.map(item => ({
-            ...item,
-            media_type: "Movie"
-        }));
-
-        series = series.map(item => ({
-            ...item,
-            media_type: "Series"
-        }));
-
-        /* Remove accidental duplicate IDs within each type. */
+        const response = await fetch(`${appUrl("/api/search")}?q=${encodeURIComponent(query)}&media_type=All&_=${Date.now()}`, {
+            cache: "no-store",
+            headers: { "Accept": "application/json" }
+        });
+        if (requestSerial !== searchRequestSerial || titleInput.value.trim() !== query) return;
+        if (!response.ok) throw new Error(`Search failed (${response.status})`);
+        const data = await response.json();
+        const incoming = Array.isArray(data.results) ? data.results : [];
         const seen = new Set();
-        currentResults = [...movies, ...series].filter(item => {
+        currentResults = incoming.filter(item => {
             const key = `${item.media_type}:${item.tmdb_id}`;
-            if (!item.tmdb_id || seen.has(key)) {
-                return false;
-            }
+            if (!item.tmdb_id || seen.has(key)) return false;
             seen.add(key);
             return true;
         });
-
         renderSearchResults(currentResults);
-
     } catch (error) {
-
+        if (error.name === "AbortError") return;
         console.error("Search error:", error);
-
-        searchResults.innerHTML = `
-            <div class="search-empty">
-                Unable to search TMDB.
-                <small>${escapeHtml(error.message)}</small>
-            </div>
-        `;
+        searchResults.innerHTML = `<div class="search-empty">Unable to search TMDB.<small>${escapeHtml(error.message)}</small></div>`;
     }
 }
 
 /* ========================================================= */
 /* RENDER SEARCH RESULTS */
-/* ========================================================= */
 
-function renderSearchResults(
-    results
-) {
-
-    if (!results.length) {
-
-        searchResults.innerHTML = `
-            <div class="search-empty">
-                No movies or series found.
+function renderSearchResults(results) {
+    const filters = `
+        <div class="search-results-head">
+            <div class="search-filter-group">
+                <button type="button" class="search-filter-chip ${searchFilter === "All" ? "active" : ""}" data-search-filter="All">All <span>${results.length}</span></button>
+                <button type="button" class="search-filter-chip ${searchFilter === "Movie" ? "active" : ""}" data-search-filter="Movie">Movies <span>${results.filter(x => x.media_type === "Movie").length}</span></button>
+                <button type="button" class="search-filter-chip ${searchFilter === "Series" ? "active" : ""}" data-search-filter="Series">Series <span>${results.filter(x => x.media_type === "Series").length}</span></button>
             </div>
-        `;
+        </div>`;
 
-        return;
-    }
+    const filtered = searchFilter === "All" ? results : results.filter(item => item.media_type === searchFilter);
 
-    searchResults.innerHTML = results.map(
-        function(item, index) {
-
+    if (!filtered.length) {
+        searchResults.innerHTML = filters + `<div class="search-empty">No ${searchFilter === "Series" ? "series" : searchFilter === "Movie" ? "movies" : "titles"} found.</div>`;
+    } else {
+        searchResults.innerHTML = filters + filtered.map(function(item) {
             const year = item.year || "";
             const poster = item.poster || "";
-            const rating = Number(
-                item.vote_average || 0
-            ).toFixed(1);
-
-            const isSeries =
-                item.media_type === "Series";
-
+            const rating = Number(item.vote_average || 0).toFixed(1);
+            const isSeries = item.media_type === "Series";
+            const resultIndex = currentResults.indexOf(item);
+            const typeLabel = isSeries ? "Series" : "Movie";
+            const icon = isSeries ? "<svg viewBox='0 0 24 24'><rect x='4' y='6' width='16' height='12' rx='2'/><path d='m8 6 2-3m2 3 2-3m2 3 2-3'/><path d='m9 10 6 4-6 4z'/></svg>" : "<svg viewBox='0 0 24 24'><rect x='3' y='6' width='18' height='12' rx='2'/><path d='m9 6 2 3m2-3 2 3M9 18l2-3m2 3 2-3'/></svg>";
             return `
-                <button
-                    type="button"
-                    class="search-result-item"
-                    data-index="${index}"
-                >
-                    <div class="search-result-poster">
-                        ${
-                            poster
-                                ? `
-                                    <img
-                                        src="${poster}"
-                                        alt=""
-                                        loading="lazy"
-                                    >
-                                `
-                                : `
-                                    <div class="search-result-placeholder">
-                                        ${isSeries ? "📺" : "🎬"}
-                                    </div>
-                                `
-                        }
-                    </div>
-
-                    <div class="search-result-info">
-                        <strong>
-                            ${escapeHtml(item.title)}
-                        </strong>
-
-                        <div class="search-result-meta">
-                            ${
-                                year
-                                    ? `<span>${year}</span><span>•</span>`
-                                    : ""
-                            }
-
-                            <span class="search-type-badge ${
-                                isSeries
-                                    ? "search-series"
-                                    : "search-movie"
-                            }">
-                                ${
-                                    isSeries
-                                        ? "📺 SERIES"
-                                        : "🎬 MOVIE"
-                                }
-                            </span>
-
-                            <span>
-                                ★ ${rating}
-                            </span>
+                <div class="search-result-item" data-index="${resultIndex}">
+                    <button type="button" class="search-result-main" aria-label="Select ${escapeHtml(item.title)}">
+                        <div class="search-result-poster">${poster ? `<img src="${poster}" alt="" loading="lazy">` : `<div class="search-result-placeholder">${isSeries ? "📺" : "🎬"}</div>`}</div>
+                        <div class="search-result-info">
+                            <strong>${escapeHtml(item.title)}</strong>
+                            <div class="search-result-meta">${year ? `<span>${year}</span><span>•</span>` : ""}<span class="search-type-badge ${isSeries ? "search-series" : "search-movie"}">${icon}<span>${typeLabel}</span></span><span>★ ${rating}</span></div>
+                            <p>${escapeHtml(item.overview || "No description available.")}</p>
                         </div>
+                    </button>
+                    <button type="button" class="search-result-details" data-details-index="${resultIndex}"><svg viewBox="0 0 24 24"><path d="M12 17v.01M12 7v6"/><circle cx="12" cy="12" r="9"/></svg><span>Details</span></button>
+                </div>`;
+        }).join("");
+    }
 
-                        <p>
-                            ${escapeHtml(
-                                item.overview ||
-                                "No description available."
-                            )}
-                        </p>
-                    </div>
+    searchResults.querySelectorAll("[data-search-filter]").forEach(button => {
+        button.addEventListener("click", () => {
+            searchFilter = button.dataset.searchFilter || "All";
+            renderSearchResults(currentResults);
+        });
+    });
 
-                    <span class="search-result-arrow">
-                        →
-                    </span>
-                </button>
-            `;
-        }
-    ).join("");
+    searchResults.querySelectorAll(".search-result-main").forEach(button => {
+        button.addEventListener("click", () => {
+            const item = currentResults[Number(button.closest(".search-result-item").dataset.index)];
+            selectSearchResult(item);
+        });
+    });
 
-    document
-        .querySelectorAll(
-            ".search-result-item"
-        )
-        .forEach(
-            function(button) {
-
-                button.addEventListener(
-                    "click",
-                    function() {
-
-                        const index = Number(
-                            button.dataset.index
-                        );
-
-                        selectSearchResult(
-                            currentResults[index]
-                        );
-                    }
-                );
-            }
-        );
+    searchResults.querySelectorAll(".search-result-details").forEach(button => {
+        button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const item = currentResults[Number(button.dataset.detailsIndex)];
+            if (!item || !item.tmdb_id) return;
+            const target = appUrl(`/title/${item.media_type}/${item.tmdb_id}`);
+            if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
+            else window.location.href = target;
+        });
+    });
 }
-
 
 /* ========================================================= */
 /* SELECT RESULT */
@@ -2582,8 +2461,9 @@ document
                     const ingressPath =
                         document.body.dataset.ingressPath || "";
 
-                    window.location.href =
-                        `${ingressPath}/title/${mediaType}/${tmdbId}`;
+                    const target = `${ingressPath}/title/${mediaType}/${tmdbId}`;
+                    if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
+                    else window.location.href = target;
                 }
             );
 
@@ -2627,8 +2507,9 @@ document
                     const ingressPath =
                         document.body.dataset.ingressPath || "";
 
-                    window.location.href =
-                        `${ingressPath}/title/${mediaType}/${tmdbId}?match=100`;
+                    const target = `${ingressPath}/title/${mediaType}/${tmdbId}?match=100`;
+                    if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
+                    else window.location.href = target;
                 }
             );
 
@@ -2713,9 +2594,9 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
 
             if (!type || !id) return;
 
-            window.location.href = appUrl(
-                `/title/${type}/${id}`
-            );
+            const target = appUrl(`/title/${type}/${id}`);
+            if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
+            else window.location.href = target;
         }
 
         card.addEventListener("click", function(event) {
@@ -2931,9 +2812,9 @@ function createLiveWatchedCard(item) {
             return;
         }
 
-        window.location.href = appUrl(
-            `/title/${encodeURIComponent(mediaType)}/${encodeURIComponent(item.tmdb_id)}?match=100`
-        );
+        const target = appUrl(`/title/${encodeURIComponent(mediaType)}/${encodeURIComponent(item.tmdb_id)}?match=100`);
+        if (typeof window.movieAiNavigate === "function") window.movieAiNavigate(target);
+        else window.location.href = target;
     });
 
     return article;
@@ -3442,7 +3323,7 @@ document.addEventListener("submit", async function (event) {
 
 <div class="site-background library-background"></div>
 
-<nav class="topbar app-topbar">
+<nav class="topbar app-topbar legacy-topbar">
     <a class="brand" href="{{ ingress_path|default('') }}/recommendations"><div class="brand-icon"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div><div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div></a>
     <div class="topbar-nav"><a class="app-nav-item" href="{{ ingress_path|default('') }}/recommendations"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Discover</span></a><a class="app-nav-item active" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg><span>Library</span></a></div>
     <div class="topbar-status"><span class="status-dot"></span><span>LOCAL SERVER</span></div>
@@ -3595,7 +3476,7 @@ load();
 
 <div class="site-background"></div>
 
-<nav class="topbar app-topbar detail-topbar">
+<nav class="topbar app-topbar detail-topbar legacy-topbar">
     <a class="brand" href="{{ ingress_path|default('') }}/recommendations"><div class="brand-icon"><svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9Z"/><path d="m9 5 2 2m2-2 2 2M9 17l2 2m2-2 2 2"/><path d="m10 9 5 3-5 3V9Z"/></svg></div><div class="brand-text"><strong>My Movie AI</strong><span>YOUR PERSONAL CINEMA</span></div></a>
     <div class="topbar-nav"><a class="app-nav-item" href="{{ ingress_path|default('') }}/recommendations"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Discover</span></a><a class="app-nav-item" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15 4h4v16h-4z"/></svg><span>Library</span></a></div>
     <a class="detail-back" href="{{ ingress_path|default('') }}/library"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/><path d="M9 12h10"/></svg><span>Back to library</span></a>
@@ -3729,5 +3610,108 @@ load();
 </script>
 
 {% endif %}
+</div>
+<script id="global-navigation-script">
+(() => {
+    const body = document.body;
+    const root = document.getElementById("app-root");
+    const ingress = body.dataset.ingressPath || "";
+
+    function appUrl(path) {
+        if (!path) return ingress || "/";
+        if (path.startsWith(ingress + "/") || path === ingress) return path;
+        if (/^https?:\/\//i.test(path)) return path;
+        const clean = path.startsWith("/") ? path : `/${path}`;
+        return ingress ? `${ingress}${clean}` : clean;
+    }
+
+    function syncNav(path) {
+        const relative = path.replace(/^\/app/, "") || "/";
+        let active = relative.startsWith("/library") ? "library" : "recommendations";
+        document.querySelectorAll(".global-nav-link[data-route]").forEach(link => {
+            link.classList.toggle("active", link.dataset.route === active);
+        });
+    }
+
+    async function executeScripts(fragment) {
+        const scripts = Array.from(fragment.querySelectorAll("script:not(#global-navigation-script)"));
+        for (const oldScript of scripts) {
+            if (oldScript.src) {
+                await new Promise((resolve, reject) => {
+                    const script = document.createElement("script");
+                    script.src = oldScript.src;
+                    script.onload = resolve;
+                    script.onerror = reject;
+                    document.body.appendChild(script);
+                });
+            } else if (oldScript.textContent.trim()) {
+                try {
+                    new Function(oldScript.textContent)();
+                } catch (error) {
+                    console.error("Page script error", error);
+                }
+            }
+        }
+        document.dispatchEvent(new Event("DOMContentLoaded"));
+    }
+
+    async function navigate(url, push = true) {
+        const target = appUrl(url);
+        if (target === location.pathname + location.search) return;
+        body.classList.add("route-loading");
+        try {
+            const response = await fetch(target, { headers: { "X-Requested-With": "SPA" }, cache: "no-store" });
+            if (!response.ok) throw new Error(`Navigation failed: ${response.status}`);
+            const html = await response.text();
+            const doc = new DOMParser().parseFromString(html, "text/html");
+            const nextRoot = doc.getElementById("app-root");
+            if (!nextRoot) throw new Error("Page shell missing");
+            const current = document.getElementById("app-root");
+            current.replaceWith(nextRoot);
+            document.body.dataset.page = nextRoot.dataset.page || "";
+            document.title = doc.title || "My Movie AI";
+            if (push) history.pushState({ url: target }, "", target);
+            window.scrollTo({ top: 0, behavior: "instant" });
+            syncNav(target);
+            nextRoot.classList.add("route-enter");
+            await executeScripts(nextRoot);
+            const searchRequested = new URL(target, location.origin).searchParams.get("search") === "1";
+            if (searchRequested && typeof window.openMovieAiSearch === "function") window.openMovieAiSearch();
+            setTimeout(() => nextRoot.classList.remove("route-enter"), 260);
+        } catch (error) {
+            console.error(error);
+            location.href = target;
+        } finally {
+            body.classList.remove("route-loading");
+        }
+    }
+
+    window.movieAiNavigate = navigate;
+    syncNav(location.pathname + location.search);
+
+    document.addEventListener("click", (event) => {
+        const searchTrigger = event.target.closest("[data-search-link]");
+        if (searchTrigger) {
+            event.preventDefault();
+            const currentPage = document.body.dataset.page;
+            if (currentPage === "recommendations" && typeof window.openMovieAiSearch === "function") {
+                window.openMovieAiSearch();
+            } else {
+                navigate(searchTrigger.getAttribute("href") || "/recommendations?search=1");
+            }
+            return;
+        }
+        const link = event.target.closest("a[data-nav], #app-root a[href]");
+        if (!link) return;
+        const href = link.getAttribute("href") || "";
+        if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("javascript:") || link.target === "_blank" || href.includes("/static/") || href.includes("api/")) return;
+        if (/^https?:\/\//i.test(href) && !href.startsWith(location.origin)) return;
+        event.preventDefault();
+        navigate(href);
+    });
+
+    window.addEventListener("popstate", () => navigate(location.pathname + location.search, false));
+})();
+</script>
 </body>
 </html>
