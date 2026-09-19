@@ -7228,3 +7228,132 @@ svg.app-svg-icon {
 .trending-actions .not-interested-button {
     min-height: 30px;
 }
+
+/* ============================================================
+   PREMIUM HOME CONSISTENCY PASS
+   ============================================================ */
+.recommendation-card,
+.trending-card {
+    cursor: pointer;
+}
+
+.recommendation-card:focus-visible,
+.trending-card:focus-visible {
+    outline: 2px solid rgba(255,255,255,.72);
+    outline-offset: 3px;
+}
+
+.recommendation-poster,
+.trending-poster {
+    position: relative;
+    isolation: isolate;
+}
+
+.recommendation-poster .poster-overlay,
+.trending-poster .trending-poster-overlay {
+    pointer-events: none;
+    z-index: 2;
+}
+
+.recommendation-poster .source-badge,
+.recommendation-poster .match-badge,
+.trending-poster .trending-badge,
+.trending-poster .trending-rank {
+    z-index: 4;
+}
+
+.home-wishlist-button,
+.trending-card .home-wishlist-button {
+    position: absolute !important;
+    top: 10px !important;
+    left: 10px !important;
+    right: auto !important;
+    z-index: 10 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    max-width: 32px !important;
+    max-height: 32px !important;
+    border-radius: 10px;
+    backdrop-filter: blur(12px) saturate(120%);
+    -webkit-backdrop-filter: blur(12px) saturate(120%);
+}
+
+.home-wishlist-button .ui-inline-icon,
+.home-wishlist-button .ui-inline-icon svg,
+.home-wishlist-button svg {
+    width: 15px !important;
+    height: 15px !important;
+    min-width: 15px !important;
+    min-height: 15px !important;
+    max-width: 15px !important;
+    max-height: 15px !important;
+}
+
+.home-wishlist-button:hover {
+    transform: translateY(-1px) scale(1.04);
+}
+
+.home-wishlist-button.is-saved {
+    box-shadow: 0 0 0 1px rgba(229,9,20,.16), 0 10px 24px rgba(229,9,20,.18);
+}
+
+.recommendation-card .recommendation-actions,
+.trending-card .trending-actions {
+    position: relative;
+    z-index: 5;
+}
+
+.recommendation-card .why-button,
+.trending-card .why-button {
+    position: relative;
+    z-index: 5;
+}
+
+.drag-scroll-rail {
+    overscroll-behavior-x: contain;
+    scroll-behavior: smooth;
+}
+
+.drag-scroll-rail.is-dragging {
+    scroll-behavior: auto;
+}
+
+@media (max-width: 700px) {
+    .home-wishlist-button,
+    .trending-card .home-wishlist-button {
+        top: 8px !important;
+        left: 8px !important;
+        width: 29px !important;
+        height: 29px !important;
+        min-width: 29px !important;
+        min-height: 29px !important;
+        max-width: 29px !important;
+        max-height: 29px !important;
+    }
+
+    .home-wishlist-button .ui-inline-icon,
+    .home-wishlist-button .ui-inline-icon svg,
+    .home-wishlist-button svg {
+        width: 14px !important;
+        height: 14px !important;
+        min-width: 14px !important;
+        min-height: 14px !important;
+        max-width: 14px !important;
+        max-height: 14px !important;
+    }
+}
+
+/* Settings page: make save state and automatic refresh feel deliberate. */
+.settings-card-wide .settings-help {
+    color: rgba(255,255,255,.52);
+}
+
+.settings-limit-form button {
+    min-width: 92px;
+    border-radius: 10px;
+}
