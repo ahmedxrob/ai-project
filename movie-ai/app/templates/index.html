@@ -32,7 +32,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css?v=20260919.11"
+        href="/static/style.css?v=20260919.12"
     >
 
 
@@ -819,6 +819,7 @@
                 {% for item in recommendations.ai_movies %}
 
                 <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}" data-details-url="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}">
+                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}"></a>
 
                     <div class="recommendation-poster">
 
@@ -1103,6 +1104,7 @@
                 {% for item in recommendations.ai_series %}
 
                 <article class="recommendation-card ai-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}" data-details-url="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}">
+                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}"></a>
 
                     <div class="recommendation-poster">
 
@@ -1366,6 +1368,7 @@
                 {% for item in (recommendations.tmdb_movies if recommendations else tmdb_discoveries.movies) %}
 
                 <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Movie" data-tmdb-id="{{ item.tmdb_id }}" data-details-url="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}">
+                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Movie/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}"></a>
 
                     <div class="recommendation-poster">
 
@@ -1616,6 +1619,7 @@
                 {% for item in (recommendations.tmdb_series if recommendations else tmdb_discoveries.series) %}
 
                 <article class="recommendation-card tmdb-card recommendation-clickable" data-media-type="Series" data-tmdb-id="{{ item.tmdb_id }}" data-details-url="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}">
+                    <a class="card-open-link" href="{{ ingress_path|default('') }}/title/Series/{{ item.tmdb_id }}" aria-label="Open details for {{ item.title|e }}"></a>
 
                     <div class="recommendation-poster">
 
@@ -2916,10 +2920,9 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
                 class="trending-card recommendation-clickable"
                 data-media-type="${mediaType}"
                 data-tmdb-id="${item.tmdb_id}"
-                tabindex="0"
-                role="link"
-                aria-label="Open ${title}"
+                data-details-url="${appUrl(`/title/${mediaType}/${item.tmdb_id}`)}"
             >
+                <a class="card-open-link" href="${appUrl(`/title/${mediaType}/${item.tmdb_id}`)}" aria-label="Open ${title}"></a>
                 <div class="trending-poster">
                     ${poster}
                     <div class="trending-poster-overlay"></div>
@@ -3660,18 +3663,13 @@ document.addEventListener("submit", async function (event) {
 
             if (event.pointerType !== "mouse") return;
 
+            // Do not capture the pointer yet. A simple press/release must remain a normal click.
             isDown = true;
             isDragging = false;
             rail.dataset.dragged = "0";
             activePointerId = event.pointerId;
             startX = event.clientX;
             startScrollLeft = rail.scrollLeft;
-
-            rail.classList.add("is-dragging");
-
-            try {
-                rail.setPointerCapture(event.pointerId);
-            } catch (_) {}
         }
 
         function moveDrag(event) {
@@ -3681,12 +3679,17 @@ document.addEventListener("submit", async function (event) {
 
             const delta = event.clientX - startX;
 
-            if (Math.abs(delta) < 6 && !isDragging) {
-                return;
+            if (!isDragging) {
+                if (Math.abs(delta) < 8) {
+                    return;
+                }
+                isDragging = true;
+                rail.dataset.dragged = "1";
+                rail.classList.add("is-dragging");
+                try {
+                    rail.setPointerCapture(event.pointerId);
+                } catch (_) {}
             }
-
-            isDragging = true;
-            rail.dataset.dragged = "1";
 
             // Move the rail exactly with the pointer.
             rail.scrollLeft = startScrollLeft - delta;
@@ -3741,7 +3744,7 @@ document.addEventListener("submit", async function (event) {
                 event.stopPropagation();
                 rail.dataset.dragged = "0";
             }
-        }, true);
+        });
     });
 })();
 
