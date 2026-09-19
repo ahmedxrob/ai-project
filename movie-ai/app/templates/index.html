@@ -434,14 +434,14 @@
                 <div class="settings-card-icon">{{ ui_icon('refresh') }}</div>
                 <div class="settings-control-content">
                     <h2>Home result count</h2>
-                    <p>Choose how many AI and TMDB cards appear in each Movie and Series section on Home.</p>
+                    <p>Choose how many cards appear in every Home Movie and Series section: Trending, AI Picks, and TMDB Discoveries.</p>
                     <form id="recommendation-limit-form" class="settings-limit-form">
                         <label for="recommendation-limit">Cards per section</label>
                         <div class="settings-limit-row">
                             <input id="recommendation-limit" name="recommendation_limit" type="number" min="1" max="20" step="1" value="{{ recommendation_limit|default(8) }}">
                             <button type="submit" class="primary-button">Save</button>
                         </div>
-                        <span class="settings-help">1–20 cards. Refresh Home after saving to generate the new amount.</span>
+                        <span class="settings-help">1–20 cards per section. This controls Trending, AI Picks, and TMDB Discoveries for both Movies and Series.</span>
                     </form>
                 </div>
             </section>
@@ -772,7 +772,7 @@
             </div>
 
             <span>
-                16 total
+                {{ recommendation_limit|default(8) * 2 }} max
             </span>
 
         </div>
@@ -1056,7 +1056,7 @@
             </div>
 
             <span>
-                16 total
+                {{ recommendation_limit|default(8) * 2 }} max
             </span>
 
         </div>
@@ -2050,6 +2050,9 @@ async function checkAIRecommendationStatus() {
 
                 if (freshRegion && currentRegion) {
                     currentRegion.replaceWith(freshRegion);
+                    if (window.bindHomeDetailCards) {
+                        window.bindHomeDetailCards(document.getElementById("recommendations-live-region") || document);
+                    }
                 }
             } catch (error) {
                 console.error("In-place recommendation update failed:", error);
@@ -2767,36 +2770,44 @@ document.addEventListener("click", async function(event) {
 
 
 /* ========================================================= */
-/* OPEN RECOMMENDATION DETAIL PAGE - delegated for dynamic cards */
+/* HOME CARD DETAIL NAVIGATION */
 /* ========================================================= */
-document.addEventListener("click", function (event) {
-    const card = event.target.closest(".recommendation-clickable");
+function openHomeCardDetails(card) {
     if (!card) return;
-
-    if (event.target.closest("a, button, form, input, select, textarea")) {
-        return;
-    }
-
     const mediaType = card.dataset.mediaType;
     const tmdbId = card.dataset.tmdbId;
     if (!mediaType || !tmdbId) return;
-
     window.location.href = appUrl(`/title/${mediaType}/${tmdbId}`);
-});
+}
 
-document.addEventListener("keydown", function (event) {
-    if (event.key !== "Enter" && event.key !== " ") return;
+function bindHomeDetailCards(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    scope.querySelectorAll('.recommendation-clickable, .trending-card').forEach(function(card) {
+        if (card.dataset.detailsBound === '1') return;
+        card.dataset.detailsBound = '1';
+        card.setAttribute('tabindex', '0');
+        card.setAttribute('role', 'link');
 
-    const card = event.target.closest(".recommendation-clickable");
-    if (!card || event.target !== card) return;
+        card.addEventListener('click', function(event) {
+            if (event.target.closest('a, button, form, input, select, textarea')) return;
+            if (window.__railDragMoved) {
+                window.__railDragMoved = false;
+                return;
+            }
+            openHomeCardDetails(card);
+        });
 
-    event.preventDefault();
-    const mediaType = card.dataset.mediaType;
-    const tmdbId = card.dataset.tmdbId;
-    if (!mediaType || !tmdbId) return;
+        card.addEventListener('keydown', function(event) {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            if (event.target !== card) return;
+            event.preventDefault();
+            openHomeCardDetails(card);
+        });
+    });
+}
 
-    window.location.href = appUrl(`/title/${mediaType}/${tmdbId}`);
-});
+window.bindHomeDetailCards = bindHomeDetailCards;
+bindHomeDetailCards(document);
 
 
 /* ========================================================= */
@@ -2966,27 +2977,9 @@ function renderTrendingRail(items, containerId, countId, mediaType) {
         `;
     }).join("");
 
-    container.querySelectorAll(".trending-card").forEach(function(card) {
-        function openCard() {
-            const type = card.dataset.mediaType;
-            const id = card.dataset.tmdbId;
-            if (!type || !id) return;
-            window.location.href = appUrl(`/title/${type}/${id}`);
-        }
-
-        card.addEventListener("click", function(event) {
-            if (event.target.closest("a, button, form, input, select, textarea")) return;
-            openCard();
-        });
-
-        card.addEventListener("keydown", function(event) {
-            if (event.key === "Enter" || event.key === " ") {
-                if (event.target.closest("a, button, form, input, select, textarea")) return;
-                event.preventDefault();
-                openCard();
-            }
-        });
-    });
+    if (window.bindHomeDetailCards) {
+        window.bindHomeDetailCards(container);
+    }
 }
 
 async function loadLifetimeStatistics() {
@@ -3678,6 +3671,7 @@ document.addEventListener("submit", async function (event) {
             }
 
             isDragging = true;
+            window.__railDragMoved = true;
 
             // Move the rail exactly with the pointer.
             rail.scrollLeft = startScrollLeft - delta;
