@@ -8281,3 +8281,200 @@ body {
         transition-duration: .001ms !important;
     }
 }
+
+
+/* ============================================================
+   RELEASE UI HARDENING — MEDIA / BADGE STACKING
+   ============================================================ */
+
+/* Cards own their height; poster media can never paint into the
+   content/action area below it. */
+.recommendation-card,
+.trending-card {
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: hidden !important;
+}
+
+.recommendation-poster,
+.trending-poster {
+    position: relative !important;
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    aspect-ratio: 2 / 3 !important;
+    overflow: hidden !important;
+    isolation: isolate !important;
+    contain: layout paint !important;
+}
+
+.recommendation-poster img.media-image,
+.trending-poster img.media-image,
+.recommendation-poster > img,
+.trending-poster > img {
+    position: absolute !important;
+    inset: 0 !important;
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+}
+
+.recommendation-poster .poster-overlay,
+.trending-poster .trending-poster-overlay {
+    position: absolute !important;
+    inset: 0 !important;
+    z-index: 2 !important;
+    pointer-events: none !important;
+}
+
+/* These are poster overlays, not flow elements.  Keeping them absolute
+   fixes the source text / image collision caused by a late position rule. */
+.recommendation-poster .source-badge,
+.recommendation-poster .match-badge,
+.trending-poster .trending-badge,
+.trending-poster .trending-rank {
+    position: absolute !important;
+    z-index: 8 !important;
+    pointer-events: none !important;
+}
+
+.recommendation-poster .source-badge,
+.trending-poster .trending-badge {
+    left: 9px !important;
+    right: auto !important;
+    bottom: 9px !important;
+    top: auto !important;
+    transform: none !important;
+}
+
+.recommendation-poster .match-badge {
+    top: 10px !important;
+    right: 10px !important;
+    left: auto !important;
+    bottom: auto !important;
+}
+
+.trending-poster .trending-rank {
+    top: 10px !important;
+    right: 10px !important;
+    left: auto !important;
+    bottom: auto !important;
+}
+
+.recommendation-poster .home-wishlist-button,
+.trending-poster .home-wishlist-button {
+    position: absolute !important;
+    top: 10px !important;
+    left: 10px !important;
+    right: auto !important;
+    bottom: auto !important;
+    z-index: 12 !important;
+    pointer-events: auto !important;
+}
+
+.recommendation-content,
+.trending-content {
+    position: relative !important;
+    z-index: 3 !important;
+    display: flex !important;
+    flex: 1 1 auto !important;
+    flex-direction: column !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    box-sizing: border-box !important;
+}
+
+.recommendation-content > h3,
+.trending-content > h3,
+.recommendation-overview,
+.trending-content p {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+.recommendation-actions,
+.trending-actions {
+    position: relative !important;
+    z-index: 4 !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    min-width: 0 !important;
+    margin-top: auto !important;
+}
+
+.recommendation-actions a,
+.recommendation-actions button,
+.recommendation-actions form,
+.trending-actions a,
+.trending-actions button,
+.trending-actions form {
+    position: relative !important;
+    z-index: 5 !important;
+}
+
+/* Rails must preserve native touch scrolling and never become a text/image
+   selection surface during an intentional drag. */
+.recommendation-grid,
+.trending-grid {
+    touch-action: pan-x pinch-zoom !important;
+    overscroll-behavior-inline: contain !important;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.recommendation-grid.is-dragging,
+.trending-grid.is-dragging {
+    cursor: grabbing !important;
+    scroll-snap-type: none !important;
+}
+
+.drag-scroll-rail img.media-image,
+.drag-scroll-rail img {
+    user-select: none !important;
+    -webkit-user-drag: none !important;
+    pointer-events: none !important;
+}
+
+/* A little extra breathing room keeps the action row visually separate from
+   the poster even on cards with long titles. */
+.recommendation-content,
+.trending-content {
+    border-top: 1px solid rgba(255,255,255,.045);
+}
+
+@media (max-width: 700px) {
+    .recommendation-poster .home-wishlist-button,
+    .trending-poster .home-wishlist-button {
+        top: 8px !important;
+        left: 8px !important;
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
+        min-height: 30px !important;
+        max-width: 30px !important;
+        max-height: 30px !important;
+    }
+
+    .recommendation-poster .source-badge,
+    .recommendation-poster .match-badge,
+    .trending-poster .trending-badge,
+    .trending-poster .trending-rank {
+        top: auto !important;
+        bottom: 8px !important;
+    }
+
+    .recommendation-poster .match-badge,
+    .trending-poster .trending-rank {
+        top: 8px !important;
+        bottom: auto !important;
+        right: 8px !important;
+    }
+}
