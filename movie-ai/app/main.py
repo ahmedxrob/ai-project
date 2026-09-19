@@ -108,7 +108,9 @@ def load_app_settings():
 
 def save_app_settings(settings):
     APP_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    APP_SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    temp_file = APP_SETTINGS_FILE.with_suffix(".tmp")
+    temp_file.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    temp_file.replace(APP_SETTINGS_FILE)
 
 def get_recommendation_limit():
     return int(load_app_settings().get("recommendation_limit", DEFAULT_RECOMMENDATION_LIMIT))
@@ -2576,16 +2578,38 @@ def api_get_settings():
 
 
 @app.post("/api/settings")
-def api_update_settings(recommendation_limit: int = Form(...)):
+def api_update_settings(
+    background_tasks: BackgroundTasks,
+    recommendation_limit: int = Form(...),
+):
+    global recommendation_state
+
     try:
         value = int(recommendation_limit)
     except Exception:
         value = DEFAULT_RECOMMENDATION_LIMIT
     value = max(MIN_RECOMMENDATION_LIMIT, min(MAX_RECOMMENDATION_LIMIT, value))
+
     settings = load_app_settings()
+    previous_value = int(settings.get("recommendation_limit", DEFAULT_RECOMMENDATION_LIMIT))
     settings["recommendation_limit"] = value
     save_app_settings(settings)
-    return JSONResponse({"ok": True, **settings})
+
+    refreshed = value != previous_value
+    if refreshed:
+        movies = get_all()
+        with recommendation_state_lock:
+            job_id = recommendation_state.get("job_id", 0) + 1
+            recommendation_state = {
+                "status": "loading",
+                "data": None,
+                "error": None,
+                "tmdb_data": None,
+                "job_id": job_id,
+            }
+        background_tasks.add_task(run_recommendation_job, None, job_id)
+
+    return JSONResponse({"ok": True, "refreshed": refreshed, **settings})
 
 
 # ============================================================
@@ -2838,6 +2862,7 @@ def recommendations(
         "tmdb_discoveries": tmdb_discoveries,
         "display_statistics": get_display_statistics(),
         "lifetime_statistics": get_lifetime_statistics(),
+        "recommendation_limit": get_recommendation_limit(),
         "ingress_path": get_ingress_path(request),
     }
 
