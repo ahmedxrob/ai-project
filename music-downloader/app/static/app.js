@@ -79,6 +79,146 @@ let playSessionRecorded = false;
 const PLAY_COUNT_THRESHOLD_SECONDS = 60;
 const ENHANCED_QUEUE_KEY = "xrob_music_up_next_queue";
 const ENHANCED_REPEAT_KEY = "xrob_music_repeat";
+const PLAYER_SYNC_CHANNEL = "xrob_music_player_sync_v1";
+const PLAYER_SYNC_STATE_KEY = "xrob_music_player_sync_state";
+const PLAYER_OWNER_KEY = "xrob_music_player_owner";
+const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+let playerSyncChannel = null;
+let playerOwnerId = null;
+let applyingRemotePlayerCommand = false;
+let remotePlayerState = null;
+
+function getPlayerOwner() {
+    try {
+        const raw = localStorage.getItem(PLAYER_OWNER_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (_) { return null; }
+}
+
+function setPlayerOwner() {
+    playerOwnerId = PLAYER_TAB_ID;
+    try { localStorage.setItem(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
+}
+
+function clearPlayerOwner() {
+    const owner = getPlayerOwner();
+    if (!owner || owner.id !== PLAYER_TAB_ID) return;
+    try { localStorage.removeItem(PLAYER_OWNER_KEY); } catch (_) {}
+    playerOwnerId = null;
+}
+
+function isRemotePlayerOwner() {
+    const owner = getPlayerOwner();
+    playerOwnerId = owner?.id || playerOwnerId || null;
+    return Boolean(playerOwnerId && playerOwnerId !== PLAYER_TAB_ID);
+}
+
+function buildPlayerSyncState() {
+    if (!audio) return null;
+    return {
+        ownerId: PLAYER_TAB_ID,
+        src: audio.src || "",
+        currentTime: Number(audio.currentTime || 0),
+        duration: Number(audio.duration || 0),
+        volume: Number(audio.volume || 0.8),
+        title: playerTitle?.textContent || "",
+        artist: playerArtist?.textContent || "",
+        art: playerArt?.src || "",
+        songId: audio.dataset.xrobSongId || currentSongId() || "",
+        source: currentPlayerSource || "",
+        queue: currentPlayerSource === "library" ? enhancedQueue : (window.xrobHomeQueue || []),
+        queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
+        paused: Boolean(audio.paused),
+        muted: Boolean(audio.muted),
+        at: Date.now()
+    };
+}
+
+function broadcastPlayerState(force = false) {
+    if (!audio || isRemotePlayerOwner()) return;
+    const state = buildPlayerSyncState();
+    if (!state) return;
+    if (force) state.force = true;
+    try { localStorage.setItem(PLAYER_SYNC_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+    try { playerSyncChannel?.postMessage({ type: "state", state }); } catch (_) {}
+}
+
+function sendPlayerCommand(command, payload = {}) {
+    const owner = getPlayerOwner();
+    if (!owner?.id || owner.id === PLAYER_TAB_ID) return false;
+    try { playerSyncChannel?.postMessage({ type: "command", targetId: owner.id, command, payload }); } catch (_) {}
+    return true;
+}
+
+function applyRemotePlayerState(state) {
+    if (!state || state.ownerId === PLAYER_TAB_ID) return;
+    remotePlayerState = state;
+    playerOwnerId = state.ownerId;
+    updatePlayerInfo(state.title, state.artist, state.art);
+    if (player) player.style.display = "grid";
+    if (volume && Number.isFinite(Number(state.volume))) volume.value = Math.max(0, Math.min(1, Number(state.volume)));
+    if (seek && Number(state.duration) > 0) seek.value = String(Math.max(0, Math.min(100, Number(state.currentTime || 0) / Number(state.duration) * 100)));
+    if (curTime) curTime.textContent = formatSeconds(state.currentTime);
+    if (durTime) durTime.textContent = formatSeconds(state.duration);
+    updatePlayingState(!state.paused);
+}
+
+function applyRemoteCommand(message) {
+    if (!audio || message?.targetId !== PLAYER_TAB_ID) return;
+    const p = message.payload || {};
+    applyingRemotePlayerCommand = true;
+    try {
+        if (message.command === "play") audio.play().catch(() => {});
+        else if (message.command === "pause") audio.pause();
+        else if (message.command === "seek" && Number.isFinite(Number(p.time))) audio.currentTime = Math.max(0, Number(p.time));
+        else if (message.command === "next") playNextTrack();
+        else if (message.command === "previous") playPreviousTrack();
+        else if (message.command === "volume" && Number.isFinite(Number(p.volume))) { audio.volume = Math.max(0, Math.min(1, Number(p.volume))); if (volume) volume.value = audio.volume; }
+        else if (message.command === "load-play") {
+            if (Array.isArray(p.queue) && p.queue.length) {
+                if (p.source === "home") { window.xrobHomeQueue = [...p.queue]; window.xrobHomeQueueIndex = Number(p.queueIndex ?? 0); }
+                else syncLibraryQueue(p.queue, Number(p.queueIndex ?? 0));
+            }
+            toggleAudioStream(document.createElement("button"), p.src, p.source || "library", p.title, p.artist, p.art, p.songId || null, true);
+        }
+    } finally {
+        applyingRemotePlayerCommand = false;
+    }
+    broadcastPlayerState(true);
+}
+
+function initPlayerSync() {
+    if (playerSyncChannel || typeof BroadcastChannel === "undefined") return;
+    try { playerSyncChannel = new BroadcastChannel(PLAYER_SYNC_CHANNEL); } catch (_) { playerSyncChannel = null; }
+    playerSyncChannel?.addEventListener("message", (event) => {
+        const msg = event.data || {};
+        if (msg.type === "request-state") {
+            const owner = getPlayerOwner();
+            if (owner?.id === PLAYER_TAB_ID) broadcastPlayerState(true);
+        } else if (msg.type === "state") {
+            const owner = getPlayerOwner();
+            if (msg.state?.ownerId !== PLAYER_TAB_ID && (!owner || owner.id === msg.state.ownerId)) applyRemotePlayerState(msg.state);
+        } else if (msg.type === "command") {
+            applyRemoteCommand(msg);
+        }
+    });
+    const owner = getPlayerOwner();
+    if (owner?.id) playerOwnerId = owner.id;
+    const raw = localStorage.getItem(PLAYER_SYNC_STATE_KEY);
+    if (raw) { try { applyRemotePlayerState(JSON.parse(raw)); } catch (_) {} }
+    try { playerSyncChannel.postMessage({ type: "request-state", requesterId: PLAYER_TAB_ID }); } catch (_) {}
+    window.addEventListener("storage", (event) => {
+        if (event.key === PLAYER_SYNC_STATE_KEY && event.newValue && !isRemotePlayerOwner()) {
+            try { const state = JSON.parse(event.newValue); if (state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state); } catch (_) {}
+        }
+    });
+    window.addEventListener("beforeunload", () => {
+        try { playerSyncChannel?.postMessage({ type: "owner-closing", ownerId: PLAYER_TAB_ID }); } catch (_) {}
+        clearPlayerOwner();
+        try { playerSyncChannel?.close(); } catch (_) {}
+    }, { once: true });
+}
+
 
 function currentSongId() {
     const useEnhanced = currentPlayerSource === "library" && enhancedQueue.length;
@@ -699,10 +839,16 @@ function savePlayerState() {
         wasPlaying: !audio.paused,
     };
     try { localStorage.setItem("xrob_music_player_state", JSON.stringify(state)); } catch (_) {}
+    if (!applyingRemotePlayerCommand && !isRemotePlayerOwner()) broadcastPlayerState();
 }
 
 function restorePlayerState() {
     if (!audio) return;
+    if (isRemotePlayerOwner()) {
+        const rawRemote = localStorage.getItem(PLAYER_SYNC_STATE_KEY);
+        if (rawRemote) { try { applyRemotePlayerState(JSON.parse(rawRemote)); } catch (_) {} }
+        return;
+    }
     try {
         const raw = localStorage.getItem("xrob_music_player_state");
         if (!raw) return;
@@ -1007,7 +1153,8 @@ function toggleAudioStream(
     title,
     artist,
     art,
-    songId = null
+    songId = null,
+    fromRemote = false
 ) {
 
     if (
@@ -1018,6 +1165,16 @@ function toggleAudioStream(
         return;
     }
 
+    if (!fromRemote && isRemotePlayerOwner()) {
+        const sourceName = type === "search" ? "home" : (type || "library");
+        const queue = sourceName === "library" ? enhancedQueue : (window.xrobHomeQueue || []);
+        const queueIndex = sourceName === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1);
+        sendPlayerCommand("load-play", { src: new URL(url, location.href).href, title, artist, art, songId, source: sourceName, queue, queueIndex });
+        applyRemotePlayerState({ ...remotePlayerState, src: new URL(url, location.href).href, title, artist, art, songId, source: sourceName, paused: false, queueIndex, at: Date.now() });
+        return;
+    }
+
+    setPlayerOwner();
     initAudioContext();
 
     if (
@@ -1214,9 +1371,9 @@ function bindAudioEvents() {
     audio.addEventListener(
         "play",
         () => {
-
+            if (!applyingRemotePlayerCommand) setPlayerOwner();
             updatePlayingState(true);
-
+            broadcastPlayerState(true);
         }
     );
 
@@ -1224,9 +1381,8 @@ function bindAudioEvents() {
     audio.addEventListener(
         "pause",
         () => {
-
             updatePlayingState(false);
-
+            broadcastPlayerState(true);
         }
     );
 
@@ -1311,29 +1467,29 @@ function bindPlayerControls() {
                 return;
             }
 
+            if (isRemotePlayerOwner()) {
+                sendPlayerCommand(audio.paused ? "play" : "pause");
+                if (remotePlayerState) applyRemotePlayerState({ ...remotePlayerState, paused: !audio.paused, at: Date.now() });
+                return;
+            }
+            setPlayerOwner();
             if (audio.paused) {
-
-                audio.play()
-                    .catch(
-                        console.error
-                    );
-
+                audio.play().catch(console.error);
             } else {
-
                 audio.pause();
             }
         }
     );
 
-    prevBtn?.addEventListener(
-        "click",
-        playPreviousTrack
-    );
+    prevBtn?.addEventListener("click", () => {
+        if (isRemotePlayerOwner()) sendPlayerCommand("previous");
+        else { setPlayerOwner(); playPreviousTrack(); }
+    });
 
-    nextBtn?.addEventListener(
-        "click",
-        playNextTrack
-    );
+    nextBtn?.addEventListener("click", () => {
+        if (isRemotePlayerOwner()) sendPlayerCommand("next");
+        else { setPlayerOwner(); playNextTrack(); }
+    });
 
     document.getElementById("gp-shuffle-btn")?.addEventListener("click", () => setShuffle(!playerShuffle));
     document.getElementById("libraryShuffleButton")?.addEventListener("click", shuffleLibrary);
@@ -1345,8 +1501,10 @@ function bindPlayerControls() {
     seek?.addEventListener("input", () => {
         if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
             const ratio = Math.max(0, Math.min(1, Number(seek.value) / 100));
-            audio.currentTime = ratio * audio.duration;
-            if (curTime) curTime.textContent = formatSeconds(audio.currentTime);
+            const targetTime = ratio * audio.duration;
+            if (isRemotePlayerOwner()) sendPlayerCommand("seek", { time: targetTime });
+            else { setPlayerOwner(); audio.currentTime = targetTime; }
+            if (curTime) curTime.textContent = formatSeconds(targetTime);
         }
     });
     seek?.addEventListener("change", () => { isSeeking = false; updateProgress(); });
@@ -1388,10 +1546,9 @@ function bindPlayerControls() {
         "input",
         () => {
 
-            audio.volume =
-                Number(
-                    volume.value
-                );
+            const nextVolume = Number(volume.value);
+            if (isRemotePlayerOwner()) sendPlayerCommand("volume", { volume: nextVolume });
+            else { setPlayerOwner(); audio.volume = nextVolume; }
 
             localStorage.setItem(
                 "xrob_music_volume",
@@ -1442,7 +1599,8 @@ async function resetSettings() {
         organize_by_artist: false,
         scan_enabled: true,
         scan_interval_minutes: 60,
-        title_cleanup_rules: "(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip"
+        title_cleanup_rules: "(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",
+        daily_mix_track_count: 30
     };
     try {
         const response = await fetch("api/settings", {
@@ -1470,6 +1628,9 @@ function applySettingsToForm(settings) {
     setChecked("set_scan_enabled", settings.scan_enabled !== false);
     setValue("set_scan_interval", settings.scan_interval_minutes || 60);
     setValue("set_title_cleanup_rules", settings.title_cleanup_rules || "");
+    const dailyMixCount = Math.max(5, Math.min(50, Number(settings.daily_mix_track_count || 30)));
+    setValue("set_daily_mix_count", dailyMixCount);
+    localStorage.setItem("xrob_music_daily_mix_count", String(dailyMixCount));
         setValue("set_web_username", settings.web_username || "admin");
     setValue("set_web_password", "");
     renderStorage(settings.storage);
@@ -1524,6 +1685,7 @@ async function saveSettings() {
         scan_enabled: getChecked("set_scan_enabled"),
         scan_interval_minutes: Math.max(5, Number(getValue("set_scan_interval") || 60)),
         title_cleanup_rules: getValue("set_title_cleanup_rules"),
+        daily_mix_track_count: Math.max(5, Math.min(50, Number(getValue("set_daily_mix_count") || 30))),
         web_username: getValue("set_web_username") || "admin",
         ...(getValue("set_web_password") ? {web_password:getValue("set_web_password")} : {}),
     };
@@ -1570,6 +1732,7 @@ async function saveSettings() {
             );
 
 
+        localStorage.setItem("xrob_music_daily_mix_count", String(result.daily_mix_track_count || data.daily_mix_track_count || 30));
         if (msg) {
 
             msg.textContent =
@@ -4705,6 +4868,7 @@ async function startAppAfterAuth() {
     // Keep it visible at startup with its existing empty-state labels.
     if (player) player.style.display = "grid";
 
+    initPlayerSync();
     bindAudioEvents();
     bindPlayerControls();
     bindSearch();
@@ -5040,8 +5204,8 @@ async function loadDetailedLibraryStats() {
 
 let dailyMixTracks = [];
 let dailyMixVariant = Number(localStorage.getItem('xrob_daily_mix_variant') || 0);
-function installHomeShelfSwipe(containerId) {
-    const row = document.getElementById(containerId);
+function installDailyMixSwipe() {
+    const row = document.getElementById("dailyMixTracks");
     if (!row || row.dataset.swipeBound === "true") return;
     row.dataset.swipeBound = "true";
     let pointerId = null;
@@ -5050,69 +5214,81 @@ function installHomeShelfSwipe(containerId) {
     let startScrollLeft = 0;
     let dragging = false;
     let moved = false;
-    let suppressClick = false;
-    const finish = (event) => {
-        if (pointerId !== null && event.pointerId !== pointerId) return;
-        const activePointerId = pointerId;
+    let suppressNextClick = false;
+    let lastX = 0;
+    let lastTime = 0;
+    let velocity = 0;
+
+    const reset = (release = true) => {
+        if (pointerId !== null && release && row.hasPointerCapture?.(pointerId)) {
+            try { row.releasePointerCapture(pointerId); } catch (_) {}
+        }
         pointerId = null;
-        if (dragging && activePointerId !== null && row.hasPointerCapture?.(activePointerId)) {
-            try { row.releasePointerCapture(activePointerId); } catch (_) {}
-        }
         row.classList.remove("is-swipe-dragging");
-        if (moved) {
-            suppressClick = true;
-            window.setTimeout(() => { suppressClick = false; }, 120);
-        }
         dragging = false;
         moved = false;
     };
+
     row.addEventListener("pointerdown", (event) => {
         if (!event.isPrimary || event.button !== 0) return;
         pointerId = event.pointerId;
-        startX = event.clientX;
+        startX = lastX = event.clientX;
         startY = event.clientY;
         startScrollLeft = row.scrollLeft;
+        lastTime = performance.now();
+        velocity = 0;
         dragging = false;
         moved = false;
-        try { row.setPointerCapture(pointerId); } catch (_) {}
     });
+
     row.addEventListener("pointermove", (event) => {
-        if (pointerId !== event.pointerId) return;
+        if (event.pointerId !== pointerId) return;
         const dx = event.clientX - startX;
         const dy = event.clientY - startY;
         if (!dragging) {
-            if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-            if (Math.abs(dy) > Math.abs(dx)) { finish(event); return; }
+            if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+            if (Math.abs(dy) >= Math.abs(dx)) { reset(false); return; }
             dragging = true;
+            moved = true;
             row.classList.add("is-swipe-dragging");
+            try { row.setPointerCapture(pointerId); } catch (_) {}
         }
-        if (!dragging) return;
-        moved = Math.abs(dx) >= 12;
+        const now = performance.now();
+        const dt = Math.max(8, now - lastTime);
+        velocity = (event.clientX - lastX) / dt;
+        lastX = event.clientX;
+        lastTime = now;
         row.scrollLeft = startScrollLeft - dx;
         event.preventDefault();
     });
-    row.addEventListener("pointerup", finish);
-    row.addEventListener("pointercancel", finish);
-    row.addEventListener("lostpointercapture", (event) => {
-        if (pointerId === event.pointerId) finish(event);
+
+    row.addEventListener("pointerup", (event) => {
+        if (event.pointerId !== pointerId) return;
+        if (dragging) {
+            const projected = row.scrollLeft - velocity * 170;
+            const max = Math.max(0, row.scrollWidth - row.clientWidth);
+            row.scrollTo({ left: Math.max(0, Math.min(max, projected)), behavior: "smooth" });
+            suppressNextClick = true;
+            window.setTimeout(() => { suppressNextClick = false; }, 180);
+        }
+        reset();
     });
+    row.addEventListener("pointercancel", () => reset());
+    row.addEventListener("lostpointercapture", () => { if (pointerId !== null) reset(false); });
     row.addEventListener("click", (event) => {
-        if (!suppressClick) return;
+        if (!suppressNextClick) return;
         event.preventDefault();
         event.stopPropagation();
+        suppressNextClick = false;
     }, true);
-}
-
-function installHomeShelfSwipes() {
-    installHomeShelfSwipe("dailyMixTracks");
-    installHomeShelfSwipe("recentTracks");
 }
 
 async function loadDailyMix(forceVariation = false) {
     const row = document.getElementById('dailyMixTracks'); if (!row) return;
     try {
         if (forceVariation) { dailyMixVariant = (dailyMixVariant + 1) % 20; localStorage.setItem('xrob_daily_mix_variant', String(dailyMixVariant)); }
-        const r = await fetch(`api/daily-mix?limit=30&variant=${dailyMixVariant}`, {cache:'no-store'}); if (!r.ok) throw new Error('Daily Mix unavailable');
+        const dailyMixCount = Math.max(5, Math.min(50, Number(localStorage.getItem("xrob_music_daily_mix_count") || 30)));
+        const r = await fetch(`api/daily-mix?limit=${dailyMixCount}&variant=${dailyMixVariant}`, {cache:'no-store'}); if (!r.ok) throw new Error('Daily Mix unavailable');
         const d = await r.json(); dailyMixTracks = Array.isArray(d.tracks) ? d.tracks : [];
         document.getElementById('dailyMixTitle')?.replaceChildren(d.title || 'Daily Mix');
         document.getElementById('dailyMixSubtitle')?.replaceChildren(d.subtitle || 'Personalized from your listening');
@@ -5136,7 +5312,7 @@ function installEnhancedFeatures(){
     document.getElementById("dailyMixPlay")?.addEventListener("click", () => { if (!dailyMixTracks.length) return; setEnhancedQueue(dailyMixTracks, 0); currentPlayerSource="library"; playLibraryTrack(0); });
     loadDetailedLibraryStats();
     loadDailyMix();
-    installHomeShelfSwipes();
+    installDailyMixSwipe();
     document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
