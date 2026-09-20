@@ -79,14 +79,24 @@ let playSessionRecorded = false;
 const PLAY_COUNT_THRESHOLD_SECONDS = 60;
 const ENHANCED_QUEUE_KEY = "xrob_music_up_next_queue";
 const ENHANCED_REPEAT_KEY = "xrob_music_repeat";
-const PLAYER_SYNC_CHANNEL = "xrob_music_player_sync_v1";
+const PLAYER_SYNC_CHANNEL = "xrob_music_player_sync_v2";
 const PLAYER_SYNC_STATE_KEY = "xrob_music_player_sync_state";
+const PLAYER_SYNC_COMMAND_KEY = "xrob_music_player_sync_command";
 const PLAYER_OWNER_KEY = "xrob_music_player_owner";
 const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const PLAYER_OWNER_STALE_MS = 6500;
+const PLAYER_HEARTBEAT_MS = 2000;
 let playerSyncChannel = null;
+let playerSyncHeartbeat = null;
 let playerOwnerId = null;
 let applyingRemotePlayerCommand = false;
 let remotePlayerState = null;
+let remotePlayerReceivedAt = 0;
+let remotePlayerTimer = null;
+let playerSyncSequence = 0;
+let lastRemoteOwnerId = null;
+let lastRemoteSequence = -1;
+const processedPlayerCommandIds = new Set();
 
 function getPlayerOwner() {
     try {
@@ -95,9 +105,31 @@ function getPlayerOwner() {
     } catch (_) { return null; }
 }
 
+function ownerIsFresh(owner) {
+    return Boolean(owner?.id && Number.isFinite(Number(owner.at)) && (Date.now() - Number(owner.at)) < PLAYER_OWNER_STALE_MS);
+}
+
 function setPlayerOwner() {
+    const current = getPlayerOwner();
+    if (current?.id && current.id !== PLAYER_TAB_ID && ownerIsFresh(current)) {
+        playerOwnerId = current.id;
+        return false;
+    }
     playerOwnerId = PLAYER_TAB_ID;
     try { localStorage.setItem(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
+    return true;
+}
+
+function heartbeatPlayerOwner() {
+    const current = getPlayerOwner();
+    if (!current?.id || current.id === PLAYER_TAB_ID) {
+        if (playerOwnerId === PLAYER_TAB_ID) {
+            try { localStorage.setItem(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
+            broadcastPlayerState();
+        }
+        return;
+    }
+    playerOwnerId = current.id;
 }
 
 function clearPlayerOwner() {
@@ -109,8 +141,12 @@ function clearPlayerOwner() {
 
 function isRemotePlayerOwner() {
     const owner = getPlayerOwner();
-    playerOwnerId = owner?.id || playerOwnerId || null;
-    return Boolean(playerOwnerId && playerOwnerId !== PLAYER_TAB_ID);
+    if (!owner || !ownerIsFresh(owner)) {
+        playerOwnerId = null;
+        return false;
+    }
+    playerOwnerId = owner.id;
+    return owner.id !== PLAYER_TAB_ID;
 }
 
 function buildPlayerSyncState() {
@@ -135,9 +171,10 @@ function buildPlayerSyncState() {
 }
 
 function broadcastPlayerState(force = false) {
-    if (!audio || isRemotePlayerOwner()) return;
+    if (!audio || (playerOwnerId && playerOwnerId !== PLAYER_TAB_ID) || isRemotePlayerOwner()) return;
     const state = buildPlayerSyncState();
     if (!state) return;
+    state.seq = ++playerSyncSequence;
     if (force) state.force = true;
     try { localStorage.setItem(PLAYER_SYNC_STATE_KEY, JSON.stringify(state)); } catch (_) {}
     try { playerSyncChannel?.postMessage({ type: "state", state }); } catch (_) {}
@@ -145,26 +182,73 @@ function broadcastPlayerState(force = false) {
 
 function sendPlayerCommand(command, payload = {}) {
     const owner = getPlayerOwner();
-    if (!owner?.id || owner.id === PLAYER_TAB_ID) return false;
-    try { playerSyncChannel?.postMessage({ type: "command", targetId: owner.id, command, payload }); } catch (_) {}
-    return true;
+    if (!owner?.id || owner.id === PLAYER_TAB_ID || !ownerIsFresh(owner)) return false;
+    const message = { type: "command", targetId: owner.id, command, payload, id: `${PLAYER_TAB_ID}:${Date.now()}:${Math.random().toString(36).slice(2)}` };
+    let sent = false;
+    if (playerSyncChannel) {
+        try { playerSyncChannel.postMessage(message); sent = true; } catch (_) {}
+    }
+    if (!sent) {
+        try { localStorage.setItem(PLAYER_SYNC_COMMAND_KEY, JSON.stringify(message)); sent = true; } catch (_) {}
+    }
+    return sent;
+}
+
+function updateRemoteProgress() {
+    if (!remotePlayerState || !remotePlayerState.ownerId || remotePlayerState.ownerId === PLAYER_TAB_ID) return;
+    const base = Number(remotePlayerState.currentTime || 0);
+    const duration = Number(remotePlayerState.duration || 0);
+    const elapsed = remotePlayerState.paused ? 0 : Math.max(0, (Date.now() - remotePlayerReceivedAt) / 1000);
+    const current = duration > 0 ? Math.min(duration, base + elapsed) : base + elapsed;
+    if (curTime) curTime.textContent = formatSeconds(current);
+    if (durTime) durTime.textContent = formatSeconds(duration);
+    if (seek && duration > 0) seek.value = String(Math.max(0, Math.min(100, current / duration * 100)));
+}
+
+function startRemoteProgressTicker() {
+    if (remotePlayerTimer) return;
+    remotePlayerTimer = window.setInterval(updateRemoteProgress, 200);
+}
+
+function updateRemotePlayerOptimistic(patch = {}) {
+    if (!remotePlayerState) return;
+    remotePlayerState = { ...remotePlayerState, ...patch };
+    remotePlayerReceivedAt = Date.now();
+    if (patch.title !== undefined || patch.artist !== undefined || patch.art !== undefined) {
+        updatePlayerInfo(remotePlayerState.title, remotePlayerState.artist, remotePlayerState.art);
+    }
+    if (patch.volume !== undefined && volume) volume.value = Math.max(0, Math.min(1, Number(remotePlayerState.volume || 0)));
+    updateRemoteProgress();
+    if (patch.paused !== undefined) updatePlayingState(!remotePlayerState.paused);
 }
 
 function applyRemotePlayerState(state) {
     if (!state || state.ownerId === PLAYER_TAB_ID) return;
-    remotePlayerState = state;
+    const owner = getPlayerOwner();
+    if (owner?.id && owner.id !== state.ownerId && ownerIsFresh(owner)) return;
+    const sequence = Number(state.seq ?? 0);
+    if (lastRemoteOwnerId === state.ownerId && sequence && sequence <= lastRemoteSequence && !state.force) return;
+    if (lastRemoteOwnerId !== state.ownerId) lastRemoteSequence = -1;
+    lastRemoteOwnerId = state.ownerId;
+    lastRemoteSequence = sequence;
+    remotePlayerState = { ...state };
+    remotePlayerReceivedAt = Date.now();
     playerOwnerId = state.ownerId;
     updatePlayerInfo(state.title, state.artist, state.art);
     if (player) player.style.display = "grid";
     if (volume && Number.isFinite(Number(state.volume))) volume.value = Math.max(0, Math.min(1, Number(state.volume)));
-    if (seek && Number(state.duration) > 0) seek.value = String(Math.max(0, Math.min(100, Number(state.currentTime || 0) / Number(state.duration) * 100)));
-    if (curTime) curTime.textContent = formatSeconds(state.currentTime);
-    if (durTime) durTime.textContent = formatSeconds(state.duration);
+    updateRemoteProgress();
     updatePlayingState(!state.paused);
+    startRemoteProgressTicker();
 }
 
 function applyRemoteCommand(message) {
     if (!audio || message?.targetId !== PLAYER_TAB_ID) return;
+    if (message.id) {
+        if (processedPlayerCommandIds.has(message.id)) return;
+        processedPlayerCommandIds.add(message.id);
+        if (processedPlayerCommandIds.size > 200) processedPlayerCommandIds.delete(processedPlayerCommandIds.values().next().value);
+    }
     const p = message.payload || {};
     applyingRemotePlayerCommand = true;
     try {
@@ -188,33 +272,43 @@ function applyRemoteCommand(message) {
 }
 
 function initPlayerSync() {
-    if (playerSyncChannel || typeof BroadcastChannel === "undefined") return;
-    try { playerSyncChannel = new BroadcastChannel(PLAYER_SYNC_CHANNEL); } catch (_) { playerSyncChannel = null; }
+    if (playerSyncChannel || typeof window === "undefined") return;
+    try { playerSyncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(PLAYER_SYNC_CHANNEL) : null; } catch (_) { playerSyncChannel = null; }
     playerSyncChannel?.addEventListener("message", (event) => {
         const msg = event.data || {};
         if (msg.type === "request-state") {
             const owner = getPlayerOwner();
             if (owner?.id === PLAYER_TAB_ID) broadcastPlayerState(true);
         } else if (msg.type === "state") {
-            const owner = getPlayerOwner();
-            if (msg.state?.ownerId !== PLAYER_TAB_ID && (!owner || owner.id === msg.state.ownerId)) applyRemotePlayerState(msg.state);
+            if (msg.state?.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(msg.state);
         } else if (msg.type === "command") {
             applyRemoteCommand(msg);
+        } else if (msg.type === "owner-closing" && msg.ownerId === playerOwnerId) {
+            remotePlayerState = null;
+            playerOwnerId = null;
+            updatePlayingState(false);
         }
     });
     const owner = getPlayerOwner();
-    if (owner?.id) playerOwnerId = owner.id;
+    if (ownerIsFresh(owner)) playerOwnerId = owner.id;
     const raw = localStorage.getItem(PLAYER_SYNC_STATE_KEY);
     if (raw) { try { applyRemotePlayerState(JSON.parse(raw)); } catch (_) {} }
-    try { playerSyncChannel.postMessage({ type: "request-state", requesterId: PLAYER_TAB_ID }); } catch (_) {}
+    try { playerSyncChannel?.postMessage({ type: "request-state", requesterId: PLAYER_TAB_ID }); } catch (_) {}
     window.addEventListener("storage", (event) => {
-        if (event.key === PLAYER_SYNC_STATE_KEY && event.newValue && !isRemotePlayerOwner()) {
+        if (event.key === PLAYER_SYNC_STATE_KEY && event.newValue) {
             try { const state = JSON.parse(event.newValue); if (state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state); } catch (_) {}
+        } else if (event.key === PLAYER_SYNC_COMMAND_KEY && event.newValue) {
+            try { const message = JSON.parse(event.newValue); if (message.targetId === PLAYER_TAB_ID) applyRemoteCommand(message); } catch (_) {}
+        } else if (event.key === PLAYER_OWNER_KEY && event.newValue) {
+            try { const owner = JSON.parse(event.newValue); if (owner?.id) playerOwnerId = owner.id; } catch (_) {}
         }
     });
+    playerSyncHeartbeat = window.setInterval(heartbeatPlayerOwner, PLAYER_HEARTBEAT_MS);
     window.addEventListener("beforeunload", () => {
         try { playerSyncChannel?.postMessage({ type: "owner-closing", ownerId: PLAYER_TAB_ID }); } catch (_) {}
         clearPlayerOwner();
+        if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
+        if (remotePlayerTimer) window.clearInterval(remotePlayerTimer);
         try { playerSyncChannel?.close(); } catch (_) {}
     }, { once: true });
 }
@@ -1170,7 +1264,7 @@ function toggleAudioStream(
         const queue = sourceName === "library" ? enhancedQueue : (window.xrobHomeQueue || []);
         const queueIndex = sourceName === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1);
         sendPlayerCommand("load-play", { src: new URL(url, location.href).href, title, artist, art, songId, source: sourceName, queue, queueIndex });
-        applyRemotePlayerState({ ...remotePlayerState, src: new URL(url, location.href).href, title, artist, art, songId, source: sourceName, paused: false, queueIndex, at: Date.now() });
+        updateRemotePlayerOptimistic({ src: new URL(url, location.href).href, title, artist, art, songId, source: sourceName, paused: false, queueIndex, currentTime: 0 });
         return;
     }
 
@@ -1468,8 +1562,10 @@ function bindPlayerControls() {
             }
 
             if (isRemotePlayerOwner()) {
-                sendPlayerCommand(audio.paused ? "play" : "pause");
-                if (remotePlayerState) applyRemotePlayerState({ ...remotePlayerState, paused: !audio.paused, at: Date.now() });
+                const remotePaused = remotePlayerState ? Boolean(remotePlayerState.paused) : Boolean(audio.paused);
+                if (sendPlayerCommand(remotePaused ? "play" : "pause")) {
+                    updateRemotePlayerOptimistic({ paused: !remotePaused });
+                }
                 return;
             }
             setPlayerOwner();
@@ -1499,11 +1595,15 @@ function bindPlayerControls() {
 
     seek?.addEventListener("pointerdown", () => { isSeeking = true; });
     seek?.addEventListener("input", () => {
-        if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+        const duration = isRemotePlayerOwner() ? Number(remotePlayerState?.duration || 0) : Number(audio?.duration || 0);
+        if (duration > 0) {
             const ratio = Math.max(0, Math.min(1, Number(seek.value) / 100));
-            const targetTime = ratio * audio.duration;
+            const targetTime = ratio * duration;
             if (isRemotePlayerOwner()) sendPlayerCommand("seek", { time: targetTime });
             else { setPlayerOwner(); audio.currentTime = targetTime; }
+            if (isRemotePlayerOwner() && remotePlayerState) {
+                updateRemotePlayerOptimistic({ currentTime: targetTime });
+            }
             if (curTime) curTime.textContent = formatSeconds(targetTime);
         }
     });
@@ -1547,8 +1647,10 @@ function bindPlayerControls() {
         () => {
 
             const nextVolume = Number(volume.value);
-            if (isRemotePlayerOwner()) sendPlayerCommand("volume", { volume: nextVolume });
-            else { setPlayerOwner(); audio.volume = nextVolume; }
+            if (isRemotePlayerOwner()) {
+                sendPlayerCommand("volume", { volume: nextVolume });
+                updateRemotePlayerOptimistic({ volume: nextVolume });
+            } else { setPlayerOwner(); audio.volume = nextVolume; }
 
             localStorage.setItem(
                 "xrob_music_volume",
@@ -1611,6 +1713,7 @@ async function resetSettings() {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Failed to reset settings.");
         applySettingsToForm(data);
+        if (document.getElementById("tab-home")?.classList.contains("active")) loadDailyMix();
         showToast("↺ Settings reset to defaults");
     } catch (error) {
         showToast("❌ " + error.message);
@@ -1738,6 +1841,7 @@ async function saveSettings() {
             msg.textContent =
                 "✅ Settings saved.";
         }
+        if (document.getElementById("tab-home")?.classList.contains("active")) loadDailyMix();
 
 
         showToast(
@@ -5212,12 +5316,12 @@ function installDailyMixSwipe() {
     let startX = 0;
     let startY = 0;
     let startScrollLeft = 0;
-    let dragging = false;
-    let moved = false;
-    let suppressNextClick = false;
     let lastX = 0;
     let lastTime = 0;
     let velocity = 0;
+    let dragging = false;
+    let suppressClickUntil = 0;
+    let suppressClickTarget = null;
 
     const reset = (release = true) => {
         if (pointerId !== null && release && row.hasPointerCapture?.(pointerId)) {
@@ -5226,11 +5330,11 @@ function installDailyMixSwipe() {
         pointerId = null;
         row.classList.remove("is-swipe-dragging");
         dragging = false;
-        moved = false;
+        velocity = 0;
     };
 
     row.addEventListener("pointerdown", (event) => {
-        if (!event.isPrimary || event.button !== 0) return;
+        if (!event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return;
         pointerId = event.pointerId;
         startX = lastX = event.clientX;
         startY = event.clientY;
@@ -5238,7 +5342,7 @@ function installDailyMixSwipe() {
         lastTime = performance.now();
         velocity = 0;
         dragging = false;
-        moved = false;
+        suppressClickTarget = event.target.closest?.(".daily-mix-track") || null;
     });
 
     row.addEventListener("pointermove", (event) => {
@@ -5246,10 +5350,14 @@ function installDailyMixSwipe() {
         const dx = event.clientX - startX;
         const dy = event.clientY - startY;
         if (!dragging) {
-            if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-            if (Math.abs(dy) >= Math.abs(dx)) { reset(false); return; }
+            const distance = Math.hypot(dx, dy);
+            if (distance < 14) return;
+            if (Math.abs(dx) < Math.abs(dy) * 1.35) {
+                reset(false);
+                suppressClickTarget = null;
+                return;
+            }
             dragging = true;
-            moved = true;
             row.classList.add("is-swipe-dragging");
             try { row.setPointerCapture(pointerId); } catch (_) {}
         }
@@ -5259,27 +5367,29 @@ function installDailyMixSwipe() {
         lastX = event.clientX;
         lastTime = now;
         row.scrollLeft = startScrollLeft - dx;
-        event.preventDefault();
+        if (event.cancelable) event.preventDefault();
     });
 
     row.addEventListener("pointerup", (event) => {
         if (event.pointerId !== pointerId) return;
         if (dragging) {
-            const projected = row.scrollLeft - velocity * 170;
             const max = Math.max(0, row.scrollWidth - row.clientWidth);
+            const projected = row.scrollLeft - velocity * 240;
             row.scrollTo({ left: Math.max(0, Math.min(max, projected)), behavior: "smooth" });
-            suppressNextClick = true;
-            window.setTimeout(() => { suppressNextClick = false; }, 180);
+            suppressClickUntil = Date.now() + 260;
         }
         reset();
     });
     row.addEventListener("pointercancel", () => reset());
     row.addEventListener("lostpointercapture", () => { if (pointerId !== null) reset(false); });
     row.addEventListener("click", (event) => {
-        if (!suppressNextClick) return;
+        if (!suppressClickUntil || Date.now() > suppressClickUntil) return;
+        const clickedTrack = event.target.closest?.(".daily-mix-track");
+        if (!clickedTrack || (suppressClickTarget && clickedTrack !== suppressClickTarget)) return;
         event.preventDefault();
         event.stopPropagation();
-        suppressNextClick = false;
+        suppressClickUntil = 0;
+        suppressClickTarget = null;
     }, true);
 }
 
@@ -5287,8 +5397,7 @@ async function loadDailyMix(forceVariation = false) {
     const row = document.getElementById('dailyMixTracks'); if (!row) return;
     try {
         if (forceVariation) { dailyMixVariant = (dailyMixVariant + 1) % 20; localStorage.setItem('xrob_daily_mix_variant', String(dailyMixVariant)); }
-        const dailyMixCount = Math.max(5, Math.min(50, Number(localStorage.getItem("xrob_music_daily_mix_count") || 30)));
-        const r = await fetch(`api/daily-mix?limit=${dailyMixCount}&variant=${dailyMixVariant}`, {cache:'no-store'}); if (!r.ok) throw new Error('Daily Mix unavailable');
+        const r = await fetch(`api/daily-mix?variant=${dailyMixVariant}`, {cache:'no-store'}); if (!r.ok) throw new Error('Daily Mix unavailable');
         const d = await r.json(); dailyMixTracks = Array.isArray(d.tracks) ? d.tracks : [];
         document.getElementById('dailyMixTitle')?.replaceChildren(d.title || 'Daily Mix');
         document.getElementById('dailyMixSubtitle')?.replaceChildren(d.subtitle || 'Personalized from your listening');
