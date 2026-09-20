@@ -4529,6 +4529,8 @@ body.music-app {
   .duplicate-group-head { flex-direction:column; }
 }
 /* Home music shelves: touch swipe + desktop drag scrolling. */
-#tab-home.active .daily-mix-track-row { touch-action: pan-y; overscroll-behavior-x: contain; scroll-behavior: smooth; scroll-snap-type: x proximity; cursor: grab; -webkit-overflow-scrolling: touch; }
-#tab-home.active .daily-mix-track-row.is-swipe-dragging { cursor: grabbing; scroll-behavior: auto; user-select: none; }
+#tab-home.active .daily-mix-track-row { touch-action: pan-y; overscroll-behavior-x: contain; scroll-behavior: auto; scroll-snap-type: x proximity; cursor: grab; -webkit-overflow-scrolling: touch; }
+#tab-home.active .daily-mix-track-row.is-swipe-dragging { cursor: grabbing; user-select: none; }
 #tab-home.active .daily-mix-track-row > * { scroll-snap-align: start; }
+#tab-home.active .daily-mix-track { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+#tab-home.active .daily-mix-track img { pointer-events: none; user-select: none; -webkit-user-drag: none; }
