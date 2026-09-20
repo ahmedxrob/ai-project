@@ -86,6 +86,7 @@ const PLAYER_OWNER_KEY = "xrob_music_player_owner";
 const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 const PLAYER_OWNER_STALE_MS = 6500;
 const PLAYER_HEARTBEAT_MS = 2000;
+const DAILY_MIX_STATE_KEY = "xrob_music_daily_mix_state_v2";
 let playerSyncChannel = null;
 let playerSyncHeartbeat = null;
 let playerOwnerId = null;
@@ -97,6 +98,15 @@ let playerSyncSequence = 0;
 let lastRemoteOwnerId = null;
 let lastRemoteSequence = -1;
 const processedPlayerCommandIds = new Set();
+let dailyMixTracks = [];
+let dailyMixVariant = Number(localStorage.getItem("xrob_daily_mix_variant") || 0);
+
+function getLocalDateKey(date = new Date()) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+}
 
 function getPlayerOwner() {
     try {
@@ -164,6 +174,14 @@ function buildPlayerSyncState() {
         source: currentPlayerSource || "",
         queue: currentPlayerSource === "library" ? enhancedQueue : (window.xrobHomeQueue || []),
         queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
+        dailyMix: {
+            tracks: Array.isArray(dailyMixTracks) ? dailyMixTracks : [],
+            variant: Number(dailyMixVariant || 0),
+            title: document.getElementById("dailyMixTitle")?.textContent || "Daily Mix",
+            subtitle: document.getElementById("dailyMixSubtitle")?.textContent || "Personalized from your listening",
+            scrollLeft: Number(document.getElementById("dailyMixTracks")?.scrollLeft || 0),
+            date: getLocalDateKey(),
+        },
         paused: Boolean(audio.paused),
         muted: Boolean(audio.muted),
         at: Date.now()
@@ -222,6 +240,36 @@ function updateRemotePlayerOptimistic(patch = {}) {
     if (patch.paused !== undefined) updatePlayingState(!remotePlayerState.paused);
 }
 
+function applyRemoteDailyMixState(state, persist = true) {
+    if (!state || !Array.isArray(state.tracks) || !state.tracks.length) return false;
+    dailyMixTracks = state.tracks.map(track => ({ ...track }));
+    dailyMixVariant = Number.isFinite(Number(state.variant)) ? Number(state.variant) : dailyMixVariant;
+    renderDailyMixCards(state.title || "Daily Mix", state.subtitle || "Personalized from your listening");
+    const row = document.getElementById("dailyMixTracks");
+    if (row && Number.isFinite(Number(state.scrollLeft))) {
+        row.scrollLeft = Math.max(0, Math.min(Number(state.scrollLeft), Math.max(0, row.scrollWidth - row.clientWidth)));
+    }
+    if (persist) {
+        try { localStorage.setItem(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, tracks: dailyMixTracks, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
+    }
+    return true;
+}
+
+function loadPersistedDailyMixState() {
+    try {
+        const raw = localStorage.getItem(DAILY_MIX_STATE_KEY);
+        if (!raw) return false;
+        const state = JSON.parse(raw);
+        const configured = Math.max(5, Math.min(50, Number(localStorage.getItem("xrob_music_daily_mix_count") || 30)));
+        if (!Array.isArray(state?.tracks) || !state.tracks.length) return false;
+        if (state.date && state.date !== getLocalDateKey()) return false;
+        if (Number(state.trackCount || state.tracks.length) !== configured) return false;
+        return applyRemoteDailyMixState(state, false);
+    } catch (_) {
+        return false;
+    }
+}
+
 function applyRemotePlayerState(state) {
     if (!state || state.ownerId === PLAYER_TAB_ID) return;
     const owner = getPlayerOwner();
@@ -234,6 +282,7 @@ function applyRemotePlayerState(state) {
     remotePlayerState = { ...state };
     remotePlayerReceivedAt = Date.now();
     playerOwnerId = state.ownerId;
+    if (state.dailyMix) applyRemoteDailyMixState(state.dailyMix);
     updatePlayerInfo(state.title, state.artist, state.art);
     if (player) player.style.display = "grid";
     if (volume && Number.isFinite(Number(state.volume))) volume.value = Math.max(0, Math.min(1, Number(state.volume)));
@@ -5306,8 +5355,6 @@ async function loadDetailedLibraryStats() {
     } catch (_) {}
 }
 
-let dailyMixTracks = [];
-let dailyMixVariant = Number(localStorage.getItem('xrob_daily_mix_variant') || 0);
 function installDailyMixSwipe() {
     const row = document.getElementById("dailyMixTracks");
     if (!row || row.dataset.swipeBound === "true") return;
@@ -5315,136 +5362,185 @@ function installDailyMixSwipe() {
     let pointerId = null;
     let startX = 0;
     let startY = 0;
-    let startScrollLeft = 0;
     let lastX = 0;
     let lastTime = 0;
     let velocity = 0;
     let dragging = false;
-    let dragCard = null;
     let suppressClick = false;
-    let rafId = 0;
-    let pendingScrollLeft = 0;
+    let momentumFrame = 0;
+    const INTENT_THRESHOLD = 8;
+    const MAX_VELOCITY = 2.8;
+    const FRICTION = 0.93;
 
-    const clampScroll = (value) => {
-        const max = Math.max(0, row.scrollWidth - row.clientWidth);
-        return Math.max(0, Math.min(max, value));
+    const clampScroll = value => Math.max(0, Math.min(Math.max(0, row.scrollWidth - row.clientWidth), value));
+    const stopMomentum = () => {
+        if (momentumFrame) cancelAnimationFrame(momentumFrame);
+        momentumFrame = 0;
     };
-
-    const paintScroll = () => {
-        rafId = 0;
-        row.scrollLeft = pendingScrollLeft;
-    };
-
-    const scheduleScroll = (value) => {
-        pendingScrollLeft = clampScroll(value);
-        if (!rafId) rafId = requestAnimationFrame(paintScroll);
-    };
-
-    const reset = (release = true) => {
-        if (rafId) {
-            cancelAnimationFrame(rafId);
-            rafId = 0;
-        }
-        if (pointerId !== null && release && row.hasPointerCapture?.(pointerId)) {
+    const releasePointer = () => {
+        if (pointerId !== null && row.hasPointerCapture?.(pointerId)) {
             try { row.releasePointerCapture(pointerId); } catch (_) {}
         }
+    };
+    const resetGesture = () => {
+        releasePointer();
         pointerId = null;
-        row.classList.remove("is-swipe-dragging");
         dragging = false;
-        dragCard = null;
         velocity = 0;
+        row.classList.remove("is-swipe-dragging");
+    };
+    const runMomentum = () => {
+        if (Math.abs(velocity) < 0.03) {
+            stopMomentum();
+            return;
+        }
+        row.scrollLeft = clampScroll(row.scrollLeft - velocity * 28);
+        const atStart = row.scrollLeft <= 0 && velocity > 0;
+        const atEnd = row.scrollLeft >= row.scrollWidth - row.clientWidth - 1 && velocity < 0;
+        if (atStart || atEnd) {
+            stopMomentum();
+            return;
+        }
+        velocity *= FRICTION;
+        momentumFrame = requestAnimationFrame(runMomentum);
     };
 
-    // Capture the pointer at the shelf level so moving across a card (or over its
-    // image/text) never hands the gesture back to the button underneath it.
-    row.addEventListener("pointerdown", (event) => {
+    row.addEventListener("pointerdown", event => {
         if (!event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return;
-        const card = event.target.closest?.(".daily-mix-track");
-        if (!card || !row.contains(card)) return;
-        if (suppressClick) suppressClick = false;
+        if (!event.target.closest?.(".daily-mix-track")) return;
+        stopMomentum();
         pointerId = event.pointerId;
         startX = lastX = event.clientX;
         startY = event.clientY;
-        startScrollLeft = row.scrollLeft;
         lastTime = performance.now();
         velocity = 0;
         dragging = false;
-        dragCard = card;
         try { row.setPointerCapture(pointerId); } catch (_) {}
     }, true);
 
-    row.addEventListener("pointermove", (event) => {
+    row.addEventListener("pointermove", event => {
         if (event.pointerId !== pointerId) return;
         const dx = event.clientX - startX;
         const dy = event.clientY - startY;
         if (!dragging) {
-            const distance = Math.hypot(dx, dy);
-            if (distance < 12) return;
-            // Give vertical page scrolling priority unless the gesture is clearly horizontal.
+            if (Math.hypot(dx, dy) < INTENT_THRESHOLD) return;
             if (Math.abs(dx) <= Math.abs(dy) * 1.15) {
-                reset();
+                resetGesture();
                 return;
             }
             dragging = true;
+            suppressClick = true;
             row.classList.add("is-swipe-dragging");
         }
         const now = performance.now();
         const dt = Math.max(8, now - lastTime);
-        velocity = (event.clientX - lastX) / dt;
+        const deltaX = event.clientX - lastX;
+        velocity = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, deltaX / dt));
         lastX = event.clientX;
         lastTime = now;
-        scheduleScroll(startScrollLeft - dx);
+        row.scrollLeft = clampScroll(row.scrollLeft - deltaX);
         if (event.cancelable) event.preventDefault();
-    }, {passive: false});
+    }, { passive: false });
 
-    const finish = (event) => {
+    row.addEventListener("pointerup", event => {
         if (event.pointerId !== pointerId) return;
-        if (dragging) {
-            const projected = row.scrollLeft - velocity * 260;
-            row.scrollTo({ left: clampScroll(projected), behavior: "smooth" });
-            // Only the click generated by this drag is swallowed; normal taps remain untouched.
-            suppressClick = true;
-        }
-        reset();
-    };
-
-    row.addEventListener("pointerup", finish, true);
-    row.addEventListener("pointercancel", (event) => {
-        if (event.pointerId === pointerId) reset();
+        const wasDragging = dragging;
+        releasePointer();
+        pointerId = null;
+        dragging = false;
+        row.classList.remove("is-swipe-dragging");
+        if (wasDragging) runMomentum();
+        else suppressClick = false;
     }, true);
+
+    row.addEventListener("pointercancel", event => {
+        if (event.pointerId !== pointerId) return;
+        resetGesture();
+        suppressClick = false;
+    }, true);
+
     row.addEventListener("lostpointercapture", () => {
-        if (pointerId !== null) reset(false);
+        if (pointerId === null) return;
+        pointerId = null;
+        dragging = false;
+        row.classList.remove("is-swipe-dragging");
     });
 
-    row.addEventListener("click", (event) => {
+    row.addEventListener("scroll", () => {
+        const state = {
+            tracks: dailyMixTracks,
+            variant: dailyMixVariant,
+            title: document.getElementById("dailyMixTitle")?.textContent || "Daily Mix",
+            subtitle: document.getElementById("dailyMixSubtitle")?.textContent || "Personalized from your listening",
+            scrollLeft: row.scrollLeft,
+            date: getLocalDateKey(),
+        };
+        try { localStorage.setItem(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
+    }, { passive: true });
+
+    row.addEventListener("click", event => {
         if (!suppressClick) return;
         const clickedTrack = event.target.closest?.(".daily-mix-track");
         if (!clickedTrack) return;
         suppressClick = false;
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation();
     }, true);
+}
+
+function renderDailyMixCards(title = "Daily Mix", subtitle = "Personalized from your listening") {
+    const row = document.getElementById('dailyMixTracks');
+    if (!row) return;
+    document.getElementById('dailyMixTitle')?.replaceChildren(title);
+    document.getElementById('dailyMixSubtitle')?.replaceChildren(subtitle);
+    row.innerHTML = '';
+    if (!dailyMixTracks.length) {
+        row.innerHTML = '<div class="daily-mix-empty">Play some music to start building your Daily Mix.</div>';
+        return;
+    }
+    dailyMixTracks.forEach((track, index) => {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'daily-mix-track';
+        card.innerHTML = `<img src="${escapeHtml(track.cover || '')}" alt="" loading="lazy"><strong>${escapeHtml(track.title || 'Unknown Track')}</strong><span>${escapeHtml(track.artist || 'Unknown Artist')}</span>`;
+        card.addEventListener('click', () => {
+            setEnhancedQueue(dailyMixTracks, index);
+            currentPlayerSource = 'library';
+            playLibraryTrack(index);
+        });
+        card.querySelector('img')?.addEventListener('error', e => e.currentTarget.removeAttribute('src'), {once:true});
+        row.appendChild(card);
+    });
+    renderLocalIcons();
 }
 
 async function loadDailyMix(forceVariation = false) {
     const row = document.getElementById('dailyMixTracks'); if (!row) return;
     try {
-        if (forceVariation) { dailyMixVariant = (dailyMixVariant + 1) % 20; localStorage.setItem('xrob_daily_mix_variant', String(dailyMixVariant)); }
-        const r = await fetch(`api/daily-mix?variant=${dailyMixVariant}`, {cache:'no-store'}); if (!r.ok) throw new Error('Daily Mix unavailable');
-        const d = await r.json(); dailyMixTracks = Array.isArray(d.tracks) ? d.tracks : [];
-        document.getElementById('dailyMixTitle')?.replaceChildren(d.title || 'Daily Mix');
-        document.getElementById('dailyMixSubtitle')?.replaceChildren(d.subtitle || 'Personalized from your listening');
-        row.innerHTML = '';
-        if (!dailyMixTracks.length) { row.innerHTML = '<div class="daily-mix-empty">Play some music to start building your Daily Mix.</div>'; return; }
-        dailyMixTracks.forEach((track, index) => {
-            const card = document.createElement('button'); card.type='button'; card.className='daily-mix-track';
-            card.innerHTML = `<img src="${escapeHtml(track.cover || '')}" alt="" loading="lazy"><strong>${escapeHtml(track.title || 'Unknown Track')}</strong><span>${escapeHtml(track.artist || 'Unknown Artist')}</span>`;
-            card.addEventListener('click', () => { setEnhancedQueue(dailyMixTracks, index); currentPlayerSource='library'; playLibraryTrack(index); });
-            card.querySelector('img')?.addEventListener('error', e => e.currentTarget.removeAttribute('src'), {once:true});
-            row.appendChild(card);
-        });
-        renderLocalIcons();
-    } catch (e) { row.innerHTML = '<div class="daily-mix-empty">Daily Mix could not be loaded.</div>'; }
+        if (forceVariation) {
+            dailyMixVariant = (dailyMixVariant + 1) % 20;
+            localStorage.setItem('xrob_daily_mix_variant', String(dailyMixVariant));
+        }
+        const r = await fetch(`api/daily-mix?variant=${dailyMixVariant}`, {cache:'no-store'});
+        if (!r.ok) throw new Error('Daily Mix unavailable');
+        const d = await r.json();
+        dailyMixTracks = Array.isArray(d.tracks) ? d.tracks : [];
+        renderDailyMixCards(d.title || 'Daily Mix', d.subtitle || 'Personalized from your listening');
+        const state = {
+            tracks: dailyMixTracks,
+            variant: dailyMixVariant,
+            title: d.title || 'Daily Mix',
+            subtitle: d.subtitle || 'Personalized from your listening',
+            scrollLeft: row.scrollLeft,
+            date: d.date || new Date().toISOString().slice(0,10),
+            savedAt: Date.now(),
+        };
+        try { localStorage.setItem(DAILY_MIX_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+        if (!isRemotePlayerOwner()) broadcastPlayerState(true);
+    } catch (e) {
+        if (!dailyMixTracks.length) row.innerHTML = '<div class="daily-mix-empty">Daily Mix could not be loaded.</div>';
+    }
 }
 
 function installEnhancedFeatures(){
@@ -5453,6 +5549,7 @@ function installEnhancedFeatures(){
     document.getElementById("dailyMixRefresh")?.addEventListener("click", () => loadDailyMix(true));
     document.getElementById("dailyMixPlay")?.addEventListener("click", () => { if (!dailyMixTracks.length) return; setEnhancedQueue(dailyMixTracks, 0); currentPlayerSource="library"; playLibraryTrack(0); });
     loadDetailedLibraryStats();
+    loadPersistedDailyMixState();
     loadDailyMix();
     installDailyMixSwipe();
     document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
