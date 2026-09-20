@@ -5377,10 +5377,12 @@ function installDailyMixSwipe() {
         if (momentumFrame) cancelAnimationFrame(momentumFrame);
         momentumFrame = 0;
     };
+    let captureTarget = null;
     const releasePointer = () => {
-        if (pointerId !== null && row.hasPointerCapture?.(pointerId)) {
-            try { row.releasePointerCapture(pointerId); } catch (_) {}
+        if (pointerId !== null && captureTarget?.hasPointerCapture?.(pointerId)) {
+            try { captureTarget.releasePointerCapture(pointerId); } catch (_) {}
         }
+        captureTarget = null;
     };
     const resetGesture = () => {
         releasePointer();
@@ -5415,7 +5417,9 @@ function installDailyMixSwipe() {
         lastTime = performance.now();
         velocity = 0;
         dragging = false;
-        try { row.setPointerCapture(pointerId); } catch (_) {}
+        suppressClick = false;
+        captureTarget = event.target.closest?.(".daily-mix-track") || null;
+        try { captureTarget?.setPointerCapture(pointerId); } catch (_) {}
     }, true);
 
     row.addEventListener("pointermove", event => {
@@ -5459,12 +5463,13 @@ function installDailyMixSwipe() {
         suppressClick = false;
     }, true);
 
-    row.addEventListener("lostpointercapture", () => {
-        if (pointerId === null) return;
+    row.addEventListener("lostpointercapture", event => {
+        if (pointerId === null || (captureTarget && event.target !== captureTarget)) return;
         pointerId = null;
+        captureTarget = null;
         dragging = false;
         row.classList.remove("is-swipe-dragging");
-    });
+    }, true);
 
     row.addEventListener("scroll", () => {
         const state = {
@@ -5479,9 +5484,8 @@ function installDailyMixSwipe() {
     }, { passive: true });
 
     row.addEventListener("click", event => {
-        if (!suppressClick) return;
         const clickedTrack = event.target.closest?.(".daily-mix-track");
-        if (!clickedTrack) return;
+        if (!clickedTrack || !suppressClick) return;
         suppressClick = false;
         event.preventDefault();
         event.stopPropagation();
