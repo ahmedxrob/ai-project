@@ -102,8 +102,6 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 AUTH_USER = os.getenv("XROB_USERNAME", "admin")
 AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "")
 AUTH_COOKIE = "xrob_session"
-AUTH_TTL = 60 * 60 * 24 * 14
-AUTH_MAX_SESSIONS = 24
 AUTH_MIN_PASSWORD_LENGTH = 12
 AUTH_SESSIONS = {}
 AUTH_LOGIN_ATTEMPTS = defaultdict(list)
@@ -202,11 +200,7 @@ def _is_authenticated(token):
     session = AUTH_SESSIONS.get(token)
     if not session:
         return False
-    now = time.time()
-    if now - session.get("created", 0) > AUTH_TTL:
-        AUTH_SESSIONS.pop(token, None)
-        return False
-    session["last_seen"] = now
+    session["last_seen"] = time.time()
     return True
 
 
@@ -250,6 +244,7 @@ DEFAULT_SETTINGS = {
     "scan_interval_minutes": 60,
     "title_cleanup_rules": "(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",
     "metadata_mode": "auto",
+    "daily_mix_track_count": 30,
     "subsonic_user": "admin",
     "subsonic_password": "",
     "web_username": os.getenv("XROB_USERNAME", "admin"),
@@ -491,7 +486,7 @@ def save_settings(data: dict):
     allowed = {
         "audio_format", "audio_quality", "embed_thumbnail",
         "embed_metadata", "organize_by_artist", "scan_enabled",
-        "scan_interval_minutes", "title_cleanup_rules", "metadata_mode", "web_username", "web_password",
+        "scan_interval_minutes", "title_cleanup_rules", "metadata_mode", "daily_mix_track_count", "web_username", "web_password",
     }
 
     old_user = str(settings.get("web_username") or "")
@@ -524,6 +519,7 @@ def save_settings(data: dict):
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist"))
     settings["scan_enabled"] = bool(settings.get("scan_enabled", True))
     settings["scan_interval_minutes"] = max(5, int(settings.get("scan_interval_minutes", 60) or 60))
+    settings["daily_mix_track_count"] = max(5, min(50, int(settings.get("daily_mix_track_count", 30) or 30)))
     settings["web_username"] = str(settings.get("web_username") or os.getenv("XROB_USERNAME", "admin"))[:64]
     # Keep a verifier, never persist web passwords in plaintext.
     if settings.get("web_password") and not settings.get("web_password_hash"):
@@ -3212,14 +3208,17 @@ async def api_library_statistics():
 
 
 @app.get("/api/daily-mix")
-async def api_daily_mix(limit: int = 30, variant: int = 0):
+async def api_daily_mix(limit: int | None = None, variant: int = 0):
     """Local Spotify-style Daily Mix.
 
     It uses listening history, recency, repeat frequency, completion, stars, and
     artist/genre affinity. The daily seed keeps the mix coherent for a day while
     ``variant`` lets Refresh produce a different but still personalized mix.
     """
-    limit = max(10, min(int(limit or 30), 50))
+    configured_limit = int(load_settings().get("daily_mix_track_count", 30) or 30)
+    requested_limit = configured_limit if limit is None else int(limit)
+    # A limit supplied by the client is honored within safe bounds; the normal UI sends the configured value.
+    limit = max(5, min(requested_limit, 50))
     variant = max(0, min(int(variant or 0), 19))
     library = await build_library()
     songs = list(library.get("songs", []))
@@ -6454,13 +6453,9 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
     token = _auth_token()
     now = time.time()
     AUTH_SESSIONS[token] = {"created": now, "last_seen": now, "username": expected_user}
-    if len(AUTH_SESSIONS) > AUTH_MAX_SESSIONS:
-        oldest = sorted(AUTH_SESSIONS.items(), key=lambda pair: pair[1].get("last_seen", 0))
-        for stale_token, _ in oldest[: len(AUTH_SESSIONS) - AUTH_MAX_SESSIONS]:
-            AUTH_SESSIONS.pop(stale_token, None)
     response = JSONResponse({"status":"ok", "username":expected_user})
     response.set_cookie(
-        AUTH_COOKIE, token, max_age=AUTH_TTL, httponly=True, samesite="lax",
+        AUTH_COOKIE, token, httponly=True, samesite="lax",
         secure=request.url.scheme == "https", path="/"
     )
     return response
