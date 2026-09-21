@@ -13,7 +13,6 @@ import time
 import urllib.parse
 import urllib.request
 import difflib
-import contextlib
 import unicodedata
 import uuid
 import secrets
@@ -32,6 +31,7 @@ from fastapi import (
     WebSocketDisconnect,
     UploadFile,
     File,
+    Cookie,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -51,16 +51,9 @@ from fastapi.staticfiles import StaticFiles
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-@contextlib.asynccontextmanager
-async def app_lifespan(_app):
-    await startup_event()
-    yield
-
-
 app = FastAPI(
     title="Xrob Music",
     version="2.6.0",
-    lifespan=app_lifespan,
 )
 
 @app.middleware("http")
@@ -269,11 +262,11 @@ FFMPEG_COMMAND = [shutil.which("ffmpeg") or "ffmpeg"]
 
 try:
     from mutagen import File as MutagenFile
-    from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC
+    from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TCON, APIC
     from mutagen.flac import Picture
 except Exception:
     MutagenFile = None
-    ID3 = TIT2 = TPE1 = TALB = APIC = None
+    ID3 = TIT2 = TPE1 = TALB = TDRC = TCON = APIC = None
     Picture = None
 
 
@@ -829,6 +822,12 @@ def parse_tag_int(value, default=0):
     match = re.match(r"^\s*(\d+)", text)
     return int(match.group(1)) if match else default
 
+
+def iso_utc(timestamp):
+    timestamp = safe_float(timestamp, 0)
+    if timestamp <= 0:
+        return ""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
 
 
 def clean_metadata_text(
@@ -2057,14 +2056,6 @@ async def download_worker():
                 or f".{fmt}"
             )
 
-            # Filename generation is required even when metadata rewriting is disabled.
-            clean_title = clean_filename(
-                normalize_catalog_title(
-                    task.get("title", "Unknown Track"),
-                    settings.get("title_cleanup_rules", ""),
-                )
-            )
-
             if settings.get("embed_metadata", True):
                 task["status"] = "processing"
                 task["percent"] = 96
@@ -2239,6 +2230,7 @@ async def download_worker():
 # STARTUP
 # ============================================================
 
+@app.on_event("startup")
 async def startup_event():
 
     await asyncio.to_thread(configure_storage)
@@ -2305,10 +2297,6 @@ async def websocket_endpoint(
     websocket: WebSocket,
 ):
 
-    if not _is_authenticated(websocket.cookies.get(AUTH_COOKIE)):
-        await websocket.close(code=1008)
-        return
-
     await manager.connect(
         websocket
     )
@@ -2362,19 +2350,11 @@ async def api_get_settings():
 async def api_post_settings(
     data: dict = Body(...),
 ):
-    before = load_settings()
-    before_user = str(before.get("web_username") or "")
-    password_change = "web_password" in data and bool(str(data.get("web_password") or ""))
     try:
         save_settings(data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    result = public_settings()
-    result["credentials_changed"] = (
-        before_user != str(result.get("web_username") or "")
-        or password_change
-    )
-    return result
+    return public_settings()
 
 
 # ============================================================
@@ -2924,7 +2904,7 @@ async def api_clear_completed():
     ids = [
         task_id
         for task_id, task in TASKS.items()
-        if task.get("status") in removable and task_id not in ACTIVE_PROCESSES
+        if task.get("status") in removable
     ]
 
     for task_id in ids:
@@ -2970,14 +2950,6 @@ async def api_delete_task(
         raise HTTPException(
             status_code=404,
             detail="Task not found",
-        )
-
-    if task_id in ACTIVE_PROCESSES:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Task is still stopping; try again in a moment."
-            ),
         )
 
     if task.get("status") in {
@@ -4024,6 +3996,9 @@ def get_starred_at_sync(item_id):
 
     return float(row[0]) if row else None
 
+
+def is_starred_sync(item_id):
+    return get_starred_at_sync(item_id) is not None
 
 
 def set_star_sync(
