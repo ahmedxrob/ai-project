@@ -17,6 +17,7 @@ import unicodedata
 import uuid
 import secrets
 import xml.etree.ElementTree as ET
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Optional
 from collections import defaultdict
@@ -31,7 +32,6 @@ from fastapi import (
     WebSocketDisconnect,
     UploadFile,
     File,
-    Cookie,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -51,9 +51,30 @@ from fastapi.staticfiles import StaticFiles
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
+@asynccontextmanager
+async def app_lifespan(_app):
+    await startup_event()
+    try:
+        yield
+    finally:
+        tasks = [*DOWNLOAD_WORKER_TASKS, *BACKGROUND_TASKS]
+        if SCHEDULED_SCANNER_TASK is not None:
+            tasks.append(SCHEDULED_SCANNER_TASK)
+        if LIBRARY_WARMUP_TASK is not None:
+            tasks.append(LIBRARY_WARMUP_TASK)
+        for task in tasks:
+            if task and not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        DOWNLOAD_WORKER_TASKS.clear()
+        BACKGROUND_TASKS.clear()
+
+
 app = FastAPI(
     title="Xrob Music",
     version="2.6.0",
+    lifespan=app_lifespan,
 )
 
 @app.middleware("http")
@@ -108,6 +129,10 @@ AUTH_LOGIN_ATTEMPTS = defaultdict(list)
 AUTH_LOGIN_WINDOW = 300
 AUTH_LOGIN_MAX_ATTEMPTS = 5
 AUTH_BOOTSTRAP_FILE = DATA_DIR / "web_bootstrap.txt"
+PLAYER_STATE = None
+PLAYER_STATE_UPDATED_AT = 0.0
+PLAYER_STATE_MAX_AGE_SECONDS = 12.0
+
 
 def _auth_token():
     return secrets.token_urlsafe(32)
@@ -286,6 +311,17 @@ LIBRARY_CACHE_TTL = 10.0
 LIBRARY_CACHE_LOCK = asyncio.Lock()
 LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
 LIBRARY_WARMUP_TASK = None
+DOWNLOAD_WORKER_TASKS = set()
+BACKGROUND_TASKS = set()
+SCHEDULED_SCANNER_TASK = None
+
+
+def track_background_task(coro):
+    """Track short-lived tasks so shutdown can await them cleanly."""
+    task = asyncio.create_task(coro)
+    BACKGROUND_TASKS.add(task)
+    task.add_done_callback(BACKGROUND_TASKS.discard)
+    return task
 
 
 # ============================================================
@@ -319,15 +355,13 @@ def migrate_legacy_db(source: Path, destination: Path):
     left untouched.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
+    source_conn = None
+    destination_conn = None
     try:
         source_conn = sqlite3.connect(source, timeout=5.0)
         source_conn.execute("PRAGMA busy_timeout = 5000")
         destination_conn = sqlite3.connect(destination, timeout=30.0)
-        try:
-            source_conn.backup(destination_conn)
-        finally:
-            destination_conn.close()
-            source_conn.close()
+        source_conn.backup(destination_conn)
         print(f"Migrated legacy database: {source} -> {destination}")
     except (sqlite3.Error, OSError) as exc:
         try:
@@ -336,6 +370,13 @@ def migrate_legacy_db(source: Path, destination: Path):
         except OSError:
             pass
         print(f"Warning: could not migrate legacy database: {exc}. Starting with a new local database.")
+    finally:
+        for conn in (destination_conn, source_conn):
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def configure_storage():
@@ -490,7 +531,6 @@ def save_settings(data: dict):
     }
 
     old_user = str(settings.get("web_username") or "")
-    old_credential = str(settings.get("web_password_hash") or settings.get("web_password") or "")
     for key in allowed & data.keys():
         if key not in {"web_password"}:
             settings[key] = data[key]
@@ -553,18 +593,30 @@ def public_settings():
 # DATABASE
 # ============================================================
 
+@contextmanager
 def db_connect():
-    """Open the local persistent SQLite database with safe lock handling.
+    """Open and reliably close the local persistent SQLite database.
 
-    The music library may live on SMB/NFS, but SQLite must stay on the
-    add-on's local /data volume. This avoids unreliable file locking on
-    network filesystems.
+    A sqlite3 connection's native ``with`` statement manages transactions but
+    does not close the connection. Xrob Music performs many short DB calls, so
+    this wrapper owns the connection lifetime and closes it deterministically.
     """
     DB_FILE.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_FILE, timeout=30.0)
-    conn.execute("PRAGMA busy_timeout = 30000")
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA foreign_keys = ON")
+        yield conn
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -757,14 +809,58 @@ class ConnectionManager:
             self.connections.remove(websocket)
 
     async def broadcast(self, message):
-        for websocket in list(self.connections):
-            try:
-                await websocket.send_json(message)
-            except Exception:
+        connections = list(self.connections)
+        if not connections:
+            return
+        results = await asyncio.gather(
+            *(websocket.send_json(message) for websocket in connections),
+            return_exceptions=True,
+        )
+        for websocket, result in zip(connections, results):
+            if isinstance(result, Exception):
                 self.disconnect(websocket)
 
 
 manager = ConnectionManager()
+
+
+def _compact_player_state(state):
+    keys = (
+        "ownerId", "clientId", "src", "currentTime", "duration",
+        "volume", "title", "artist", "art", "songId", "source",
+        "queueIndex", "paused", "muted", "at", "seq", "force",
+    )
+    return {key: state[key] for key in keys if key in state}
+
+
+async def publish_player_state(state, full=True):
+    global PLAYER_STATE, PLAYER_STATE_UPDATED_AT
+    if not isinstance(state, dict):
+        return
+    incoming = dict(state)
+    previous_owner = str(PLAYER_STATE.get("ownerId") or "") if isinstance(PLAYER_STATE, dict) else ""
+    incoming_owner = str(incoming.get("ownerId") or "")
+    # A new owner must start a fresh state. Otherwise a compact heartbeat from a
+    # newly claimed player could accidentally inherit the previous owner's queue.
+    if isinstance(PLAYER_STATE, dict) and not full and previous_owner == incoming_owner:
+        merged = dict(PLAYER_STATE)
+        merged.update(incoming)
+    else:
+        merged = incoming
+    PLAYER_STATE = merged
+    PLAYER_STATE_UPDATED_AT = time.time()
+    outbound = dict(merged) if full else _compact_player_state(merged)
+    outbound["_serverUpdatedAt"] = PLAYER_STATE_UPDATED_AT
+    await manager.broadcast({"type": "player_state", "state": outbound})
+
+
+def get_player_state():
+    if not isinstance(PLAYER_STATE, dict):
+        return None
+    age = time.time() - PLAYER_STATE_UPDATED_AT if PLAYER_STATE_UPDATED_AT else float("inf")
+    if age > PLAYER_STATE_MAX_AGE_SECONDS:
+        return None
+    return {"state": dict(PLAYER_STATE), "updated_at": PLAYER_STATE_UPDATED_AT}
 
 
 async def notify_task_update(task, force_save=False):
@@ -822,12 +918,6 @@ def parse_tag_int(value, default=0):
     match = re.match(r"^\s*(\d+)", text)
     return int(match.group(1)) if match else default
 
-
-def iso_utc(timestamp):
-    timestamp = safe_float(timestamp, 0)
-    if timestamp <= 0:
-        return ""
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
 
 
 def clean_metadata_text(
@@ -2055,6 +2145,12 @@ async def download_worker():
                 audio_file.suffix
                 or f".{fmt}"
             )
+            clean_title = clean_filename(
+                normalize_catalog_title(
+                    task.get("title", "Unknown Track"),
+                    settings.get("title_cleanup_rules", ""),
+                )
+            ) or "Unknown Track"
 
             if settings.get("embed_metadata", True):
                 task["status"] = "processing"
@@ -2176,7 +2272,7 @@ async def download_worker():
             # Do not block completion on a full-library metadata rebuild. The file
             # is already safely in the library; queue a background refresh that also
             # persists the duplicate-detection index and adds the song to the editor.
-            asyncio.create_task(refresh_after_download(final_path))
+            track_background_task(refresh_after_download(final_path))
 
             await notify_task_update(
                 task,
@@ -2230,7 +2326,6 @@ async def download_worker():
 # STARTUP
 # ============================================================
 
-@app.on_event("startup")
 async def startup_event():
 
     await asyncio.to_thread(configure_storage)
@@ -2267,16 +2362,15 @@ async def startup_event():
                 force=True,
             )
 
-    for _ in range(
-        MAX_CONCURRENT_DOWNLOADS
-    ):
-        asyncio.create_task(
-            download_worker()
-        )
+    global LIBRARY_WARMUP_TASK, DOWNLOAD_WORKER_TASKS, SCHEDULED_SCANNER_TASK
+    if not DOWNLOAD_WORKER_TASKS:
+        for _ in range(MAX_CONCURRENT_DOWNLOADS):
+            DOWNLOAD_WORKER_TASKS.add(asyncio.create_task(download_worker()))
 
-    asyncio.create_task(scheduled_library_scanner())
-    global LIBRARY_WARMUP_TASK
-    if LIBRARY_WARMUP_TASK is None:
+    if SCHEDULED_SCANNER_TASK is None or SCHEDULED_SCANNER_TASK.done():
+        SCHEDULED_SCANNER_TASK = asyncio.create_task(scheduled_library_scanner())
+
+    if LIBRARY_WARMUP_TASK is None or LIBRARY_WARMUP_TASK.done():
         LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
 
     for task in TASKS.values():
@@ -2293,33 +2387,35 @@ async def startup_event():
 # ============================================================
 
 @app.websocket("/ws")
-async def websocket_endpoint(
-    websocket: WebSocket,
-):
+async def websocket_endpoint(websocket: WebSocket):
+    # HTTP middleware does not authenticate WebSocket handshakes, so check the
+    # same session cookie explicitly before accepting the connection.
+    if not _is_authenticated(websocket.cookies.get(AUTH_COOKIE)):
+        await websocket.close(code=1008)
+        return
 
-    await manager.connect(
-        websocket
-    )
+    await manager.connect(websocket)
+    current_state = get_player_state()
+    if current_state:
+        try:
+            initial_state = dict(current_state["state"])
+            initial_state["_serverUpdatedAt"] = current_state["updated_at"]
+            await websocket.send_json({"type": "player_state", "state": initial_state})
+        except Exception:
+            manager.disconnect(websocket)
+            return
 
     try:
-
         while True:
-            await websocket.receive_text()
-
+            message = await websocket.receive_text()
+            if message == "ping":
+                await websocket.send_text("pong")
     except WebSocketDisconnect:
-
-        manager.disconnect(
-            websocket
-        )
-
+        manager.disconnect(websocket)
     except Exception:
-
-        manager.disconnect(
-            websocket
-        )
+        manager.disconnect(websocket)
 
 
-# ============================================================
 # WEB APP
 # ============================================================
 
@@ -2681,8 +2777,14 @@ async def api_preview(
 
                 try:
                     ffmpeg.kill()
+                except ProcessLookupError:
+                    pass
                 except Exception:
                     pass
+            try:
+                await ffmpeg.wait()
+            except Exception:
+                pass
 
     return StreamingResponse(
         generator(),
@@ -2905,6 +3007,7 @@ async def api_clear_completed():
         task_id
         for task_id, task in TASKS.items()
         if task.get("status") in removable
+        and task_id not in ACTIVE_PROCESSES
     ]
 
     for task_id in ids:
@@ -2956,7 +3059,7 @@ async def api_delete_task(
         "queued",
         "downloading",
         "processing",
-    }:
+    } or task_id in ACTIVE_PROCESSES:
 
         raise HTTPException(
             status_code=400,
@@ -2994,7 +3097,7 @@ async def api_delete_task(
 async def api_library():
     global LIBRARY_WARMUP_TASK
     if LIBRARY_CACHE is None:
-        if LIBRARY_WARMUP_TASK is None:
+        if LIBRARY_WARMUP_TASK is None or LIBRARY_WARMUP_TASK.done():
             LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
         return await fast_library_snapshot()
 
@@ -3995,10 +4098,6 @@ def get_starred_at_sync(item_id):
         ).fetchone()
 
     return float(row[0]) if row else None
-
-
-def is_starred_sync(item_id):
-    return get_starred_at_sync(item_id) is not None
 
 
 def set_star_sync(
@@ -6218,13 +6317,17 @@ async def rest_playlist(
 # PLAYER / PLAYLIST / HEALTH API
 # ============================================================
 
-async def write_app_error(source, message, task_id=None):
+def write_app_error_sync(source, message, task_id=None):
     try:
         with db_connect() as conn:
             conn.execute("INSERT INTO app_errors(created_at,source,message,task_id) VALUES(?,?,?,?)", (time.time(), str(source), str(message), task_id))
             conn.commit()
     except Exception:
         pass
+
+
+async def write_app_error(source, message, task_id=None):
+    await asyncio.to_thread(write_app_error_sync, source, message, task_id)
 
 
 def _playlist_row_to_dict(row):
@@ -6236,23 +6339,89 @@ def _playlist_row_to_dict(row):
     return d
 
 
+@app.get("/api/player/state")
+async def api_player_state():
+    data = get_player_state()
+    if not data:
+        return {"state": None, "updated_at": 0}
+    return data
+
+
+@app.post("/api/player/state")
+async def api_player_state_update(payload: dict = Body(...)):
+    state = payload.get("state") if isinstance(payload, dict) else None
+    if not isinstance(state, dict):
+        raise HTTPException(400, "state is required")
+    owner_id = str(state.get("ownerId") or "").strip()
+    if not owner_id:
+        raise HTTPException(400, "state.ownerId is required")
+    # Keep the shared state bounded; the frontend only needs player/queue metadata.
+    state = dict(state)
+    state["ownerId"] = owner_id[:200]
+    state["clientId"] = str(state.get("clientId") or "")[:200]
+    state["at"] = time.time()
+    full = bool(payload.get("full", False) or state.get("force"))
+    await publish_player_state(state, full=full)
+    return {"status": "ok", "updated_at": PLAYER_STATE_UPDATED_AT}
+
+
+@app.post("/api/player/command")
+async def api_player_command(payload: dict = Body(...)):
+    target_id = str(payload.get("targetId") or "").strip()
+    command = str(payload.get("command") or "").strip()
+    if not target_id or not command:
+        raise HTTPException(400, "targetId and command are required")
+    allowed_commands = {"play", "pause", "seek", "next", "previous", "volume", "load-play"}
+    if command not in allowed_commands:
+        raise HTTPException(400, "Unsupported player command")
+    message = {
+        "type": "command",
+        "targetId": target_id[:200],
+        "command": command[:64],
+        "payload": payload.get("payload") if isinstance(payload.get("payload"), dict) else {},
+        "id": str(payload.get("id") or "")[:300],
+    }
+    await manager.broadcast(message)
+    return {"status": "ok"}
+
+
+def get_player_positions_sync():
+    with db_connect() as conn:
+        rows = conn.execute("SELECT song_id,position,duration,updated_at FROM playback_positions").fetchall()
+    return {r[0]: {"position": r[1], "duration": r[2], "updated_at": r[3]} for r in rows}
+
+
+def save_player_position_sync(song_id, position, duration, now):
+    with db_connect() as conn:
+        conn.execute("INSERT INTO playback_positions(song_id,position,duration,updated_at) VALUES(?,?,?,?) ON CONFLICT(song_id) DO UPDATE SET position=excluded.position,duration=excluded.duration,updated_at=excluded.updated_at", (song_id, position, duration, now))
+        conn.commit()
+
+
+def save_player_history_sync(song_id, duration, position):
+    with db_connect() as conn:
+        conn.execute("INSERT INTO play_history(song_id,played_at,duration,position) VALUES(?,?,?,?)", (song_id, time.time(), duration, position))
+        conn.commit()
+        return int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+
+
 @app.get("/api/player/positions")
 async def api_player_positions():
-    with db_connect() as conn:
-        rows=conn.execute("SELECT song_id,position,duration,updated_at FROM playback_positions").fetchall()
-    return {r[0]: {"position":r[1],"duration":r[2],"updated_at":r[3]} for r in rows}
+    return await asyncio.to_thread(get_player_positions_sync)
 
 
 @app.post("/api/player/position")
 async def api_player_position(payload: dict = Body(...)):
     song_id=str(payload.get("song_id") or "").strip()
     if not song_id: raise HTTPException(400, "song_id is required")
-    position=max(0.0, float(payload.get("position") or 0))
-    duration=max(0.0, float(payload.get("duration") or 0))
+    raw_position = payload.get("position", 0)
+    raw_duration = payload.get("duration", 0)
+    try:
+        position = max(0.0, float(raw_position))
+        duration = max(0.0, float(raw_duration))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "position and duration must be numeric") from None
     now=time.time()
-    with db_connect() as conn:
-        conn.execute("INSERT INTO playback_positions(song_id,position,duration,updated_at) VALUES(?,?,?,?) ON CONFLICT(song_id) DO UPDATE SET position=excluded.position,duration=excluded.duration,updated_at=excluded.updated_at", (song_id,position,duration,now))
-        conn.commit()
+    await asyncio.to_thread(save_player_position_sync, song_id, position, duration, now)
     return {"status":"ok"}
 
 
@@ -6260,10 +6429,12 @@ async def api_player_position(payload: dict = Body(...)):
 async def api_player_history(payload: dict = Body(...)):
     song_id=str(payload.get("song_id") or "").strip()
     if not song_id: raise HTTPException(400, "song_id is required")
-    with db_connect() as conn:
-        conn.execute("INSERT INTO play_history(song_id,played_at,duration,position) VALUES(?,?,?,?)", (song_id,time.time(),float(payload.get("duration") or 0),float(payload.get("position") or 0)))
-        conn.commit()
-        total_plays = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+    try:
+        duration = max(0.0, float(payload.get("duration") or 0))
+        position = max(0.0, float(payload.get("position") or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "position and duration must be numeric") from None
+    total_plays = await asyncio.to_thread(save_player_history_sync, song_id, duration, position)
     return {"status":"ok", "all_play_count": total_plays}
 
 
