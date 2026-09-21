@@ -1097,51 +1097,82 @@ a { color:inherit; }
     color: var(--text-secondary);
     font-size: 8px;
 }
-.gp-progress-container input {
+.gp-seek-wrap {
+    position: relative;
     flex: 1;
     min-width: 0;
+    height: 14px;
+    display: flex;
+    align-items: center;
+}
+.gp-seek-wrap::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
     height: 4px;
+    transform: translateY(-50%);
+    background: var(--bg-elevated);
+    border-radius: 99px;
+}
+.gp-seek-fill {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 0%;
+    height: 4px;
+    transform: translateY(-50%);
+    background: var(--accent);
+    border-radius: 99px;
+    pointer-events: none;
+    will-change: width;
+}
+.gp-seek-thumb {
+    position: absolute;
+    left: 0%;
+    top: 50%;
+    width: 11px;
+    height: 11px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: var(--text-primary);
+    box-shadow: 0 1px 5px rgba(0, 0, 0, .25);
+    pointer-events: none;
+    will-change: left;
+    z-index: 1;
+}
+.gp-seek-wrap input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
     appearance: none;
     -webkit-appearance: none;
     background: transparent;
     cursor: pointer;
+    opacity: 0;
+    z-index: 2;
 }
-/* WebKit slider */
-.gp-progress-container input::-webkit-slider-runnable-track {
-    height: 4px;
-    background: var(--bg-elevated);
-    border-radius: 99px;
+.gp-seek-wrap input::-webkit-slider-runnable-track,
+.gp-seek-wrap input::-moz-range-track {
+    height: 100%;
+    background: transparent;
 }
-.gp-progress-container input::-webkit-slider-thumb {
+.gp-seek-wrap input::-webkit-slider-thumb {
     appearance: none;
     -webkit-appearance: none;
-    width: 11px;
-    height: 11px;
-    margin-top: -3.5px;
+    width: 100%;
+    height: 100%;
     border: 0;
-    border-radius: 50%;
-    background: var(--text-primary);
-    box-shadow:
-        0 1px 5px
-        rgba(0, 0, 0, .25);
+    background: transparent;
 }
-/* Firefox */
-.gp-progress-container input::-moz-range-track {
-    height: 4px;
-    background: var(--bg-elevated);
-    border-radius: 99px;
-}
-.gp-progress-container input::-moz-range-progress {
-    height: 4px;
-    background: var(--accent);
-    border-radius: 99px;
-}
-.gp-progress-container input::-moz-range-thumb {
-    width: 11px;
-    height: 11px;
+.gp-seek-wrap input::-moz-range-thumb {
+    width: 100%;
+    height: 100%;
     border: 0;
-    border-radius: 50%;
-    background: var(--text-primary);
+    background: transparent;
 }
 /* ============================================================
    PLAYER EXTRA / VOLUME
@@ -2073,6 +2104,7 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 @media(max-width:700px){.queue-drawer{right:8px;bottom:calc(var(--player-height) + var(--bottom-nav-height) + 8px);width:calc(100vw - 16px);max-height:calc(100vh - var(--player-height) - var(--bottom-nav-height) - 24px)}.queue-list{max-height:calc(100vh - var(--player-height) - var(--bottom-nav-height) - 120px)}.queue-row{grid-template-columns:14px 36px minmax(0,1fr) 42px 28px}.queue-row .queue-next{padding:5px;font-size:.72rem;min-width:0}.queue-row .icon-btn{width:28px;height:28px}.health-summary{grid-template-columns:1fr}}
 /* Spotify-style library/player polish */
 .track-play-count{position:absolute;right:8px;bottom:8px;padding:4px 7px;border-radius:999px;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);font-size:.7rem;font-weight:800;opacity:.9;}
+.collection-track .result-card{}
 .catalog-detail-header{gap:14px;}
 .modal-subtitle{font-size:.78rem;opacity:.58;margin-top:3px}
 #tab-settings .settings-card + .settings-card{margin-top:14px}
