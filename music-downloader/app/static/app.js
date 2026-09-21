@@ -49,7 +49,10 @@ let playBtn = null;
 let prevBtn = null;
 let nextBtn = null;
 let seek = null;
+let seekFill = null;
+let seekThumb = null;
 let isSeeking = false;
+let playerProgressFrame = null;
 let volume = null;
 let curTime = null;
 let durTime = null;
@@ -256,7 +259,11 @@ function updateRemoteProgress() {
     remoteDisplayTime = current;
     if (curTime) curTime.textContent = formatSeconds(current);
     if (durTime) durTime.textContent = formatSeconds(duration);
-    if (seek && duration > 0 && !isSeeking) seek.value = String(Math.max(0, Math.min(100, current / duration * 100)));
+    if (seek && duration > 0 && !isSeeking) {
+        const percent = Math.max(0, Math.min(100, current / duration * 100));
+        seek.value = percent.toFixed(3);
+        renderSeekVisual(percent);
+    }
 }
 
 
@@ -557,6 +564,9 @@ function cacheDom() {
         document.getElementById(
             "gp-seek"
         );
+
+    seekFill = document.getElementById("gp-seek-fill");
+    seekThumb = document.getElementById("gp-seek-thumb");
 
     volume =
         document.getElementById(
@@ -1121,50 +1131,50 @@ function formatSeconds(seconds) {
 }
 
 
+function renderSeekVisual(percent) {
+    const safe = Math.max(0, Math.min(100, Number(percent) || 0));
+    if (seekFill) seekFill.style.width = `${safe}%`;
+    if (seekThumb) seekThumb.style.left = `${safe}%`;
+}
+
+function stopPlayerProgressFrame() {
+    if (playerProgressFrame) {
+        cancelAnimationFrame(playerProgressFrame);
+        playerProgressFrame = null;
+    }
+}
+
+function tickPlayerProgressFrame() {
+    playerProgressFrame = null;
+    if (!audio || audio.paused) return;
+    updateProgress();
+    playerProgressFrame = requestAnimationFrame(tickPlayerProgressFrame);
+}
+
+function startPlayerProgressFrame() {
+    if (!audio || audio.paused || playerProgressFrame) return;
+    playerProgressFrame = requestAnimationFrame(tickPlayerProgressFrame);
+}
+
 function updateProgress() {
+    if (!audio || !seek) return;
 
-    if (!audio || !seek) {
+    if (!audio.duration || !Number.isFinite(audio.duration)) {
+        if (!isSeeking) seek.value = 0;
+        renderSeekVisual(0);
+        if (curTime) curTime.textContent = "0:00";
+        if (durTime) durTime.textContent = "0:00";
         return;
     }
 
-    if (
-        !audio.duration ||
-        !Number.isFinite(audio.duration)
-    ) {
-
-        seek.value = 0;
-
-        if (curTime) {
-            curTime.textContent = "0:00";
-        }
-
-        if (durTime) {
-            durTime.textContent = "0:00";
-        }
-
-        return;
-    }
-
-
+    const percent = Math.max(0, Math.min(100, (audio.currentTime / audio.duration) * 100));
     if (!isSeeking) {
-        seek.value = (audio.currentTime / audio.duration) * 100;
+        seek.value = percent.toFixed(3);
+        renderSeekVisual(percent);
     }
 
-
-    if (curTime) {
-        curTime.textContent =
-            formatSeconds(
-                audio.currentTime
-            );
-    }
-
-
-    if (durTime) {
-        durTime.textContent =
-            formatSeconds(
-                audio.duration
-            );
-    }
+    if (curTime) curTime.textContent = formatSeconds(audio.currentTime);
+    if (durTime) durTime.textContent = formatSeconds(audio.duration);
 }
 
 
@@ -1579,6 +1589,7 @@ function bindAudioEvents() {
         () => {
             if (!applyingRemotePlayerCommand) setPlayerOwner();
             updatePlayingState(true);
+            startPlayerProgressFrame();
             schedulePlayerStateBroadcast(true);
         }
     );
@@ -1588,6 +1599,7 @@ function bindAudioEvents() {
         "pause",
         () => {
             updatePlayingState(false);
+            stopPlayerProgressFrame();
             schedulePlayerStateBroadcast(true);
         }
     );
@@ -1600,9 +1612,11 @@ function bindAudioEvents() {
             updatePlayingState(
                 false
             );
+            stopPlayerProgressFrame();
 
             if (seek) {
                 seek.value = 0;
+                renderSeekVisual(0);
             }
 
             if (curTime) {
@@ -1720,6 +1734,7 @@ function bindPlayerControls() {
             if (isRemotePlayerOwner() && remotePlayerState) {
                 updateRemotePlayerOptimistic({ currentTime: targetTime });
             }
+            renderSeekVisual(ratio * 100);
             if (curTime) curTime.textContent = formatSeconds(targetTime);
         }
     });
