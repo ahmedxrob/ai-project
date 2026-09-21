@@ -16,6 +16,7 @@ let libraryView = "tracks";
 let selectedArtistId = null;
 let selectedAlbumId = null;
 let libraryPlaybackQueue = null;
+let libraryFilesSet = new Set();
 let playerShuffle = localStorage.getItem("xrob_music_shuffle") === "true";
 let shuffleRestoreQueue = null;
 let shuffleRestoreCurrentId = null;
@@ -85,6 +86,11 @@ const PLAYER_OWNER_KEY = "xrob_music_player_owner";
 const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 const PLAYER_OWNER_STALE_MS = 6500;
 const PLAYER_HEARTBEAT_MS = 2000;
+const PLAYER_OWNER_CLAIM_DELAY_MS = 650;
+const PLAYER_PROGRESS_BROADCAST_MS = 220;
+let playerOwnerClaimTimer = null;
+let playerProgressBroadcastTimer = null;
+let remoteDisplayTime = 0;
 const DAILY_MIX_STATE_KEY = "xrob_music_daily_mix_state_v2";
 let playerSyncChannel = null;
 let playerSyncHeartbeat = null;
@@ -197,6 +203,35 @@ function broadcastPlayerState(force = false) {
     try { playerSyncChannel?.postMessage({ type: "state", state }); } catch (_) {}
 }
 
+function schedulePlayerStateBroadcast(force = false) {
+    if (force) {
+        if (playerProgressBroadcastTimer) {
+            window.clearTimeout(playerProgressBroadcastTimer);
+            playerProgressBroadcastTimer = null;
+        }
+        broadcastPlayerState(true);
+        return;
+    }
+    if (playerProgressBroadcastTimer || typeof window === "undefined") return;
+    playerProgressBroadcastTimer = window.setTimeout(() => {
+        playerProgressBroadcastTimer = null;
+        broadcastPlayerState(false);
+    }, PLAYER_PROGRESS_BROADCAST_MS);
+}
+
+function claimLocalPlayerWhenOwnerIsGone() {
+    const owner = getPlayerOwner();
+    if (!owner?.id || owner.id === PLAYER_TAB_ID || !ownerIsFresh(owner)) {
+        setPlayerOwner();
+        return true;
+    }
+    if (remotePlayerState?.ownerId === owner.id) return false;
+    setPlayerOwner();
+    remotePlayerState = null;
+    playerOwnerId = PLAYER_TAB_ID;
+    return true;
+}
+
 function sendPlayerCommand(command, payload = {}) {
     const owner = getPlayerOwner();
     if (!owner?.id || owner.id === PLAYER_TAB_ID || !ownerIsFresh(owner)) return false;
@@ -216,11 +251,14 @@ function updateRemoteProgress() {
     const base = Number(remotePlayerState.currentTime || 0);
     const duration = Number(remotePlayerState.duration || 0);
     const elapsed = remotePlayerState.paused ? 0 : Math.max(0, (Date.now() - remotePlayerReceivedAt) / 1000);
-    const current = duration > 0 ? Math.min(duration, base + elapsed) : base + elapsed;
+    let current = duration > 0 ? Math.min(duration, base + elapsed) : base + elapsed;
+    if (!remotePlayerState.paused) current = Math.max(current, remoteDisplayTime);
+    remoteDisplayTime = current;
     if (curTime) curTime.textContent = formatSeconds(current);
     if (durTime) durTime.textContent = formatSeconds(duration);
-    if (seek && duration > 0) seek.value = String(Math.max(0, Math.min(100, current / duration * 100)));
+    if (seek && duration > 0 && !isSeeking) seek.value = String(Math.max(0, Math.min(100, current / duration * 100)));
 }
+
 
 function startRemoteProgressTicker() {
     if (remotePlayerTimer) return;
@@ -231,6 +269,9 @@ function updateRemotePlayerOptimistic(patch = {}) {
     if (!remotePlayerState) return;
     remotePlayerState = { ...remotePlayerState, ...patch };
     remotePlayerReceivedAt = Date.now();
+    if (patch.currentTime !== undefined && Number.isFinite(Number(patch.currentTime))) {
+        remoteDisplayTime = Math.max(0, Number(patch.currentTime));
+    }
     if (patch.title !== undefined || patch.artist !== undefined || patch.art !== undefined) {
         updatePlayerInfo(remotePlayerState.title, remotePlayerState.artist, remotePlayerState.art);
     }
@@ -275,7 +316,17 @@ function applyRemotePlayerState(state) {
     if (owner?.id && owner.id !== state.ownerId && ownerIsFresh(owner)) return;
     const sequence = Number(state.seq ?? 0);
     if (lastRemoteOwnerId === state.ownerId && sequence && sequence <= lastRemoteSequence && !state.force) return;
-    if (lastRemoteOwnerId !== state.ownerId) lastRemoteSequence = -1;
+    if (lastRemoteOwnerId !== state.ownerId) {
+        lastRemoteSequence = -1;
+        remoteDisplayTime = Number(state.currentTime || 0);
+    }
+    const previous = remotePlayerState;
+    const nextTime = Number(state.currentTime || 0);
+    const previousTime = Number(previous?.currentTime || 0);
+    const wasPlaying = Boolean(previous && !previous.paused);
+    const isNormalPlaybackTick = wasPlaying && !state.paused && Math.abs(nextTime - previousTime) <= 1.25;
+    if (!isNormalPlaybackTick || state.paused) remoteDisplayTime = nextTime;
+    else remoteDisplayTime = Math.max(remoteDisplayTime, nextTime);
     lastRemoteOwnerId = state.ownerId;
     lastRemoteSequence = sequence;
     remotePlayerState = { ...state };
@@ -316,7 +367,7 @@ function applyRemoteCommand(message) {
     } finally {
         applyingRemotePlayerCommand = false;
     }
-    broadcastPlayerState(true);
+    schedulePlayerStateBroadcast(true);
 }
 
 function initPlayerSync() {
@@ -326,7 +377,7 @@ function initPlayerSync() {
         const msg = event.data || {};
         if (msg.type === "request-state") {
             const owner = getPlayerOwner();
-            if (owner?.id === PLAYER_TAB_ID) broadcastPlayerState(true);
+            if (owner?.id === PLAYER_TAB_ID) schedulePlayerStateBroadcast(true);
         } else if (msg.type === "state") {
             if (msg.state?.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(msg.state);
         } else if (msg.type === "command") {
@@ -340,8 +391,18 @@ function initPlayerSync() {
     const owner = getPlayerOwner();
     if (ownerIsFresh(owner)) playerOwnerId = owner.id;
     const raw = localStorage.getItem(PLAYER_SYNC_STATE_KEY);
-    if (raw) { try { applyRemotePlayerState(JSON.parse(raw)); } catch (_) {} }
+    // When another tab owns the player, trust a live BroadcastChannel response
+    // instead of blindly restoring an old state snapshot from localStorage.
+    if (!(ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID) && raw) {
+        try { applyRemotePlayerState(JSON.parse(raw)); } catch (_) {}
+    }
     try { playerSyncChannel?.postMessage({ type: "request-state", requesterId: PLAYER_TAB_ID }); } catch (_) {}
+    if (ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID && !remotePlayerState) {
+        playerOwnerClaimTimer = window.setTimeout(() => {
+            playerOwnerClaimTimer = null;
+            if (!remotePlayerState) claimLocalPlayerWhenOwnerIsGone();
+        }, PLAYER_OWNER_CLAIM_DELAY_MS);
+    }
     window.addEventListener("storage", (event) => {
         if (event.key === PLAYER_SYNC_STATE_KEY && event.newValue) {
             try { const state = JSON.parse(event.newValue); if (state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state); } catch (_) {}
@@ -357,6 +418,8 @@ function initPlayerSync() {
         clearPlayerOwner();
         if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
         if (remotePlayerTimer) window.clearInterval(remotePlayerTimer);
+        if (playerOwnerClaimTimer) window.clearTimeout(playerOwnerClaimTimer);
+        if (playerProgressBroadcastTimer) window.clearTimeout(playerProgressBroadcastTimer);
         try { playerSyncChannel?.close(); } catch (_) {}
     }, { once: true });
 }
@@ -408,7 +471,7 @@ function persistCurrentPosition() {
     if(!id || !audio) return;
     const position=Number(audio.currentTime||0), duration=Number(audio.duration||0);
     enhancedSongPositions[id]={position,duration,updated_at:Date.now()/1000};
-    fetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({song_id:id,position,duration})}).catch(() => {});
+    try { fetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({song_id:id,position,duration})}); } catch (_) {}
 }
 
 function beginPlaySession(id) {
@@ -742,6 +805,7 @@ function updateSearchLoading(percent, text = "") {
 }
 function smoothSearchLoading(from, to, text) { updateSearchLoading(to, text); }
 function hideSearchLoading() { document.getElementById("searchLoading")?.style && (document.getElementById("searchLoading").style.display = "none"); }
+function smoothLoading(type, from, to, text) { updateLoadingCircle(type, to, text); }
 function hideLoadingCircle(type) { const el = document.getElementById(type === "library" ? "libraryLoading" : "recentTracksLoading"); if (el) el.style.display = "none"; }
 
 function escapeHtml(value) {
@@ -754,6 +818,24 @@ function escapeHtml(value) {
         .replaceAll("'", "&#039;");
 }
 
+
+function normalizeKey(value) {
+
+    let text = String(value || "").trim().toLowerCase();
+
+    // Keep search-side duplicate detection in sync with the server/catalog
+    // title normalization: strip track numbers and upload-only decorations.
+    text = text.replace(/^\s*\[?\d{1,3}\]?\s*[-–—.)_:]+\s*/i, "");
+    text = text.replace(/\s+#\d{1,4}\s*album\b.*$/i, "");
+    text = text.replace(/\s*[\(\[]\s*(?:official\s+)?(?:lyric|lyrics|music\s+video|video|mv|visualizer|audio)(?:\s+video|\s+clip)?\s*[\)\]]/gi, " ");
+    text = text.replace(/\s+(?:official\s+)?(?:music\s+)?video(?:\s+clip)?\s*$/i, "");
+    text = text.replace(/\s+mv\s*$/i, "");
+    text = text.replace(/\s+(?:lyric|lyrics)\s*(?:video|clip)?\s*$/i, "");
+    text = text.replace(/\s+prod(?:uced)?\.?\s*by\b.*$/i, "");
+    text = text.replace(/[^a-z0-9]+/g, "");
+
+    return text;
+}
 
 
 function showToast(message) {
@@ -962,15 +1044,15 @@ function savePlayerState() {
         wasPlaying: !audio.paused,
     };
     try { localStorage.setItem("xrob_music_player_state", JSON.stringify(state)); } catch (_) {}
-    if (!applyingRemotePlayerCommand && !isRemotePlayerOwner()) broadcastPlayerState();
 }
 
 function restorePlayerState() {
     if (!audio) return;
     if (isRemotePlayerOwner()) {
-        const rawRemote = localStorage.getItem(PLAYER_SYNC_STATE_KEY);
-        if (rawRemote) { try { applyRemotePlayerState(JSON.parse(rawRemote)); } catch (_) {} }
-        return;
+        // A remote owner must have a live state message; an orphaned owner key
+        // from a closed/crashed tab should never block the restored local player.
+        if (remotePlayerState) return;
+        claimLocalPlayerWhenOwnerIsGone();
     }
     try {
         const raw = localStorage.getItem("xrob_music_player_state");
@@ -1474,6 +1556,7 @@ function bindAudioEvents() {
 
             updateProgress();
             savePlayerState();
+            if (!applyingRemotePlayerCommand && !isRemotePlayerOwner()) schedulePlayerStateBroadcast(false);
 
         }
     );
@@ -1496,7 +1579,7 @@ function bindAudioEvents() {
         () => {
             if (!applyingRemotePlayerCommand) setPlayerOwner();
             updatePlayingState(true);
-            broadcastPlayerState(true);
+            schedulePlayerStateBroadcast(true);
         }
     );
 
@@ -1505,7 +1588,7 @@ function bindAudioEvents() {
         "pause",
         () => {
             updatePlayingState(false);
-            broadcastPlayerState(true);
+            schedulePlayerStateBroadcast(true);
         }
     );
 
@@ -1539,7 +1622,7 @@ function bindAudioEvents() {
             }
 
             if (currentPlayerSource === "library") {
-                if (advanceLibraryQueue(1)) return;
+                if (advanceLibraryQueue(1, true)) return;
             }
 
             if (activePreviewBtn) {
@@ -1590,6 +1673,9 @@ function bindPlayerControls() {
                 return;
             }
 
+            if (isRemotePlayerOwner() && !remotePlayerState) {
+                claimLocalPlayerWhenOwnerIsGone();
+            }
             if (isRemotePlayerOwner()) {
                 const remotePaused = remotePlayerState ? Boolean(remotePlayerState.paused) : Boolean(audio.paused);
                 if (sendPlayerCommand(remotePaused ? "play" : "pause")) {
@@ -1598,6 +1684,7 @@ function bindPlayerControls() {
                 return;
             }
             setPlayerOwner();
+            initAudioContext();
             if (audio.paused) {
                 audio.play().catch(console.error);
             } else {
@@ -1865,12 +1952,6 @@ async function saveSettings() {
 
 
         localStorage.setItem("xrob_music_daily_mix_count", String(result.daily_mix_track_count || data.daily_mix_track_count || 30));
-        if (result.credentials_changed) {
-            if (msg) msg.textContent = "✅ Credentials changed. Please sign in again.";
-            showToast("🔐 Credentials changed. Signing in again is required.");
-            setTimeout(() => location.reload(), 350);
-            return;
-        }
         if (msg) {
 
             msg.textContent =
@@ -1966,6 +2047,42 @@ function loadLibraryCache() {
 
         libraryLoadedFromCache =
             true;
+
+        libraryFilesSet.clear();
+
+        rawLibraryFiles.forEach(
+            file => {
+
+                const name =
+                    String(
+                        file.name || ""
+                    );
+
+                const slash =
+                    name.lastIndexOf(
+                        "/"
+                    );
+
+                const dot =
+                    name.lastIndexOf(
+                        "."
+                    );
+
+                const base =
+                    name.substring(
+                        slash + 1,
+                        dot > slash
+                            ? dot
+                            : name.length
+                    );
+
+                libraryFilesSet.add(
+                    normalizeKey(
+                        base
+                    )
+                );
+            }
+        );
 
         return true;
 
@@ -2087,6 +2204,41 @@ async function refreshLibraryCache() {
 
         libraryLoadedFromCache =
             false;
+
+        libraryFilesSet.clear();
+
+
+        rawLibraryFiles.forEach(
+            file => {
+
+                const name =
+                    String(
+                        file.name || ""
+                    );
+
+
+                const slash =
+                    name.lastIndexOf("/");
+
+
+                const dot =
+                    name.lastIndexOf(".");
+
+
+                const base =
+                    name.substring(
+                        slash + 1,
+                        dot > slash
+                            ? dot
+                            : name.length
+                    );
+
+
+                libraryFilesSet.add(
+                    normalizeKey(base)
+                );
+            }
+        );
 
 
         const side =
@@ -2890,7 +3042,13 @@ function renderItems(items) {
             }
 
 
-            if (item.already_downloaded) {
+            const titleKey =
+                normalizeKey(
+                    item.title || ""
+                );
+
+
+            if (item.already_downloaded || libraryFilesSet.has(titleKey)) {
 
                 group.innerHTML = `
                     <div class="badge-library">
@@ -4151,7 +4309,7 @@ async function clearDoneTasks() {
    HOME
    ============================================================ */
 
-function advanceLibraryQueue(direction = 1) {
+function advanceLibraryQueue(direction = 1, fromEnded = false) {
     const queue = getLibraryQueue();
     if (!queue.length) return false;
     const current = getQueueIndex();
@@ -4864,11 +5022,6 @@ function renderLocalIcons() {
         'skip-back': [['path','M19 20 9 12l10-8v16'],['path','M5 19V5']],
         'skip-forward': [['path','m5 4 10 8-10 8V4'],['path','M19 5v14']],
         shuffle: [['path','M3 6h3c3 0 4 6 7 6h8'],['path','m18 9 3 3-3 3'],['path','M3 18h3c3 0 4-6 7-6h2'],['path','m18 3 3 3-3 3']],
-        'sparkles': [['path','m12 3-1.6 4.9a2 2 0 0 1-1.3 1.3L4 11l5.1 1.7a2 2 0 0 1 1.3 1.3L12 19l1.6-5a2 2 0 0 1 1.3-1.3L20 11l-5.1-1.7a2 2 0 0 1-1.3-1.3Z'],['path','m19 3-.6 1.9a1 1 0 0 1-.6.6L16 6l1.8.5a1 1 0 0 1 .6.6L19 9l.6-1.9a1 1 0 0 1 .6-.6L22 6l-1.8-.5a1 1 0 0 1-.6-.6Z']],
-        'settings-2': [['path','M20 7h-9'],['path','M14 17H4'],['circle','17 7 3'],['circle','7 17 3']],
-        'folder-open': [['path','M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'],['path','m3 13 2-3h14l2 3']],
-        'bar-chart-3': [['path','M4 20V10'],['path','M10 20V4'],['path','M16 20v-7'],['path','M22 20H2']],
-        'list-plus': [['path','M8 6h13'],['path','M8 12h13'],['path','M8 18h9'],['path','M3 6h.01'],['path','M3 12h.01'],['path','M3 18h.01'],['path','M19 15v6'],['path','M16 18h6']],
     };
     const ns = 'http://www.w3.org/2000/svg';
     document.querySelectorAll('[data-lucide]').forEach(el => {
@@ -5226,6 +5379,7 @@ async function loadSongEditor(){
     }
 }
 
+function updateSongEditorCount(delta=0){const el=document.getElementById("songEditorCount"),badge=document.getElementById("songEditorBadge"); const cur=Math.max(0,(parseInt(el?.textContent||"0",10)||0)+delta); if(el)el.textContent=String(cur); if(badge)badge.textContent=String(cur);}
 
 
 function formatBytes(bytes) { const n=Math.max(0,Number(bytes)||0); if(n<1024) return `${Math.round(n)} B`; if(n<1024**2) return `${(n/1024).toFixed(1)} KB`; if(n<1024**3) return `${(n/1024**2).toFixed(1)} MB`; return `${(n/1024**3).toFixed(2)} GB`; }
@@ -5454,7 +5608,7 @@ async function loadDailyMix(forceVariation = false) {
             savedAt: Date.now(),
         };
         try { localStorage.setItem(DAILY_MIX_STATE_KEY, JSON.stringify(state)); } catch (_) {}
-        if (!isRemotePlayerOwner()) broadcastPlayerState(true);
+        if (!isRemotePlayerOwner()) schedulePlayerStateBroadcast(true);
     } catch (e) {
         if (!dailyMixTracks.length) row.innerHTML = '<div class="daily-mix-empty">Daily Mix could not be loaded.</div>';
     }
