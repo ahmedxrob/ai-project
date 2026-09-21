@@ -16,7 +16,6 @@ let libraryView = "tracks";
 let selectedArtistId = null;
 let selectedAlbumId = null;
 let libraryPlaybackQueue = null;
-let libraryFilesSet = new Set();
 let playerShuffle = localStorage.getItem("xrob_music_shuffle") === "true";
 let shuffleRestoreQueue = null;
 let shuffleRestoreCurrentId = null;
@@ -409,7 +408,7 @@ function persistCurrentPosition() {
     if(!id || !audio) return;
     const position=Number(audio.currentTime||0), duration=Number(audio.duration||0);
     enhancedSongPositions[id]={position,duration,updated_at:Date.now()/1000};
-    try { fetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({song_id:id,position,duration})}); } catch (_) {}
+    fetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({song_id:id,position,duration})}).catch(() => {});
 }
 
 function beginPlaySession(id) {
@@ -743,7 +742,6 @@ function updateSearchLoading(percent, text = "") {
 }
 function smoothSearchLoading(from, to, text) { updateSearchLoading(to, text); }
 function hideSearchLoading() { document.getElementById("searchLoading")?.style && (document.getElementById("searchLoading").style.display = "none"); }
-function smoothLoading(type, from, to, text) { updateLoadingCircle(type, to, text); }
 function hideLoadingCircle(type) { const el = document.getElementById(type === "library" ? "libraryLoading" : "recentTracksLoading"); if (el) el.style.display = "none"; }
 
 function escapeHtml(value) {
@@ -756,24 +754,6 @@ function escapeHtml(value) {
         .replaceAll("'", "&#039;");
 }
 
-
-function normalizeKey(value) {
-
-    let text = String(value || "").trim().toLowerCase();
-
-    // Keep search-side duplicate detection in sync with the server/catalog
-    // title normalization: strip track numbers and upload-only decorations.
-    text = text.replace(/^\s*\[?\d{1,3}\]?\s*[-–—.)_:]+\s*/i, "");
-    text = text.replace(/\s+#\d{1,4}\s*album\b.*$/i, "");
-    text = text.replace(/\s*[\(\[]\s*(?:official\s+)?(?:lyric|lyrics|music\s+video|video|mv|visualizer|audio)(?:\s+video|\s+clip)?\s*[\)\]]/gi, " ");
-    text = text.replace(/\s+(?:official\s+)?(?:music\s+)?video(?:\s+clip)?\s*$/i, "");
-    text = text.replace(/\s+mv\s*$/i, "");
-    text = text.replace(/\s+(?:lyric|lyrics)\s*(?:video|clip)?\s*$/i, "");
-    text = text.replace(/\s+prod(?:uced)?\.?\s*by\b.*$/i, "");
-    text = text.replace(/[^a-z0-9]+/g, "");
-
-    return text;
-}
 
 
 function showToast(message) {
@@ -1559,7 +1539,7 @@ function bindAudioEvents() {
             }
 
             if (currentPlayerSource === "library") {
-                if (advanceLibraryQueue(1, true)) return;
+                if (advanceLibraryQueue(1)) return;
             }
 
             if (activePreviewBtn) {
@@ -1885,6 +1865,12 @@ async function saveSettings() {
 
 
         localStorage.setItem("xrob_music_daily_mix_count", String(result.daily_mix_track_count || data.daily_mix_track_count || 30));
+        if (result.credentials_changed) {
+            if (msg) msg.textContent = "✅ Credentials changed. Please sign in again.";
+            showToast("🔐 Credentials changed. Signing in again is required.");
+            setTimeout(() => location.reload(), 350);
+            return;
+        }
         if (msg) {
 
             msg.textContent =
@@ -1980,42 +1966,6 @@ function loadLibraryCache() {
 
         libraryLoadedFromCache =
             true;
-
-        libraryFilesSet.clear();
-
-        rawLibraryFiles.forEach(
-            file => {
-
-                const name =
-                    String(
-                        file.name || ""
-                    );
-
-                const slash =
-                    name.lastIndexOf(
-                        "/"
-                    );
-
-                const dot =
-                    name.lastIndexOf(
-                        "."
-                    );
-
-                const base =
-                    name.substring(
-                        slash + 1,
-                        dot > slash
-                            ? dot
-                            : name.length
-                    );
-
-                libraryFilesSet.add(
-                    normalizeKey(
-                        base
-                    )
-                );
-            }
-        );
 
         return true;
 
@@ -2137,41 +2087,6 @@ async function refreshLibraryCache() {
 
         libraryLoadedFromCache =
             false;
-
-        libraryFilesSet.clear();
-
-
-        rawLibraryFiles.forEach(
-            file => {
-
-                const name =
-                    String(
-                        file.name || ""
-                    );
-
-
-                const slash =
-                    name.lastIndexOf("/");
-
-
-                const dot =
-                    name.lastIndexOf(".");
-
-
-                const base =
-                    name.substring(
-                        slash + 1,
-                        dot > slash
-                            ? dot
-                            : name.length
-                    );
-
-
-                libraryFilesSet.add(
-                    normalizeKey(base)
-                );
-            }
-        );
 
 
         const side =
@@ -2975,13 +2890,7 @@ function renderItems(items) {
             }
 
 
-            const titleKey =
-                normalizeKey(
-                    item.title || ""
-                );
-
-
-            if (item.already_downloaded || libraryFilesSet.has(titleKey)) {
+            if (item.already_downloaded) {
 
                 group.innerHTML = `
                     <div class="badge-library">
@@ -4242,7 +4151,7 @@ async function clearDoneTasks() {
    HOME
    ============================================================ */
 
-function advanceLibraryQueue(direction = 1, fromEnded = false) {
+function advanceLibraryQueue(direction = 1) {
     const queue = getLibraryQueue();
     if (!queue.length) return false;
     const current = getQueueIndex();
@@ -4955,6 +4864,11 @@ function renderLocalIcons() {
         'skip-back': [['path','M19 20 9 12l10-8v16'],['path','M5 19V5']],
         'skip-forward': [['path','m5 4 10 8-10 8V4'],['path','M19 5v14']],
         shuffle: [['path','M3 6h3c3 0 4 6 7 6h8'],['path','m18 9 3 3-3 3'],['path','M3 18h3c3 0 4-6 7-6h2'],['path','m18 3 3 3-3 3']],
+        'sparkles': [['path','m12 3-1.6 4.9a2 2 0 0 1-1.3 1.3L4 11l5.1 1.7a2 2 0 0 1 1.3 1.3L12 19l1.6-5a2 2 0 0 1 1.3-1.3L20 11l-5.1-1.7a2 2 0 0 1-1.3-1.3Z'],['path','m19 3-.6 1.9a1 1 0 0 1-.6.6L16 6l1.8.5a1 1 0 0 1 .6.6L19 9l.6-1.9a1 1 0 0 1 .6-.6L22 6l-1.8-.5a1 1 0 0 1-.6-.6Z']],
+        'settings-2': [['path','M20 7h-9'],['path','M14 17H4'],['circle','17 7 3'],['circle','7 17 3']],
+        'folder-open': [['path','M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'],['path','m3 13 2-3h14l2 3']],
+        'bar-chart-3': [['path','M4 20V10'],['path','M10 20V4'],['path','M16 20v-7'],['path','M22 20H2']],
+        'list-plus': [['path','M8 6h13'],['path','M8 12h13'],['path','M8 18h9'],['path','M3 6h.01'],['path','M3 12h.01'],['path','M3 18h.01'],['path','M19 15v6'],['path','M16 18h6']],
     };
     const ns = 'http://www.w3.org/2000/svg';
     document.querySelectorAll('[data-lucide]').forEach(el => {
@@ -5312,7 +5226,6 @@ async function loadSongEditor(){
     }
 }
 
-function updateSongEditorCount(delta=0){const el=document.getElementById("songEditorCount"),badge=document.getElementById("songEditorBadge"); const cur=Math.max(0,(parseInt(el?.textContent||"0",10)||0)+delta); if(el)el.textContent=String(cur); if(badge)badge.textContent=String(cur);}
 
 
 function formatBytes(bytes) { const n=Math.max(0,Number(bytes)||0); if(n<1024) return `${Math.round(n)} B`; if(n<1024**2) return `${(n/1024).toFixed(1)} KB`; if(n<1024**3) return `${(n/1024**2).toFixed(1)} MB`; return `${(n/1024**3).toFixed(2)} GB`; }
