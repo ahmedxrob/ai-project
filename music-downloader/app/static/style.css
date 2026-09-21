@@ -2073,7 +2073,6 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 @media(max-width:700px){.queue-drawer{right:8px;bottom:calc(var(--player-height) + var(--bottom-nav-height) + 8px);width:calc(100vw - 16px);max-height:calc(100vh - var(--player-height) - var(--bottom-nav-height) - 24px)}.queue-list{max-height:calc(100vh - var(--player-height) - var(--bottom-nav-height) - 120px)}.queue-row{grid-template-columns:14px 36px minmax(0,1fr) 42px 28px}.queue-row .queue-next{padding:5px;font-size:.72rem;min-width:0}.queue-row .icon-btn{width:28px;height:28px}.health-summary{grid-template-columns:1fr}}
 /* Spotify-style library/player polish */
 .track-play-count{position:absolute;right:8px;bottom:8px;padding:4px 7px;border-radius:999px;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);font-size:.7rem;font-weight:800;opacity:.9;}
-.collection-track .result-card{}
 .catalog-detail-header{gap:14px;}
 .modal-subtitle{font-size:.78rem;opacity:.58;margin-top:3px}
 #tab-settings .settings-card + .settings-card{margin-top:14px}
