@@ -12,7 +12,7 @@
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
   <link href="/static/style.css?v=300" rel="stylesheet"/>
-  <link href="/static/logo.png" rel="icon" type="image/png"/>
+  <link href="/static/icon.png" rel="icon" type="image/png"/>
   <link href="/static/logo.png" rel="apple-touch-icon"/>
  </head>
  <body class="music-app">
@@ -1053,7 +1053,11 @@
       <span id="gp-cur-time">
        0:00
       </span>
-      <input aria-label="Track progress" id="gp-seek" max="100" min="0" step=".1" type="range" value="0"/>
+      <div class="gp-seek-wrap" id="gp-seek-wrap">
+       <div aria-hidden="true" class="gp-seek-fill" id="gp-seek-fill"></div>
+       <div aria-hidden="true" class="gp-seek-thumb" id="gp-seek-thumb"></div>
+       <input aria-label="Track progress" id="gp-seek" max="100" min="0" step=".1" type="range" value="0"/>
+      </div>
       <span id="gp-dur-time">
        0:00
       </span>
@@ -1212,7 +1216,7 @@
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="/static/app.js?v=294">
+  <script src="/static/app.js?v=296">
   </script>
 
 
