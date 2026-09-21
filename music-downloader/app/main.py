@@ -34,6 +34,7 @@ from fastapi import (
     File,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -73,7 +74,7 @@ async def app_lifespan(_app):
 
 app = FastAPI(
     title="Xrob Music",
-    version="2.6.0",
+    version="3.5.19",
     lifespan=app_lifespan,
 )
 
@@ -87,6 +88,19 @@ async def web_auth_middleware(request: Request, call_next):
         return JSONResponse({"detail":"Authentication required"}, status_code=401)
     return await call_next(request)
 
+
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -607,6 +621,8 @@ def db_connect():
     try:
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         yield conn
         conn.commit()
     except Exception:
