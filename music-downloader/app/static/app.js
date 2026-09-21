@@ -6,6 +6,7 @@
 
 let socket = null;
 let socketReconnectTimer = null;
+let socketPingTimer = null;
 
 let completedSet = new Set();
 
@@ -50,7 +51,6 @@ let prevBtn = null;
 let nextBtn = null;
 let seek = null;
 let seekFill = null;
-let seekThumb = null;
 let isSeeking = false;
 let playerProgressFrame = null;
 let volume = null;
@@ -87,12 +87,28 @@ const PLAYER_SYNC_STATE_KEY = "xrob_music_player_sync_state";
 const PLAYER_SYNC_COMMAND_KEY = "xrob_music_player_sync_command";
 const PLAYER_OWNER_KEY = "xrob_music_player_owner";
 const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const PLAYER_CLIENT_ID = (() => {
+    const key = "xrob_music_player_client_id";
+    try {
+        const saved = localStorage.getItem(key);
+        if (saved) return saved;
+        const value = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        localStorage.setItem(key, value);
+        return value;
+    } catch (_) {
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+})();
 const PLAYER_OWNER_STALE_MS = 6500;
+const PLAYER_SERVER_STATE_STALE_MS = 12000;
 const PLAYER_HEARTBEAT_MS = 2000;
 const PLAYER_OWNER_CLAIM_DELAY_MS = 650;
 const PLAYER_PROGRESS_BROADCAST_MS = 220;
+const PLAYER_SERVER_SYNC_MS = 750;
 let playerOwnerClaimTimer = null;
 let playerProgressBroadcastTimer = null;
+let playerServerSyncTimer = null;
+let serverPlayerStateLoaded = false;
 let remoteDisplayTime = 0;
 const DAILY_MIX_STATE_KEY = "xrob_music_daily_mix_state_v2";
 let playerSyncChannel = null;
@@ -102,6 +118,9 @@ let applyingRemotePlayerCommand = false;
 let remotePlayerState = null;
 let remotePlayerReceivedAt = 0;
 let remotePlayerTimer = null;
+let remoteRangeLastUpdatedAt = 0;
+let visualizerFrame = null;
+let visualizerData = null;
 let playerSyncSequence = 0;
 let lastRemoteOwnerId = null;
 let lastRemoteSequence = -1;
@@ -134,6 +153,10 @@ function setPlayerOwner() {
         return false;
     }
     playerOwnerId = PLAYER_TAB_ID;
+    remotePlayerState = null;
+    lastRemoteOwnerId = null;
+    lastRemoteSequence = -1;
+    stopRemoteProgressTicker();
     try { localStorage.setItem(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
     return true;
 }
@@ -159,18 +182,31 @@ function clearPlayerOwner() {
 
 function isRemotePlayerOwner() {
     const owner = getPlayerOwner();
-    if (!owner || !ownerIsFresh(owner)) {
-        playerOwnerId = null;
-        return false;
+    const localOwnerIsFresh = Boolean(owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner));
+    if (localOwnerIsFresh) {
+        playerOwnerId = owner.id;
+        return true;
     }
-    playerOwnerId = owner.id;
-    return owner.id !== PLAYER_TAB_ID;
+    if (remotePlayerState?._serverSynced && remotePlayerState.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID) {
+        const sameClient = remotePlayerState.clientId && remotePlayerState.clientId === PLAYER_CLIENT_ID;
+        const age = Date.now() - remotePlayerReceivedAt;
+        if (!sameClient && age < PLAYER_OWNER_STALE_MS * 2) {
+            playerOwnerId = remotePlayerState.ownerId;
+            return true;
+        }
+    }
+    if (owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner)) {
+        playerOwnerId = owner.id;
+        return true;
+    }
+    return false;
 }
 
-function buildPlayerSyncState() {
+function buildPlayerSyncState(includeQueue = true) {
     if (!audio) return null;
-    return {
+    const state = {
         ownerId: PLAYER_TAB_ID,
+        clientId: PLAYER_CLIENT_ID,
         src: audio.src || "",
         currentTime: Number(audio.currentTime || 0),
         duration: Number(audio.duration || 0),
@@ -180,30 +216,78 @@ function buildPlayerSyncState() {
         art: playerArt?.src || "",
         songId: audio.dataset.xrobSongId || currentSongId() || "",
         source: currentPlayerSource || "",
-        queue: currentPlayerSource === "library" ? enhancedQueue : (window.xrobHomeQueue || []),
         queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
-        dailyMix: {
+        paused: Boolean(audio.paused),
+        muted: Boolean(audio.muted),
+        at: Date.now()
+    };
+    if (includeQueue) {
+        state.queue = currentPlayerSource === "library" ? enhancedQueue : (window.xrobHomeQueue || []);
+        state.dailyMix = {
             tracks: Array.isArray(dailyMixTracks) ? dailyMixTracks : [],
             variant: Number(dailyMixVariant || 0),
             title: document.getElementById("dailyMixTitle")?.textContent || "Daily Mix",
             subtitle: document.getElementById("dailyMixSubtitle")?.textContent || "Personalized from your listening",
             scrollLeft: Number(document.getElementById("dailyMixTracks")?.scrollLeft || 0),
             date: getLocalDateKey(),
-        },
-        paused: Boolean(audio.paused),
-        muted: Boolean(audio.muted),
-        at: Date.now()
-    };
+        };
+    }
+    return state;
 }
 
 function broadcastPlayerState(force = false) {
     if (!audio || (playerOwnerId && playerOwnerId !== PLAYER_TAB_ID) || isRemotePlayerOwner()) return;
-    const state = buildPlayerSyncState();
+    const state = buildPlayerSyncState(force);
     if (!state) return;
     state.seq = ++playerSyncSequence;
     if (force) state.force = true;
-    try { localStorage.setItem(PLAYER_SYNC_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+    if (force) {
+        try { localStorage.setItem(PLAYER_SYNC_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+    }
     try { playerSyncChannel?.postMessage({ type: "state", state }); } catch (_) {}
+    publishPlayerStateToServer(state, force);
+}
+
+function publishPlayerStateToServer(state, force = false) {
+    if (!state || state.ownerId !== PLAYER_TAB_ID) return;
+    const send = (nextState, full) => {
+        try {
+            fetch("api/player/state", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ state: nextState, full })
+            }).catch(() => {});
+        } catch (_) {}
+    };
+    if (force) {
+        if (playerServerSyncTimer) { window.clearTimeout(playerServerSyncTimer); playerServerSyncTimer = null; }
+        send(state, true);
+        return;
+    }
+    if (playerServerSyncTimer) return;
+    playerServerSyncTimer = window.setTimeout(() => {
+        playerServerSyncTimer = null;
+        if (!audio || isRemotePlayerOwner()) return;
+        const fresh = buildPlayerSyncState(false);
+        if (fresh) send(fresh, false);
+    }, PLAYER_SERVER_SYNC_MS);
+}
+
+async function loadServerPlayerState() {
+    try {
+        const response = await fetch("api/player/state", { cache: "no-store", credentials: "same-origin" });
+        if (!response.ok) return false;
+        const data = await response.json().catch(() => ({}));
+        if (data?.state?.ownerId && data.state.ownerId !== PLAYER_TAB_ID) {
+            const serverUpdatedAt = Number(data.updated_at || 0);
+            if (serverUpdatedAt && (Date.now() - serverUpdatedAt * 1000) > PLAYER_SERVER_STATE_STALE_MS) return false;
+            applyRemotePlayerState({ ...data.state, _serverUpdatedAt: serverUpdatedAt }, true);
+            serverPlayerStateLoaded = true;
+            return true;
+        }
+    } catch (_) {}
+    return false;
 }
 
 function schedulePlayerStateBroadcast(force = false) {
@@ -236,20 +320,33 @@ function claimLocalPlayerWhenOwnerIsGone() {
 }
 
 function sendPlayerCommand(command, payload = {}) {
-    const owner = getPlayerOwner();
-    if (!owner?.id || owner.id === PLAYER_TAB_ID || !ownerIsFresh(owner)) return false;
-    const message = { type: "command", targetId: owner.id, command, payload, id: `${PLAYER_TAB_ID}:${Date.now()}:${Math.random().toString(36).slice(2)}` };
+    let targetId = null;
+    if (remotePlayerState?._serverSynced && remotePlayerState.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID) {
+        targetId = remotePlayerState.ownerId;
+    } else {
+        const owner = getPlayerOwner();
+        if (owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner)) targetId = owner.id;
+    }
+    if (!targetId) return false;
+    const message = { type: "command", targetId, command, payload, id: `${PLAYER_TAB_ID}:${Date.now()}:${Math.random().toString(36).slice(2)}` };
     let sent = false;
     if (playerSyncChannel) {
         try { playerSyncChannel.postMessage(message); sent = true; } catch (_) {}
     }
-    if (!sent) {
-        try { localStorage.setItem(PLAYER_SYNC_COMMAND_KEY, JSON.stringify(message)); sent = true; } catch (_) {}
-    }
+    try { localStorage.setItem(PLAYER_SYNC_COMMAND_KEY, JSON.stringify(message)); sent = true; } catch (_) {}
+    try {
+        fetch("api/player/command", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(message)
+        }).catch(() => {});
+        sent = true;
+    } catch (_) {}
     return sent;
 }
 
-function updateRemoteProgress() {
+function updateRemoteProgress(animationFrame = false) {
     if (!remotePlayerState || !remotePlayerState.ownerId || remotePlayerState.ownerId === PLAYER_TAB_ID) return;
     const base = Number(remotePlayerState.currentTime || 0);
     const duration = Number(remotePlayerState.duration || 0);
@@ -257,20 +354,44 @@ function updateRemoteProgress() {
     let current = duration > 0 ? Math.min(duration, base + elapsed) : base + elapsed;
     if (!remotePlayerState.paused) current = Math.max(current, remoteDisplayTime);
     remoteDisplayTime = current;
-    if (curTime) curTime.textContent = formatSeconds(current);
-    if (durTime) durTime.textContent = formatSeconds(duration);
+    if (curTime) {
+        const formatted = formatSeconds(current);
+        if (curTime.textContent !== formatted) curTime.textContent = formatted;
+    }
+    if (durTime) {
+        const formattedDuration = formatSeconds(duration);
+        if (durTime.textContent !== formattedDuration) durTime.textContent = formattedDuration;
+    }
     if (seek && duration > 0 && !isSeeking) {
         const percent = Math.max(0, Math.min(100, current / duration * 100));
-        seek.value = percent.toFixed(3);
+        if (!animationFrame || (Date.now() - remoteRangeLastUpdatedAt) >= 200) {
+            seek.value = percent.toFixed(3);
+            remoteRangeLastUpdatedAt = Date.now();
+        }
         renderSeekVisual(percent);
     }
 }
 
-
 function startRemoteProgressTicker() {
     if (remotePlayerTimer) return;
-    remotePlayerTimer = window.setInterval(updateRemoteProgress, 200);
+    const tick = () => {
+        remotePlayerTimer = requestAnimationFrame(tick);
+        if (remotePlayerState && !isRemotePlayerOwner()) {
+            stopRemoteProgressTicker();
+            return;
+        }
+        updateRemoteProgress(true);
+    };
+    remotePlayerTimer = requestAnimationFrame(tick);
 }
+
+function stopRemoteProgressTicker() {
+    if (remotePlayerTimer) {
+        cancelAnimationFrame(remotePlayerTimer);
+        remotePlayerTimer = null;
+    }
+}
+
 
 function updateRemotePlayerOptimistic(patch = {}) {
     if (!remotePlayerState) return;
@@ -317,36 +438,77 @@ function loadPersistedDailyMixState() {
     }
 }
 
-function applyRemotePlayerState(state) {
+function applyRemotePlayerState(state, fromServer = false) {
     if (!state || state.ownerId === PLAYER_TAB_ID) return;
+    const serverUpdatedAt = Number(state._serverUpdatedAt || 0);
+    const serverUpdatedAtMs = serverUpdatedAt > 0
+        ? (serverUpdatedAt > 1e12 ? serverUpdatedAt : serverUpdatedAt * 1000)
+        : 0;
+    if (fromServer && serverUpdatedAtMs && (Date.now() - serverUpdatedAtMs) > PLAYER_SERVER_STATE_STALE_MS) return;
+
     const owner = getPlayerOwner();
-    if (owner?.id && owner.id !== state.ownerId && ownerIsFresh(owner)) return;
+    if (!fromServer && owner?.id && owner.id !== state.ownerId && ownerIsFresh(owner)) return;
     const sequence = Number(state.seq ?? 0);
     if (lastRemoteOwnerId === state.ownerId && sequence && sequence <= lastRemoteSequence && !state.force) return;
-    if (lastRemoteOwnerId !== state.ownerId) {
-        lastRemoteSequence = -1;
-        remoteDisplayTime = Number(state.currentTime || 0);
-    }
+
     const previous = remotePlayerState;
-    const nextTime = Number(state.currentTime || 0);
+    const ownerChanged = lastRemoteOwnerId !== state.ownerId;
+    // Never carry a previous owner's queue/Daily Mix into a newly claimed player.
+    const merged = { ...(ownerChanged ? {} : (previous || {})), ...state, _serverSynced: Boolean(fromServer || state._serverSynced) };
+    if (ownerChanged) {
+        lastRemoteSequence = -1;
+        remoteDisplayTime = Number(merged.currentTime || 0);
+    }
+    const nextTime = Number(merged.currentTime || 0);
     const previousTime = Number(previous?.currentTime || 0);
     const wasPlaying = Boolean(previous && !previous.paused);
-    const isNormalPlaybackTick = wasPlaying && !state.paused && Math.abs(nextTime - previousTime) <= 1.25;
-    if (!isNormalPlaybackTick || state.paused) remoteDisplayTime = nextTime;
+    const isNormalPlaybackTick = wasPlaying && !merged.paused && Math.abs(nextTime - previousTime) <= 1.25;
+    if (!isNormalPlaybackTick || merged.paused || ownerChanged) remoteDisplayTime = nextTime;
     else remoteDisplayTime = Math.max(remoteDisplayTime, nextTime);
+
     lastRemoteOwnerId = state.ownerId;
     lastRemoteSequence = sequence;
-    remotePlayerState = { ...state };
-    remotePlayerReceivedAt = Date.now();
+    remotePlayerState = merged;
+    remotePlayerReceivedAt = serverUpdatedAtMs || Date.now();
     playerOwnerId = state.ownerId;
-    if (state.dailyMix) applyRemoteDailyMixState(state.dailyMix);
-    updatePlayerInfo(state.title, state.artist, state.art);
+    if (merged.dailyMix) applyRemoteDailyMixState(merged.dailyMix);
+    updatePlayerInfo(merged.title, merged.artist, merged.art);
     if (player) player.style.display = "grid";
-    if (volume && Number.isFinite(Number(state.volume))) volume.value = Math.max(0, Math.min(1, Number(state.volume)));
-    updateRemoteProgress();
-    updatePlayingState(!state.paused);
+    if (volume && Number.isFinite(Number(merged.volume))) volume.value = Math.max(0, Math.min(1, Number(merged.volume)));
+    updateRemoteProgress(false);
+    updatePlayingState(!merged.paused);
     startRemoteProgressTicker();
 }
+
+function takeoverRemotePlayer() {
+    const state = remotePlayerState;
+    if (!audio || !state?.src || isRemotePlayerOwner()) return false;
+    setPlayerOwner();
+    if (Array.isArray(state.queue) && state.queue.length) {
+        if (state.source === "home") {
+            window.xrobHomeQueue = state.queue.map(item => ({ ...item }));
+            window.xrobHomeQueueIndex = Number.isInteger(Number(state.queueIndex)) ? Number(state.queueIndex) : 0;
+        } else {
+            syncLibraryQueue(state.queue, Number(state.queueIndex ?? 0));
+            currentPlayerSource = "library";
+        }
+    }
+    currentPlayerSource = state.source === "home" ? "home" : "library";
+    updatePlayerInfo(state.title, state.artist, state.art);
+    audio.dataset.xrobSongId = String(state.songId || "");
+    audio.src = state.src;
+    activePreviewBtn = null;
+    const target = Number.isFinite(Number(state.currentTime)) ? Math.max(0, Number(state.currentTime)) : 0;
+    const restore = () => {
+        if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.25));
+        if (state.paused) updatePlayingState(false);
+    };
+    audio.addEventListener("loadedmetadata", restore, { once: true });
+    audio.load();
+    if (player) player.style.display = "grid";
+    return true;
+}
+
 
 function applyRemoteCommand(message) {
     if (!audio || message?.targetId !== PLAYER_TAB_ID) return;
@@ -377,7 +539,7 @@ function applyRemoteCommand(message) {
     schedulePlayerStateBroadcast(true);
 }
 
-function initPlayerSync() {
+async function initPlayerSync() {
     if (playerSyncChannel || typeof window === "undefined") return;
     try { playerSyncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(PLAYER_SYNC_CHANNEL) : null; } catch (_) { playerSyncChannel = null; }
     playerSyncChannel?.addEventListener("message", (event) => {
@@ -392,15 +554,17 @@ function initPlayerSync() {
         } else if (msg.type === "owner-closing" && msg.ownerId === playerOwnerId) {
             remotePlayerState = null;
             playerOwnerId = null;
+            stopRemoteProgressTicker();
             updatePlayingState(false);
         }
     });
     const owner = getPlayerOwner();
     if (ownerIsFresh(owner)) playerOwnerId = owner.id;
+    await loadServerPlayerState();
     const raw = localStorage.getItem(PLAYER_SYNC_STATE_KEY);
     // When another tab owns the player, trust a live BroadcastChannel response
     // instead of blindly restoring an old state snapshot from localStorage.
-    if (!(ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID) && raw) {
+    if (!serverPlayerStateLoaded && !(ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID) && raw) {
         try { applyRemotePlayerState(JSON.parse(raw)); } catch (_) {}
     }
     try { playerSyncChannel?.postMessage({ type: "request-state", requesterId: PLAYER_TAB_ID }); } catch (_) {}
@@ -410,6 +574,9 @@ function initPlayerSync() {
             if (!remotePlayerState) claimLocalPlayerWhenOwnerIsGone();
         }, PLAYER_OWNER_CLAIM_DELAY_MS);
     }
+    window.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") loadServerPlayerState();
+    });
     window.addEventListener("storage", (event) => {
         if (event.key === PLAYER_SYNC_STATE_KEY && event.newValue) {
             try { const state = JSON.parse(event.newValue); if (state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state); } catch (_) {}
@@ -424,9 +591,10 @@ function initPlayerSync() {
         try { playerSyncChannel?.postMessage({ type: "owner-closing", ownerId: PLAYER_TAB_ID }); } catch (_) {}
         clearPlayerOwner();
         if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
-        if (remotePlayerTimer) window.clearInterval(remotePlayerTimer);
+        stopRemoteProgressTicker();
         if (playerOwnerClaimTimer) window.clearTimeout(playerOwnerClaimTimer);
         if (playerProgressBroadcastTimer) window.clearTimeout(playerProgressBroadcastTimer);
+        if (playerServerSyncTimer) window.clearTimeout(playerServerSyncTimer);
         try { playerSyncChannel?.close(); } catch (_) {}
     }, { once: true });
 }
@@ -473,12 +641,18 @@ async function loadEnhancedPositions() {
     try { const r=await fetch("api/player/positions",{cache:"no-store"}); if(r.ok) enhancedSongPositions=await r.json(); } catch (_) {}
 }
 
-function persistCurrentPosition() {
+let lastPositionPersistId = "";
+let lastPositionPersistSecond = -1;
+function persistCurrentPosition(force = false) {
     const id = audio?.dataset?.xrobSongId || currentSongId();
     if(!id || !audio) return;
     const position=Number(audio.currentTime||0), duration=Number(audio.duration||0);
+    const second = Math.floor(Math.max(0, position));
+    if (!force && id === lastPositionPersistId && Math.abs(second - lastPositionPersistSecond) < 5) return;
+    lastPositionPersistId = id;
+    lastPositionPersistSecond = second;
     enhancedSongPositions[id]={position,duration,updated_at:Date.now()/1000};
-    try { fetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({song_id:id,position,duration})}); } catch (_) {}
+    fetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify({song_id:id,position,duration})}).catch(()=>{});
 }
 
 function beginPlaySession(id) {
@@ -510,6 +684,7 @@ function recordPlay(id) {
     try {
         fetch("api/player/history", {
             method: "POST",
+            credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 song_id: id,
@@ -566,7 +741,6 @@ function cacheDom() {
         );
 
     seekFill = document.getElementById("gp-seek-fill");
-    seekThumb = document.getElementById("gp-seek-thumb");
 
     volume =
         document.getElementById(
@@ -815,7 +989,6 @@ function updateSearchLoading(percent, text = "") {
 }
 function smoothSearchLoading(from, to, text) { updateSearchLoading(to, text); }
 function hideSearchLoading() { document.getElementById("searchLoading")?.style && (document.getElementById("searchLoading").style.display = "none"); }
-function smoothLoading(type, from, to, text) { updateLoadingCircle(type, to, text); }
 function hideLoadingCircle(type) { const el = document.getElementById(type === "library" ? "libraryLoading" : "recentTracksLoading"); if (el) el.style.display = "none"; }
 
 function escapeHtml(value) {
@@ -1039,9 +1212,13 @@ window.addEventListener(
    PLAYER
    ============================================================ */
 
-function savePlayerState() {
+let lastPlayerStateSavedAt = 0;
+function savePlayerState(force = false) {
     if (!audio) return;
+    const now = Date.now();
+    if (!force && now - lastPlayerStateSavedAt < 1200) return;
     const state = {
+        clientId: PLAYER_CLIENT_ID,
         src: audio.src || "",
         currentTime: Number(audio.currentTime || 0),
         volume: Number(audio.volume || 0.8),
@@ -1053,7 +1230,7 @@ function savePlayerState() {
         queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
         wasPlaying: !audio.paused,
     };
-    try { localStorage.setItem("xrob_music_player_state", JSON.stringify(state)); } catch (_) {}
+    try { localStorage.setItem("xrob_music_player_state", JSON.stringify(state)); lastPlayerStateSavedAt = now; } catch (_) {}
 }
 
 function restorePlayerState() {
@@ -1133,8 +1310,7 @@ function formatSeconds(seconds) {
 
 function renderSeekVisual(percent) {
     const safe = Math.max(0, Math.min(100, Number(percent) || 0));
-    if (seekFill) seekFill.style.width = `${safe}%`;
-    if (seekThumb) seekThumb.style.left = `${safe}%`;
+    if (seekFill) seekFill.style.setProperty("--seek-ratio", String(safe / 100));
 }
 
 function stopPlayerProgressFrame() {
@@ -1147,7 +1323,7 @@ function stopPlayerProgressFrame() {
 function tickPlayerProgressFrame() {
     playerProgressFrame = null;
     if (!audio || audio.paused) return;
-    updateProgress();
+    updateProgress(true);
     playerProgressFrame = requestAnimationFrame(tickPlayerProgressFrame);
 }
 
@@ -1156,25 +1332,28 @@ function startPlayerProgressFrame() {
     playerProgressFrame = requestAnimationFrame(tickPlayerProgressFrame);
 }
 
-function updateProgress() {
+function updateProgress(animationFrame = false) {
     if (!audio || !seek) return;
 
     if (!audio.duration || !Number.isFinite(audio.duration)) {
-        if (!isSeeking) seek.value = 0;
+        if (!isSeeking && !animationFrame) seek.value = 0;
         renderSeekVisual(0);
-        if (curTime) curTime.textContent = "0:00";
-        if (durTime) durTime.textContent = "0:00";
+        if (curTime && curTime.textContent !== "0:00") curTime.textContent = "0:00";
+        if (durTime && durTime.textContent !== "0:00") durTime.textContent = "0:00";
         return;
     }
 
-    const percent = Math.max(0, Math.min(100, (audio.currentTime / audio.duration) * 100));
+    const currentTime = Math.max(0, Number(audio.currentTime) || 0);
+    const percent = Math.max(0, Math.min(100, (currentTime / audio.duration) * 100));
     if (!isSeeking) {
-        seek.value = percent.toFixed(3);
+        if (!animationFrame) seek.value = percent.toFixed(3);
         renderSeekVisual(percent);
     }
 
-    if (curTime) curTime.textContent = formatSeconds(audio.currentTime);
-    if (durTime) durTime.textContent = formatSeconds(audio.duration);
+    const currentText = formatSeconds(currentTime);
+    const durationText = formatSeconds(audio.duration);
+    if (curTime && curTime.textContent !== currentText) curTime.textContent = currentText;
+    if (durTime && durTime.textContent !== durationText) durTime.textContent = durationText;
 }
 
 
@@ -1258,8 +1437,10 @@ function initAudioContext() {
         analyser.connect(
             audioContext.destination
         );
-
-        drawVisualizer();
+        visualizerData = new Uint8Array(analyser.frequencyBinCount);
+        if (audio && !audio.paused && document.visibilityState === "visible") {
+            startVisualizer();
+        }
 
     } catch (error) {
 
@@ -1275,22 +1456,20 @@ function drawVisualizer() {
 
     if (
         !canvasCtx ||
-        !analyser
+        !analyser ||
+        !audio ||
+        audio.paused ||
+        document.visibilityState !== "visible"
     ) {
+        visualizerFrame = null;
         return;
     }
 
-    requestAnimationFrame(
-        drawVisualizer
-    );
-
-    const length =
-        analyser.frequencyBinCount;
-
-    const data =
-        new Uint8Array(length);
-
-    analyser.getByteFrequencyData(data);
+    const length = analyser.frequencyBinCount;
+    if (!visualizerData || visualizerData.length !== length) {
+        visualizerData = new Uint8Array(length);
+    }
+    analyser.getByteFrequencyData(visualizerData);
 
     canvasCtx.clearRect(
         0,
@@ -1299,35 +1478,31 @@ function drawVisualizer() {
         canvas.height
     );
 
-    const barWidth =
-        canvas.width / length;
+    const barWidth = canvas.width / length;
+    canvasCtx.fillStyle = "#1ed760";
 
-    for (
-        let i = 0;
-        i < length;
-        i++
-    ) {
-
-        const height =
-            Math.max(
-                2,
-                (
-                    data[i] / 255
-                ) * canvas.height
-            );
-
-        canvasCtx.fillStyle =
-            "#1ed760";
-
+    for (let i = 0; i < length; i++) {
+        const height = Math.max(2, (visualizerData[i] / 255) * canvas.height);
         canvasCtx.fillRect(
             i * barWidth,
             canvas.height - height,
-            Math.max(
-                1,
-                barWidth - 1
-            ),
+            Math.max(1, barWidth - 1),
             height
         );
+    }
+
+    visualizerFrame = requestAnimationFrame(drawVisualizer);
+}
+
+function startVisualizer() {
+    if (visualizerFrame || !audio || audio.paused || document.visibilityState !== "visible") return;
+    visualizerFrame = requestAnimationFrame(drawVisualizer);
+}
+
+function stopVisualizer() {
+    if (visualizerFrame) {
+        cancelAnimationFrame(visualizerFrame);
+        visualizerFrame = null;
     }
 }
 
@@ -1559,6 +1734,11 @@ function bindAudioEvents() {
         return;
     }
 
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && !audio.paused) startVisualizer();
+        else stopVisualizer();
+    }, { passive: true });
+
 
     audio.addEventListener(
         "timeupdate",
@@ -1588,6 +1768,9 @@ function bindAudioEvents() {
         "play",
         () => {
             if (!applyingRemotePlayerCommand) setPlayerOwner();
+            initAudioContext();
+            if (audioContext?.state === "suspended") audioContext.resume().catch(() => {});
+            startVisualizer();
             updatePlayingState(true);
             startPlayerProgressFrame();
             schedulePlayerStateBroadcast(true);
@@ -1598,6 +1781,7 @@ function bindAudioEvents() {
     audio.addEventListener(
         "pause",
         () => {
+            stopVisualizer();
             updatePlayingState(false);
             stopPlayerProgressFrame();
             schedulePlayerStateBroadcast(true);
@@ -1612,6 +1796,7 @@ function bindAudioEvents() {
             updatePlayingState(
                 false
             );
+            stopVisualizer();
             stopPlayerProgressFrame();
 
             if (seek) {
@@ -1683,20 +1868,21 @@ function bindPlayerControls() {
                 return;
             }
 
-            if (!audio.src) {
-                return;
-            }
-
-            if (isRemotePlayerOwner() && !remotePlayerState) {
-                claimLocalPlayerWhenOwnerIsGone();
-            }
-            if (isRemotePlayerOwner()) {
+            const remoteOwner = isRemotePlayerOwner();
+            if (remoteOwner) {
                 const remotePaused = remotePlayerState ? Boolean(remotePlayerState.paused) : Boolean(audio.paused);
                 if (sendPlayerCommand(remotePaused ? "play" : "pause")) {
                     updateRemotePlayerOptimistic({ paused: !remotePaused });
                 }
                 return;
             }
+            if (!audio.src && remotePlayerState?.src) {
+                if (takeoverRemotePlayer()) {
+                    audio.play().catch(() => {});
+                    return;
+                }
+            }
+            if (!audio.src) return;
             setPlayerOwner();
             initAudioContext();
             if (audio.paused) {
@@ -4789,11 +4975,12 @@ function initWebSocket() {
 
     socket.onopen =
         () => {
-
-            console.log(
-                "Xrob Music WebSocket connected"
-            );
-
+            if (socketPingTimer) window.clearInterval(socketPingTimer);
+            socketPingTimer = window.setInterval(() => {
+                if (socket?.readyState === WebSocket.OPEN) {
+                    try { socket.send("ping"); } catch (_) {}
+                }
+            }, 20000);
         };
 
 
@@ -4814,6 +5001,10 @@ function initWebSocket() {
 
                     pollTasks();
 
+                } else if (data.type === "player_state" && data.state?.ownerId !== PLAYER_TAB_ID) {
+                    applyRemotePlayerState(data.state, true);
+                } else if (data.type === "command") {
+                    applyRemoteCommand(data);
                 }
 
             } catch (error) {
@@ -4838,9 +5029,8 @@ function initWebSocket() {
 
     socket.onclose =
         () => {
-
             socket = null;
-
+            if (socketPingTimer) { window.clearInterval(socketPingTimer); socketPingTimer = null; }
             scheduleWebSocketReconnect();
         };
 }
@@ -5103,7 +5293,7 @@ async function startAppAfterAuth() {
     // Keep it visible at startup with its existing empty-state labels.
     if (player) player.style.display = "grid";
 
-    initPlayerSync();
+    await initPlayerSync();
     bindAudioEvents();
     bindPlayerControls();
     bindSearch();
@@ -5393,8 +5583,6 @@ async function loadSongEditor(){
         list.innerHTML = `<div class="editor-empty">${escapeHtml(err.message || "Could not load editor")}</div>`;
     }
 }
-
-function updateSongEditorCount(delta=0){const el=document.getElementById("songEditorCount"),badge=document.getElementById("songEditorBadge"); const cur=Math.max(0,(parseInt(el?.textContent||"0",10)||0)+delta); if(el)el.textContent=String(cur); if(badge)badge.textContent=String(cur);}
 
 
 function formatBytes(bytes) { const n=Math.max(0,Number(bytes)||0); if(n<1024) return `${Math.round(n)} B`; if(n<1024**2) return `${(n/1024).toFixed(1)} KB`; if(n<1024**3) return `${(n/1024**2).toFixed(1)} MB`; return `${(n/1024**3).toFixed(2)} GB`; }
@@ -5771,7 +5959,6 @@ function installEnhancedFeatures(){
             recordPlay(id);
         });
         audio.addEventListener('timeupdate',()=>{
-            if(Math.floor(audio.currentTime)%5===0) persistCurrentPosition();
             recordPlay(currentSongId());
         });
         audio.addEventListener('play',()=>{
@@ -5783,7 +5970,7 @@ function installEnhancedFeatures(){
             recordPlay(currentSongId());
             resetPlaySession();
         });
-        audio.addEventListener('pause',persistCurrentPosition); window.addEventListener('beforeunload',persistCurrentPosition);
+        audio.addEventListener('pause',()=>persistCurrentPosition(true)); window.addEventListener('beforeunload',()=>persistCurrentPosition(true));
     }
     const originalRenderLibraryView=renderLibraryView; window._xrobOriginalRenderLibraryView=originalRenderLibraryView;
     renderLibraryView=function(){if(libraryView==='playlists')return loadPlaylistsView();if(libraryView==='recent')return renderLibraryCollections('recent');if(libraryView==='most')return renderLibraryCollections('most');return originalRenderLibraryView();};
