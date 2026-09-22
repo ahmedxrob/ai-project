@@ -5,20 +5,23 @@
   <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
   <meta content="#121212" name="theme-color"/>
   <meta content="Xrob Music self-hosted music downloader, library and OpenSubsonic server" name="description"/>
+  <meta content="yes" name="mobile-web-app-capable"/>
+  <meta content="yes" name="apple-mobile-web-app-capable"/>
+  <meta content="Xrob Music" name="apple-mobile-web-app-title"/>
   <title>
    Xrob Music
   </title>
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="/static/style.css?v=303" rel="stylesheet"/>
-  <link href="/static/icon.png" rel="icon" type="image/png"/>
-  <link href="/static/logo.png" rel="apple-touch-icon"/>
+  <link href="static/style.css?v=306" rel="stylesheet"/>
+  <link href="static/icon.png" rel="icon" type="image/png"/>
+  <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
  <body class="music-app">
   <div class="login-screen auth-shell" id="login-screen">
    <div class="login-card auth-panel">
-    <img alt="Xrob Music" class="login-logo" src="/static/logo.png"/>
+    <img alt="Xrob Music" class="login-logo" src="static/logo.png"/>
     <h1>
      Welcome back
     </h1>
@@ -50,7 +53,7 @@
   <!-- ============================================================
      AUDIO
      ============================================================ -->
-  <audio crossorigin="anonymous" id="global-audio-element" preload="auto">
+  <audio crossorigin="anonymous" id="global-audio-element" preload="metadata">
   </audio>
   <!-- ============================================================
      APP
@@ -63,7 +66,7 @@
     <header aria-label="Xrob Music navigation" class="app-topbar">
      <div class="app-topbar-inner">
       <button class="brand-mark" type="button" onclick="navigate('home')" aria-label="Xrob Music home">
-       <img src="/static/logo.png" alt="" aria-hidden="true">
+       <img src="static/logo.png" alt="" aria-hidden="true">
        <span>Xrob Music</span>
       </button>
 
@@ -1215,7 +1218,7 @@
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="/static/app.js?v=304">
+  <script src="static/app.js?v=306">
   </script>
 
 
