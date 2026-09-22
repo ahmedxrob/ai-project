@@ -426,11 +426,20 @@ function publishPlayerStateToServer(state, force = false, unload = false) {
                 timeoutMs: useUnloadTransport ? 5000 : API_DEFAULT_TIMEOUT_MS,
                 headers: { "Content-Type": "application/json" },
                 body: payload
-            }).then(response => {
+            }).then(async response => {
                 if (response.status === 409 && !useUnloadTransport) {
-                    try { audio?.pause(); } catch (_) {}
-                    try { clearPlayerOwner(); } catch (_) {}
-                    loadServerPlayerState();
+                    let details = null;
+                    try { details = await response.clone().json(); } catch (_) {}
+                    const detail = details?.detail;
+                    const isOwnedByAnotherDevice = detail?.status === "owned" &&
+                        detail?.ownerId && detail.ownerId !== PLAYER_TAB_ID;
+                    // A stale/out-of-order state from this same tab must never pause
+                    // playback. Only a real ownership conflict can stop the local player.
+                    if (isOwnedByAnotherDevice) {
+                        try { audio?.pause(); } catch (_) {}
+                        try { clearPlayerOwner(); } catch (_) {}
+                        loadServerPlayerState();
+                    }
                 }
             }).catch(() => {});
         } catch (_) {}
