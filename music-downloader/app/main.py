@@ -74,7 +74,7 @@ async def app_lifespan(_app):
 
 app = FastAPI(
     title="Xrob Music",
-    version="3.5.22",
+    version="3.5.23",
     lifespan=app_lifespan,
 )
 
@@ -251,7 +251,7 @@ def _is_authenticated(token):
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "3.5.22"
+SERVER_VERSION = "3.5.23"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 LIBRARY_METADATA_CONCURRENCY = max(4, min(12, int(os.getenv("XROB_LIBRARY_METADATA_CONCURRENCY", "8"))))
@@ -6851,11 +6851,15 @@ async def api_player_state_update(payload: dict = Body(...)):
         incoming_seq = safe_int(state.get("seq"), 0)
         current_seq = safe_int(current_state.get("seq"), 0) if isinstance(current_state, dict) else 0
         if current_owner == owner_id and not force and not bool(payload.get("full", False)) and current_seq > incoming_seq:
-            raise HTTPException(409, {
-                "status": "stale",
+            # State updates are asynchronous and may arrive out of order.
+            # An older heartbeat from the same owner is harmless and must not
+            # be surfaced as an ownership conflict to the playback client.
+            return {
+                "status": "ignored_stale",
+                "updated_at": current.get("updated_at", 0) if isinstance(current, dict) else 0,
                 "seq": current_seq,
                 "ownerId": owner_id,
-            })
+            }
 
         state["at"] = time.time()
         await publish_player_state(state, full=force or bool(payload.get("full", False)))
