@@ -73,7 +73,7 @@ async def app_lifespan(_app):
 
 app = FastAPI(
     title="Xrob Music",
-    version="2.6.0",
+    version="3.5.19",
     lifespan=app_lifespan,
 )
 
@@ -109,7 +109,7 @@ app.mount(
 
 DEFAULT_LIBRARY_PATH = os.getenv(
     "DOWNLOAD_DIR",
-    "/share/mymusic/music",
+    "/media/xrob-music",
 )
 
 # The library path can be changed by the Home Assistant add-on through
@@ -131,7 +131,11 @@ AUTH_LOGIN_MAX_ATTEMPTS = 5
 AUTH_BOOTSTRAP_FILE = DATA_DIR / "web_bootstrap.txt"
 PLAYER_STATE = None
 PLAYER_STATE_UPDATED_AT = 0.0
-PLAYER_STATE_MAX_AGE_SECONDS = 12.0
+PLAYER_STATE_MAX_AGE_SECONDS = 20.0
+PLAYER_STATE_MAX_QUEUE_ITEMS = 500
+PLAYER_STATE_MAX_DAILY_MIX_ITEMS = 100
+PLAYER_STATE_MAX_TEXT = 512
+PLAYER_STATE_MAX_URL = 4096
 
 
 def _auth_token():
@@ -232,7 +236,7 @@ def _is_authenticated(token):
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "2.7.0"
+SERVER_VERSION = "3.5.19"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 LIBRARY_METADATA_CONCURRENCY = max(4, min(12, int(os.getenv("XROB_LIBRARY_METADATA_CONCURRENCY", "8"))))
@@ -314,6 +318,7 @@ LIBRARY_WARMUP_TASK = None
 DOWNLOAD_WORKER_TASKS = set()
 BACKGROUND_TASKS = set()
 SCHEDULED_SCANNER_TASK = None
+LIBRARY_SCAN_LOCK = asyncio.Lock()
 
 
 def track_background_task(coro):
@@ -824,6 +829,118 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def _bounded_text(value, limit=PLAYER_STATE_MAX_TEXT):
+    return str(value or "")[:limit]
+
+
+def _sanitize_player_track(track):
+    if not isinstance(track, dict):
+        return None
+    allowed = ("id", "name", "title", "artist", "album", "duration", "cover", "stream")
+    cleaned = {}
+    for key in allowed:
+        if key not in track:
+            continue
+        value = track[key]
+        if key == "duration":
+            try:
+                value = max(0.0, float(value or 0))
+            except (TypeError, ValueError):
+                value = 0.0
+        elif key in {"id", "name", "title", "artist", "album"}:
+            value = _bounded_text(value)
+        elif key in {"cover", "stream"}:
+            value = _bounded_text(value, PLAYER_STATE_MAX_URL)
+        cleaned[key] = value
+    return cleaned if cleaned.get("id") or cleaned.get("name") or cleaned.get("stream") else None
+
+
+def _sanitize_player_state(state):
+    if not isinstance(state, dict):
+        return {}
+    # Preserve the distinction between a full snapshot and a compact heartbeat.
+    # Only sanitize keys that are actually present so compact updates cannot
+    # overwrite a previously stored title, queue, volume, etc. with defaults.
+    cleaned = dict(state)
+
+    if "ownerId" in cleaned:
+        cleaned["ownerId"] = _bounded_text(cleaned.get("ownerId"), 200)
+    if "clientId" in cleaned:
+        cleaned["clientId"] = _bounded_text(cleaned.get("clientId"), 200)
+    for key in ("src", "art"):
+        if key in cleaned:
+            cleaned[key] = _bounded_text(cleaned.get(key), PLAYER_STATE_MAX_URL)
+    for key in ("title", "artist", "songId", "source"):
+        if key in cleaned:
+            cleaned[key] = _bounded_text(cleaned.get(key))
+
+    for key in ("currentTime", "duration", "volume"):
+        if key not in cleaned:
+            continue
+        try:
+            cleaned[key] = max(0.0, float(cleaned.get(key) or 0))
+        except (TypeError, ValueError):
+            cleaned[key] = 0.0
+    if "volume" in cleaned:
+        cleaned["volume"] = min(1.0, cleaned["volume"])
+    if "queueIndex" in cleaned:
+        try:
+            raw_index = cleaned.get("queueIndex")
+            cleaned["queueIndex"] = int(raw_index) if raw_index is not None else -1
+        except (TypeError, ValueError):
+            cleaned["queueIndex"] = -1
+        cleaned["queueIndex"] = max(-1, cleaned["queueIndex"])
+
+    for key in ("paused", "muted", "force"):
+        if key in cleaned:
+            cleaned[key] = bool(cleaned.get(key))
+
+    if "queue" in cleaned:
+        if isinstance(cleaned.get("queue"), list):
+            cleaned["queue"] = [
+                t for t in (_sanitize_player_track(item) for item in cleaned["queue"][:PLAYER_STATE_MAX_QUEUE_ITEMS])
+                if t
+            ]
+        else:
+            cleaned.pop("queue", None)
+
+    if "dailyMix" in cleaned:
+        daily = cleaned.get("dailyMix")
+        if isinstance(daily, dict):
+            daily = dict(daily)
+            if "tracks" in daily:
+                tracks = daily.get("tracks") if isinstance(daily.get("tracks"), list) else []
+                daily["tracks"] = [
+                    t for t in (_sanitize_player_track(item) for item in tracks[:PLAYER_STATE_MAX_DAILY_MIX_ITEMS])
+                    if t
+                ]
+            if "variant" in daily:
+                try:
+                    daily["variant"] = max(0, int(daily.get("variant", 0) or 0))
+                except (TypeError, ValueError):
+                    daily["variant"] = 0
+            for key in ("title", "subtitle"):
+                if key in daily:
+                    daily[key] = _bounded_text(daily.get(key), PLAYER_STATE_MAX_TEXT)
+            if "scrollLeft" in daily:
+                try:
+                    daily["scrollLeft"] = max(0.0, float(daily.get("scrollLeft", 0) or 0))
+                except (TypeError, ValueError):
+                    daily["scrollLeft"] = 0.0
+            if "date" in daily:
+                daily["date"] = _bounded_text(daily.get("date"), 32)
+            cleaned["dailyMix"] = daily
+        else:
+            cleaned.pop("dailyMix", None)
+
+    if "seq" in cleaned:
+        try:
+            cleaned["seq"] = max(0, int(cleaned.get("seq", 0) or 0))
+        except (TypeError, ValueError):
+            cleaned["seq"] = 0
+    return cleaned
+
+
 def _compact_player_state(state):
     keys = (
         "ownerId", "clientId", "src", "currentTime", "duration",
@@ -837,7 +954,7 @@ async def publish_player_state(state, full=True):
     global PLAYER_STATE, PLAYER_STATE_UPDATED_AT
     if not isinstance(state, dict):
         return
-    incoming = dict(state)
+    incoming = _sanitize_player_state(state)
     previous_owner = str(PLAYER_STATE.get("ownerId") or "") if isinstance(PLAYER_STATE, dict) else ""
     incoming_owner = str(incoming.get("ownerId") or "")
     # A new owner must start a fresh state. Otherwise a compact heartbeat from a
@@ -2247,7 +2364,8 @@ async def download_worker():
                 final_name = f"{clean_title}_{task_id[:4]}{extension}"
                 final_path = final_dir / final_name
 
-            shutil.move(
+            await asyncio.to_thread(
+                shutil.move,
                 str(audio_file),
                 str(final_path),
             )
@@ -6355,10 +6473,7 @@ async def api_player_state_update(payload: dict = Body(...)):
     owner_id = str(state.get("ownerId") or "").strip()
     if not owner_id:
         raise HTTPException(400, "state.ownerId is required")
-    # Keep the shared state bounded; the frontend only needs player/queue metadata.
-    state = dict(state)
-    state["ownerId"] = owner_id[:200]
-    state["clientId"] = str(state.get("clientId") or "")[:200]
+    state = _sanitize_player_state(state)
     state["at"] = time.time()
     full = bool(payload.get("full", False) or state.get("force"))
     await publish_player_state(state, full=full)
@@ -6555,46 +6670,52 @@ async def api_library_health():
 async def api_library_scan_mode(mode: str):
     if mode not in {"quick", "full"}:
         raise HTTPException(400, "mode must be quick or full")
-    with db_connect() as conn:
-        conn.execute(
-            "INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?,?,?) "
-            "ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message",
-            (time.time(), mode, "running", "Scanning"),
-        )
-        conn.commit()
-    try:
-        invalidate_library_cache()
-        # build_library already uses the on-disk index and only reads tags for
-        # new/changed files. Metadata reads are performed concurrently.
-        library = await build_library(force=True)
-        if mode == "full":
-            cover_tasks = [ensure_cover(song["path"]) for song in library["songs"]]
-            if cover_tasks:
-                semaphore = asyncio.Semaphore(8)
-                async def cover_one(coro):
-                    async with semaphore:
-                        try:
-                            return await coro
-                        except Exception:
-                            return None
-                await asyncio.gather(*(cover_one(c) for c in cover_tasks), return_exceptions=True)
-        await persist_library_index(library)
+    if LIBRARY_SCAN_LOCK.locked():
+        raise HTTPException(409, "A library scan is already running")
+
+    async with LIBRARY_SCAN_LOCK:
         with db_connect() as conn:
             conn.execute(
-                "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
-                (time.time(), "ok", f"{len(library['songs'])} tracks scanned"),
+                "INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message",
+                (time.time(), mode, "running", "Scanning"),
             )
             conn.commit()
-        return {"status": "ok", "mode": mode, "tracks": len(library["songs"])}
-    except Exception as exc:
-        await write_app_error("library_scan", str(exc))
-        with db_connect() as conn:
-            conn.execute(
-                "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
-                (time.time(), "error", str(exc)),
-            )
-            conn.commit()
-        raise
+        try:
+            invalidate_library_cache()
+            # build_library already uses the on-disk index and only reads tags for
+            # new/changed files. Metadata reads are performed concurrently.
+            library = await build_library(force=True)
+            if mode == "full":
+                cover_tasks = [ensure_cover(song["path"]) for song in library["songs"]]
+                if cover_tasks:
+                    semaphore = asyncio.Semaphore(8)
+
+                    async def cover_one(coro):
+                        async with semaphore:
+                            try:
+                                return await coro
+                            except Exception:
+                                return None
+
+                    await asyncio.gather(*(cover_one(c) for c in cover_tasks), return_exceptions=True)
+            await persist_library_index(library)
+            with db_connect() as conn:
+                conn.execute(
+                    "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
+                    (time.time(), "ok", f"{len(library['songs'])} tracks scanned"),
+                )
+                conn.commit()
+            return {"status": "ok", "mode": mode, "tracks": len(library["songs"])}
+        except Exception as exc:
+            await write_app_error("library_scan", str(exc))
+            with db_connect() as conn:
+                conn.execute(
+                    "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
+                    (time.time(), "error", str(exc)),
+                )
+                conn.commit()
+            raise
 
 
 @app.get("/api/library/scan/status")
@@ -6857,8 +6978,15 @@ async def scheduled_library_scanner():
         try:
             settings=load_settings()
             enabled=bool(settings.get("scan_enabled",True)); minutes=max(5,int(settings.get("scan_interval_minutes",60) or 60))
-            if enabled: await asyncio.sleep(minutes*60); await api_library_scan_mode("quick")
-            else: await asyncio.sleep(300)
+            if enabled:
+                await asyncio.sleep(minutes*60)
+                try:
+                    await api_library_scan_mode("quick")
+                except HTTPException as exc:
+                    if exc.status_code != 409:
+                        raise
+            else:
+                await asyncio.sleep(300)
         except asyncio.CancelledError: return
         except Exception as exc:
             await write_app_error("scheduled_scan",str(exc)); await asyncio.sleep(300)
