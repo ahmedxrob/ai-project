@@ -6,6 +6,7 @@
 
 let socket = null;
 let socketReconnectTimer = null;
+let socketReconnectAttempt = 0;
 let socketPingTimer = null;
 
 let completedSet = new Set();
@@ -18,7 +19,7 @@ let selectedArtistId = null;
 let selectedAlbumId = null;
 let libraryPlaybackQueue = null;
 let libraryFilesSet = new Set();
-let playerShuffle = localStorage.getItem("xrob_music_shuffle") === "true";
+let playerShuffle = storageGet("xrob_music_shuffle") === "true";
 let shuffleRestoreQueue = null;
 let shuffleRestoreCurrentId = null;
 
@@ -73,7 +74,7 @@ let savedPlayerState = {
     queueIndex: -1
 };
 
-let playerRepeatMode = localStorage.getItem("xrob_music_repeat") || "off";
+let playerRepeatMode = storageGet("xrob_music_repeat") || "off";
 let enhancedQueue = [];
 let enhancedQueueIndex = -1;
 let enhancedSongPositions = {};
@@ -82,6 +83,103 @@ let playSessionRecorded = false;
 const PLAY_COUNT_THRESHOLD_SECONDS = 60;
 const ENHANCED_QUEUE_KEY = "xrob_music_up_next_queue";
 const ENHANCED_REPEAT_KEY = "xrob_music_repeat";
+/* ============================================================
+   PLATFORM-SAFE STORAGE + API TRANSPORT
+   ============================================================ */
+
+function storageGet(key, fallback = null) {
+    try {
+        const value = window.localStorage.getItem(key);
+        return value === null ? fallback : value;
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function storageSet(key, value) {
+    try {
+        window.localStorage.setItem(key, String(value));
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function storageRemove(key) {
+    try {
+        window.localStorage.removeItem(key);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+const nativeFetch = typeof window.fetch === "function" ? window.fetch.bind(window) : (...args) => Promise.reject(new Error("Fetch unavailable"));
+const API_DEFAULT_TIMEOUT_MS = 15000;
+
+function appBaseUrl() {
+    try {
+        const base = new URL(document.baseURI || window.location.href);
+        if (!base.pathname.endsWith("/")) base.pathname += "/";
+        return base;
+    } catch (_) {
+        return new URL("/", window.location.href);
+    }
+}
+
+function apiUrl(path) {
+    try {
+        return new URL(String(path || ""), appBaseUrl()).href;
+    } catch (_) {
+        return String(path || "");
+    }
+}
+
+function websocketUrl() {
+    const base = appBaseUrl();
+    base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+    return new URL("ws", base).href;
+}
+
+async function apiFetch(input, options = {}) {
+    const requestOptions = { ...options };
+    const method = String(requestOptions.method || (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")).toUpperCase();
+    const retryable = method === "GET" || method === "HEAD";
+    const attempts = retryable ? 2 : 1;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        let timeoutId = null;
+        let controller = null;
+        try {
+            if (!requestOptions.signal && typeof AbortController !== "undefined") {
+                controller = new AbortController();
+                requestOptions.signal = controller.signal;
+                const timeout = Number(requestOptions.timeoutMs || API_DEFAULT_TIMEOUT_MS);
+                timeoutId = window.setTimeout(() => controller.abort(), Math.max(1000, timeout));
+            }
+            const target = typeof input === "string" ? apiUrl(input) : input;
+            const response = await nativeFetch(target, {
+                credentials: requestOptions.credentials || "same-origin",
+                ...requestOptions,
+            });
+            if (timeoutId) window.clearTimeout(timeoutId);
+            if (retryable && attempt + 1 < attempts && [408, 429, 502, 503, 504].includes(response.status)) {
+                await new Promise(resolve => window.setTimeout(resolve, 350 * (attempt + 1)));
+                continue;
+            }
+            return response;
+        } catch (error) {
+            if (timeoutId) window.clearTimeout(timeoutId);
+            lastError = error;
+            if (!retryable || attempt + 1 >= attempts) throw error;
+            await new Promise(resolve => window.setTimeout(resolve, 350 * (attempt + 1)));
+        }
+    }
+    throw lastError || new Error("Request failed");
+}
+
+
 const PLAYER_SYNC_CHANNEL = "xrob_music_player_sync_v2";
 const PLAYER_SYNC_STATE_KEY = "xrob_music_player_sync_state";
 const PLAYER_SYNC_COMMAND_KEY = "xrob_music_player_sync_command";
@@ -90,21 +188,21 @@ const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).s
 const PLAYER_CLIENT_ID = (() => {
     const key = "xrob_music_player_client_id";
     try {
-        const saved = localStorage.getItem(key);
+        const saved = storageGet(key);
         if (saved) return saved;
         const value = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-        localStorage.setItem(key, value);
+        storageSet(key, value);
         return value;
     } catch (_) {
         return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     }
 })();
-const PLAYER_OWNER_STALE_MS = 6500;
+const PLAYER_OWNER_STALE_MS = 15000;
 const PLAYER_SERVER_STATE_STALE_MS = 12000;
 const PLAYER_HEARTBEAT_MS = 2000;
 const PLAYER_OWNER_CLAIM_DELAY_MS = 650;
-const PLAYER_PROGRESS_BROADCAST_MS = 220;
-const PLAYER_SERVER_SYNC_MS = 750;
+const PLAYER_PROGRESS_BROADCAST_MS = 450;
+const PLAYER_SERVER_SYNC_MS = 1800;
 let playerOwnerClaimTimer = null;
 let playerProgressBroadcastTimer = null;
 let playerServerSyncTimer = null;
@@ -115,6 +213,7 @@ let playerSyncChannel = null;
 let playerSyncHeartbeat = null;
 let playerOwnerId = null;
 let applyingRemotePlayerCommand = false;
+let suppressLocalOwnershipUntil = 0;
 let remotePlayerState = null;
 let remotePlayerReceivedAt = 0;
 let remotePlayerTimer = null;
@@ -126,7 +225,9 @@ let lastRemoteOwnerId = null;
 let lastRemoteSequence = -1;
 const processedPlayerCommandIds = new Set();
 let dailyMixTracks = [];
-let dailyMixVariant = Number(localStorage.getItem("xrob_daily_mix_variant") || 0);
+let dailyMixVariant = Number(storageGet("xrob_daily_mix_variant") || 0);
+
+
 
 function getLocalDateKey(date = new Date()) {
     const y = date.getFullYear();
@@ -137,7 +238,7 @@ function getLocalDateKey(date = new Date()) {
 
 function getPlayerOwner() {
     try {
-        const raw = localStorage.getItem(PLAYER_OWNER_KEY);
+        const raw = storageGet(PLAYER_OWNER_KEY);
         return raw ? JSON.parse(raw) : null;
     } catch (_) { return null; }
 }
@@ -157,7 +258,7 @@ function setPlayerOwner() {
     lastRemoteOwnerId = null;
     lastRemoteSequence = -1;
     stopRemoteProgressTicker();
-    try { localStorage.setItem(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
+    try { storageSet(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
     return true;
 }
 
@@ -165,7 +266,7 @@ function heartbeatPlayerOwner() {
     const current = getPlayerOwner();
     if (!current?.id || current.id === PLAYER_TAB_ID) {
         if (playerOwnerId === PLAYER_TAB_ID) {
-            try { localStorage.setItem(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
+            try { storageSet(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
             broadcastPlayerState();
         }
         return;
@@ -176,7 +277,7 @@ function heartbeatPlayerOwner() {
 function clearPlayerOwner() {
     const owner = getPlayerOwner();
     if (!owner || owner.id !== PLAYER_TAB_ID) return;
-    try { localStorage.removeItem(PLAYER_OWNER_KEY); } catch (_) {}
+    try { storageRemove(PLAYER_OWNER_KEY); } catch (_) {}
     playerOwnerId = null;
 }
 
@@ -235,34 +336,44 @@ function buildPlayerSyncState(includeQueue = true) {
     return state;
 }
 
-function broadcastPlayerState(force = false) {
+function broadcastPlayerState(force = false, unload = false) {
     if (!audio || (playerOwnerId && playerOwnerId !== PLAYER_TAB_ID) || isRemotePlayerOwner()) return;
     const state = buildPlayerSyncState(force);
     if (!state) return;
     state.seq = ++playerSyncSequence;
     if (force) state.force = true;
     if (force) {
-        try { localStorage.setItem(PLAYER_SYNC_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+        try { storageSet(PLAYER_SYNC_STATE_KEY, JSON.stringify(state)); } catch (_) {}
     }
     try { playerSyncChannel?.postMessage({ type: "state", state }); } catch (_) {}
-    publishPlayerStateToServer(state, force);
+    publishPlayerStateToServer(state, force, unload);
 }
 
-function publishPlayerStateToServer(state, force = false) {
+function publishPlayerStateToServer(state, force = false, unload = false) {
     if (!state || state.ownerId !== PLAYER_TAB_ID) return;
-    const send = (nextState, full) => {
+    const send = (nextState, full, useUnloadTransport = false) => {
+        const payload = JSON.stringify({ state: nextState, full });
         try {
-            fetch("api/player/state", {
+            if (useUnloadTransport && typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" && typeof Blob !== "undefined") {
+                const ok = navigator.sendBeacon(
+                    apiUrl("api/player/state"),
+                    new Blob([payload], { type: "application/json" })
+                );
+                if (ok) return;
+            }
+            apiFetch("api/player/state", {
                 method: "POST",
                 credentials: "same-origin",
+                keepalive: useUnloadTransport,
+                timeoutMs: useUnloadTransport ? 5000 : API_DEFAULT_TIMEOUT_MS,
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ state: nextState, full })
+                body: payload
             }).catch(() => {});
         } catch (_) {}
     };
-    if (force) {
+    if (force || unload) {
         if (playerServerSyncTimer) { window.clearTimeout(playerServerSyncTimer); playerServerSyncTimer = null; }
-        send(state, true);
+        send(state, true, unload);
         return;
     }
     if (playerServerSyncTimer) return;
@@ -276,7 +387,7 @@ function publishPlayerStateToServer(state, force = false) {
 
 async function loadServerPlayerState() {
     try {
-        const response = await fetch("api/player/state", { cache: "no-store", credentials: "same-origin" });
+        const response = await apiFetch("api/player/state", { cache: "no-store", credentials: "same-origin" });
         if (!response.ok) return false;
         const data = await response.json().catch(() => ({}));
         if (data?.state?.ownerId && data.state.ownerId !== PLAYER_TAB_ID) {
@@ -333,9 +444,9 @@ function sendPlayerCommand(command, payload = {}) {
     if (playerSyncChannel) {
         try { playerSyncChannel.postMessage(message); sent = true; } catch (_) {}
     }
-    try { localStorage.setItem(PLAYER_SYNC_COMMAND_KEY, JSON.stringify(message)); sent = true; } catch (_) {}
+    try { storageSet(PLAYER_SYNC_COMMAND_KEY, JSON.stringify(message)); sent = true; } catch (_) {}
     try {
-        fetch("api/player/command", {
+        apiFetch("api/player/command", {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
@@ -418,17 +529,17 @@ function applyRemoteDailyMixState(state, persist = true) {
         row.scrollLeft = Math.max(0, Math.min(Number(state.scrollLeft), Math.max(0, row.scrollWidth - row.clientWidth)));
     }
     if (persist) {
-        try { localStorage.setItem(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, tracks: dailyMixTracks, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
+        try { storageSet(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, tracks: dailyMixTracks, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
     }
     return true;
 }
 
 function loadPersistedDailyMixState() {
     try {
-        const raw = localStorage.getItem(DAILY_MIX_STATE_KEY);
+        const raw = storageGet(DAILY_MIX_STATE_KEY);
         if (!raw) return false;
         const state = JSON.parse(raw);
-        const configured = Math.max(5, Math.min(50, Number(localStorage.getItem("xrob_music_daily_mix_count") || 30)));
+        const configured = Math.max(5, Math.min(50, Number(storageGet("xrob_music_daily_mix_count") || 30)));
         if (!Array.isArray(state?.tracks) || !state.tracks.length) return false;
         if (state.date && state.date !== getLocalDateKey()) return false;
         if (Number(state.trackCount || state.tracks.length) !== configured) return false;
@@ -519,6 +630,7 @@ function applyRemoteCommand(message) {
     }
     const p = message.payload || {};
     applyingRemotePlayerCommand = true;
+    suppressLocalOwnershipUntil = Date.now() + 5000;
     try {
         if (message.command === "play") audio.play().catch(() => {});
         else if (message.command === "pause") audio.pause();
@@ -561,7 +673,7 @@ async function initPlayerSync() {
     const owner = getPlayerOwner();
     if (ownerIsFresh(owner)) playerOwnerId = owner.id;
     await loadServerPlayerState();
-    const raw = localStorage.getItem(PLAYER_SYNC_STATE_KEY);
+    const raw = storageGet(PLAYER_SYNC_STATE_KEY);
     // When another tab owns the player, trust a live BroadcastChannel response
     // instead of blindly restoring an old state snapshot from localStorage.
     if (!serverPlayerStateLoaded && !(ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID) && raw) {
@@ -609,12 +721,12 @@ function currentSongId() {
 }
 
 function saveEnhancedQueue() {
-    try { localStorage.setItem(ENHANCED_QUEUE_KEY, JSON.stringify({queue: enhancedQueue, index: enhancedQueueIndex})); } catch (_) {}
+    try { storageSet(ENHANCED_QUEUE_KEY, JSON.stringify({queue: enhancedQueue, index: enhancedQueueIndex})); } catch (_) {}
 }
 
 function loadEnhancedQueue() {
     try {
-        const v = JSON.parse(localStorage.getItem(ENHANCED_QUEUE_KEY) || "null");
+        const v = JSON.parse(storageGet(ENHANCED_QUEUE_KEY) || "null");
         if (Array.isArray(v?.queue) && v.queue.length) {
             enhancedQueue = [...v.queue];
             enhancedQueueIndex = Math.max(
@@ -638,12 +750,12 @@ function loadEnhancedQueue() {
 }
 
 async function loadEnhancedPositions() {
-    try { const r=await fetch("api/player/positions",{cache:"no-store"}); if(r.ok) enhancedSongPositions=await r.json(); } catch (_) {}
+    try { const r=await apiFetch("api/player/positions",{cache:"no-store"}); if(r.ok) enhancedSongPositions=await r.json(); } catch (_) {}
 }
 
 let lastPositionPersistId = "";
 let lastPositionPersistSecond = -1;
-function persistCurrentPosition(force = false) {
+function persistCurrentPosition(force = false, unload = false) {
     const id = audio?.dataset?.xrobSongId || currentSongId();
     if(!id || !audio) return;
     const position=Number(audio.currentTime||0), duration=Number(audio.duration||0);
@@ -652,7 +764,13 @@ function persistCurrentPosition(force = false) {
     lastPositionPersistId = id;
     lastPositionPersistSecond = second;
     enhancedSongPositions[id]={position,duration,updated_at:Date.now()/1000};
-    fetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify({song_id:id,position,duration})}).catch(()=>{});
+    const payload = JSON.stringify({song_id:id,position,duration});
+    if (unload && typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" && typeof Blob !== "undefined") {
+        try {
+            if (navigator.sendBeacon(apiUrl("api/player/position"), new Blob([payload], {type:"application/json"}))) return;
+        } catch (_) {}
+    }
+    apiFetch("api/player/position",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",keepalive:unload,timeoutMs:unload ? 5000 : API_DEFAULT_TIMEOUT_MS,body:payload}).catch(()=>{});
 }
 
 function beginPlaySession(id) {
@@ -682,7 +800,7 @@ function recordPlay(id) {
 
     playSessionRecorded = true;
     try {
-        fetch("api/player/history", {
+        apiFetch("api/player/history", {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
@@ -701,7 +819,7 @@ function recordPlay(id) {
 }
 
 function applyRepeatLabel() { const b=document.getElementById("queueRepeat"); if(b) b.textContent=`Repeat: ${playerRepeatMode === "track" ? "Track" : playerRepeatMode === "queue" ? "Queue" : "Off"}`; }
-function cycleRepeatMode() { playerRepeatMode = playerRepeatMode === "off" ? "track" : playerRepeatMode === "track" ? "queue" : "off"; localStorage.setItem(ENHANCED_REPEAT_KEY,playerRepeatMode); applyRepeatLabel(); }
+function cycleRepeatMode() { playerRepeatMode = playerRepeatMode === "off" ? "track" : playerRepeatMode === "track" ? "queue" : "off"; storageSet(ENHANCED_REPEAT_KEY,playerRepeatMode); applyRepeatLabel(); }
 
 
 /* ============================================================
@@ -820,7 +938,7 @@ function syncLibraryQueue(queue, index) {
     libraryPlaybackQueue = [...normalized];
     currentLibraryIndex = enhancedQueueIndex;
     if (normalized.length) saveEnhancedQueue();
-    else localStorage.removeItem(ENHANCED_QUEUE_KEY);
+    else storageRemove(ENHANCED_QUEUE_KEY);
 }
 
 function reconcileEnhancedQueue() {
@@ -935,7 +1053,7 @@ function setShuffle(enabled) {
         renderEnhancedQueue();
     }
     playerShuffle = nextValue;
-    localStorage.setItem("xrob_music_shuffle", String(playerShuffle));
+    storageSet("xrob_music_shuffle", String(playerShuffle));
     updateShuffleButtons();
     saveEnhancedQueue();
 }
@@ -959,7 +1077,7 @@ function shuffleLibrary() {
         libraryPlaybackQueue = [...enhancedQueue];
         currentLibraryIndex = enhancedQueueIndex;
         playerShuffle = true;
-        localStorage.setItem("xrob_music_shuffle", "true");
+        storageSet("xrob_music_shuffle", "true");
         updateShuffleButtons();
         saveEnhancedQueue();
         renderEnhancedQueue();
@@ -1071,7 +1189,7 @@ function toggleTheme(theme) {
         theme
     );
 
-    localStorage.setItem(
+    storageSet(
         "xrob_music_theme",
         theme
     );
@@ -1230,7 +1348,7 @@ function savePlayerState(force = false) {
         queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
         wasPlaying: !audio.paused,
     };
-    try { localStorage.setItem("xrob_music_player_state", JSON.stringify(state)); lastPlayerStateSavedAt = now; } catch (_) {}
+    try { storageSet("xrob_music_player_state", JSON.stringify(state)); lastPlayerStateSavedAt = now; } catch (_) {}
 }
 
 function restorePlayerState() {
@@ -1242,7 +1360,7 @@ function restorePlayerState() {
         claimLocalPlayerWhenOwnerIsGone();
     }
     try {
-        const raw = localStorage.getItem("xrob_music_player_state");
+        const raw = storageGet("xrob_music_player_state");
         if (!raw) return;
         const state = JSON.parse(raw);
         if (Number.isFinite(Number(state.volume))) {
@@ -1528,13 +1646,39 @@ function updatePlayerInfo(
     }
 
     if (playerArt) {
-
-        playerArt.src =
-            art ||
-            "https://via.placeholder.com/60?text=Music";
+        playerArt.src = art || "";
+        playerArt.alt = title || "";
     }
+    updateMediaSession();
 }
 
+
+function updateMediaSession() {
+    if (!("mediaSession" in navigator) || !("MediaMetadata" in window)) return;
+    const title = playerTitle?.textContent || "Unknown Track";
+    const artist = playerArtist?.textContent || "Unknown Artist";
+    const artwork = playerArt?.src ? [{ src: playerArt.src, sizes: "512x512", type: "image/png" }] : [];
+    try {
+        navigator.mediaSession.metadata = new MediaMetadata({ title, artist, album: "Xrob Music", artwork });
+        navigator.mediaSession.playbackState = audio?.paused ? "paused" : "playing";
+    } catch (_) {}
+}
+
+function installMediaSession() {
+    if (!("mediaSession" in navigator)) return;
+    const actions = {
+        play: () => { if (audio?.src) audio.play().catch(() => {}); },
+        pause: () => audio?.pause(),
+        previoustrack: () => playPreviousTrack(),
+        nexttrack: () => playNextTrack(),
+        seekbackward: details => { if (audio) audio.currentTime = Math.max(0, audio.currentTime - Number(details.seekOffset || 10)); },
+        seekforward: details => { if (audio && Number.isFinite(audio.duration)) audio.currentTime = Math.min(audio.duration, audio.currentTime + Number(details.seekOffset || 10)); },
+        seekto: details => { if (audio && Number.isFinite(details.seekTime)) { audio.currentTime = Math.max(0, Math.min(audio.duration || details.seekTime, details.seekTime)); } },
+    };
+    Object.entries(actions).forEach(([action, handler]) => {
+        try { navigator.mediaSession.setActionHandler(action, handler); } catch (_) {}
+    });
+}
 
 function toggleAudioStream(
     button,
@@ -1564,7 +1708,7 @@ function toggleAudioStream(
         return;
     }
 
-    setPlayerOwner();
+    if (!fromRemote) setPlayerOwner();
     initAudioContext();
 
     if (
@@ -1767,11 +1911,12 @@ function bindAudioEvents() {
     audio.addEventListener(
         "play",
         () => {
-            if (!applyingRemotePlayerCommand) setPlayerOwner();
+            if (!applyingRemotePlayerCommand && Date.now() >= suppressLocalOwnershipUntil) setPlayerOwner();
             initAudioContext();
             if (audioContext?.state === "suspended") audioContext.resume().catch(() => {});
             startVisualizer();
             updatePlayingState(true);
+            updateMediaSession();
             startPlayerProgressFrame();
             schedulePlayerStateBroadcast(true);
         }
@@ -1783,6 +1928,7 @@ function bindAudioEvents() {
         () => {
             stopVisualizer();
             updatePlayingState(false);
+            updateMediaSession();
             stopPlayerProgressFrame();
             schedulePlayerStateBroadcast(true);
         }
@@ -1929,7 +2075,7 @@ function bindPlayerControls() {
 
 
     const savedVolume =
-        localStorage.getItem(
+        storageGet(
             "xrob_music_volume"
         );
 
@@ -1969,7 +2115,7 @@ function bindPlayerControls() {
                 updateRemotePlayerOptimistic({ volume: nextVolume });
             } else { setPlayerOwner(); audio.volume = nextVolume; }
 
-            localStorage.setItem(
+            storageSet(
                 "xrob_music_volume",
                 volume.value
             );
@@ -2022,7 +2168,7 @@ async function resetSettings() {
         daily_mix_track_count: 30
     };
     try {
-        const response = await fetch("api/settings", {
+        const response = await apiFetch("api/settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(defaults)
@@ -2050,7 +2196,7 @@ function applySettingsToForm(settings) {
     setValue("set_title_cleanup_rules", settings.title_cleanup_rules || "");
     const dailyMixCount = Math.max(5, Math.min(50, Number(settings.daily_mix_track_count || 30)));
     setValue("set_daily_mix_count", dailyMixCount);
-    localStorage.setItem("xrob_music_daily_mix_count", String(dailyMixCount));
+    storageSet("xrob_music_daily_mix_count", String(dailyMixCount));
         setValue("set_web_username", settings.web_username || "admin");
     setValue("set_web_password", "");
     renderStorage(settings.storage);
@@ -2068,7 +2214,7 @@ function updateQualityState() {
 
 async function loadSettings() {
     try {
-        const response = await fetch("api/settings", { cache: "no-store" });
+        const response = await apiFetch("api/settings", { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const settings = await response.json();
         applySettingsToForm(settings);
@@ -2114,7 +2260,7 @@ async function saveSettings() {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 "api/settings",
                 {
                     method: "POST",
@@ -2152,7 +2298,7 @@ async function saveSettings() {
             );
 
 
-        localStorage.setItem("xrob_music_daily_mix_count", String(result.daily_mix_track_count || data.daily_mix_track_count || 30));
+        storageSet("xrob_music_daily_mix_count", String(result.daily_mix_track_count || data.daily_mix_track_count || 30));
         if (msg) {
 
             msg.textContent =
@@ -2197,7 +2343,7 @@ function saveLibraryCache() {
 
     try {
 
-        localStorage.setItem(
+        storageSet(
             LIBRARY_CACHE_KEY,
             JSON.stringify({
                 files: rawLibraryFiles,
@@ -2222,7 +2368,7 @@ function loadLibraryCache() {
     try {
 
         const raw =
-            localStorage.getItem(
+            storageGet(
                 LIBRARY_CACHE_KEY
             );
 
@@ -2305,7 +2451,7 @@ function saveRecentlyAddedCache(
 
     try {
 
-        localStorage.setItem(
+        storageSet(
             RECENT_CACHE_KEY,
             JSON.stringify({
                 tracks:
@@ -2332,7 +2478,7 @@ function loadRecentlyAddedCache() {
     try {
 
         const raw =
-            localStorage.getItem(
+            storageGet(
                 RECENT_CACHE_KEY
             );
 
@@ -2375,7 +2521,7 @@ async function refreshLibraryCache() {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 "api/library",
                 {
                     cache: "no-store"
@@ -2557,7 +2703,7 @@ async function loadStats() {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 "/api/stats",
                 {
                     cache:
@@ -2684,7 +2830,7 @@ function playQueue(queue, index = 0, shuffle = false) {
     syncLibraryQueue(playbackQueue, playbackIndex);
     currentPlayerSource = "library";
     playerShuffle = Boolean(shuffle);
-    localStorage.setItem("xrob_music_shuffle", String(playerShuffle));
+    storageSet("xrob_music_shuffle", String(playerShuffle));
     updateShuffleButtons();
     renderEnhancedQueue();
     playLibraryTrack(playbackIndex);
@@ -2764,7 +2910,7 @@ function renderArtists(list, query) {
         card.innerHTML = `<button type="button" class="catalog-main-action"><img class="artist-cover" src="${escapeHtml(artist.cover||"")}" alt="" loading="lazy" onerror="this.style.display='none'"/><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count || 0} album${artist.album_count === 1 ? "" : "s"} · ${artist.song_count || 0} track${artist.song_count === 1 ? "" : "s"}</span></div></button><div class="catalog-actions"><button type="button" class="btn-refresh artist-art-btn">Cover</button><button type="button" class="btn-preview catalog-play">▶ Play</button></div>`;
         card.querySelector(".catalog-main-action")?.addEventListener("click", () => openArtist(artist.id));
         card.querySelector(".catalog-play")?.addEventListener("click", e => { e.stopPropagation(); const tracks = rawLibraryFiles.filter(f => (artist.song_ids || []).includes(f.id)); playQueue(tracks, 0, false); });
-        card.querySelector(".artist-art-btn")?.addEventListener("click", e => { e.stopPropagation(); const input=document.createElement("input"); input.type="file"; input.accept="image/jpeg,image/png,image/webp"; input.onchange=async()=>{const file=input.files?.[0]; if(!file)return; const fd=new FormData(); fd.append("upload",file); const rr=await fetch(`api/library/artist-artwork/${encodeURIComponent(artist.id)}`,{method:"POST",body:fd}); if(rr.ok){showToast("✅ Artist cover saved"); renderArtists(list,query);} else showToast("❌ Could not save artist cover");}; input.click(); });
+        card.querySelector(".artist-art-btn")?.addEventListener("click", e => { e.stopPropagation(); const input=document.createElement("input"); input.type="file"; input.accept="image/jpeg,image/png,image/webp"; input.onchange=async()=>{const file=input.files?.[0]; if(!file)return; const fd=new FormData(); fd.append("upload",file); const rr=await apiFetch(`api/library/artist-artwork/${encodeURIComponent(artist.id)}`,{method:"POST",body:fd}); if(rr.ok){showToast("✅ Artist cover saved"); renderArtists(list,query);} else showToast("❌ Could not save artist cover");}; input.click(); });
         list.appendChild(card);
     });
 }
@@ -2858,7 +3004,7 @@ async function deleteFile(filename) {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 "api/library/" +
                 encodeURIComponent(
                     filename
@@ -3000,7 +3146,7 @@ async function searchMusic() {
         );
 
         const response =
-            await fetch(
+            await apiFetch(
                 `api/search?q=${
                     encodeURIComponent(query)
                 }&source=youtube&page=1`,
@@ -3392,7 +3538,7 @@ async function loadMoreResults() {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 `api/search?q=${
                     encodeURIComponent(
                         currentQuery
@@ -4110,7 +4256,7 @@ async function pollTasks(force = false) {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 "/api/tasks",
                 {
                     cache: "no-store"
@@ -4237,7 +4383,7 @@ async function startDownload(
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 "/api/download",
                 {
                     method: "POST",
@@ -4327,7 +4473,7 @@ async function cancelTask(taskId) {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 `api/tasks/${
                     encodeURIComponent(taskId)
                 }/cancel`,
@@ -4375,7 +4521,7 @@ async function removeDownloadTask(taskId) {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 `api/tasks/${
                     encodeURIComponent(taskId)
                 }`,
@@ -4425,7 +4571,7 @@ async function removeDownloadTask(taskId) {
 
 async function retryTask(taskId) {
     try {
-        const response = await fetch(`api/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST" });
+        const response = await apiFetch(`api/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST" });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Retry failed.");
         completedSet.delete(taskId);
@@ -4442,7 +4588,7 @@ async function clearDoneTasks() {
     try {
 
         const response =
-            await fetch(
+            await apiFetch(
                 "api/tasks/clear-completed",
                 {
                     method: "DELETE",
@@ -4793,7 +4939,7 @@ async function loadHome() {
 
 
         const response =
-            await fetch(
+            await apiFetch(
                 "api/home",
                 {
                     cache:
@@ -4947,18 +5093,8 @@ function initWebSocket() {
     }
 
 
-    const protocol =
-        location.protocol === "https:"
-            ? "wss:"
-            : "ws:";
-
-
     try {
-
-        socket =
-            new WebSocket(
-                `${protocol}//${location.host}/ws`
-            );
+        socket = new WebSocket(websocketUrl());
 
     } catch (error) {
 
@@ -4975,6 +5111,7 @@ function initWebSocket() {
 
     socket.onopen =
         () => {
+            socketReconnectAttempt = 0;
             if (socketPingTimer) window.clearInterval(socketPingTimer);
             socketPingTimer = window.setInterval(() => {
                 if (socket?.readyState === WebSocket.OPEN) {
@@ -5028,10 +5165,11 @@ function initWebSocket() {
 
 
     socket.onclose =
-        () => {
+        event => {
             socket = null;
             if (socketPingTimer) { window.clearInterval(socketPingTimer); socketPingTimer = null; }
-            scheduleWebSocketReconnect();
+            // 1008 is an authentication rejection; do not hammer the server until login succeeds.
+            if (event?.code !== 1008 && navigator.onLine !== false) scheduleWebSocketReconnect();
         };
 }
 
@@ -5043,18 +5181,13 @@ function scheduleWebSocketReconnect() {
     }
 
 
-    socketReconnectTimer =
-        setTimeout(
-            () => {
-
-                socketReconnectTimer =
-                    null;
-
-                initWebSocket();
-
-            },
-            3000
-        );
+    if (navigator.onLine === false) return;
+    const delay = Math.min(30000, 1000 * (2 ** Math.min(socketReconnectAttempt, 5)));
+    socketReconnectAttempt += 1;
+    socketReconnectTimer = setTimeout(() => {
+        socketReconnectTimer = null;
+        initWebSocket();
+    }, delay);
 }
 
 
@@ -5104,7 +5237,7 @@ function bindInfiniteScroll() {
 
 function playHomeTrack(index) {
 
-    currentPlayerSource = "library";
+    currentPlayerSource = "home";
 
     const queue =
         window.xrobHomeQueue || [];
@@ -5176,7 +5309,7 @@ async function refreshLibrary() {
     if (button) button.disabled = true;
     try {
         updateLoadingCircle("library", 10, "Quick scan…");
-        const response = await fetch("api/library/scan/quick", { method: "POST", cache: "no-store" });
+        const response = await apiFetch("api/library/scan/quick", { method: "POST", cache: "no-store" });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Quick scan failed.");
         await refreshLibraryCache();
@@ -5246,7 +5379,7 @@ function renderLocalIcons() {
     });
 }
 async function checkWebAuth() {
-    try { const r=await fetch("api/auth/status",{cache:"no-store"}); if(!r.ok) return false; const d=await r.json(); return !!d.authenticated; } catch (_) { return false; }
+    try { const r=await apiFetch("api/auth/status",{cache:"no-store"}); if(!r.ok) return false; const d=await r.json(); return !!d.authenticated; } catch (_) { return false; }
 }
 
 function showAuthenticatedApp() { document.getElementById("login-screen")?.classList.add("hidden"); const shell=document.getElementById("app-shell"); if(shell) shell.hidden=false; renderLocalIcons(); }
@@ -5257,18 +5390,18 @@ async function handleLoginSubmit(e){
     const btn=document.querySelector(".login-submit");
     if(error) error.textContent="";
     const body={username:String(document.getElementById("loginUsername")?.value||"").trim(),password:document.getElementById("loginPassword")?.value||""};
-    localStorage.setItem("xrob_music_login_user", body.username);
+    storageSet("xrob_music_login_user", body.username);
     if(btn){btn.disabled=true; btn.dataset.originalText=btn.textContent; btn.textContent="Signing in…";}
-    try{const r=await fetch("api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||"Sign in failed"); document.getElementById("loginPassword").value=""; showAuthenticatedApp(); await startAppAfterAuth(); }catch(err){if(error)error.textContent=err.message||"Sign in failed";} finally{if(btn){btn.disabled=false;btn.textContent=btn.dataset.originalText||"Sign in";}}
+    try{const r=await apiFetch("api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify(body)}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||"Sign in failed"); document.getElementById("loginPassword").value=""; showAuthenticatedApp(); await startAppAfterAuth(); }catch(err){if(error)error.textContent=err.message||"Sign in failed";} finally{if(btn){btn.disabled=false;btn.textContent=btn.dataset.originalText||"Sign in";}}
 }
 
 
-async function logoutWebAuth(){ await fetch("api/auth/logout",{method:"POST"}).catch(()=>{}); location.reload(); }
+async function logoutWebAuth(){ await apiFetch("api/auth/logout",{method:"POST"}).catch(()=>{}); location.reload(); }
 
 async function initializeApp() {
 
     renderLocalIcons();
-    const savedLoginUser = localStorage.getItem("xrob_music_login_user");
+    const savedLoginUser = storageGet("xrob_music_login_user");
     if(savedLoginUser && document.getElementById("loginUsername")) document.getElementById("loginUsername").value=savedLoginUser;
     document.getElementById("loginForm")?.addEventListener("submit",handleLoginSubmit);
     setTimeout(()=>document.getElementById("loginUsername")?.focus(),50);
@@ -5283,7 +5416,7 @@ async function startAppAfterAuth() {
     cacheDom();
 
     toggleTheme(
-        localStorage.getItem(
+        storageGet(
             "xrob_music_theme"
         ) || "dark"
     );
@@ -5345,7 +5478,7 @@ async function startAppAfterAuth() {
         libraryWarmupChecks += 1;
         if (libraryWarmupChecks > 30) return clearInterval(warmupTimer);
         try {
-            const r = await fetch('api/library', {cache:'no-store'});
+            const r = await apiFetch('api/library', {cache:'no-store'});
             if (!r.ok) return;
             const d = await r.json();
             if (d.ready) {
@@ -5365,10 +5498,38 @@ async function startAppAfterAuth() {
 
 
     initWebSocket();
+    window.addEventListener("online", () => {
+        socketReconnectAttempt = 0;
+        if (socketReconnectTimer) { clearTimeout(socketReconnectTimer); socketReconnectTimer = null; }
+        initWebSocket();
+    }, { passive: true });
+    window.addEventListener("offline", () => {
+        if (socketReconnectTimer) { clearTimeout(socketReconnectTimer); socketReconnectTimer = null; }
+    }, { passive: true });
 
 
     installEnhancedFeatures();
-    document.getElementById("errorsButton")?.addEventListener("click",async()=>{const r=await fetch("api/errors");const d=await r.json();document.getElementById("errorsContent").innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';document.getElementById("errors-modal").hidden=false;});
+    installMediaSession();
+    const persistOnLeave = () => {
+        persistCurrentPosition(true, true);
+        if (!isRemotePlayerOwner()) {
+            const state = buildPlayerSyncState(true);
+            if (state) {
+                state.seq = ++playerSyncSequence;
+                state.force = true;
+                publishPlayerStateToServer(state, true, true);
+            }
+        }
+    };
+    window.addEventListener("pagehide", persistOnLeave, { passive: true });
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") persistOnLeave();
+        else {
+            loadServerPlayerState();
+            if (!audio?.paused) startPlayerProgressFrame();
+        }
+    }, { passive: true });
+    document.getElementById("errorsButton")?.addEventListener("click",async()=>{const r=await apiFetch("api/errors");const d=await r.json();document.getElementById("errorsContent").innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';document.getElementById("errors-modal").hidden=false;});
     document.getElementById("errorsClose")?.addEventListener("click",()=>document.getElementById("errors-modal").hidden=true);
     restorePlayerState();
 
@@ -5481,22 +5642,22 @@ function closeDownloadsDrawer(){
     if (drawer) drawer.hidden = true;
 }
 
-async function saveQueueAsPlaylist(){ if(!enhancedQueue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await fetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:enhancedQueue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
+async function saveQueueAsPlaylist(){ if(!enhancedQueue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await apiFetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:enhancedQueue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
 
 async function renderLibraryCollections(mode){
     const list=document.getElementById("libraryList"); if(!list)return;
     list.innerHTML='<div class="downloads-empty"><div class="empty-title">Loading…</div></div>';
     let endpoint=mode==="recent"?"recent":mode==="most"?"most_played":null;
     if(!endpoint)return;
-    const r=await fetch("api/library/recent-most",{cache:"no-store"}); const d=await r.json(); const rows=d[endpoint]||[]; list.innerHTML="";
+    const r=await apiFetch("api/library/recent-most",{cache:"no-store"}); const d=await r.json(); const rows=d[endpoint]||[]; list.innerHTML="";
     if(!rows.length){renderEmpty(list,"clock-3",mode==="recent"?"Nothing recently played":"No play history yet","Play some tracks to build this list.");return;}
     rows.forEach((t, rank)=>{ const f={...t,name:t.title,stream:t.stream,cover:t.cover,play_count:Number(t.plays||0)}; const card=createTrackCard(f,rows); card.classList.add("collection-track"); card.dataset.rank=String(rank+1); list.appendChild(card); });
 }
 
 async function loadPlaylistsView(){
-    const list=document.getElementById("libraryList"); if(!list)return; const r=await fetch("api/playlists",{cache:"no-store"}); const rows=await r.json(); list.innerHTML="";
+    const list=document.getElementById("libraryList"); if(!list)return; const r=await apiFetch("api/playlists",{cache:"no-store"}); const rows=await r.json(); list.innerHTML="";
     const head=document.createElement("div"); head.className="catalog-detail-header"; head.innerHTML='<div><h3>Playlists</h3><p>Create manual or smart playlists.</p></div><button class="btn-preview" id="newPlaylistBtn"><i data-lucide="plus" aria-hidden="true"></i> New playlist</button>'; list.appendChild(head);
-    rows.forEach(p=>{const c=document.createElement("article");c.className="catalog-card";c.innerHTML=`<div><strong>${escapeHtml(p.name)}</strong><span>${p.kind==='smart'?'Smart':'Manual'} · ${p.song_count} tracks</span></div><div class="btn-group"><button class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button class="btn-danger"><i data-lucide="trash-2" aria-hidden="true"></i> Delete</button></div>`;c.querySelector('.btn-preview').onclick=async()=>{const rr=await fetch(`api/playlists/${encodeURIComponent(p.id)}`);const full=await rr.json();setEnhancedQueue(full.tracks,0);playLibraryTrack(0);};c.querySelector('.btn-danger').onclick=async()=>{if(confirm(`Delete ${p.name}?`)){await fetch(`api/playlists/${encodeURIComponent(p.id)}`,{method:'DELETE'});loadPlaylistsView();}};list.appendChild(c);});
+    rows.forEach(p=>{const c=document.createElement("article");c.className="catalog-card";c.innerHTML=`<div><strong>${escapeHtml(p.name)}</strong><span>${p.kind==='smart'?'Smart':'Manual'} · ${p.song_count} tracks</span></div><div class="btn-group"><button class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button class="btn-danger"><i data-lucide="trash-2" aria-hidden="true"></i> Delete</button></div>`;c.querySelector('.btn-preview').onclick=async()=>{const rr=await apiFetch(`api/playlists/${encodeURIComponent(p.id)}`);const full=await rr.json();setEnhancedQueue(full.tracks,0);playLibraryTrack(0);};c.querySelector('.btn-danger').onclick=async()=>{if(confirm(`Delete ${p.name}?`)){await apiFetch(`api/playlists/${encodeURIComponent(p.id)}`,{method:'DELETE'});loadPlaylistsView();}};list.appendChild(c);});
     renderLocalIcons();
     const newPlaylistButton = head.querySelector("#newPlaylistBtn");
     newPlaylistButton?.addEventListener("click", async () => {
@@ -5505,7 +5666,7 @@ async function loadPlaylistsView(){
         const kind=confirm("Make this a smart playlist?\nOK = smart, Cancel = manual") ? 'smart' : 'manual';
         let rules={};
         if(kind==='smart'){const genre=prompt("Genre rule (optional)","");const artist=prompt("Artist rule (optional)","");if(genre)rules.genre=genre;if(artist)rules.artist=artist;}
-        const response = await fetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind,rules,song_ids:[]})});
+        const response = await apiFetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind,rules,song_ids:[]})});
         if (response.ok) loadPlaylistsView(); else showToast("❌ Could not create playlist");
     });
 }
@@ -5533,7 +5694,7 @@ function renderSongEditorTracks(query = "") {
         card.innerHTML = `<img class="song-editor-art" src="${escapeHtml(track.cover || "")}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title || track.name || "Unknown Track")}</div><div class="song-editor-artist">${escapeHtml(track.artist || "Unknown Artist")} <span aria-hidden="true">•</span> ${escapeHtml(track.album || "Unknown Album")}</div><div class="song-editor-file">${escapeHtml(track.name || "")}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="square-pen" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
         card.querySelector(".editor-edit").onclick = () => openMetadataEditor(track);
         card.querySelector(".editor-skip").onclick = async () => {
-            const r = await fetch(`api/song-editor/${encodeURIComponent(track.id)}/skip`, {method:"POST"});
+            const r = await apiFetch(`api/song-editor/${encodeURIComponent(track.id)}/skip`, {method:"POST"});
             if (!r.ok) return showToast("❌ Could not skip track");
             songEditorTracks = songEditorTracks.filter(x => x.id !== track.id);
             const input = document.getElementById("songEditorSearch");
@@ -5552,7 +5713,7 @@ async function loadSongEditor(){
     const list = document.getElementById("songEditorList"); if (!list) return;
     if (!songEditorTracks.length) list.innerHTML = '<div class="editor-empty">Loading tracks waiting for review…</div>';
     try {
-        const r = await fetch("api/song-editor", {cache:"no-store"});
+        const r = await apiFetch("api/song-editor", {cache:"no-store"});
         if (!r.ok) throw new Error("Could not load Songs Editor");
         const d = await r.json();
         songEditorTracks = Array.isArray(d.tracks) ? d.tracks : [];
@@ -5604,7 +5765,7 @@ function renderDashboardRows(id, rows) {
 
 async function loadDetailedLibraryStats() {
     try {
-        const r = await fetch('api/library/statistics', {cache:'no-store'}); if (!r.ok) return;
+        const r = await apiFetch('api/library/statistics', {cache:'no-store'}); if (!r.ok) return;
         const d = await r.json();
         const set = (id, value) => document.getElementById(id)?.replaceChildren(String(value));
         set('detailStatDuration', formatLongDuration(d.total_duration));
@@ -5750,7 +5911,7 @@ function installDailyMixSwipe() {
             scrollLeft: row.scrollLeft,
             date: getLocalDateKey(),
         };
-        try { localStorage.setItem(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
+        try { storageSet(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
     }, { passive: true });
 
     row.addEventListener("click", event => {
@@ -5794,9 +5955,9 @@ async function loadDailyMix(forceVariation = false) {
     try {
         if (forceVariation) {
             dailyMixVariant = (dailyMixVariant + 1) % 20;
-            localStorage.setItem('xrob_daily_mix_variant', String(dailyMixVariant));
+            storageSet('xrob_daily_mix_variant', String(dailyMixVariant));
         }
-        const r = await fetch(`api/daily-mix?variant=${dailyMixVariant}`, {cache:'no-store'});
+        const r = await apiFetch(`api/daily-mix?variant=${dailyMixVariant}`, {cache:'no-store'});
         if (!r.ok) throw new Error('Daily Mix unavailable');
         const d = await r.json();
         dailyMixTracks = Array.isArray(d.tracks) ? d.tracks : [];
@@ -5810,7 +5971,7 @@ async function loadDailyMix(forceVariation = false) {
             date: d.date || new Date().toISOString().slice(0,10),
             savedAt: Date.now(),
         };
-        try { localStorage.setItem(DAILY_MIX_STATE_KEY, JSON.stringify(state)); } catch (_) {}
+        try { storageSet(DAILY_MIX_STATE_KEY, JSON.stringify(state)); } catch (_) {}
         if (!isRemotePlayerOwner()) schedulePlayerStateBroadcast(true);
     } catch (e) {
         if (!dailyMixTracks.length) row.innerHTML = '<div class="daily-mix-empty">Daily Mix could not be loaded.</div>';
@@ -5863,11 +6024,11 @@ function installEnhancedFeatures(){
     renderEnhancedQueue();
 }); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
-    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await fetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();await loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
+    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await apiFetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();await loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
     document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{
         const btn=document.getElementById("libraryFullScanButton"); if(btn) btn.disabled=true;
         showToast('⏳ Full metadata rebuild…');
-        try { const r=await fetch('api/library/scan/full',{method:'POST'}); if(!r.ok) throw new Error('Full scan failed'); showToast('✅ Full scan complete'); await refreshLibraryCache(); await loadStats(); renderLibraryView(); }
+        try { const r=await apiFetch('api/library/scan/full',{method:'POST'}); if(!r.ok) throw new Error('Full scan failed'); showToast('✅ Full scan complete'); await refreshLibraryCache(); await loadStats(); renderLibraryView(); }
         catch(err){ showToast('❌ '+(err.message||'Full scan failed')); }
         finally { if(btn) btn.disabled=false; }
     });
@@ -5885,7 +6046,7 @@ function installEnhancedFeatures(){
     document.getElementById("songEditorReset")?.addEventListener("click", async()=>{
         if(!confirm('Re-add all library tracks to Songs Editor? This marks every track as pending again.')) return;
         const btn=document.getElementById('songEditorReset'); if(btn) btn.disabled=true;
-        try{ const r=await fetch('api/song-editor/reset',{method:'POST'}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||'Reset failed'); await loadSongEditor(); showToast(`✅ ${d.count||0} tracks added to editor`); }
+        try{ const r=await apiFetch('api/song-editor/reset',{method:'POST'}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||'Reset failed'); await loadSongEditor(); showToast(`✅ ${d.count||0} tracks added to editor`); }
         catch(err){ showToast('❌ '+(err.message||'Reset failed')); }
         finally{ if(btn) btn.disabled=false; }
     });
@@ -5893,7 +6054,7 @@ function installEnhancedFeatures(){
         const pick=document.getElementById('songEditorImportSelect');
         if(!pick){ showToast('❌ Import selector unavailable'); return; }
         const id=pick.value; if(!id){ showToast('Select a track to import'); return; }
-        const r=await fetch(`api/song-editor/${encodeURIComponent(id)}/import`,{method:'POST'});
+        const r=await apiFetch(`api/song-editor/${encodeURIComponent(id)}/import`,{method:'POST'});
         if(r.ok){ const label=pick.options[pick.selectedIndex]?.text||'Track'; showToast(`✅ ${label} added to editor`); await loadSongEditor(); }
         else { const d=await r.json().catch(()=>({})); showToast('❌ '+(d.detail||'Could not import track')); }
     });
@@ -5902,7 +6063,7 @@ function installEnhancedFeatures(){
         if (!content) return;
         content.innerHTML = '<div class="queue-empty">Checking library health…</div>';
         try {
-            const r = await fetch("api/library/health", {cache:"no-store"});
+            const r = await apiFetch("api/library/health", {cache:"no-store"});
             const d = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(d.detail || "Could not check library health");
             const duplicates = Array.isArray(d.duplicates) ? d.duplicates : [];
@@ -5924,7 +6085,7 @@ function installEnhancedFeatures(){
                         row.innerHTML = `<div class="duplicate-file-copy"><strong>${escapeHtml(file.path)}</strong><span>${escapeHtml(file.album || "Unknown Album")} · ${escapeHtml(formatSeconds(file.duration || 0))}${index === 0 ? " · first found" : ""} · ${mb}</span></div><button type="button" class="btn-danger duplicate-delete-btn">Delete copy</button>`;
                         row.querySelector("button")?.addEventListener("click", async () => {
                             if (!confirm(`Delete duplicate file "${file.path}"?`)) return;
-                            const response = await fetch(`api/library/${encodeURIComponent(file.path).replace(/%2F/g, "/")}`, {method:"DELETE"});
+                            const response = await apiFetch(`api/library/${encodeURIComponent(file.path).replace(/%2F/g, "/")}`, {method:"DELETE"});
                             const result = await response.json().catch(() => ({}));
                             if (!response.ok) { showToast("❌ " + (result.detail || "Could not delete duplicate")); return; }
                             showToast("✅ Duplicate copy deleted");
@@ -5949,29 +6110,6 @@ function installEnhancedFeatures(){
     }
     document.getElementById("libraryHealthButton")?.addEventListener("click",async()=>{document.getElementById("health-modal").hidden=false;await loadLibraryHealth();});
 
-    if(audio){
-        audio.addEventListener('loadedmetadata',()=>{
-            const id=currentSongId();
-            if (id && playSessionTrackId !== id) beginPlaySession(id);
-            // Every newly selected track always starts at 0:00.
-            // A → B → A must restart A from the beginning rather than resume A's old position.
-            audio.currentTime = 0;
-            recordPlay(id);
-        });
-        audio.addEventListener('timeupdate',()=>{
-            recordPlay(currentSongId());
-        });
-        audio.addEventListener('play',()=>{
-            const id=currentSongId();
-            if (id && playSessionTrackId !== id) beginPlaySession(id);
-            recordPlay(id);
-        });
-        audio.addEventListener('ended',()=>{
-            recordPlay(currentSongId());
-            resetPlaySession();
-        });
-        audio.addEventListener('pause',()=>persistCurrentPosition(true)); window.addEventListener('beforeunload',()=>persistCurrentPosition(true));
-    }
     const originalRenderLibraryView=renderLibraryView; window._xrobOriginalRenderLibraryView=originalRenderLibraryView;
     renderLibraryView=function(){if(libraryView==='playlists')return loadPlaylistsView();if(libraryView==='recent')return renderLibraryCollections('recent');if(libraryView==='most')return renderLibraryCollections('most');return originalRenderLibraryView();};
 }
