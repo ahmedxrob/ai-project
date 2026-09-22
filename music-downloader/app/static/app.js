@@ -72,6 +72,7 @@ let crossfadeSourceNode = null;
 let crossfadeGainNode = null;
 let crossfadePrepared = null;
 let crossfadeTimer = null;
+let crossfadeActive = false;
 let playerSettings = { replaygain_enabled: true, replaygain_mode: "track", replaygain_preamp_db: 0, replaygain_prevent_clipping: true, crossfade_seconds: 0, gapless_playback: true };
 
 let savedPlayerState = {
@@ -149,8 +150,8 @@ function websocketUrl() {
 }
 
 async function apiFetch(input, options = {}) {
-    const requestOptions = { ...options };
-    const method = String(requestOptions.method || (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")).toUpperCase();
+    const baseOptions = { ...options };
+    const method = String(baseOptions.method || (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")).toUpperCase();
     const retryable = method === "GET" || method === "HEAD";
     const attempts = retryable ? 2 : 1;
     let lastError = null;
@@ -159,10 +160,13 @@ async function apiFetch(input, options = {}) {
         let timeoutId = null;
         let controller = null;
         try {
-            if (!requestOptions.signal && typeof AbortController !== "undefined") {
+            const requestOptions = { ...baseOptions };
+            const callerSignal = requestOptions.signal;
+            delete requestOptions.timeoutMs;
+            if (!callerSignal && typeof AbortController !== "undefined") {
                 controller = new AbortController();
                 requestOptions.signal = controller.signal;
-                const timeout = Number(requestOptions.timeoutMs || API_DEFAULT_TIMEOUT_MS);
+                const timeout = Number(baseOptions.timeoutMs || API_DEFAULT_TIMEOUT_MS);
                 timeoutId = window.setTimeout(() => controller.abort(), Math.max(1000, timeout));
             }
             const target = typeof input === "string" ? apiUrl(input) : input;
@@ -180,6 +184,8 @@ async function apiFetch(input, options = {}) {
             if (timeoutId) window.clearTimeout(timeoutId);
             lastError = error;
             if (!retryable || attempt + 1 >= attempts) throw error;
+            // Only retry a request when the caller did not explicitly abort it.
+            if (baseOptions.signal?.aborted) throw error;
             await new Promise(resolve => window.setTimeout(resolve, 350 * (attempt + 1)));
         }
     }
@@ -1675,6 +1681,7 @@ function stopCrossfadePreload() {
     if (crossfadeAudio) { try { crossfadeAudio.pause(); } catch (_) {} }
     if (crossfadeGainNode && audioContext) crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime);
     if (crossfadeTimer) { clearTimeout(crossfadeTimer); crossfadeTimer = null; }
+    crossfadeActive = false;
     crossfadePrepared = null;
 }
 
@@ -1718,10 +1725,11 @@ function maybeStartCrossfade() {
     crossfadeAudio.currentTime = 0;
     crossfadeAudio.volume = Number(audio.volume || 1);
     if (crossfadeSourceNode && audioContext) crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime);
-    crossfadeAudio.play().catch(() => { crossfadeTimer = null; });
+    crossfadeAudio.play().catch(() => { crossfadeTimer = null; crossfadeActive = false; });
     const remaining = Math.max(0, duration - current - fade);
     crossfadeTimer = window.setTimeout(() => {
         crossfadeTimer = null;
+        crossfadeActive = true;
         if (!audio || audio.paused || !crossfadePrepared || crossfadePrepared.url !== targetUrl) return;
         const start = performance.now();
         const tick = () => {
@@ -1737,7 +1745,7 @@ function maybeStartCrossfade() {
 }
 
 function finalizePreparedTrackIfNeeded() {
-    if (!playerSettings.gapless_playback || !crossfadePrepared || !crossfadeAudio) return false;
+    if ((!playerSettings.gapless_playback && !crossfadeActive) || !crossfadePrepared || !crossfadeAudio) return false;
     if (crossfadeAudio.paused && crossfadeAudio.readyState < 2) return false;
     const prepared = crossfadePrepared;
     const carried = Math.max(0, Number(crossfadeAudio.currentTime || 0));
@@ -1764,7 +1772,7 @@ function finalizePreparedTrackIfNeeded() {
 }
 
 function finalizeCrossfadeIfNeeded() {
-    if (!crossfadePrepared || !crossfadeAudio || crossfadeAudio.paused) return false;
+    if (!crossfadeActive || !crossfadePrepared || !crossfadeAudio || crossfadeAudio.paused) return false;
     return finalizePreparedTrackIfNeeded();
 }
 
@@ -2303,6 +2311,7 @@ function bindPlayerControls() {
         if (!isSeeking) return;
         isSeeking = false;
         try { seekWrap.releasePointerCapture?.(event.pointerId); } catch (_) {}
+        flushRemoteSeek();
         updateProgress();
         savePlayerState(true);
     };
@@ -2320,12 +2329,29 @@ function bindPlayerControls() {
     });
     seekWrap?.addEventListener("pointerup", releaseSeek);
     seekWrap?.addEventListener("pointercancel", releaseSeek);
+    let seekRemoteTimer = null;
+    let pendingRemoteSeek = null;
+    const flushRemoteSeek = () => {
+        if (seekRemoteTimer) { window.clearTimeout(seekRemoteTimer); seekRemoteTimer = null; }
+        if (pendingRemoteSeek === null) return;
+        const time = pendingRemoteSeek;
+        pendingRemoteSeek = null;
+        sendPlayerCommand("seek", { time });
+    };
+    const scheduleRemoteSeek = time => {
+        pendingRemoteSeek = time;
+        if (seekRemoteTimer) return;
+        seekRemoteTimer = window.setTimeout(() => {
+            seekRemoteTimer = null;
+            flushRemoteSeek();
+        }, 90);
+    };
     seek?.addEventListener("input", () => {
         const duration = isRemotePlayerOwner() ? Number(remotePlayerState?.duration || 0) : Number(audio?.duration || 0);
         if (duration > 0) {
             const ratio = Math.max(0, Math.min(1, Number(seek.value) / 100));
             const targetTime = ratio * duration;
-            if (isRemotePlayerOwner()) sendPlayerCommand("seek", { time: targetTime });
+            if (isRemotePlayerOwner()) scheduleRemoteSeek(targetTime);
             else { setPlayerOwner(); try { audio.currentTime = targetTime; } catch (_) {} }
             if (isRemotePlayerOwner() && remotePlayerState) updateRemotePlayerOptimistic({ currentTime: targetTime });
             renderSeekVisual(ratio * 100);
@@ -2333,7 +2359,7 @@ function bindPlayerControls() {
             persistCurrentPosition(false);
         }
     });
-    seek?.addEventListener("change", () => { isSeeking = false; updateProgress(); savePlayerState(true); });
+    seek?.addEventListener("change", () => { isSeeking = false; flushRemoteSeek(); updateProgress(); savePlayerState(true); });
 
 
     const savedVolume =
