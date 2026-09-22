@@ -74,7 +74,7 @@ async def app_lifespan(_app):
 
 app = FastAPI(
     title="Xrob Music",
-    version="3.5.21",
+    version="3.5.22",
     lifespan=app_lifespan,
 )
 
@@ -174,8 +174,18 @@ def _stored_web_password(settings):
 
 def _write_settings_sync(settings):
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
+    tmp = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, SETTINGS_FILE)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 def _ensure_secure_web_credentials_sync():
     settings = load_settings()
@@ -241,7 +251,7 @@ def _is_authenticated(token):
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "3.5.21"
+SERVER_VERSION = "3.5.22"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 LIBRARY_METADATA_CONCURRENCY = max(4, min(12, int(os.getenv("XROB_LIBRARY_METADATA_CONCURRENCY", "8"))))
@@ -330,6 +340,12 @@ DOWNLOAD_WORKER_TASKS = set()
 BACKGROUND_TASKS = set()
 SCHEDULED_SCANNER_TASK = None
 LIBRARY_SCAN_LOCK = asyncio.Lock()
+LIBRARY_REFRESH_LOCK = asyncio.Lock()
+COVER_LOCKS = {}
+COVER_LOCKS_GUARD = asyncio.Lock()
+HISTORY_MAX_ROWS = 100000
+APP_ERRORS_MAX_ROWS = 5000
+MAX_PLAYLIST_SONGS = 10000
 
 
 def track_background_task(coro):
@@ -526,7 +542,7 @@ def load_settings():
     settings["embed_thumbnail"] = bool(settings.get("embed_thumbnail", True))
     settings["embed_metadata"] = bool(settings.get("embed_metadata", True))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist", False))
-    settings["title_cleanup_rules"] = str(settings.get("title_cleanup_rules") or "")
+    settings["title_cleanup_rules"] = str(settings.get("title_cleanup_rules") or "")[:4096]
     settings["metadata_mode"] = str(settings.get("metadata_mode") or "auto").lower()
     if settings["metadata_mode"] not in {"off", "musicbrainz", "auto"}:
         settings["metadata_mode"] = "auto"
@@ -590,8 +606,16 @@ def save_settings(data: dict):
     settings["embed_metadata"] = bool(settings.get("embed_metadata"))
     settings["organize_by_artist"] = bool(settings.get("organize_by_artist"))
     settings["scan_enabled"] = bool(settings.get("scan_enabled", True))
-    settings["scan_interval_minutes"] = max(5, int(settings.get("scan_interval_minutes", 60) or 60))
-    settings["daily_mix_track_count"] = max(5, min(50, int(settings.get("daily_mix_track_count", 30) or 30)))
+    try:
+        scan_interval = int(settings.get("scan_interval_minutes", 60) or 60)
+    except (TypeError, ValueError):
+        scan_interval = 60
+    settings["scan_interval_minutes"] = max(5, min(10080, scan_interval))
+    try:
+        daily_mix_count = int(settings.get("daily_mix_track_count", 30) or 30)
+    except (TypeError, ValueError):
+        daily_mix_count = 30
+    settings["daily_mix_track_count"] = max(5, min(50, daily_mix_count))
     settings["replaygain_enabled"] = bool(settings.get("replaygain_enabled", True))
     settings["replaygain_mode"] = str(settings.get("replaygain_mode") or "track").lower()
     if settings["replaygain_mode"] not in {"track", "album"}:
@@ -634,6 +658,17 @@ def public_settings():
     settings["storage"] = storage_info_sync()
     return settings
 
+async def load_settings_async():
+    return await asyncio.to_thread(load_settings)
+
+
+async def save_settings_async(data):
+    return await asyncio.to_thread(save_settings, data)
+
+
+async def public_settings_async():
+    return await asyncio.to_thread(public_settings)
+
 
 # ============================================================
 # DATABASE
@@ -653,6 +688,7 @@ def db_connect():
     try:
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA synchronous = NORMAL")
         yield conn
         conn.commit()
     except Exception:
@@ -667,6 +703,7 @@ def db_connect():
 
 def init_db():
     with db_connect() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (
@@ -930,6 +967,12 @@ def _sanitize_player_state(state):
             cleaned[key] = max(0.0, value) if math.isfinite(value) else 0.0
         except (TypeError, ValueError):
             cleaned[key] = 0.0
+    if "duration" in cleaned:
+        cleaned["duration"] = min(86_400.0, cleaned["duration"])
+    if "currentTime" in cleaned:
+        cleaned["currentTime"] = min(86_400.0, cleaned["currentTime"])
+        if cleaned.get("duration", 0) > 0:
+            cleaned["currentTime"] = min(cleaned["currentTime"], cleaned["duration"])
     if "volume" in cleaned:
         cleaned["volume"] = min(1.0, cleaned["volume"])
     if "queueIndex" in cleaned:
@@ -1070,6 +1113,9 @@ def get_player_state():
         "persistent": True,
     }
 
+async def get_player_state_async():
+    return await asyncio.to_thread(get_player_state)
+
 
 async def notify_task_update(task, force_save=False):
     await db_save_task(
@@ -1143,7 +1189,7 @@ def clean_metadata_text(
     value,
     fallback="",
 ):
-    value = str(value or "").strip()
+    value = str(value or "").strip()[:512]
 
     if not value:
         return fallback
@@ -1266,15 +1312,23 @@ def normalize_duplicate_key(value, artist=None):
 # ============================================================
 
 def get_audio_files_sync():
-    return [
-        path
-        for path in DOWNLOAD_DIR.rglob("*")
-        if (
-            path.is_file()
-            and not path.name.startswith(".")
-            and path.suffix.lower() in AUDIO_EXTENSIONS
-        )
-    ]
+    base = DOWNLOAD_DIR.resolve()
+    files = []
+    try:
+        iterator = DOWNLOAD_DIR.rglob("*")
+        for path in iterator:
+            if path.name.startswith(".") or path.suffix.lower() not in AUDIO_EXTENSIONS:
+                continue
+            try:
+                resolved = path.resolve()
+                if not resolved.is_file() or not resolved.is_relative_to(base):
+                    continue
+                files.append(resolved)
+            except (OSError, RuntimeError):
+                continue
+    except OSError:
+        return []
+    return files
 
 
 async def get_all_audio_files():
@@ -1285,48 +1339,20 @@ async def get_all_audio_files():
 
 def resolve_file_sync(filename):
     base = DOWNLOAD_DIR.resolve()
-    target = (
-        DOWNLOAD_DIR / filename
-    ).resolve()
+    target = (DOWNLOAD_DIR / filename).resolve()
 
     try:
         safe = target.is_relative_to(base)
     except AttributeError:
-        safe = (
-            target == base
-            or base in target.parents
-        )
+        safe = target == base or base in target.parents
 
     if not safe:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied",
-        )
-
-    if (
-        target.exists()
-        and target.is_file()
-    ):
-        return target
-
-    target_name = Path(filename).name
-    matches = [
-        match.resolve()
-        for match in DOWNLOAD_DIR.rglob("*")
-        if match.is_file() and match.name == target_name
-    ]
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        raise HTTPException(
-            status_code=409,
-            detail="Ambiguous filename; use the full library-relative path.",
-        )
-
-    raise HTTPException(
-        status_code=404,
-        detail="File not found",
-    )
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    if target.suffix.lower() not in AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return target
 
 
 async def resolve_file(filename):
@@ -1641,15 +1667,30 @@ async def fast_library_snapshot():
             albums.add((str(v.get("artist") or "Unknown Artist").strip().lower(), str(v["album"]).strip().lower()))
     return {"files": files, "total_size": format_size(total), "total_bytes": total, "artists_count": len(artists), "albums_count": len(albums), "ready": False, "storage": await asyncio.to_thread(storage_info_sync)}
 
-async def persist_library_index(library):
-    entries={}
+def _build_library_index_entries_sync(library):
+    entries = {}
     for song in library.get("songs", []):
         try:
-            st=song["path"].stat()
-            entries[str(song["path"].relative_to(DOWNLOAD_DIR))]={"mtime_ns":st.st_mtime_ns,"size":st.st_size,"title":song.get("title"),"artist":song.get("artist"),"album":song.get("album"),"album_artist":song.get("albumArtist"),"genre":song.get("genre"),"year":song.get("year"),"track":song.get("track"),"disc":song.get("disc"),"duration":song.get("duration"),"bit_rate":song.get("bit_rate"),"sample_rate":song.get("sample_rate"),"channels":song.get("channels"),"bit_depth":song.get("bit_depth")}
+            path = song["path"]
+            st = path.stat()
+            entries[str(path.relative_to(DOWNLOAD_DIR))] = {
+                "mtime_ns": st.st_mtime_ns, "size": st.st_size,
+                "title": song.get("title"), "artist": song.get("artist"),
+                "album": song.get("album"), "album_artist": song.get("albumArtist"),
+                "genre": song.get("genre"), "year": song.get("year"),
+                "track": song.get("track"), "disc": song.get("disc"),
+                "duration": song.get("duration"), "bit_rate": song.get("bit_rate"),
+                "sample_rate": song.get("sample_rate"), "channels": song.get("channels"),
+                "bit_depth": song.get("bit_depth"),
+            }
         except Exception:
             pass
+    return entries
+
+
+async def persist_library_index(library):
     try:
+        entries = await asyncio.to_thread(_build_library_index_entries_sync, library)
         await asyncio.to_thread(_save_library_index_sync, entries)
     except Exception as exc:
         print("Warning: could not save library index:", exc)
@@ -1802,35 +1843,41 @@ async def build_library(force=False):
         for album in albums.values():
             album["songIds"] = sorted(album["songIds"], key=lambda sid: song_sort_key(song_by_id[sid]))
 
-        LIBRARY_CACHE = {"songs": songs, "artists": artists, "albums": albums, "genres": genres}
+        LIBRARY_CACHE = {
+            "songs": songs,
+            "artists": artists,
+            "albums": albums,
+            "genres": genres,
+            "_songs_by_id": song_by_id,
+            "_artists_by_id": dict(artists),
+            "_albums_by_id": dict(albums),
+        }
         LIBRARY_CACHE_TIME = time.monotonic()
         return LIBRARY_CACHE
 
 
 async def find_song(song_id):
     library = await build_library()
-
-    for song in library["songs"]:
-        if song["id"] == song_id:
-            return song
-
-    return None
+    song_map = library.get("_songs_by_id")
+    if not isinstance(song_map, dict):
+        song_map = {song["id"]: song for song in library.get("songs", [])}
+    return song_map.get(song_id)
 
 
 async def find_artist(artist_id):
     library = await build_library()
-
-    return library["artists"].get(
-        artist_id
-    )
+    artist_map = library.get("_artists_by_id")
+    if not isinstance(artist_map, dict):
+        artist_map = library.get("artists", {})
+    return artist_map.get(artist_id)
 
 
 async def find_album(album_id):
     library = await build_library()
-
-    return library["albums"].get(
-        album_id
-    )
+    album_map = library.get("_albums_by_id")
+    if not isinstance(album_map, dict):
+        album_map = library.get("albums", {})
+    return album_map.get(album_id)
 
 
 # ============================================================
@@ -1854,39 +1901,31 @@ def cover_cache_path(path):
     )
 
 
+async def _cover_lock_for(cover):
+    key = str(cover)
+    async with COVER_LOCKS_GUARD:
+        lock = COVER_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            COVER_LOCKS[key] = lock
+        return lock
+
+
 async def ensure_cover(path):
-
-    cover = cover_cache_path(path)
-
-    if cover.exists():
-        return cover
-
-    command = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(path),
-        "-an",
-        "-vcodec",
-        "mjpeg",
-        "-vframes",
-        "1",
-        str(cover),
-    ]
-
-    try:
-        await asyncio.to_thread(
-            subprocess.run,
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=10,
-        )
-    except Exception:
-        pass
-
-    return cover if cover.exists() else None
-
+    cover = await asyncio.to_thread(cover_cache_path, path)
+    lock = await _cover_lock_for(cover)
+    async with lock:
+        if await asyncio.to_thread(cover.exists):
+            return cover
+        command = ["ffmpeg", "-y", "-i", str(path), "-an", "-vcodec", "mjpeg", "-vframes", "1", str(cover)]
+        try:
+            await asyncio.to_thread(
+                subprocess.run, command, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=10,
+            )
+        except Exception:
+            return None
+        return cover if await asyncio.to_thread(cover.exists) else None
 
 async def resolve_cover_id(item_id):
 
@@ -1967,10 +2006,10 @@ def _http_json_sync(url, headers=None, timeout=12):
     return json.loads(raw)
 
 
-async def _musicbrainz_lookup(artist, title):
+async def _musicbrainz_lookup(artist, title, cleanup_rules=""):
     global _METADATA_LAST_MB_CALL
     artist = clean_metadata_text(artist, "")
-    title = clean_title_with_rules(title, load_settings().get("title_cleanup_rules", ""))
+    title = clean_title_with_rules(title, cleanup_rules)
     cache_key = ("mb", _compact_identity(artist), _compact_identity(title))
     if cache_key in _METADATA_CACHE:
         return _METADATA_CACHE[cache_key]
@@ -2021,9 +2060,9 @@ async def _musicbrainz_lookup(artist, title):
     return best
 
 
-async def _itunes_lookup(artist, title):
+async def _itunes_lookup(artist, title, cleanup_rules=""):
     artist = clean_metadata_text(artist, "")
-    title = clean_title_with_rules(title, load_settings().get("title_cleanup_rules", ""))
+    title = clean_title_with_rules(title, cleanup_rules)
     cache_key = ("itunes", _compact_identity(artist), _compact_identity(title))
     if cache_key in _METADATA_CACHE:
         return _METADATA_CACHE[cache_key]
@@ -2073,8 +2112,8 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
         return result
 
     candidates = []
-    mb = await _musicbrainz_lookup(artist, catalog_title)
-    it = await _itunes_lookup(artist, catalog_title)
+    mb = await _musicbrainz_lookup(artist, catalog_title, rules_text)
+    it = await _itunes_lookup(artist, catalog_title, rules_text)
     for cand in (mb, it):
         if cand and cand.get("score", 0) >= 0.55:
             candidates.append(cand)
@@ -2100,14 +2139,26 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
 
 async def refresh_after_download(final_path):
     try:
-        library_now = await build_library(force=True)
-        await persist_library_index(library_now)
-        matched = next(
-            (x for x in library_now.get("songs", []) if str(x.get("path")) == str(final_path)),
-            None,
-        )
-        if matched:
-            await asyncio.to_thread(_mark_song_review_sync, matched["id"], "pending", 0.0)
+        async with LIBRARY_REFRESH_LOCK:
+            library_now = await build_library(force=False)
+            matched = next(
+                (x for x in library_now.get("songs", []) if str(x.get("path")) == str(final_path)),
+                None,
+            )
+            if matched:
+                await asyncio.to_thread(_mark_song_review_sync, matched["id"], "pending", 0.0)
+            else:
+                # A download can finish just after a cached scan. Invalidate once
+                # and rescan only when this completed path is genuinely missing.
+                invalidate_library_cache()
+                library_now = await build_library(force=True)
+                await persist_library_index(library_now)
+                matched = next(
+                    (x for x in library_now.get("songs", []) if str(x.get("path")) == str(final_path)),
+                    None,
+                )
+                if matched:
+                    await asyncio.to_thread(_mark_song_review_sync, matched["id"], "pending", 0.0)
     except Exception as exc:
         await write_app_error("library_refresh_after_download", str(exc))
 
@@ -2154,7 +2205,7 @@ async def download_worker():
 
                 continue
 
-            settings = load_settings()
+            settings = await load_settings_async()
 
             # Re-check the lightweight library index at worker time as well. This
             # prevents a duplicate when the library changed after Save was clicked.
@@ -2380,21 +2431,14 @@ async def download_worker():
 
                 continue
 
-            possible_files = [
-                path
-                for path in DOWNLOAD_DIR.glob(
-                    f"{task_id}.*"
-                )
-                if (
-                    path.is_file()
-                    and path.suffix.lower()
-                    not in {
-                        ".part",
-                        ".ytdl",
-                        ".temp",
-                    }
-                )
-            ]
+            def find_downloaded_files_sync():
+                try:
+                    candidates = list(DOWNLOAD_DIR.glob(f"{task_id}.*"))
+                except OSError:
+                    return []
+                return [path for path in candidates if path.is_file() and path.suffix.lower() not in {".part", ".ytdl", ".temp"}]
+
+            possible_files = await asyncio.to_thread(find_downloaded_files_sync)
 
             if not possible_files:
 
@@ -2474,9 +2518,10 @@ async def download_worker():
                     await notify_task_update(task, force_save=True)
                     continue
 
-                if clean_process.returncode == 0 and clean_file.exists():
+                clean_ready = clean_process.returncode == 0 and await asyncio.to_thread(clean_file.exists)
+                if clean_ready:
                     try:
-                        audio_file.unlink()
+                        await asyncio.to_thread(audio_file.unlink)
                     except OSError:
                         pass
                     audio_file = clean_file
@@ -2495,40 +2540,18 @@ async def download_worker():
                 )
             )
 
-            if settings.get(
-                "organize_by_artist",
-                False,
-            ):
-
-                final_dir = (
-                    DOWNLOAD_DIR / artist
-                )
-
-                final_dir.mkdir(
-                    parents=True,
-                    exist_ok=True,
-                )
-
-            else:
-                final_dir = DOWNLOAD_DIR
-
-            final_name = (
-                f"{clean_title}{extension}"
-            )
-
-            final_path = (
-                final_dir / final_name
-            )
-
-            if final_path.exists():
-                final_name = f"{clean_title}_{task_id[:4]}{extension}"
+            async with DOWNLOAD_GUARD:
+                if settings.get("organize_by_artist", False):
+                    final_dir = DOWNLOAD_DIR / artist
+                else:
+                    final_dir = DOWNLOAD_DIR
+                await asyncio.to_thread(final_dir.mkdir, parents=True, exist_ok=True)
+                final_name = f"{clean_title}{extension}"
                 final_path = final_dir / final_name
-
-            await asyncio.to_thread(
-                shutil.move,
-                str(audio_file),
-                str(final_path),
-            )
+                if await asyncio.to_thread(final_path.exists):
+                    final_name = f"{clean_title}_{task_id[:4]}{extension}"
+                    final_path = final_dir / final_name
+                await asyncio.to_thread(shutil.move, str(audio_file), str(final_path))
 
             task["final_name"] = str(
                 final_path.relative_to(
@@ -2677,7 +2700,7 @@ async def websocket_endpoint(websocket: WebSocket):
         return
 
     await manager.connect(websocket)
-    current_state = get_player_state()
+    current_state = await get_player_state_async()
     if current_state:
         try:
             initial_state = dict(current_state["state"])
@@ -2721,7 +2744,7 @@ async def api_health():
 
 @app.get("/api/settings")
 async def api_get_settings():
-    return public_settings()
+    return await public_settings_async()
 
 
 @app.post("/api/settings")
@@ -2729,10 +2752,10 @@ async def api_post_settings(
     data: dict = Body(...),
 ):
     try:
-        save_settings(data)
+        await save_settings_async(data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return public_settings()
+    return await public_settings_async()
 
 
 # ============================================================
@@ -2952,8 +2975,8 @@ def _library_search_sync(query: str, page: int, limit: int = 20):
 
 @app.get("/api/search")
 async def api_search(
-    q: str = Query(...),
-    page: int = Query(1, ge=1),
+    q: str = Query(..., min_length=1, max_length=256),
+    page: int = Query(1, ge=1, le=1000),
     source: str = Query("youtube"),
 ):
 
@@ -2987,6 +3010,23 @@ async def api_search(
 
 
 # ============================================================
+def validate_media_url(raw_url):
+    value = str(raw_url or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="URL missing")
+    if len(value) > PLAYER_STATE_MAX_URL:
+        raise HTTPException(status_code=400, detail="URL is too long")
+    try:
+        parsed = urllib.parse.urlparse(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid URL") from exc
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Only HTTP(S) media URLs are supported")
+    if any(ch in value[:4096] for ch in ("\x00", "\r", "\n")):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    return value
+
+
 # PREVIEW
 # ============================================================
 
@@ -2995,11 +3035,7 @@ async def api_preview(
     url: str = Query(...),
 ):
 
-    if not url:
-        raise HTTPException(
-            status_code=400,
-            detail="URL missing",
-        )
+    url = validate_media_url(url)
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -3139,11 +3175,9 @@ async def api_download(
     payload: dict = Body(...),
 ):
 
-    url = payload.get("url")
-    if not url:
-        raise HTTPException(status_code=400, detail="Missing URL")
+    url = validate_media_url(payload.get("url"))
 
-    settings = load_settings()
+    settings = await load_settings_async()
     task_title = normalize_catalog_title(
         str(payload.get("title", "Unknown Track") or "Unknown Track"),
         settings.get("title_cleanup_rules", ""),
@@ -3409,15 +3443,19 @@ async def api_library():
 
     files = await get_all_audio_files()
 
+    def file_rows_sync(paths):
+        rows = []
+        for path in paths:
+            try:
+                rows.append((path, path.stat().st_size))
+            except Exception:
+                continue
+        return rows
+
     result = []
     total = 0
 
-    for path in files:
-
-        try:
-            size = path.stat().st_size
-        except Exception:
-            continue
+    for path, size in await asyncio.to_thread(file_rows_sync, files):
 
         total += size
 
@@ -3442,7 +3480,7 @@ async def api_library():
     play_counts = await asyncio.to_thread(_play_count_map_sync)
     song_by_path = {str(song["path"]): song for song in library["songs"]}
     for item in result:
-        path = str((DOWNLOAD_DIR / item["name"]).resolve())
+        path = str(DOWNLOAD_DIR / item["name"])
         song = song_by_path.get(path)
         if song:
             item["id"] = song["id"]
@@ -3666,11 +3704,22 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0):
     artist/genre affinity. The daily seed keeps the mix coherent for a day while
     ``variant`` lets Refresh produce a different but still personalized mix.
     """
-    configured_limit = int(load_settings().get("daily_mix_track_count", 30) or 30)
-    requested_limit = configured_limit if limit is None else int(limit)
+    settings = await load_settings_async()
+    try:
+        configured_limit = int(settings.get("daily_mix_track_count", 30) or 30)
+    except (TypeError, ValueError):
+        configured_limit = 30
+    try:
+        requested_limit = configured_limit if limit is None else int(limit)
+    except (TypeError, ValueError):
+        requested_limit = configured_limit
     # A limit supplied by the client is honored within safe bounds; the normal UI sends the configured value.
     limit = max(5, min(requested_limit, 50))
-    variant = max(0, min(int(variant or 0), 19))
+    try:
+        variant_value = int(variant or 0)
+    except (TypeError, ValueError):
+        variant_value = 0
+    variant = max(0, min(variant_value, 19))
     library = await build_library()
     songs = list(library.get("songs", []))
     if not songs:
@@ -3986,14 +4035,16 @@ async def api_delete_library(
     path = await resolve_file(filename)
 
     try:
+        def delete_file_sync(target):
+            cover = cover_cache_path(target)
+            target.unlink()
+            try:
+                if cover.exists():
+                    cover.unlink()
+            except OSError:
+                pass
 
-        cover = cover_cache_path(path)
-
-        path.unlink()
-
-        if cover.exists():
-            cover.unlink()
-
+        await asyncio.to_thread(delete_file_sync, path)
         METADATA_CACHE.pop(str(path), None)
         invalidate_library_cache()
 
@@ -4419,19 +4470,26 @@ def subsonic_error(
 # ============================================================
 
 def get_starred_at_sync(item_id):
-
     with db_connect() as conn:
-
         row = conn.execute(
-            """
-            SELECT starred_at
-            FROM stars
-            WHERE item_id = ?
-            """,
+            "SELECT starred_at FROM stars WHERE item_id = ?",
             (item_id,),
         ).fetchone()
-
     return float(row[0]) if row else None
+
+
+def get_starred_map_sync():
+    with db_connect() as conn:
+        rows = conn.execute("SELECT item_id, starred_at FROM stars").fetchall()
+    return {str(row[0]): float(row[1]) for row in rows if row[0]}
+
+
+async def songs_to_subsonic_async(songs):
+    songs = list(songs or [])
+    if not songs:
+        return []
+    starred = await asyncio.to_thread(get_starred_map_sync)
+    return [song_to_subsonic(song, starred.get(song.get("id"))) for song in songs]
 
 
 def set_star_sync(
@@ -4475,7 +4533,9 @@ def set_star_sync(
 # SUBSONIC OBJECTS
 # ============================================================
 
-def song_to_subsonic(song):
+_STARRED_UNSET = object()
+
+def song_to_subsonic(song, starred_at=_STARRED_UNSET):
 
     track_value = safe_int(
         song.get("track"),
@@ -4556,8 +4616,10 @@ def song_to_subsonic(song):
         result["genres"] = []
 
     # OpenSubsonic defines starred/played as ISO-8601 date strings,
-    # not booleans. Only include starred when the song is actually starred.
-    starred_at = get_starred_at_sync(song["id"])
+    # not booleans. Only query the database for single-song calls; list routes
+    # pass a bulk-loaded starred map to avoid one SQLite query per song.
+    if starred_at is _STARRED_UNSET:
+        starred_at = get_starred_at_sync(song["id"])
     if starred_at is not None:
         result["starred"] = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ",
@@ -4902,8 +4964,7 @@ async def rest_get_scan_status(
     # We therefore report the library as not currently
     # scanning while providing a useful current count.
     try:
-
-        library = await build_library(force=True)
+        library = await build_library(force=False)
         count = len(library.get("songs", []))
     except Exception:
         count = 0
@@ -4945,13 +5006,12 @@ async def rest_start_scan(
 
     # Trigger a lightweight filesystem rebuild.
     try:
-
-        library = await build_library(force=True)
-
+        library = await build_library(force=False)
         count = len(library.get("songs", []))
-
+        if not library.get("songs") and await asyncio.to_thread(get_audio_files_sync):
+            library = await build_library(force=True)
+            count = len(library.get("songs", []))
     except Exception:
-
         count = 0
 
     return make_subsonic_response(
@@ -5239,6 +5299,7 @@ async def rest_artist(
         )
 
     library = await build_library()
+    song_map = {song["id"]: song for song in library["songs"]}
 
     albums = []
 
@@ -5256,12 +5317,9 @@ async def rest_artist(
             continue
 
         songs = [
-            song
-            for song in library[
-                "songs"
-            ]
-            if song["id"]
-            in album["songIds"]
+            song_map[sid]
+            for sid in album["songIds"]
+            if sid in song_map
         ]
 
         albums.append(
@@ -5311,6 +5369,7 @@ async def rest_album(
         return error
 
     library = await build_library()
+    song_map = {song["id"]: song for song in library["songs"]}
 
     album = library[
         "albums"
@@ -5327,12 +5386,9 @@ async def rest_album(
         )
 
     songs = [
-        song
-        for song in library[
-            "songs"
-        ]
-        if song["id"]
-        in album["songIds"]
+        song_map[sid]
+        for sid in album["songIds"]
+        if sid in song_map
     ]
 
     return make_subsonic_response(
@@ -5347,12 +5403,7 @@ async def rest_album(
                     album,
                     songs,
                 ),
-                "song": [
-                    song_to_subsonic(
-                        song
-                    )
-                    for song in songs
-                ],
+                "song": await songs_to_subsonic_async(songs),
             },
         },
         request,
@@ -5392,6 +5443,7 @@ async def rest_album_list2(
         return error
 
     library = await build_library()
+    song_map = {song["id"]: song for song in library["songs"]}
 
     album_data = []
 
@@ -5400,12 +5452,9 @@ async def rest_album_list2(
     ].values():
 
         songs = [
-            song
-            for song in library[
-                "songs"
-            ]
-            if song["id"]
-            in album["songIds"]
+            song_map[sid]
+            for sid in album["songIds"]
+            if sid in song_map
         ]
 
         item = album_to_subsonic(
@@ -5588,18 +5637,8 @@ async def rest_album_list2(
                 ).lower()
         )
 
-    start = max(
-        0,
-        offset,
-    )
-
-    end = (
-        start
-        + max(
-            1,
-            min(500, max(1, size)),
-        )
-    )
+    start = _bounded_subsonic_int(offset, 0, 100000)
+    end = start + max(1, _bounded_subsonic_int(size, 50, 500))
 
     result = []
 
@@ -5686,6 +5725,7 @@ async def rest_music_directory(
         return error
 
     library = await build_library()
+    song_map = {song["id"]: song for song in library["songs"]}
 
     children = []
 
@@ -5735,12 +5775,9 @@ async def rest_music_directory(
                     continue
 
                 songs = [
-                    song
-                    for song in library[
-                        "songs"
-                    ]
-                    if song["id"]
-                    in album["songIds"]
+                    song_map[sid]
+                    for sid in album["songIds"]
+                    if sid in song_map
                 ]
 
                 item = album_to_subsonic(
@@ -5765,18 +5802,12 @@ async def rest_music_directory(
         if album:
 
             songs = [
-                song
-                for song in library[
-                    "songs"
-                ]
-                if song["id"]
-                in album["songIds"]
+                song_map[sid]
+                for sid in album["songIds"]
+                if sid in song_map
             ]
 
-            children.extend(
-                song_to_subsonic(song)
-                for song in songs
-            )
+            children.extend(await songs_to_subsonic_async(songs))
 
     if not (
         id == "1"
@@ -5832,6 +5863,7 @@ async def rest_song(
             "Song not found.",
         )
 
+    starred_at = await asyncio.to_thread(get_starred_at_sync, song["id"])
     return make_subsonic_response(
         {
             "status": "ok",
@@ -5839,9 +5871,7 @@ async def rest_song(
             "serverVersion": SERVER_VERSION,
             "openSubsonic": True,
             "type": "Xrob Music",
-            "song": song_to_subsonic(
-                song
-            ),
+            "song": song_to_subsonic(song, starred_at),
         },
         request,
     )
@@ -5850,6 +5880,14 @@ async def rest_song(
 # ============================================================
 # SEARCH
 # ============================================================
+
+def _bounded_subsonic_int(value, default=0, maximum=500):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(maximum, number))
+
 
 async def search_impl(
     request,
@@ -5870,11 +5908,18 @@ async def search_impl(
         return error
 
     library = await build_library()
+    song_map = {song["id"]: song for song in library["songs"]}
 
     if music_folder_id not in (None, "", "1", 1):
         return subsonic_error(request, 70, "Music folder not found.")
 
-    q = query.lower().strip()
+    q = str(query or "").strip()[:256].lower()
+    artist_count = _bounded_subsonic_int(artist_count, 20)
+    artist_offset = _bounded_subsonic_int(artist_offset, 0, 100000)
+    album_count = _bounded_subsonic_int(album_count, 20)
+    album_offset = _bounded_subsonic_int(album_offset, 0, 100000)
+    song_count = _bounded_subsonic_int(song_count, 20)
+    song_offset = _bounded_subsonic_int(song_offset, 0, 100000)
 
     matching_artists = [
         artist
@@ -5928,12 +5973,9 @@ async def search_impl(
     for album in matching_albums:
 
         album_songs = [
-            song
-            for song in library[
-                "songs"
-            ]
-            if song["id"]
-            in album["songIds"]
+            song_map[sid]
+            for sid in album["songIds"]
+            if sid in song_map
         ]
 
         album_objects.append(
@@ -5943,10 +5985,7 @@ async def search_impl(
             )
         )
 
-    song_objects = [
-        song_to_subsonic(song)
-        for song in matching_songs
-    ]
+    song_objects = await songs_to_subsonic_async(matching_songs)
 
     return make_subsonic_response(
         {
@@ -6090,18 +6129,7 @@ async def rest_random_songs(
             "openSubsonic": True,
             "type": "Xrob Music",
             "randomSongs": {
-                "song": [
-                    song_to_subsonic(
-                        song
-                    )
-                    for song
-                    in songs[
-                        :max(
-                            1,
-                            size,
-                        )
-                    ]
-                ],
+                "song": await songs_to_subsonic_async(songs[:max(1, _bounded_subsonic_int(size, 10, 500))]),
             },
         },
         request,
@@ -6199,14 +6227,7 @@ async def rest_songs_by_genre(
             "openSubsonic": True,
             "type": "Xrob Music",
             "songsByGenre": {
-                "song": [
-                    song_to_subsonic(song)
-                    for song
-                    in songs[
-                        offset:
-                        offset + count
-                    ]
-                ],
+                "song": await songs_to_subsonic_async(songs[_bounded_subsonic_int(offset, 0, 100000): _bounded_subsonic_int(offset, 0, 100000) + _bounded_subsonic_int(count, 50, 500)]),
             },
         },
         request,
@@ -6426,13 +6447,7 @@ async def rest_starred2(
 
     library = await build_library()
 
-    songs = [
-        song_to_subsonic(song)
-        for song in library[
-            "songs"
-        ]
-        if song["id"] in starred_ids
-    ]
+    songs = await songs_to_subsonic_async([song for song in library["songs"] if song["id"] in starred_ids])
 
     return make_subsonic_response(
         {
@@ -6460,7 +6475,7 @@ def safe_song_ids(raw):
         return []
     if not isinstance(value, list):
         return []
-    return [str(item) for item in value if item is not None]
+    return [str(item)[:512] for item in value[:MAX_PLAYLIST_SONGS] if item is not None]
 
 
 def playlists_sync():
@@ -6598,26 +6613,11 @@ async def rest_playlist(
     )
 
     library = await build_library()
+    song_map = {song["id"]: song for song in library["songs"]}
 
-    songs = []
+    playlist_songs = [song_map[song_id] for song_id in ids if song_id in song_map]
 
-    for song_id in ids:
-
-        song = next(
-            (
-                item
-                for item in library[
-                    "songs"
-                ]
-                if item["id"] == song_id
-            ),
-            None,
-        )
-
-        if song:
-            songs.append(
-                song_to_subsonic(song)
-            )
+    songs = await songs_to_subsonic_async(playlist_songs)
 
     return make_subsonic_response(
         {
@@ -6787,6 +6787,7 @@ def write_app_error_sync(source, message, task_id=None):
     try:
         with db_connect() as conn:
             conn.execute("INSERT INTO app_errors(created_at,source,message,task_id) VALUES(?,?,?,?)", (time.time(), str(source), str(message), task_id))
+            conn.execute("DELETE FROM app_errors WHERE id IN (SELECT id FROM app_errors ORDER BY id DESC LIMIT -1 OFFSET ?)", (APP_ERRORS_MAX_ROWS,))
             conn.commit()
     except Exception:
         pass
@@ -6797,17 +6798,25 @@ async def write_app_error(source, message, task_id=None):
 
 
 def _playlist_row_to_dict(row):
-    d=dict(row)
-    d["song_ids"]=safe_song_ids(d.get("song_ids", "[]"))
-    d["rules"]=json.loads(d.get("rules") or "{}") if isinstance(d.get("rules"), str) else (d.get("rules") or {})
-    d["public"]=bool(d.get("public", 0))
-    d["kind"]=d.get("kind") or "manual"
+    d = dict(row)
+    d["song_ids"] = safe_song_ids(d.get("song_ids", "[]"))
+    raw_rules = d.get("rules")
+    if isinstance(raw_rules, str):
+        try:
+            parsed_rules = json.loads(raw_rules or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_rules = {}
+    else:
+        parsed_rules = raw_rules or {}
+    d["rules"] = parsed_rules if isinstance(parsed_rules, dict) else {}
+    d["public"] = bool(d.get("public", 0))
+    d["kind"] = "smart" if str(d.get("kind") or "").lower() == "smart" else "manual"
     return d
 
 
 @app.get("/api/player/state")
 async def api_player_state():
-    data = get_player_state()
+    data = await get_player_state_async()
     if not data:
         return {"state": None, "updated_at": 0}
     return data
@@ -6823,11 +6832,12 @@ async def api_player_state_update(payload: dict = Body(...)):
         raise HTTPException(400, "state.ownerId is required")
     state = _sanitize_player_state(state)
     force = bool(payload.get("takeover") or state.get("takeover"))
+    state.pop("takeover", None)
 
     # The server is the cross-device source of truth. A live owner cannot be
     # silently replaced by another browser; explicit Take Over sends force=true.
     async with PLAYER_STATE_LOCK:
-        current = get_player_state()
+        current = await get_player_state_async()
         current_state = current.get("state") if isinstance(current, dict) else None
         current_owner = str(current_state.get("ownerId") or "").strip() if isinstance(current_state, dict) else ""
         current_updated = float(current.get("updated_at") or 0) if isinstance(current, dict) else 0.0
@@ -6837,6 +6847,14 @@ async def api_player_state_update(payload: dict = Body(...)):
                 "status": "owned",
                 "ownerId": current_owner,
                 "updated_at": current_updated,
+            })
+        incoming_seq = safe_int(state.get("seq"), 0)
+        current_seq = safe_int(current_state.get("seq"), 0) if isinstance(current_state, dict) else 0
+        if current_owner == owner_id and not force and not bool(payload.get("full", False)) and current_seq > incoming_seq:
+            raise HTTPException(409, {
+                "status": "stale",
+                "seq": current_seq,
+                "ownerId": owner_id,
             })
 
         state["at"] = time.time()
@@ -6894,6 +6912,10 @@ def get_player_positions_sync():
 
 
 def save_player_position_sync(song_id, position, duration, now):
+    duration = max(0.0, min(86_400.0, float(duration or 0)))
+    position = max(0.0, min(86_400.0, float(position or 0)))
+    if duration > 0:
+        position = min(position, duration)
     with db_connect() as conn:
         conn.execute("INSERT INTO playback_positions(song_id,position,duration,updated_at) VALUES(?,?,?,?) ON CONFLICT(song_id) DO UPDATE SET position=excluded.position,duration=excluded.duration,updated_at=excluded.updated_at", (song_id, position, duration, now))
         conn.commit()
@@ -6902,6 +6924,7 @@ def save_player_position_sync(song_id, position, duration, now):
 def save_player_history_sync(song_id, duration, position):
     with db_connect() as conn:
         conn.execute("INSERT INTO play_history(song_id,played_at,duration,position) VALUES(?,?,?,?)", (song_id, time.time(), duration, position))
+        conn.execute("DELETE FROM play_history WHERE id IN (SELECT id FROM play_history ORDER BY id DESC LIMIT -1 OFFSET ?)", (HISTORY_MAX_ROWS,))
         conn.commit()
         return int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
 
@@ -6913,7 +6936,7 @@ async def api_player_positions():
 
 @app.post("/api/player/position")
 async def api_player_position(payload: dict = Body(...)):
-    song_id=str(payload.get("song_id") or "").strip()
+    song_id=str(payload.get("song_id") or "").strip()[:512]
     if not song_id: raise HTTPException(400, "song_id is required")
     position = finite_nonnegative_float(payload.get("position", 0), "position")
     duration = finite_nonnegative_float(payload.get("duration", 0), "duration")
@@ -6924,7 +6947,7 @@ async def api_player_position(payload: dict = Body(...)):
 
 @app.post("/api/player/history")
 async def api_player_history(payload: dict = Body(...)):
-    song_id=str(payload.get("song_id") or "").strip()
+    song_id=str(payload.get("song_id") or "").strip()[:512]
     if not song_id: raise HTTPException(400, "song_id is required")
     duration = finite_nonnegative_float(payload.get("duration") or 0, "duration")
     position = finite_nonnegative_float(payload.get("position") or 0, "position")
@@ -6969,13 +6992,27 @@ async def api_playlists():
 
 @app.post("/api/playlists")
 async def api_playlist_create(payload: dict = Body(...)):
-    name=str(payload.get("name") or "New Playlist").strip()
-    if not name: raise HTTPException(400,"Playlist name required")
-    ids=[str(x) for x in (payload.get("song_ids") or [])]
-    kind="smart" if payload.get("kind")=="smart" else "manual"
-    rules=payload.get("rules") or {}
-    now=time.time(); pid="playlist-"+uuid.uuid4().hex[:16]
-    await asyncio.to_thread(_playlist_create_sync, (pid,name,str(payload.get("comment") or ""),"admin",0,json.dumps(ids),now,now,kind,json.dumps(rules)))
+    name = clean_metadata_text(payload.get("name"), "New Playlist")
+    if not name:
+        raise HTTPException(400, "Playlist name required")
+    raw_ids = payload.get("song_ids") or []
+    if not isinstance(raw_ids, list):
+        raise HTTPException(400, "song_ids must be an array")
+    ids = [str(x)[:512] for x in raw_ids[:MAX_PLAYLIST_SONGS] if x is not None]
+    kind = "smart" if payload.get("kind") == "smart" else "manual"
+    rules = payload.get("rules") or {}
+    if not isinstance(rules, dict):
+        raise HTTPException(400, "Playlist rules must be an object")
+    comment = str(payload.get("comment") or "").strip()[:1000]
+    try:
+        rules_json = json.dumps(rules, ensure_ascii=False, separators=(",", ":"))
+        ids_json = json.dumps(ids, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Playlist contains invalid data") from exc
+    if len(rules_json) > 16384:
+        raise HTTPException(400, "Playlist rules are too large")
+    now = time.time(); pid = "playlist-" + uuid.uuid4().hex[:16]
+    await asyncio.to_thread(_playlist_create_sync, (pid, name, comment, "admin", 0, ids_json, now, now, kind, rules_json))
     return {"status":"ok","id":pid}
 
 
@@ -6985,11 +7022,33 @@ async def api_playlist_update(playlist_id:str,payload:dict=Body(...)):
     row = next((r for r in rows if str(r["id"]) == playlist_id), None)
     if not row:
         raise HTTPException(404,"Playlist not found")
-    current=dict(row)
-    name=str(payload.get("name",current["name"])).strip()
-    ids=[str(x) for x in payload.get("song_ids",safe_song_ids(current.get("song_ids","[]")))]
-    kind=payload.get("kind", current.get("kind","manual")); rules=payload.get("rules", json.loads(current.get("rules") or "{}"))
-    updated = await asyncio.to_thread(_playlist_update_sync, (name,str(payload.get("comment",current.get("comment") or "")),json.dumps(ids),time.time(),kind,json.dumps(rules),playlist_id))
+    current = dict(row)
+    name = clean_metadata_text(payload.get("name", current["name"]), "New Playlist")
+    raw_ids = payload.get("song_ids", safe_song_ids(current.get("song_ids","[]")))
+    if not isinstance(raw_ids, list):
+        raise HTTPException(400, "song_ids must be an array")
+    ids = [str(x)[:512] for x in raw_ids[:MAX_PLAYLIST_SONGS] if x is not None]
+    kind = payload.get("kind", current.get("kind", "manual"))
+    if "rules" in payload:
+        rules = payload.get("rules") or {}
+    else:
+        try:
+            rules = json.loads(current.get("rules") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            rules = {}
+    if kind not in {"manual", "smart"}:
+        raise HTTPException(400, "Invalid playlist kind")
+    if not isinstance(rules, dict):
+        raise HTTPException(400, "Playlist rules must be an object")
+    comment = str(payload.get("comment", current.get("comment") or "")).strip()[:1000]
+    try:
+        ids_json = json.dumps(ids, ensure_ascii=False, separators=(",", ":"))
+        rules_json = json.dumps(rules, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Playlist contains invalid data") from exc
+    if len(rules_json) > 16384:
+        raise HTTPException(400, "Playlist rules are too large")
+    updated = await asyncio.to_thread(_playlist_update_sync, (name, comment, ids_json, time.time(), kind, rules_json, playlist_id))
     if not updated:
         raise HTTPException(404,"Playlist not found")
     return {"status":"ok"}
@@ -7109,17 +7168,21 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
         raise HTTPException(429, "Too many failed sign-in attempts. Try again in a few minutes.")
     user = str(payload.get("username") or "")[:64]
     password = str(payload.get("password") or "")[:256]
-    expected_user, stored_credential = _current_web_credentials()
-    password_ok, was_legacy_plaintext = _verify_web_password(password, stored_credential)
+    def verify_login_sync():
+        expected, credential = _current_web_credentials()
+        ok, legacy = _verify_web_password(password, credential)
+        return expected, ok, legacy
+
+    expected_user, password_ok, was_legacy_plaintext = await asyncio.to_thread(verify_login_sync)
     if not secrets.compare_digest(user, expected_user) or not password_ok:
         _record_login_failure(request)
         raise HTTPException(401, "Invalid username or password")
     _clear_login_failures(request)
     if was_legacy_plaintext and not os.getenv("XROB_PASSWORD"):
-        settings = load_settings()
+        settings = await load_settings_async()
         settings["web_password_hash"] = _hash_web_password(password)
         settings.pop("web_password", None)
-        _write_settings_sync(settings)
+        await asyncio.to_thread(_write_settings_sync, settings)
     token = _auth_token()
     now = time.time()
     AUTH_SESSIONS[token] = {"created": now, "last_seen": now, "username": expected_user}
@@ -7133,7 +7196,7 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
 @app.get("/api/auth/status")
 async def api_auth_status(request: Request):
     authenticated = _is_authenticated(request.cookies.get(AUTH_COOKIE))
-    expected_user, _ = _current_web_credentials()
+    expected_user, _ = await asyncio.to_thread(_current_web_credentials)
     return {"authenticated": authenticated, "username": expected_user if authenticated else None}
 
 @app.post("/api/auth/logout")
@@ -7160,8 +7223,14 @@ async def api_library_metadata(payload: dict = Body(...)):
     song_id=str(payload.get("id") or "")
     song=await find_song(song_id)
     if not song: raise HTTPException(404,"Track not found")
-    path=song["path"]; fields={k:payload.get(k) for k in ("title","artist","album") if k in payload}
-    if not fields: return {"status":"ok"}
+    path = song["path"]
+    fields = {}
+    for key in ("title", "artist", "album"):
+        if key in payload:
+            value = clean_metadata_text(payload.get(key), "")
+            fields[key] = value
+    if not fields:
+        return {"status":"ok"}
     if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
     def write_tags():
         audio=MutagenFile(path, easy=False)
@@ -7284,11 +7353,12 @@ async def api_library_artwork(song_id:str, upload:UploadFile=File(...)):
     if not song: raise HTTPException(404,"Track not found")
     data=await upload.read()
     if not data or len(data)>15*1024*1024: raise HTTPException(400,"Invalid artwork")
+    mime=upload.content_type or "image/jpeg"
+    if mime not in {"image/jpeg", "image/png", "image/webp"}: raise HTTPException(400,"Use JPEG, PNG or WebP artwork")
     if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
     def write_art():
         audio=MutagenFile(song["path"], easy=False)
         ext=song["path"].suffix.lower()
-        mime=upload.content_type or "image/jpeg"
         if ext==".mp3":
             if audio.tags is None: audio.add_tags()
             audio.tags.delall("APIC")
@@ -7310,8 +7380,13 @@ async def api_library_artwork(song_id:str, upload:UploadFile=File(...)):
 async def scheduled_library_scanner():
     while True:
         try:
-            settings=load_settings()
-            enabled=bool(settings.get("scan_enabled",True)); minutes=max(5,int(settings.get("scan_interval_minutes",60) or 60))
+            settings=await load_settings_async()
+            enabled = bool(settings.get("scan_enabled", True))
+            try:
+                minutes = int(settings.get("scan_interval_minutes", 60) or 60)
+            except (TypeError, ValueError):
+                minutes = 60
+            minutes = max(5, min(10080, minutes))
             if enabled:
                 await asyncio.sleep(minutes*60)
                 try:
@@ -7442,13 +7517,7 @@ async def rest_similar_songs(
             "openSubsonic": True,
             "type": "Xrob Music",
             "similarSongs2": {
-                "song": [
-                    song_to_subsonic(song)
-                    for song
-                    in similar[
-                        :max(0, count)
-                    ]
-                ],
+                "song": await songs_to_subsonic_async(similar[:_bounded_subsonic_int(count, 20, 500)]),
             },
         },
         request,
