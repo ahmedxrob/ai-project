@@ -1099,6 +1099,8 @@ a { color:inherit; }
 }
 .gp-seek-wrap {
     position: relative;
+    touch-action: none;
+    cursor: pointer;
     flex: 1;
     min-width: 0;
     height: 14px;
@@ -1222,6 +1224,35 @@ a { color:inherit; }
 #visualizer-canvas {
     flex: 0 0 90px;
     border-radius: 6px;
+}
+.gp-device-state {
+    max-width: min(30vw, 240px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+.gp-device-state[data-remote="true"] {
+    color: var(--accent);
+}
+.gp-device-takeover {
+    min-height: 28px;
+    padding: 4px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+}
+.gp-device-takeover:hover:not(:disabled) {
+    border-color: var(--accent);
+}
+.gp-device-takeover:disabled {
+    opacity: .55;
+    cursor: default;
 }
 /* ============================================================
    GENERAL RANGE INPUT
