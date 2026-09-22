@@ -1,6 +1,7 @@
 import asyncio
 import binascii
 import hashlib
+import math
 import json
 import os
 import random
@@ -73,7 +74,7 @@ async def app_lifespan(_app):
 
 app = FastAPI(
     title="Xrob Music",
-    version="3.5.20",
+    version="3.5.21",
     lifespan=app_lifespan,
 )
 
@@ -139,6 +140,7 @@ PLAYER_STATE_MAX_URL = 4096
 PLAYER_STATE_PERSIST_INTERVAL_SECONDS = 5.0
 PLAYER_STATE_DB_KEY = "default"
 PLAYER_STATE_LAST_PERSISTED_AT = 0.0
+PLAYER_STATE_LOCK = asyncio.Lock()
 
 
 def _auth_token():
@@ -239,7 +241,7 @@ def _is_authenticated(token):
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "3.5.20"
+SERVER_VERSION = "3.5.21"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 LIBRARY_METADATA_CONCURRENCY = max(4, min(12, int(os.getenv("XROB_LIBRARY_METADATA_CONCURRENCY", "8"))))
@@ -712,6 +714,10 @@ def init_db():
 
         conn.execute("""CREATE TABLE IF NOT EXISTS playback_positions (song_id TEXT PRIMARY KEY, position REAL DEFAULT 0, duration REAL DEFAULT 0, updated_at REAL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS play_history (id INTEGER PRIMARY KEY AUTOINCREMENT, song_id TEXT NOT NULL, played_at REAL NOT NULL, duration REAL DEFAULT 0, position REAL DEFAULT 0)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_play_history_song_id ON play_history(song_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_play_history_played_at ON play_history(played_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_play_history_song_played_at ON play_history(song_id, played_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, last_updated DESC)")
         conn.execute("""CREATE TABLE IF NOT EXISTS player_sessions (session_key TEXT PRIMARY KEY, owner_id TEXT, client_id TEXT, state_json TEXT NOT NULL, updated_at REAL NOT NULL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
@@ -920,7 +926,8 @@ def _sanitize_player_state(state):
         if key not in cleaned:
             continue
         try:
-            cleaned[key] = max(0.0, float(cleaned.get(key) or 0))
+            value = float(cleaned.get(key) or 0)
+            cleaned[key] = max(0.0, value) if math.isfinite(value) else 0.0
         except (TypeError, ValueError):
             cleaned[key] = 0.0
     if "volume" in cleaned:
@@ -1056,12 +1063,10 @@ def get_player_state():
         else:
             return None
     age = time.time() - PLAYER_STATE_UPDATED_AT if PLAYER_STATE_UPDATED_AT else float("inf")
-    if age > PLAYER_STATE_MAX_AGE_SECONDS:
-        return {"state": None, "updated_at": PLAYER_STATE_UPDATED_AT, "stale": True, "persistent": True}
     return {
         "state": dict(PLAYER_STATE),
         "updated_at": PLAYER_STATE_UPDATED_AT,
-        "stale": False,
+        "stale": age > PLAYER_STATE_MAX_AGE_SECONDS,
         "persistent": True,
     }
 
@@ -1093,9 +1098,20 @@ def safe_int(value, default=0):
 
 def safe_float(value, default=0):
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else default
     except Exception:
         return default
+
+
+def finite_nonnegative_float(value, field_name):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{field_name} must be numeric") from None
+    if not math.isfinite(number):
+        raise HTTPException(400, f"{field_name} must be finite")
+    return max(0.0, number)
 
 
 def format_duration(seconds):
@@ -2091,12 +2107,7 @@ async def refresh_after_download(final_path):
             None,
         )
         if matched:
-            with db_connect() as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO song_review(song_id,state,actioned_at) VALUES(?,'pending',0)",
-                    (matched["id"],),
-                )
-                conn.commit()
+            await asyncio.to_thread(_mark_song_review_sync, matched["id"], "pending", 0.0)
     except Exception as exc:
         await write_app_error("library_refresh_after_download", str(exc))
 
@@ -2115,6 +2126,7 @@ async def download_worker():
         else:
             task_id, queue_token = queue_item, None
 
+        process = None
         try:
 
             task = TASKS.get(task_id)
@@ -2240,9 +2252,15 @@ async def download_worker():
 
             while True:
 
-                line = (
-                    await process.stdout.readline()
-                )
+                try:
+                    line = await asyncio.wait_for(
+                        process.stdout.readline(),
+                        timeout=DOWNLOAD_OUTPUT_IDLE_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError(
+                        f"Download produced no progress output for {DOWNLOAD_OUTPUT_IDLE_TIMEOUT_SECONDS} seconds"
+                    ) from exc
 
                 if not line:
                     break
@@ -2442,7 +2460,9 @@ async def download_worker():
                     *clean_command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
                 ACTIVE_PROCESSES[task_id] = clean_process
-                _, clean_stderr = await clean_process.communicate()
+                _, clean_stderr = await communicate_with_timeout(
+                    clean_process, METADATA_REWRITE_TIMEOUT_SECONDS, "Metadata rewrite"
+                )
                 ACTIVE_PROCESSES.pop(task_id, None)
 
                 if task.get("cancel_requested"):
@@ -2571,12 +2591,16 @@ async def download_worker():
                 )
 
         finally:
-
-            ACTIVE_PROCESSES.pop(
-                task_id,
-                None,
-            )
-
+            active = ACTIVE_PROCESSES.pop(task_id, None) or process
+            if active is not None and getattr(active, "returncode", None) is None:
+                try:
+                    active.terminate()
+                    await asyncio.wait_for(active.wait(), timeout=3)
+                except Exception:
+                    try:
+                        active.kill()
+                    except Exception:
+                        pass
             TASK_QUEUE.task_done()
 
 
@@ -2715,6 +2739,29 @@ async def api_post_settings(
 # YOUTUBE SEARCH
 # ============================================================
 
+SUBPROCESS_TIMEOUT_SECONDS = 45
+PREVIEW_LOOKUP_TIMEOUT_SECONDS = 30
+PREVIEW_STREAM_TIMEOUT_SECONDS = 180
+DOWNLOAD_OUTPUT_IDLE_TIMEOUT_SECONDS = 120
+METADATA_REWRITE_TIMEOUT_SECONDS = 60
+
+
+async def communicate_with_timeout(process, timeout, label="process"):
+    try:
+        return await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except Exception:
+            pass
+        raise RuntimeError(f"{label} timed out after {timeout} seconds")
+
 async def youtube_search(
     query,
     max_results,
@@ -2753,7 +2800,7 @@ async def youtube_search(
             "yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed."
         ) from exc
 
-    stdout, stderr = await process.communicate()
+    stdout, stderr = await communicate_with_timeout(process, SUBPROCESS_TIMEOUT_SECONDS, "YouTube search")
 
     if process.returncode != 0:
 
@@ -2970,7 +3017,7 @@ async def api_preview(
             detail="yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed.",
         ) from exc
 
-    stdout, stderr = await process.communicate()
+    stdout, stderr = await communicate_with_timeout(process, PREVIEW_LOOKUP_TIMEOUT_SECONDS, "Preview lookup")
 
     if (
         process.returncode != 0
@@ -3015,20 +3062,21 @@ async def api_preview(
     )
 
     async def generator():
-
+        started = time.monotonic()
         try:
-
             while True:
-
-                chunk = await ffmpeg.stdout.read(
-                    64 * 1024
-                )
-
+                if time.monotonic() - started > PREVIEW_STREAM_TIMEOUT_SECONDS:
+                    raise RuntimeError("Preview stream timed out")
+                chunk = await asyncio.wait_for(ffmpeg.stdout.read(64 * 1024), timeout=15)
                 if not chunk:
                     break
-
                 yield chunk
-
+        except (asyncio.TimeoutError, RuntimeError):
+            try:
+                if ffmpeg.returncode is None:
+                    ffmpeg.kill()
+            except Exception:
+                pass
         finally:
 
             if ffmpeg.returncode is None:
@@ -3391,8 +3439,7 @@ async def api_library():
     )
 
     library = await build_library()
-    with db_connect() as conn:
-        play_counts = {r[0]: int(r[1]) for r in conn.execute("SELECT song_id, COUNT(*) FROM play_history GROUP BY song_id").fetchall()}
+    play_counts = await asyncio.to_thread(_play_count_map_sync)
     song_by_path = {str(song["path"]): song for song in library["songs"]}
     for item in result:
         path = str((DOWNLOAD_DIR / item["name"]).resolve())
@@ -3452,7 +3499,7 @@ async def api_library():
         "files": result,
         "total_size": format_size(total),
         "total_bytes": total,
-        "storage": storage_info_sync(),
+        "storage": await asyncio.to_thread(storage_info_sync),
         "artists": artists,
         "albums": albums,
         "ready": True,
@@ -3509,28 +3556,10 @@ async def api_library_statistics():
         if channels:
             channel_counts[str(channels)] = channel_counts.get(str(channels), 0) + 1
 
-    with db_connect() as conn:
-        total_plays = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
-        unique_played = int(conn.execute("SELECT COUNT(DISTINCT song_id) FROM play_history").fetchone()[0])
-        first_play = conn.execute("SELECT MIN(played_at) FROM play_history").fetchone()[0]
-        last_play = conn.execute("SELECT MAX(played_at) FROM play_history").fetchone()[0]
-        recent_plays = int(conn.execute("SELECT COUNT(*) FROM play_history WHERE played_at >= ?", (time.time() - 7 * 86400,)).fetchone()[0])
-        play_seconds = float(conn.execute("SELECT COALESCE(SUM(CASE WHEN duration > 0 THEN MIN(position, duration) ELSE position END),0) FROM play_history").fetchone()[0] or 0)
-        top_artists_rows = conn.execute("""
-            SELECT ph.song_id, COUNT(*) AS plays
-            FROM play_history ph
-            GROUP BY ph.song_id
-            ORDER BY plays DESC, MAX(ph.played_at) DESC
-            LIMIT 20
-        """).fetchall()
-        top_recent_rows = conn.execute("""
-            SELECT ph.song_id, COUNT(*) AS plays, MAX(ph.played_at) AS last_play
-            FROM play_history ph
-            WHERE ph.played_at >= ?
-            GROUP BY ph.song_id
-            ORDER BY plays DESC, last_play DESC
-            LIMIT 12
-        """, (time.time() - 30 * 86400,)).fetchall()
+    (total_plays, unique_played, first_play, last_play, recent_plays,
+     play_seconds, top_artists_rows, top_recent_rows) = await asyncio.to_thread(
+        _library_statistics_db_sync, time.time() - 7 * 86400, time.time() - 30 * 86400
+    )
 
     songs_by_id = {song["id"]: song for song in songs}
     top_artists = {}
@@ -3652,18 +3681,7 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0):
     seed_input = f"xrob-daily-mix:{day_key}:{variant}"
     rng = random.Random(int(hashlib.sha256(seed_input.encode()).hexdigest()[:16], 16))
 
-    with db_connect() as conn:
-        rows = conn.execute("""
-            SELECT song_id, COUNT(*) AS plays, MAX(played_at) AS last_play,
-                   COALESCE(SUM(CASE WHEN duration > 0 THEN MIN(position, duration) ELSE position END),0) AS heard,
-                   COALESCE(SUM(duration),0) AS duration_sum
-            FROM play_history GROUP BY song_id
-        """).fetchall()
-        recent_rows = conn.execute(
-            "SELECT song_id, MAX(played_at) FROM play_history WHERE played_at >= ? GROUP BY song_id",
-            (now - 24 * 3600,),
-        ).fetchall()
-        star_rows = conn.execute("SELECT item_id FROM stars").fetchall()
+    rows, recent_rows, star_rows = await asyncio.to_thread(_daily_mix_db_sync, now - 24 * 3600, now)
 
     history = {
         r[0]: {"plays": int(r[1]), "last": float(r[2] or 0), "heard": float(r[3] or 0), "duration_sum": float(r[4] or 0)}
@@ -3778,8 +3796,7 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0):
 async def api_stats():
     if LIBRARY_CACHE is None:
         snap = await fast_library_snapshot()
-        with db_connect() as conn:
-            all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+        all_play_count, _ = await asyncio.to_thread(_play_totals_sync)
         return {"tracks": len(snap["files"]), "artists": snap.get("artists_count", 0), "albums": snap.get("albums_count", 0), "total_bytes": snap["total_bytes"], "folder_size": snap["total_size"], "all_play_count": all_play_count, "played_tracks": 0, "ready": False}
 
     library = await build_library()
@@ -3790,9 +3807,7 @@ async def api_stats():
     albums = library["albums"]
 
     total = sum(song["size"] for song in songs)
-    with db_connect() as conn:
-        all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
-        distinct_played = int(conn.execute("SELECT COUNT(DISTINCT song_id) FROM play_history").fetchone()[0])
+    all_play_count, distinct_played = await asyncio.to_thread(_play_totals_sync)
     return {
         "tracks": len(songs),
         "artists": len(artists),
@@ -3810,12 +3825,13 @@ async def api_home():
     # Home must stay fast. Do not rebuild the entire metadata library
     # here because the frontend also requests /api/stats separately.
     files = await get_all_audio_files()
-
-    files.sort(
-        key=lambda path: path.stat().st_mtime
-        if path.exists()
-        else 0,
-        reverse=True,
+    files = await asyncio.to_thread(
+        lambda paths: sorted(
+            paths,
+            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+            reverse=True,
+        ),
+        files,
     )
 
     recent_files = files[:12]
@@ -3893,8 +3909,7 @@ async def api_home():
 
     library = await build_library()
     total_bytes = sum(song.get("size", 0) for song in library["songs"])
-    with db_connect() as conn:
-        all_play_count = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+    all_play_count, _ = await asyncio.to_thread(_play_totals_sync)
     return {
         "stats": {
             "tracks": len(library["songs"]),
@@ -6402,11 +6417,7 @@ async def rest_starred2(
     if error:
         return error
 
-    with db_connect() as conn:
-
-        rows = conn.execute(
-            "SELECT item_id FROM stars"
-        ).fetchall()
+    rows = await asyncio.to_thread(lambda: db_connect_starred_rows())
 
     starred_ids = {
         row[0]
@@ -6635,6 +6646,142 @@ async def rest_playlist(
 # ============================================================
 # PLAYER / PLAYLIST / HEALTH API
 # ============================================================
+def _mark_song_review_sync(song_id, state, actioned_at=0.0, history=False):
+    with db_connect() as conn:
+        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,?,?) ON CONFLICT(song_id) DO UPDATE SET state=excluded.state,actioned_at=excluded.actioned_at", (song_id, state, actioned_at))
+        if history:
+            conn.execute("INSERT INTO song_editor_history(song_id,edited_at) VALUES(?,?) ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at", (song_id, actioned_at))
+        conn.commit()
+
+
+def _song_editor_snapshot_sync(song_ids):
+    with db_connect() as conn:
+        conn.execute("INSERT OR IGNORE INTO song_editor_history(song_id,edited_at) SELECT song_id,actioned_at FROM song_review WHERE state='edited'")
+        if song_ids:
+            conn.executemany("INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)", [(song_id, "pending") for song_id in song_ids])
+        conn.commit()
+        conn.row_factory = sqlite3.Row
+        review_rows = conn.execute("SELECT song_id,state,actioned_at FROM song_review").fetchall()
+        history_rows = conn.execute("SELECT song_id,edited_at FROM song_editor_history ORDER BY edited_at DESC, song_id").fetchall()
+    return review_rows, history_rows
+
+
+def _reset_song_editor_sync(song_ids):
+    with db_connect() as conn:
+        conn.execute("DELETE FROM song_review")
+        if song_ids:
+            conn.executemany("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)", [(song_id, "pending") for song_id in song_ids])
+        conn.commit()
+
+
+def _artist_artwork_get_sync(artist_id):
+    with db_connect() as conn:
+        return conn.execute("SELECT data,mime FROM artist_artwork WHERE artist_id=?", (artist_id,)).fetchone()
+
+def _artist_artwork_save_sync(artist_id, data, mime):
+    with db_connect() as conn:
+        conn.execute("INSERT INTO artist_artwork(artist_id,data,mime,updated_at) VALUES(?,?,?,?) ON CONFLICT(artist_id) DO UPDATE SET data=excluded.data,mime=excluded.mime,updated_at=excluded.updated_at", (artist_id,data,mime,time.time()))
+        conn.commit()
+
+def db_connect_starred_rows():
+    with db_connect() as conn:
+        return conn.execute("SELECT item_id FROM stars").fetchall()
+
+
+def _library_statistics_db_sync(cutoff_7d, cutoff_30d):
+    with db_connect() as conn:
+        total_plays = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+        unique_played = int(conn.execute("SELECT COUNT(DISTINCT song_id) FROM play_history").fetchone()[0])
+        first_play = conn.execute("SELECT MIN(played_at) FROM play_history").fetchone()[0]
+        last_play = conn.execute("SELECT MAX(played_at) FROM play_history").fetchone()[0]
+        recent_plays = int(conn.execute("SELECT COUNT(*) FROM play_history WHERE played_at >= ?", (cutoff_7d,)).fetchone()[0])
+        play_seconds = float(conn.execute("SELECT COALESCE(SUM(CASE WHEN duration > 0 THEN MIN(position, duration) ELSE position END),0) FROM play_history").fetchone()[0] or 0)
+        top_artists_rows = conn.execute("SELECT ph.song_id, COUNT(*) AS plays FROM play_history ph GROUP BY ph.song_id ORDER BY plays DESC, MAX(ph.played_at) DESC LIMIT 20").fetchall()
+        top_recent_rows = conn.execute("SELECT ph.song_id, COUNT(*) AS plays, MAX(ph.played_at) AS last_play FROM play_history ph WHERE ph.played_at >= ? GROUP BY ph.song_id ORDER BY plays DESC, last_play DESC LIMIT 12", (cutoff_30d,)).fetchall()
+    return total_plays, unique_played, first_play, last_play, recent_plays, play_seconds, top_artists_rows, top_recent_rows
+
+
+
+def _play_count_map_sync():
+    with db_connect() as conn:
+        return {r[0]: int(r[1]) for r in conn.execute("SELECT song_id, COUNT(*) FROM play_history GROUP BY song_id").fetchall()}
+
+
+def _play_totals_sync():
+    with db_connect() as conn:
+        total = int(conn.execute("SELECT COUNT(*) FROM play_history").fetchone()[0])
+        distinct = int(conn.execute("SELECT COUNT(DISTINCT song_id) FROM play_history").fetchone()[0])
+        return total, distinct
+
+
+def _recent_most_sync():
+    with db_connect() as conn:
+        recent = conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY t DESC LIMIT 24").fetchall()
+        most = conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY c DESC, t DESC LIMIT 24").fetchall()
+    return recent, most
+
+
+def _playlist_rows_sync():
+    with db_connect() as conn:
+        conn.row_factory = sqlite3.Row
+        return conn.execute("SELECT * FROM playlists ORDER BY name COLLATE NOCASE").fetchall()
+
+
+def _playlist_create_sync(values):
+    with db_connect() as conn:
+        conn.execute("INSERT INTO playlists(id,name,comment,owner,public,song_ids,created_at,updated_at,kind,rules) VALUES(?,?,?,?,?,?,?,?,?,?)", values)
+        conn.commit()
+
+
+def _playlist_update_sync(values):
+    with db_connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM playlists WHERE id=?", (values[-1],)).fetchone()
+        if not row:
+            return False
+        conn.execute("UPDATE playlists SET name=?,comment=?,song_ids=?,updated_at=?,kind=?,rules=? WHERE id=?", values)
+        conn.commit()
+        return True
+
+
+def _playlist_delete_sync(playlist_id):
+    with db_connect() as conn:
+        conn.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
+        conn.commit()
+
+
+def _daily_mix_db_sync(cutoff_24h, now=None):
+    with db_connect() as conn:
+        rows = conn.execute("""
+            SELECT song_id, COUNT(*) AS plays, MAX(played_at) AS last_play,
+                   COALESCE(SUM(CASE WHEN duration > 0 THEN MIN(position, duration) ELSE position END),0) AS heard,
+                   COALESCE(SUM(duration),0) AS duration_sum
+            FROM play_history GROUP BY song_id
+        """).fetchall()
+        recent_rows = conn.execute("SELECT song_id, MAX(played_at) FROM play_history WHERE played_at >= ? GROUP BY song_id", (cutoff_24h,)).fetchall()
+        star_rows = conn.execute("SELECT item_id FROM stars").fetchall()
+    return rows, recent_rows, star_rows
+
+
+def _scan_state_sync(status, mode=None, message="", started_at=None):
+    with db_connect() as conn:
+        if status == "running":
+            conn.execute("INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?,?,?) ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message", (started_at or time.time(), mode, status, message))
+        else:
+            conn.execute("UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1", (time.time(), status, message))
+        conn.commit()
+
+
+def _scan_state_read_sync():
+    with db_connect() as conn:
+        row = conn.execute("SELECT started_at,finished_at,mode,status,message FROM scan_state WHERE id=1").fetchone()
+    return dict(zip(["started_at","finished_at","mode","status","message"], row)) if row else {"status":"idle"}
+
+
+def _errors_sync(limit):
+    with db_connect() as conn:
+        conn.row_factory = sqlite3.Row
+        return conn.execute("SELECT id,created_at,source,message,task_id FROM app_errors ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
 
 def write_app_error_sync(source, message, task_id=None):
     try:
@@ -6679,21 +6826,45 @@ async def api_player_state_update(payload: dict = Body(...)):
 
     # The server is the cross-device source of truth. A live owner cannot be
     # silently replaced by another browser; explicit Take Over sends force=true.
-    current = get_player_state()
-    current_state = current.get("state") if isinstance(current, dict) else None
-    current_owner = str(current_state.get("ownerId") or "").strip() if isinstance(current_state, dict) else ""
-    current_updated = float(current.get("updated_at") or 0) if isinstance(current, dict) else 0.0
-    current_age = time.time() - current_updated if current_updated else float("inf")
-    if current_owner and current_owner != owner_id and current_age <= PLAYER_STATE_MAX_AGE_SECONDS and not force:
-        raise HTTPException(409, {
-            "status": "owned",
-            "ownerId": current_owner,
-            "updated_at": current_updated,
-        })
+    async with PLAYER_STATE_LOCK:
+        current = get_player_state()
+        current_state = current.get("state") if isinstance(current, dict) else None
+        current_owner = str(current_state.get("ownerId") or "").strip() if isinstance(current_state, dict) else ""
+        current_updated = float(current.get("updated_at") or 0) if isinstance(current, dict) else 0.0
+        current_age = time.time() - current_updated if current_updated else float("inf")
+        if current_owner and current_owner != owner_id and current_age <= PLAYER_STATE_MAX_AGE_SECONDS and not force:
+            raise HTTPException(409, {
+                "status": "owned",
+                "ownerId": current_owner,
+                "updated_at": current_updated,
+            })
 
-    state["at"] = time.time()
-    await publish_player_state(state, full=force or bool(payload.get("full", False)))
-    return {"status": "ok", "updated_at": PLAYER_STATE_UPDATED_AT}
+        state["at"] = time.time()
+        await publish_player_state(state, full=force or bool(payload.get("full", False)))
+        return {"status": "ok", "updated_at": PLAYER_STATE_UPDATED_AT}
+
+
+def _sanitize_player_command_payload(command, payload):
+    data = payload if isinstance(payload, dict) else {}
+    if command == "seek":
+        value = data.get("time", 0)
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return {}
+        return {"time": max(0.0, value) if math.isfinite(value) else 0.0}
+    if command == "volume":
+        value = data.get("volume", 0.8)
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return {}
+        return {"volume": min(1.0, max(0.0, value)) if math.isfinite(value) else 0.8}
+    if command == "load-play":
+        state = _sanitize_player_state(data)
+        allowed = {"src", "source", "title", "artist", "art", "songId", "queueIndex", "queue", "dailyMix"}
+        return {key: state[key] for key in allowed if key in state}
+    return {}
 
 
 @app.post("/api/player/command")
@@ -6709,7 +6880,7 @@ async def api_player_command(payload: dict = Body(...)):
         "type": "command",
         "targetId": target_id[:200],
         "command": command[:64],
-        "payload": payload.get("payload") if isinstance(payload.get("payload"), dict) else {},
+        "payload": _sanitize_player_command_payload(command, payload.get("payload")),
         "id": str(payload.get("id") or "")[:300],
     }
     await manager.broadcast(message)
@@ -6744,13 +6915,8 @@ async def api_player_positions():
 async def api_player_position(payload: dict = Body(...)):
     song_id=str(payload.get("song_id") or "").strip()
     if not song_id: raise HTTPException(400, "song_id is required")
-    raw_position = payload.get("position", 0)
-    raw_duration = payload.get("duration", 0)
-    try:
-        position = max(0.0, float(raw_position))
-        duration = max(0.0, float(raw_duration))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "position and duration must be numeric") from None
+    position = finite_nonnegative_float(payload.get("position", 0), "position")
+    duration = finite_nonnegative_float(payload.get("duration", 0), "duration")
     now=time.time()
     await asyncio.to_thread(save_player_position_sync, song_id, position, duration, now)
     return {"status":"ok"}
@@ -6760,11 +6926,8 @@ async def api_player_position(payload: dict = Body(...)):
 async def api_player_history(payload: dict = Body(...)):
     song_id=str(payload.get("song_id") or "").strip()
     if not song_id: raise HTTPException(400, "song_id is required")
-    try:
-        duration = max(0.0, float(payload.get("duration") or 0))
-        position = max(0.0, float(payload.get("position") or 0))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "position and duration must be numeric") from None
+    duration = finite_nonnegative_float(payload.get("duration") or 0, "duration")
+    position = finite_nonnegative_float(payload.get("position") or 0, "position")
     total_plays = await asyncio.to_thread(save_player_history_sync, song_id, duration, position)
     return {"status":"ok", "all_play_count": total_plays}
 
@@ -6773,9 +6936,7 @@ async def api_player_history(payload: dict = Body(...)):
 async def api_recent_most():
     library=await build_library()
     by_id={s["id"]:s for s in library["songs"]}
-    with db_connect() as conn:
-        recent=conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY t DESC LIMIT 24").fetchall()
-        most=conn.execute("SELECT song_id, COUNT(*) c, MAX(played_at) t FROM play_history GROUP BY song_id ORDER BY c DESC, t DESC LIMIT 24").fetchall()
+    recent, most = await asyncio.to_thread(_recent_most_sync)
     def pack(rows):
         out=[]
         for r in rows:
@@ -6789,9 +6950,7 @@ async def api_recent_most():
 
 @app.get("/api/playlists")
 async def api_playlists():
-    with db_connect() as conn:
-        conn.row_factory=sqlite3.Row
-        rows=conn.execute("SELECT * FROM playlists ORDER BY name COLLATE NOCASE").fetchall()
+    rows = await asyncio.to_thread(_playlist_rows_sync)
     library=await build_library(); by_id={s["id"]:s for s in library["songs"]}
     out=[]
     for row in rows:
@@ -6816,30 +6975,29 @@ async def api_playlist_create(payload: dict = Body(...)):
     kind="smart" if payload.get("kind")=="smart" else "manual"
     rules=payload.get("rules") or {}
     now=time.time(); pid="playlist-"+uuid.uuid4().hex[:16]
-    with db_connect() as conn:
-        conn.execute("INSERT INTO playlists(id,name,comment,owner,public,song_ids,created_at,updated_at,kind,rules) VALUES(?,?,?,?,?,?,?,?,?,?)", (pid,name,str(payload.get("comment") or ""),"admin",0,json.dumps(ids),now,now,kind,json.dumps(rules)))
-        conn.commit()
+    await asyncio.to_thread(_playlist_create_sync, (pid,name,str(payload.get("comment") or ""),"admin",0,json.dumps(ids),now,now,kind,json.dumps(rules)))
     return {"status":"ok","id":pid}
 
 
 @app.put("/api/playlists/{playlist_id}")
 async def api_playlist_update(playlist_id:str,payload:dict=Body(...)):
-    with db_connect() as conn:
-        conn.row_factory=sqlite3.Row
-        row=conn.execute("SELECT * FROM playlists WHERE id=?",(playlist_id,)).fetchone()
-        if not row: raise HTTPException(404,"Playlist not found")
-        current=dict(row)
-        name=str(payload.get("name",current["name"])).strip()
-        ids=[str(x) for x in payload.get("song_ids",safe_song_ids(current.get("song_ids","[]")))]
-        kind=payload.get("kind", current.get("kind","manual")); rules=payload.get("rules", json.loads(current.get("rules") or "{}"))
-        conn.execute("UPDATE playlists SET name=?,comment=?,song_ids=?,updated_at=?,kind=?,rules=? WHERE id=?",(name,str(payload.get("comment",current.get("comment") or "")),json.dumps(ids),time.time(),kind,json.dumps(rules),playlist_id)); conn.commit()
+    rows = await asyncio.to_thread(_playlist_rows_sync)
+    row = next((r for r in rows if str(r["id"]) == playlist_id), None)
+    if not row:
+        raise HTTPException(404,"Playlist not found")
+    current=dict(row)
+    name=str(payload.get("name",current["name"])).strip()
+    ids=[str(x) for x in payload.get("song_ids",safe_song_ids(current.get("song_ids","[]")))]
+    kind=payload.get("kind", current.get("kind","manual")); rules=payload.get("rules", json.loads(current.get("rules") or "{}"))
+    updated = await asyncio.to_thread(_playlist_update_sync, (name,str(payload.get("comment",current.get("comment") or "")),json.dumps(ids),time.time(),kind,json.dumps(rules),playlist_id))
+    if not updated:
+        raise HTTPException(404,"Playlist not found")
     return {"status":"ok"}
 
 
 @app.delete("/api/playlists/{playlist_id}")
 async def api_playlist_delete(playlist_id:str):
-    with db_connect() as conn:
-        conn.execute("DELETE FROM playlists WHERE id=?",(playlist_id,)); conn.commit()
+    await asyncio.to_thread(_playlist_delete_sync, playlist_id)
     return {"status":"ok"}
 
 
@@ -6862,24 +7020,46 @@ async def api_playlist_get(playlist_id:str):
 
 @app.get("/api/library/health")
 async def api_library_health():
-    files=await get_all_audio_files(); unreadable=[]; bad_tags=[]; missing_art=[]; groups={}
-    for path in files:
-        try: md=await read_metadata(path)
-        except Exception as exc: unreadable.append({"path":str(path.relative_to(DOWNLOAD_DIR)),"error":str(exc)}); continue
-        rel=str(path.relative_to(DOWNLOAD_DIR))
-        title=str(md.get("title") or "").strip(); artist=str(md.get("artist") or "").strip(); album=str(md.get("album") or "").strip()
-        if not title or not artist or not album: bad_tags.append({"path":rel,"title":title,"artist":artist,"album":album})
-        if not await ensure_cover(path): missing_art.append(rel)
-        key=normalize_duplicate_key(title, artist)
+    # Reuse the normal library index. Health checks must not trigger ffmpeg for
+    # every track or block the event loop with repeated filesystem calls.
+    library = await build_library()
+    songs = library.get("songs", [])
+    bad_tags, missing_art, groups = [], [], {}
+    for song in songs:
+        rel = str(song["path"].relative_to(DOWNLOAD_DIR))
+        title = str(song.get("title") or "").strip()
+        artist = str(song.get("artist") or "").strip()
+        album = str(song.get("album") or "").strip()
+        title_missing = not title or title.casefold() in {"unknown", "unknown track"}
+        artist_missing = not artist or artist.casefold() in {"unknown", "unknown artist"}
+        album_missing = not album or album.casefold() in {"unknown", "unknown album"}
+        if title_missing or artist_missing or album_missing:
+            bad_tags.append({"path": rel, "title": title, "artist": artist, "album": album})
+        if not song.get("has_artwork"):
+            missing_art.append(rel)
+        key = normalize_duplicate_key(title or Path(rel).stem, artist or "Unknown Artist")
         if key:
-            groups.setdefault(key,[]).append({
-                "path":rel, "id":make_song_id(path), "title":title or path.stem,
-                "artist":artist or "Unknown Artist", "album":album or "Unknown Album",
-                "size":path.stat().st_size if path.exists() else 0,
-                "duration":safe_float(md.get("duration"), 0),
+            groups.setdefault(key, []).append({
+                "path": rel, "id": song["id"], "title": title or Path(rel).stem,
+                "artist": artist or "Unknown Artist", "album": album or "Unknown Album",
+                "size": safe_int(song.get("size"), 0), "duration": safe_float(song.get("duration"), 0),
             })
-    duplicates=[{"key":k,"title":(v[0].get("title") if v else ""),"artist":(v[0].get("artist") if v else ""),"files":v} for k,v in groups.items() if len(v)>1]
-    return {"unreadable":unreadable,"bad_tags":bad_tags,"missing_artwork":missing_art,"duplicates":duplicates,"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":len(duplicates),"duplicate_files":sum(len(g["files"]) for g in duplicates)}}
+    duplicates = [
+        {"key": key, "title": files[0].get("title", "") if files else "",
+         "artist": files[0].get("artist", "") if files else "", "files": files}
+        for key, files in groups.items() if len(files) > 1
+    ]
+    return {
+        "unreadable": [],
+        "bad_tags": bad_tags,
+        "missing_artwork": missing_art,
+        "duplicates": duplicates,
+        "counts": {
+            "unreadable": 0, "bad_tags": len(bad_tags),
+            "missing_artwork": len(missing_art), "duplicates": len(duplicates),
+            "duplicate_files": sum(len(item["files"]) for item in duplicates),
+        },
+    }
 
 
 @app.post("/api/library/scan/{mode}")
@@ -6890,13 +7070,7 @@ async def api_library_scan_mode(mode: str):
         raise HTTPException(409, "A library scan is already running")
 
     async with LIBRARY_SCAN_LOCK:
-        with db_connect() as conn:
-            conn.execute(
-                "INSERT INTO scan_state(id,started_at,finished_at,mode,status,message) VALUES(1,?,NULL,?,?,?) "
-                "ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,finished_at=NULL,mode=excluded.mode,status=excluded.status,message=excluded.message",
-                (time.time(), mode, "running", "Scanning"),
-            )
-            conn.commit()
+        await asyncio.to_thread(_scan_state_sync, "running", mode, "Scanning", time.time())
         try:
             invalidate_library_cache()
             # build_library already uses the on-disk index and only reads tags for
@@ -6916,29 +7090,17 @@ async def api_library_scan_mode(mode: str):
 
                     await asyncio.gather(*(cover_one(c) for c in cover_tasks), return_exceptions=True)
             await persist_library_index(library)
-            with db_connect() as conn:
-                conn.execute(
-                    "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
-                    (time.time(), "ok", f"{len(library['songs'])} tracks scanned"),
-                )
-                conn.commit()
+            await asyncio.to_thread(_scan_state_sync, "ok", None, f"{len(library['songs'])} tracks scanned")
             return {"status": "ok", "mode": mode, "tracks": len(library["songs"])}
         except Exception as exc:
             await write_app_error("library_scan", str(exc))
-            with db_connect() as conn:
-                conn.execute(
-                    "UPDATE scan_state SET finished_at=?,status=?,message=? WHERE id=1",
-                    (time.time(), "error", str(exc)),
-                )
-                conn.commit()
+            await asyncio.to_thread(_scan_state_sync, "error", None, str(exc))
             raise
 
 
 @app.get("/api/library/scan/status")
 async def api_library_scan_status():
-    with db_connect() as conn:
-        row=conn.execute("SELECT started_at,finished_at,mode,status,message FROM scan_state WHERE id=1").fetchone()
-    return dict(zip(["started_at","finished_at","mode","status","message"],row)) if row else {"status":"idle"}
+    return await asyncio.to_thread(_scan_state_read_sync)
 
 
 @app.post("/api/auth/login")
@@ -6985,9 +7147,7 @@ async def api_errors(limit:int=Query(200,ge=1,le=1000)):
     if not isinstance(limit, int):
         limit = 200
     limit = max(1, min(1000, limit))
-    with db_connect() as conn:
-        conn.row_factory=sqlite3.Row
-        rows=conn.execute("SELECT id,created_at,source,message,task_id FROM app_errors ORDER BY created_at DESC LIMIT ?",(limit,)).fetchall()
+    rows = await asyncio.to_thread(_errors_sync, limit)
     failures=[]
     for task in sorted(TASKS.values(), key=lambda x:x.get("last_updated",0), reverse=True):
         if task.get("status")=="failed" or task.get("error"):
@@ -7025,11 +7185,8 @@ async def api_library_metadata(payload: dict = Body(...)):
         audio.save()
     try: await asyncio.to_thread(write_tags)
     except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
-    with db_connect() as conn:
-        edited_at = time.time()
-        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'edited',?) ON CONFLICT(song_id) DO UPDATE SET state='edited',actioned_at=excluded.actioned_at", (song_id,edited_at))
-        conn.execute("INSERT INTO song_editor_history(song_id,edited_at) VALUES(?,?) ON CONFLICT(song_id) DO UPDATE SET edited_at=excluded.edited_at", (song_id,edited_at))
-        conn.commit()
+    edited_at = time.time()
+    await asyncio.to_thread(_mark_song_review_sync, song_id, "edited", edited_at, True)
     invalidate_library_cache(); return {"status":"ok"}
 
 
@@ -7041,28 +7198,7 @@ async def api_song_editor():
 
     # song_review is only the CURRENT review queue. song_editor_history is the
     # permanent list of tracks that have been edited and can therefore be reopened.
-    with db_connect() as conn:
-        # Recover edits made before the history table existed.
-        conn.execute(
-            "INSERT OR IGNORE INTO song_editor_history(song_id,edited_at) "
-            "SELECT song_id, actioned_at FROM song_review "
-            "WHERE state='edited'"
-        )
-        # New library files enter the current review queue automatically.
-        # Do not delete old review rows here: history is independent of the queue.
-        for s in songs:
-            conn.execute(
-                "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
-                (s["id"], "pending"),
-            )
-        conn.commit()
-        conn.row_factory = sqlite3.Row
-        review_rows = conn.execute(
-            "SELECT song_id,state,actioned_at FROM song_review"
-        ).fetchall()
-        history_rows = conn.execute(
-            "SELECT song_id,edited_at FROM song_editor_history ORDER BY edited_at DESC, song_id"
-        ).fetchall()
+    review_rows, history_rows = await asyncio.to_thread(_song_editor_snapshot_sync, [s["id"] for s in songs])
 
     def make_item(s):
         rel = str(s["path"].relative_to(DOWNLOAD_DIR))
@@ -7104,16 +7240,8 @@ async def api_song_editor():
 async def api_song_editor_reset():
     library = await build_library()
     ids = [s["id"] for s in library["songs"]]
-    with db_connect() as conn:
-        # Reset ONLY the current review queue. Never erase song_editor_history:
-        # previously edited tracks must remain available in the Reopen selector.
-        conn.execute("DELETE FROM song_review")
-        if ids:
-            conn.executemany(
-                "INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
-                [(song_id, "pending") for song_id in ids],
-            )
-        conn.commit()
+    # Reset ONLY the current review queue. Never erase song_editor_history.
+    await asyncio.to_thread(_reset_song_editor_sync, ids)
     return {"status": "ok", "count": len(ids)}
 
 
@@ -7122,13 +7250,7 @@ async def api_song_editor_import(song_id: str):
     song = await find_song(song_id)
     if not song:
         raise HTTPException(404, "Track not found")
-    with db_connect() as conn:
-        conn.execute(
-            "INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'pending',0) "
-            "ON CONFLICT(song_id) DO UPDATE SET state='pending',actioned_at=0",
-            (song_id,),
-        )
-        conn.commit()
+    await asyncio.to_thread(_mark_song_review_sync, song_id, "pending", 0.0)
     return {"status": "ok", "count": 1}
 
 
@@ -7136,15 +7258,13 @@ async def api_song_editor_import(song_id: str):
 async def api_song_editor_skip(song_id:str):
     song=await find_song(song_id)
     if not song: raise HTTPException(404,"Track not found")
-    with db_connect() as conn:
-        conn.execute("INSERT INTO song_review(song_id,state,actioned_at) VALUES(?,'skipped',?) ON CONFLICT(song_id) DO UPDATE SET state='skipped',actioned_at=excluded.actioned_at",(song_id,time.time())); conn.commit()
+    await asyncio.to_thread(_mark_song_review_sync, song_id, "skipped", time.time())
     return {"status":"ok"}
 
 
 @app.get("/api/library/artist-artwork/{artist_id}")
 async def api_artist_artwork(artist_id: str):
-    with db_connect() as conn:
-        row = conn.execute("SELECT data,mime FROM artist_artwork WHERE artist_id=?", (artist_id,)).fetchone()
+    row = await asyncio.to_thread(_artist_artwork_get_sync, artist_id)
     if not row: raise HTTPException(404, "Artist artwork not found")
     return Response(content=row[0], media_type=row[1])
 
@@ -7154,9 +7274,7 @@ async def api_artist_artwork_upload(artist_id: str, upload: UploadFile = File(..
     if not data or len(data) > 15 * 1024 * 1024: raise HTTPException(400, "Invalid artwork")
     mime = upload.content_type or "image/jpeg"
     if mime not in {"image/jpeg","image/png","image/webp"}: raise HTTPException(400, "Use JPEG, PNG or WebP artwork")
-    with db_connect() as conn:
-        conn.execute("INSERT INTO artist_artwork(artist_id,data,mime,updated_at) VALUES(?,?,?,?) ON CONFLICT(artist_id) DO UPDATE SET data=excluded.data,mime=excluded.mime,updated_at=excluded.updated_at", (artist_id,data,mime,time.time()))
-        conn.commit()
+    await asyncio.to_thread(_artist_artwork_save_sync, artist_id, data, mime)
     invalidate_library_cache()
     return {"status":"ok","artist_id":artist_id}
 
