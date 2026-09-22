@@ -66,6 +66,13 @@ let canvasCtx = null;
 let audioContext = null;
 let analyser = null;
 let sourceNode = null;
+let replayGainNode = null;
+let crossfadeAudio = null;
+let crossfadeSourceNode = null;
+let crossfadeGainNode = null;
+let crossfadePrepared = null;
+let crossfadeTimer = null;
+let playerSettings = { replaygain_enabled: true, replaygain_mode: "track", replaygain_preamp_db: 0, replaygain_prevent_clipping: true, crossfade_seconds: 0, gapless_playback: true };
 
 let savedPlayerState = {
     track: null,
@@ -214,6 +221,7 @@ let playerSyncHeartbeat = null;
 let playerOwnerId = null;
 let applyingRemotePlayerCommand = false;
 let suppressLocalOwnershipUntil = 0;
+let playerTakeoverPending = false;
 let remotePlayerState = null;
 let remotePlayerReceivedAt = 0;
 let remotePlayerTimer = null;
@@ -247,9 +255,9 @@ function ownerIsFresh(owner) {
     return Boolean(owner?.id && Number.isFinite(Number(owner.at)) && (Date.now() - Number(owner.at)) < PLAYER_OWNER_STALE_MS);
 }
 
-function setPlayerOwner() {
+function setPlayerOwner(force = false) {
     const current = getPlayerOwner();
-    if (current?.id && current.id !== PLAYER_TAB_ID && ownerIsFresh(current)) {
+    if (!force && current?.id && current.id !== PLAYER_TAB_ID && ownerIsFresh(current)) {
         playerOwnerId = current.id;
         return false;
     }
@@ -259,6 +267,7 @@ function setPlayerOwner() {
     lastRemoteSequence = -1;
     stopRemoteProgressTicker();
     try { storageSet(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
+    updateDeviceOwnershipUI();
     return true;
 }
 
@@ -274,11 +283,52 @@ function heartbeatPlayerOwner() {
     playerOwnerId = current.id;
 }
 
+function localDeviceLabel() {
+    try {
+        const platformRaw = navigator.userAgentData?.platform || navigator.platform || "Device";
+        const platform = String(platformRaw)
+            .replace(/^Win.*$/i, "Windows")
+            .replace(/^Mac.*$/i, "Mac")
+            .replace(/^Linux.*$/i, "Linux")
+            .replace(/^Android.*$/i, "Android")
+            .replace(/^iPhone.*$/i, "iPhone")
+            .replace(/^iPad.*$/i, "iPad");
+        const ua = String(navigator.userAgent || "");
+        const browser = /Edg\//i.test(ua) ? "Edge" : /OPR\//i.test(ua) ? "Opera" : /Chrome\//i.test(ua) ? "Chrome" : /Firefox\//i.test(ua) ? "Firefox" : /Safari\//i.test(ua) && !/Chrome\//i.test(ua) ? "Safari" : "Browser";
+        return `${platform} · ${browser}`;
+    } catch (_) { return "This device"; }
+}
+
+function updateDeviceOwnershipUI() {
+    const status = document.getElementById("gp-device-status");
+    const btn = document.getElementById("gp-device-takeover");
+    const remote = isRemotePlayerOwner();
+    const hasRemoteSession = Boolean(remotePlayerState?.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID && remotePlayerState?.src);
+    const stale = Boolean(remotePlayerState?._serverStale);
+    const remoteName = String(remotePlayerState?.deviceName || "another device").trim();
+    if (status) {
+        if (remote || hasRemoteSession) {
+            status.textContent = stale ? `Last played on ${remoteName}` : `Playing on ${remoteName}`;
+            status.title = stale ? "Saved player session from another device" : "Another Xrob Music device currently controls playback";
+        } else {
+            status.textContent = `Playing on ${localDeviceLabel()}`;
+            status.title = "This device controls playback";
+        }
+        status.dataset.remote = String(remote || hasRemoteSession);
+    }
+    if (btn) {
+        btn.hidden = !hasRemoteSession;
+        btn.disabled = !hasRemoteSession;
+        btn.textContent = stale ? "Resume here" : "Take over";
+    }
+}
+
 function clearPlayerOwner() {
     const owner = getPlayerOwner();
     if (!owner || owner.id !== PLAYER_TAB_ID) return;
     try { storageRemove(PLAYER_OWNER_KEY); } catch (_) {}
     playerOwnerId = null;
+    updateDeviceOwnershipUI();
 }
 
 function isRemotePlayerOwner() {
@@ -291,7 +341,7 @@ function isRemotePlayerOwner() {
     if (remotePlayerState?._serverSynced && remotePlayerState.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID) {
         const sameClient = remotePlayerState.clientId && remotePlayerState.clientId === PLAYER_CLIENT_ID;
         const age = Date.now() - remotePlayerReceivedAt;
-        if (!sameClient && age < PLAYER_OWNER_STALE_MS * 2) {
+        if (!sameClient && age < PLAYER_SERVER_STATE_STALE_MS) {
             playerOwnerId = remotePlayerState.ownerId;
             return true;
         }
@@ -317,6 +367,7 @@ function buildPlayerSyncState(includeQueue = true) {
         art: playerArt?.src || "",
         songId: audio.dataset.xrobSongId || currentSongId() || "",
         source: currentPlayerSource || "",
+        deviceName: localDeviceLabel(),
         queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
         paused: Boolean(audio.paused),
         muted: Boolean(audio.muted),
@@ -342,6 +393,7 @@ function broadcastPlayerState(force = false, unload = false) {
     if (!state) return;
     state.seq = ++playerSyncSequence;
     if (force) state.force = true;
+    if (playerTakeoverPending) { state.takeover = true; playerTakeoverPending = false; }
     if (force) {
         try { storageSet(PLAYER_SYNC_STATE_KEY, JSON.stringify(state)); } catch (_) {}
     }
@@ -352,7 +404,7 @@ function broadcastPlayerState(force = false, unload = false) {
 function publishPlayerStateToServer(state, force = false, unload = false) {
     if (!state || state.ownerId !== PLAYER_TAB_ID) return;
     const send = (nextState, full, useUnloadTransport = false) => {
-        const payload = JSON.stringify({ state: nextState, full });
+        const payload = JSON.stringify({ state: nextState, full, takeover: Boolean(nextState?.takeover) });
         try {
             if (useUnloadTransport && typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" && typeof Blob !== "undefined") {
                 const ok = navigator.sendBeacon(
@@ -368,6 +420,12 @@ function publishPlayerStateToServer(state, force = false, unload = false) {
                 timeoutMs: useUnloadTransport ? 5000 : API_DEFAULT_TIMEOUT_MS,
                 headers: { "Content-Type": "application/json" },
                 body: payload
+            }).then(response => {
+                if (response.status === 409 && !useUnloadTransport) {
+                    try { audio?.pause(); } catch (_) {}
+                    try { clearPlayerOwner(); } catch (_) {}
+                    loadServerPlayerState();
+                }
             }).catch(() => {});
         } catch (_) {}
     };
@@ -392,9 +450,17 @@ async function loadServerPlayerState() {
         const data = await response.json().catch(() => ({}));
         if (data?.state?.ownerId && data.state.ownerId !== PLAYER_TAB_ID) {
             const serverUpdatedAt = Number(data.updated_at || 0);
-            if (serverUpdatedAt && (Date.now() - serverUpdatedAt * 1000) > PLAYER_SERVER_STATE_STALE_MS) return false;
-            applyRemotePlayerState({ ...data.state, _serverUpdatedAt: serverUpdatedAt }, true);
+            const ageMs = serverUpdatedAt ? (Date.now() - serverUpdatedAt * 1000) : Infinity;
+            const persistent = Boolean(data.persistent || data.stale);
+            if (!persistent && serverUpdatedAt && ageMs > PLAYER_SERVER_STATE_STALE_MS) return false;
+            const enriched = { ...data.state, _serverUpdatedAt: serverUpdatedAt, _serverPersistent: persistent, _serverStale: ageMs > PLAYER_SERVER_STATE_STALE_MS };
             serverPlayerStateLoaded = true;
+            if (enriched.clientId && enriched.clientId === PLAYER_CLIENT_ID && enriched.src) {
+                remotePlayerState = enriched;
+                return takeoverRemotePlayer(true);
+            }
+            applyRemotePlayerState(enriched, true);
+            updateDeviceOwnershipUI();
             return true;
         }
     } catch (_) {}
@@ -555,7 +621,8 @@ function applyRemotePlayerState(state, fromServer = false) {
     const serverUpdatedAtMs = serverUpdatedAt > 0
         ? (serverUpdatedAt > 1e12 ? serverUpdatedAt : serverUpdatedAt * 1000)
         : 0;
-    if (fromServer && serverUpdatedAtMs && (Date.now() - serverUpdatedAtMs) > PLAYER_SERVER_STATE_STALE_MS) return;
+    const serverStale = Boolean(state._serverStale || (serverUpdatedAtMs && (Date.now() - serverUpdatedAtMs) > PLAYER_SERVER_STATE_STALE_MS));
+    if (fromServer && serverStale && !state._serverPersistent) return;
 
     const owner = getPlayerOwner();
     if (!fromServer && owner?.id && owner.id !== state.ownerId && ownerIsFresh(owner)) return;
@@ -589,12 +656,14 @@ function applyRemotePlayerState(state, fromServer = false) {
     updateRemoteProgress(false);
     updatePlayingState(!merged.paused);
     startRemoteProgressTicker();
+    updateDeviceOwnershipUI();
 }
 
-function takeoverRemotePlayer() {
+function takeoverRemotePlayer(force = false) {
     const state = remotePlayerState;
-    if (!audio || !state?.src || isRemotePlayerOwner()) return false;
-    setPlayerOwner();
+    if (!audio || !state?.src || (!force && isRemotePlayerOwner())) return false;
+    if (state.ownerId && state.ownerId !== PLAYER_TAB_ID) sendPlayerCommand("pause");
+    setPlayerOwner(true);
     if (Array.isArray(state.queue) && state.queue.length) {
         if (state.source === "home") {
             window.xrobHomeQueue = state.queue.map(item => ({ ...item }));
@@ -610,13 +679,21 @@ function takeoverRemotePlayer() {
     audio.src = state.src;
     activePreviewBtn = null;
     const target = Number.isFinite(Number(state.currentTime)) ? Math.max(0, Number(state.currentTime)) : 0;
+    const shouldPlay = !Boolean(state.paused);
     const restore = () => {
         if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.25));
-        if (state.paused) updatePlayingState(false);
+        if (shouldPlay) { initAudioContext(); audio.play().catch(() => {}); }
+        else updatePlayingState(false);
+        applyReplayGainToActiveAudio(activeQueueTrack());
     };
     audio.addEventListener("loadedmetadata", restore, { once: true });
     audio.load();
     if (player) player.style.display = "grid";
+    remotePlayerState = null;
+    stopRemoteProgressTicker();
+    updateDeviceOwnershipUI();
+    playerTakeoverPending = true;
+    schedulePlayerStateBroadcast(true);
     return true;
 }
 
@@ -700,6 +777,8 @@ async function initPlayerSync() {
     });
     playerSyncHeartbeat = window.setInterval(heartbeatPlayerOwner, PLAYER_HEARTBEAT_MS);
     window.addEventListener("beforeunload", () => {
+        try { persistCurrentPosition(true, true); } catch (_) {}
+        try { broadcastPlayerState(true, true); } catch (_) {}
         try { playerSyncChannel?.postMessage({ type: "owner-closing", ownerId: PLAYER_TAB_ID }); } catch (_) {}
         clearPlayerOwner();
         if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
@@ -1519,54 +1598,174 @@ function resetPreviewButton(button) {
 
 
 function initAudioContext() {
-
-    if (
-        audioContext ||
-        !audio
-    ) {
-        return;
-    }
-
+    if (audioContext || !audio) return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass || typeof audioContext === "object" && audioContext) return;
     try {
-
-        const AudioContextClass =
-            window.AudioContext ||
-            window.webkitAudioContext;
-
-        if (!AudioContextClass) {
-            return;
-        }
-
-        audioContext =
-            new AudioContextClass();
-
-        analyser =
-            audioContext.createAnalyser();
-
+        audioContext = new AudioContextClass();
+        analyser = audioContext.createAnalyser();
         analyser.fftSize = 64;
         analyser.smoothingTimeConstant = 0.8;
-
-        sourceNode =
-            audioContext.createMediaElementSource(
-                audio
-            );
-
-        sourceNode.connect(analyser);
-        analyser.connect(
-            audioContext.destination
-        );
+        sourceNode = audioContext.createMediaElementSource(audio);
+        replayGainNode = audioContext.createGain();
+        replayGainNode.gain.value = 1;
+        sourceNode.connect(replayGainNode);
+        replayGainNode.connect(analyser);
+        analyser.connect(audioContext.destination);
         visualizerData = new Uint8Array(analyser.frequencyBinCount);
-        if (audio && !audio.paused && document.visibilityState === "visible") {
-            startVisualizer();
-        }
-
+        if (crossfadeAudio) initCrossfadeAudioGraph();
+        applyReplayGainToActiveAudio();
+        if (audio && !audio.paused && document.visibilityState === "visible") startVisualizer();
     } catch (error) {
-
-        console.warn(
-            "Audio visualizer unavailable:",
-            error
-        );
+        console.warn("Audio visualizer unavailable:", error);
     }
+}
+
+function initCrossfadeAudio() {
+    if (crossfadeAudio || typeof Audio === "undefined") return;
+    try {
+        crossfadeAudio = new Audio();
+        crossfadeAudio.crossOrigin = "anonymous";
+        crossfadeAudio.preload = "auto";
+        crossfadeAudio.volume = 1;
+        if (audioContext) initCrossfadeAudioGraph();
+    } catch (_) { crossfadeAudio = null; }
+}
+
+function initCrossfadeAudioGraph() {
+    if (!audioContext || !crossfadeAudio || crossfadeSourceNode) return;
+    try {
+        crossfadeSourceNode = audioContext.createMediaElementSource(crossfadeAudio);
+        crossfadeGainNode = audioContext.createGain();
+        crossfadeGainNode.gain.value = 0;
+        crossfadeSourceNode.connect(crossfadeGainNode);
+        crossfadeGainNode.connect(audioContext.destination);
+    } catch (_) {}
+}
+
+function dbToLinear(db) { return Math.pow(10, Number(db || 0) / 20); }
+
+function currentReplayGain(track) {
+    if (!playerSettings.replaygain_enabled || !track) return 0;
+    const mode = playerSettings.replaygain_mode === "album" ? "album" : "track";
+    const gain = mode === "album" ? Number(track.replaygain_album_gain) : Number(track.replaygain_track_gain);
+    if (!Number.isFinite(gain)) return 0;
+    const preamp = Number(playerSettings.replaygain_preamp_db) || 0;
+    let db = gain + preamp;
+    if (playerSettings.replaygain_prevent_clipping) {
+        const peak = mode === "album" ? Number(track.replaygain_album_peak) : Number(track.replaygain_track_peak);
+        if (Number.isFinite(peak) && peak > 0) db = Math.min(db, -20 * Math.log10(peak));
+    }
+    return Math.max(-30, Math.min(12, db));
+}
+
+function activeQueueTrack() {
+    const q = currentPlayerSource === "library" ? getLibraryQueue() : (window.xrobHomeQueue || []);
+    const idx = currentPlayerSource === "library" ? enhancedQueueIndex : window.xrobHomeQueueIndex;
+    return q?.[Number(idx)] || null;
+}
+
+function applyReplayGainToActiveAudio(track = activeQueueTrack(), fade = 1) {
+    const gain = dbToLinear(currentReplayGain(track));
+    if (replayGainNode) replayGainNode.gain.setTargetAtTime(gain * Math.max(0, Math.min(1, fade)), audioContext.currentTime, 0.015);
+    if (audio) audio.dataset.replayGainDb = String(currentReplayGain(track));
+}
+
+function stopCrossfadePreload() {
+    if (crossfadeAudio) { try { crossfadeAudio.pause(); } catch (_) {} }
+    if (crossfadeGainNode && audioContext) crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+    if (crossfadeTimer) { clearTimeout(crossfadeTimer); crossfadeTimer = null; }
+    crossfadePrepared = null;
+}
+
+function nextQueueTrack() {
+    const q = currentPlayerSource === "library" ? getLibraryQueue() : (window.xrobHomeQueue || []);
+    const idx = currentPlayerSource === "library" ? enhancedQueueIndex : window.xrobHomeQueueIndex;
+    if (!q.length || !Number.isInteger(Number(idx))) return null;
+    let next = Number(idx) + 1;
+    if (next >= q.length) {
+        if (playerRepeatMode !== "queue") return null;
+        next = 0;
+    }
+    return q[next] || null;
+}
+
+function prepareNextTrack() {
+    const next = nextQueueTrack();
+    if (!next?.stream || !crossfadeAudio) return false;
+    const url = new URL(next.stream, location.href).href;
+    if (crossfadePrepared?.url === url && crossfadeAudio.readyState >= 2) return true;
+    try {
+        crossfadeAudio.pause();
+        crossfadeAudio.src = url;
+        crossfadeAudio.load();
+        crossfadePrepared = { url, track: next };
+        return true;
+    } catch (_) {
+        crossfadePrepared = null;
+        return false;
+    }
+}
+
+function maybeStartCrossfade() {
+    if (!audio || audio.paused || !playerSettings.crossfade_seconds || !crossfadeAudio || !crossfadePrepared) return false;
+    const duration = Number(audio.duration || 0);
+    const current = Number(audio.currentTime || 0);
+    const fade = Math.max(0, Math.min(Number(playerSettings.crossfade_seconds) || 0, duration / 2));
+    if (!(duration > 0 && fade > 0 && duration - current > fade + 0.02)) return false;
+    if (crossfadeTimer) return true;
+    const targetUrl = crossfadePrepared.url;
+    crossfadeAudio.currentTime = 0;
+    crossfadeAudio.volume = Number(audio.volume || 1);
+    if (crossfadeSourceNode && audioContext) crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+    crossfadeAudio.play().catch(() => { crossfadeTimer = null; });
+    const remaining = Math.max(0, duration - current - fade);
+    crossfadeTimer = window.setTimeout(() => {
+        crossfadeTimer = null;
+        if (!audio || audio.paused || !crossfadePrepared || crossfadePrepared.url !== targetUrl) return;
+        const start = performance.now();
+        const tick = () => {
+            const elapsed = (performance.now() - start) / 1000;
+            const p = Math.max(0, Math.min(1, elapsed / fade));
+            if (replayGainNode && audioContext) replayGainNode.gain.setTargetAtTime(dbToLinear(currentReplayGain(activeQueueTrack())) * (1 - p), audioContext.currentTime, 0.015);
+            if (crossfadeGainNode && audioContext) crossfadeGainNode.gain.setTargetAtTime(dbToLinear(currentReplayGain(crossfadePrepared.track)) * p, audioContext.currentTime, 0.015);
+            if (p < 1 && !audio.paused) requestAnimationFrame(tick);
+        };
+        tick();
+    }, remaining * 1000);
+    return true;
+}
+
+function finalizePreparedTrackIfNeeded() {
+    if (!playerSettings.gapless_playback || !crossfadePrepared || !crossfadeAudio) return false;
+    if (crossfadeAudio.paused && crossfadeAudio.readyState < 2) return false;
+    const prepared = crossfadePrepared;
+    const carried = Math.max(0, Number(crossfadeAudio.currentTime || 0));
+    const idx = currentPlayerSource === "library"
+        ? getLibraryQueue().findIndex(t => trackKey(t) === trackKey(prepared.track))
+        : (window.xrobHomeQueue || []).findIndex(t => trackKey(t) === trackKey(prepared.track));
+    if (idx < 0) return false;
+    crossfadeAudio.pause();
+    stopCrossfadePreload();
+    if (currentPlayerSource === "library") { enhancedQueueIndex = idx; currentLibraryIndex = idx; }
+    else window.xrobHomeQueueIndex = idx;
+    audio.pause();
+    audio.src = prepared.url;
+    audio.load();
+    audio.addEventListener("loadedmetadata", () => {
+        audio.currentTime = Math.min(carried, Math.max(0, Number(audio.duration || carried) - 0.05));
+        updatePlayerInfo(prepared.track.title, prepared.track.artist, prepared.track.cover);
+        audio.dataset.xrobSongId = String(prepared.track.id || "");
+        applyReplayGainToActiveAudio(prepared.track);
+        beginPlaySession(currentSongId());
+        audio.play().catch(() => {});
+    }, {once:true});
+    return true;
+}
+
+function finalizeCrossfadeIfNeeded() {
+    if (!crossfadePrepared || !crossfadeAudio || crossfadeAudio.paused) return false;
+    return finalizePreparedTrackIfNeeded();
 }
 
 
@@ -1709,7 +1908,9 @@ function toggleAudioStream(
     }
 
     if (!fromRemote) setPlayerOwner();
+    stopCrossfadePreload();
     initAudioContext();
+    initCrossfadeAudio();
 
     if (
         audioContext &&
@@ -1815,10 +2016,14 @@ function toggleAudioStream(
     audio.dataset.xrobSongId = String(songId || "");
     if (type) currentPlayerSource = type === "search" ? "home" : type;
     savePlayerState();
+    stopCrossfadePreload();
     audio.src = absoluteUrl;
 
     audio.load();
 
+
+    const selectedTrack = activeQueueTrack() || { id: songId, title, artist, cover: art };
+    audio.addEventListener("loadedmetadata", () => applyReplayGainToActiveAudio(selectedTrack), { once: true });
 
     audio.play()
         .then(() => {
@@ -1890,6 +2095,13 @@ function bindAudioEvents() {
 
             updateProgress();
             savePlayerState();
+            const duration = Number(audio?.duration || 0);
+            const remaining = duration > 0 ? duration - Number(audio?.currentTime || 0) : Infinity;
+            const fadeWindow = Number(playerSettings.crossfade_seconds || 0);
+            if (playerSettings.gapless_playback || fadeWindow > 0) {
+                if (remaining < Math.max(8, fadeWindow + 4)) prepareNextTrack();
+                if (fadeWindow > 0 && remaining <= fadeWindow + 0.25) maybeStartCrossfade();
+            }
             if (!applyingRemotePlayerCommand && !isRemotePlayerOwner()) schedulePlayerStateBroadcast(false);
 
         }
@@ -1957,8 +2169,16 @@ function bindAudioEvents() {
 
             if (typeof playerRepeatMode !== "undefined" && playerRepeatMode === "track") {
                 audio.currentTime = 0;
+                applyReplayGainToActiveAudio(activeQueueTrack());
                 beginPlaySession(currentSongId());
                 audio.play().catch(console.error);
+                return;
+            }
+
+            if (finalizeCrossfadeIfNeeded()) {
+                return;
+            }
+            if (finalizePreparedTrackIfNeeded()) {
                 return;
             }
 
@@ -2049,29 +2269,71 @@ function bindPlayerControls() {
         else { setPlayerOwner(); playNextTrack(); }
     });
 
+    document.getElementById("gp-device-takeover")?.addEventListener("click", () => {
+        if (takeoverRemotePlayer()) showToast("▶ Playback moved to this device");
+    });
+
     document.getElementById("gp-shuffle-btn")?.addEventListener("click", () => setShuffle(!playerShuffle));
     document.getElementById("libraryShuffleButton")?.addEventListener("click", shuffleLibrary);
     document.getElementById("libraryPlayAllButton")?.addEventListener("click", () => playQueue(rawLibraryFiles, 0, false));
     setShuffle(playerShuffle);
 
 
-    seek?.addEventListener("pointerdown", () => { isSeeking = true; });
+    const seekWrap = document.getElementById("gp-seek-wrap") || seek;
+    const seekFromPointer = event => {
+        const duration = isRemotePlayerOwner() ? Number(remotePlayerState?.duration || 0) : Number(audio?.duration || 0);
+        if (!seek || !seekWrap || !(duration > 0) || !Number.isFinite(Number(event.clientX))) return;
+        const rect = seekWrap.getBoundingClientRect();
+        if (!(rect.width > 0)) return;
+        const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+        seek.value = String(ratio * 100);
+        const targetTime = ratio * duration;
+        if (isRemotePlayerOwner()) {
+            sendPlayerCommand("seek", { time: targetTime });
+            updateRemotePlayerOptimistic({ currentTime: targetTime });
+        } else {
+            setPlayerOwner();
+            try { audio.currentTime = targetTime; } catch (_) {}
+        }
+        renderSeekVisual(ratio * 100);
+        if (curTime) curTime.textContent = formatSeconds(targetTime);
+        persistCurrentPosition(false);
+    };
+    const releaseSeek = event => {
+        if (!isSeeking) return;
+        isSeeking = false;
+        try { seekWrap.releasePointerCapture?.(event.pointerId); } catch (_) {}
+        updateProgress();
+        savePlayerState(true);
+    };
+    seekWrap?.addEventListener("pointerdown", event => {
+        if (event.button !== undefined && event.button !== 0) return;
+        isSeeking = true;
+        try { seekWrap.setPointerCapture?.(event.pointerId); } catch (_) {}
+        seekFromPointer(event);
+        event.preventDefault();
+    });
+    seekWrap?.addEventListener("pointermove", event => {
+        if (!isSeeking) return;
+        seekFromPointer(event);
+        event.preventDefault();
+    });
+    seekWrap?.addEventListener("pointerup", releaseSeek);
+    seekWrap?.addEventListener("pointercancel", releaseSeek);
     seek?.addEventListener("input", () => {
         const duration = isRemotePlayerOwner() ? Number(remotePlayerState?.duration || 0) : Number(audio?.duration || 0);
         if (duration > 0) {
             const ratio = Math.max(0, Math.min(1, Number(seek.value) / 100));
             const targetTime = ratio * duration;
             if (isRemotePlayerOwner()) sendPlayerCommand("seek", { time: targetTime });
-            else { setPlayerOwner(); audio.currentTime = targetTime; }
-            if (isRemotePlayerOwner() && remotePlayerState) {
-                updateRemotePlayerOptimistic({ currentTime: targetTime });
-            }
+            else { setPlayerOwner(); try { audio.currentTime = targetTime; } catch (_) {} }
+            if (isRemotePlayerOwner() && remotePlayerState) updateRemotePlayerOptimistic({ currentTime: targetTime });
             renderSeekVisual(ratio * 100);
             if (curTime) curTime.textContent = formatSeconds(targetTime);
+            persistCurrentPosition(false);
         }
     });
-    seek?.addEventListener("change", () => { isSeeking = false; updateProgress(); });
-    seek?.addEventListener("pointerup", () => { isSeeking = false; updateProgress(); });
+    seek?.addEventListener("change", () => { isSeeking = false; updateProgress(); savePlayerState(true); });
 
 
     const savedVolume =
@@ -2197,6 +2459,13 @@ function applySettingsToForm(settings) {
     const dailyMixCount = Math.max(5, Math.min(50, Number(settings.daily_mix_track_count || 30)));
     setValue("set_daily_mix_count", dailyMixCount);
     storageSet("xrob_music_daily_mix_count", String(dailyMixCount));
+    playerSettings = { ...playerSettings, replaygain_enabled: settings.replaygain_enabled !== false, replaygain_mode: settings.replaygain_mode || "track", replaygain_preamp_db: Number(settings.replaygain_preamp_db || 0), replaygain_prevent_clipping: settings.replaygain_prevent_clipping !== false, crossfade_seconds: Number(settings.crossfade_seconds || 0), gapless_playback: settings.gapless_playback !== false };
+    setChecked("set_replaygain_enabled", playerSettings.replaygain_enabled);
+    setValue("set_replaygain_mode", playerSettings.replaygain_mode);
+    setValue("set_replaygain_preamp", playerSettings.replaygain_preamp_db);
+    setChecked("set_replaygain_clip", playerSettings.replaygain_prevent_clipping);
+    setValue("set_crossfade", playerSettings.crossfade_seconds);
+    setChecked("set_gapless", playerSettings.gapless_playback);
         setValue("set_web_username", settings.web_username || "admin");
     setValue("set_web_password", "");
     renderStorage(settings.storage);
@@ -2252,6 +2521,12 @@ async function saveSettings() {
         scan_interval_minutes: Math.max(5, Number(getValue("set_scan_interval") || 60)),
         title_cleanup_rules: getValue("set_title_cleanup_rules"),
         daily_mix_track_count: Math.max(5, Math.min(50, Number(getValue("set_daily_mix_count") || 30))),
+        replaygain_enabled: getChecked("set_replaygain_enabled"),
+        replaygain_mode: getValue("set_replaygain_mode") || "track",
+        replaygain_preamp_db: Math.max(-12, Math.min(12, Number(getValue("set_replaygain_preamp") || 0))),
+        replaygain_prevent_clipping: getChecked("set_replaygain_clip"),
+        crossfade_seconds: Math.max(0, Math.min(12, Number(getValue("set_crossfade") || 0))),
+        gapless_playback: getChecked("set_gapless"),
         web_username: getValue("set_web_username") || "admin",
         ...(getValue("set_web_password") ? {web_password:getValue("set_web_password")} : {}),
     };
@@ -2299,6 +2574,15 @@ async function saveSettings() {
 
 
         storageSet("xrob_music_daily_mix_count", String(result.daily_mix_track_count || data.daily_mix_track_count || 30));
+        playerSettings = {
+            ...playerSettings,
+            replaygain_enabled: Boolean(data.replaygain_enabled),
+            replaygain_mode: data.replaygain_mode === "album" ? "album" : "track",
+            replaygain_preamp_db: Number(data.replaygain_preamp_db || 0),
+            replaygain_prevent_clipping: Boolean(data.replaygain_prevent_clipping),
+            crossfade_seconds: Math.max(0, Math.min(12, Number(data.crossfade_seconds || 0))),
+            gapless_playback: Boolean(data.gapless_playback)
+        };
         if (msg) {
 
             msg.textContent =
@@ -2307,6 +2591,8 @@ async function saveSettings() {
         if (document.getElementById("tab-home")?.classList.contains("active")) loadDailyMix();
 
 
+        applyReplayGainToActiveAudio(activeQueueTrack());
+        stopCrossfadePreload();
         showToast(
             "✅ Settings saved"
         );
@@ -5351,6 +5637,10 @@ function renderLocalIcons() {
         'arrow-left': [['path','m12 19-7-7 7-7'],['path','M5 12h14']],
         'clock-3': [['circle','12 12 9'],['path','M12 7v5l3 2']],
         'circle-check': [['circle','12 12 9'],['path','m9 12 2 2 4-4']],
+        copy: [['rect','6 6 12 12'],['path','M9 3h9a3 3 0 0 1 3 3v9']],
+        tag: [['path','M20 13 13 20 4 11V4h7z'],['circle','8 8 1']],
+        'image-off': [['path','m3 3 18 18'],['path','M8.5 8.5a2 2 0 1 0 0 4'],['path','M21 15l-4-4-4 4'],['path','M3 15l4-4']],
+        'volume-x': [['path','M11 5 6 9H3v6h3l5 4z'],['path','m19 9-6 6'],['path','m13 9 6 6']],
         'search-x': [['circle','11 11 7'],['path','m20 20-4-4'],['path','m8.5 8.5 5 5'],['path','m13.5 8.5-5 5']],
 
         'refresh-cw': [['path','M20 11a8 8 0 0 0-14.9-4'],['path','M4 5v4h4'],['path','M4 13a8 8 0 0 0 14.9 4'],['path','M20 19v-4h-4']],
@@ -5782,6 +6072,29 @@ async function loadDetailedLibraryStats() {
         renderDashboardRows('detailBitrates', d.bitrates);
         renderDashboardRows('detailYears', d.years);
         renderDashboardRows('detailSampleRates', d.sample_rates);
+        renderLocalIcons();
+        loadLibraryIntelligence();
+    } catch (_) {}
+}
+
+async function loadLibraryIntelligence() {
+    try {
+        const r = await apiFetch('api/library/intelligence', {cache:'no-store'});
+        if (!r.ok) return;
+        const d = await r.json();
+        const set = (id, value) => document.getElementById(id)?.replaceChildren(String(value));
+        set('intelDuplicateCount', d.duplicate_groups?.length || 0);
+        set('intelMissingMeta', d.missing_metadata_count || 0);
+        set('intelMissingArtwork', d.missing_artwork_count || 0);
+        set('intelReplayGain', d.replaygain_missing_count || 0);
+        const list = document.getElementById('libraryIntelligenceList');
+        if (!list) return;
+        const items = [];
+        (d.duplicate_groups || []).slice(0, 4).forEach(group => items.push({icon:'copy', title:`Duplicate: ${group.files?.[0]?.title || 'Untitled'}`, detail:`${group.count} matching files`}));
+        (d.missing_metadata || []).slice(0, 4).forEach(item => items.push({icon:'tag', title:`Metadata: ${item.title}`, detail:`Missing ${item.issues.join(', ')}`}));
+        (d.missing_artwork || []).slice(0, 4).forEach(item => items.push({icon:'image-off', title:`Artwork: ${item.title}`, detail:item.artist || 'Unknown Artist'}));
+        (d.replaygain_missing || []).slice(0, 4).forEach(item => items.push({icon:'volume-x', title:`ReplayGain: ${item.title}`, detail:item.artist || 'Unknown Artist'}));
+        list.innerHTML = items.length ? items.map(item => `<div class="library-intel-row"><i data-lucide="${escapeHtml(item.icon)}" aria-hidden="true"></i><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div></div>`).join('') : '<div class="queue-empty">Library looks clean.</div>';
         renderLocalIcons();
     } catch (_) {}
 }
