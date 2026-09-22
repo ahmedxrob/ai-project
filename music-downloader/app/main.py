@@ -73,7 +73,7 @@ async def app_lifespan(_app):
 
 app = FastAPI(
     title="Xrob Music",
-    version="3.5.19",
+    version="3.5.20",
     lifespan=app_lifespan,
 )
 
@@ -136,6 +136,9 @@ PLAYER_STATE_MAX_QUEUE_ITEMS = 500
 PLAYER_STATE_MAX_DAILY_MIX_ITEMS = 100
 PLAYER_STATE_MAX_TEXT = 512
 PLAYER_STATE_MAX_URL = 4096
+PLAYER_STATE_PERSIST_INTERVAL_SECONDS = 5.0
+PLAYER_STATE_DB_KEY = "default"
+PLAYER_STATE_LAST_PERSISTED_AT = 0.0
 
 
 def _auth_token():
@@ -236,7 +239,7 @@ def _is_authenticated(token):
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "3.5.19"
+SERVER_VERSION = "3.5.20"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 LIBRARY_METADATA_CONCURRENCY = max(4, min(12, int(os.getenv("XROB_LIBRARY_METADATA_CONCURRENCY", "8"))))
@@ -274,6 +277,12 @@ DEFAULT_SETTINGS = {
     "title_cleanup_rules": "(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",
     "metadata_mode": "auto",
     "daily_mix_track_count": 30,
+    "replaygain_enabled": True,
+    "replaygain_mode": "track",
+    "replaygain_preamp_db": 0.0,
+    "replaygain_prevent_clipping": True,
+    "crossfade_seconds": 0.0,
+    "gapless_playback": True,
     "subsonic_user": "admin",
     "subsonic_password": "",
     "web_username": os.getenv("XROB_USERNAME", "admin"),
@@ -519,6 +528,20 @@ def load_settings():
     settings["metadata_mode"] = str(settings.get("metadata_mode") or "auto").lower()
     if settings["metadata_mode"] not in {"off", "musicbrainz", "auto"}:
         settings["metadata_mode"] = "auto"
+    settings["replaygain_enabled"] = bool(settings.get("replaygain_enabled", True))
+    settings["replaygain_mode"] = str(settings.get("replaygain_mode") or "track").lower()
+    if settings["replaygain_mode"] not in {"track", "album"}:
+        settings["replaygain_mode"] = "track"
+    try:
+        settings["replaygain_preamp_db"] = max(-12.0, min(12.0, float(settings.get("replaygain_preamp_db", 0) or 0)))
+    except (TypeError, ValueError):
+        settings["replaygain_preamp_db"] = 0.0
+    settings["replaygain_prevent_clipping"] = bool(settings.get("replaygain_prevent_clipping", True))
+    try:
+        settings["crossfade_seconds"] = max(0.0, min(12.0, float(settings.get("crossfade_seconds", 0) or 0)))
+    except (TypeError, ValueError):
+        settings["crossfade_seconds"] = 0.0
+    settings["gapless_playback"] = bool(settings.get("gapless_playback", True))
     settings.pop("max_results", None)
 
     return settings
@@ -532,7 +555,9 @@ def save_settings(data: dict):
     allowed = {
         "audio_format", "audio_quality", "embed_thumbnail",
         "embed_metadata", "organize_by_artist", "scan_enabled",
-        "scan_interval_minutes", "title_cleanup_rules", "metadata_mode", "daily_mix_track_count", "web_username", "web_password",
+        "scan_interval_minutes", "title_cleanup_rules", "metadata_mode", "daily_mix_track_count",
+        "replaygain_enabled", "replaygain_mode", "replaygain_preamp_db", "replaygain_prevent_clipping",
+        "crossfade_seconds", "gapless_playback", "web_username", "web_password",
     }
 
     old_user = str(settings.get("web_username") or "")
@@ -565,6 +590,20 @@ def save_settings(data: dict):
     settings["scan_enabled"] = bool(settings.get("scan_enabled", True))
     settings["scan_interval_minutes"] = max(5, int(settings.get("scan_interval_minutes", 60) or 60))
     settings["daily_mix_track_count"] = max(5, min(50, int(settings.get("daily_mix_track_count", 30) or 30)))
+    settings["replaygain_enabled"] = bool(settings.get("replaygain_enabled", True))
+    settings["replaygain_mode"] = str(settings.get("replaygain_mode") or "track").lower()
+    if settings["replaygain_mode"] not in {"track", "album"}:
+        settings["replaygain_mode"] = "track"
+    try:
+        settings["replaygain_preamp_db"] = max(-12.0, min(12.0, float(settings.get("replaygain_preamp_db", 0) or 0)))
+    except (TypeError, ValueError):
+        settings["replaygain_preamp_db"] = 0.0
+    settings["replaygain_prevent_clipping"] = bool(settings.get("replaygain_prevent_clipping", True))
+    try:
+        settings["crossfade_seconds"] = max(0.0, min(12.0, float(settings.get("crossfade_seconds", 0) or 0)))
+    except (TypeError, ValueError):
+        settings["crossfade_seconds"] = 0.0
+    settings["gapless_playback"] = bool(settings.get("gapless_playback", True))
     settings["web_username"] = str(settings.get("web_username") or os.getenv("XROB_USERNAME", "admin"))[:64]
     # Keep a verifier, never persist web passwords in plaintext.
     if settings.get("web_password") and not settings.get("web_password_hash"):
@@ -673,6 +712,7 @@ def init_db():
 
         conn.execute("""CREATE TABLE IF NOT EXISTS playback_positions (song_id TEXT PRIMARY KEY, position REAL DEFAULT 0, duration REAL DEFAULT 0, updated_at REAL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS play_history (id INTEGER PRIMARY KEY AUTOINCREMENT, song_id TEXT NOT NULL, played_at REAL NOT NULL, duration REAL DEFAULT 0, position REAL DEFAULT 0)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS player_sessions (session_key TEXT PRIMARY KEY, owner_id TEXT, client_id TEXT, state_json TEXT NOT NULL, updated_at REAL NOT NULL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS app_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, source TEXT, message TEXT, task_id TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS song_review (song_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', actioned_at REAL DEFAULT 0)""")
@@ -873,6 +913,8 @@ def _sanitize_player_state(state):
     for key in ("title", "artist", "songId", "source"):
         if key in cleaned:
             cleaned[key] = _bounded_text(cleaned.get(key))
+    if "deviceName" in cleaned:
+        cleaned["deviceName"] = _bounded_text(cleaned.get("deviceName"), 120)
 
     for key in ("currentTime", "duration", "volume"):
         if key not in cleaned:
@@ -891,7 +933,7 @@ def _sanitize_player_state(state):
             cleaned["queueIndex"] = -1
         cleaned["queueIndex"] = max(-1, cleaned["queueIndex"])
 
-    for key in ("paused", "muted", "force"):
+    for key in ("paused", "muted", "force", "takeover"):
         if key in cleaned:
             cleaned[key] = bool(cleaned.get(key))
 
@@ -944,21 +986,48 @@ def _sanitize_player_state(state):
 def _compact_player_state(state):
     keys = (
         "ownerId", "clientId", "src", "currentTime", "duration",
-        "volume", "title", "artist", "art", "songId", "source",
+        "volume", "title", "artist", "art", "songId", "source", "deviceName",
         "queueIndex", "paused", "muted", "at", "seq", "force",
     )
     return {key: state[key] for key in keys if key in state}
 
 
+def _load_persisted_player_state_sync():
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT state_json, updated_at FROM player_sessions WHERE session_key=?",
+                (PLAYER_STATE_DB_KEY,),
+            ).fetchone()
+        if not row:
+            return None
+        state = _sanitize_player_state(json.loads(row[0] or "{}"))
+        updated_at = float(row[1] or 0)
+        if not state:
+            return None
+        return {"state": state, "updated_at": updated_at, "persistent": True}
+    except Exception:
+        return None
+
+
+def _persist_player_state_sync(state, updated_at):
+    payload = json.dumps(_sanitize_player_state(state), separators=(",", ":"), ensure_ascii=False)
+    with db_connect() as conn:
+        conn.execute(
+            "INSERT INTO player_sessions(session_key,owner_id,client_id,state_json,updated_at) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(session_key) DO UPDATE SET owner_id=excluded.owner_id,client_id=excluded.client_id,state_json=excluded.state_json,updated_at=excluded.updated_at",
+            (PLAYER_STATE_DB_KEY, str(state.get("ownerId") or ""), str(state.get("clientId") or ""), payload, float(updated_at)),
+        )
+        conn.commit()
+
+
 async def publish_player_state(state, full=True):
-    global PLAYER_STATE, PLAYER_STATE_UPDATED_AT
+    global PLAYER_STATE, PLAYER_STATE_UPDATED_AT, PLAYER_STATE_LAST_PERSISTED_AT
     if not isinstance(state, dict):
         return
     incoming = _sanitize_player_state(state)
     previous_owner = str(PLAYER_STATE.get("ownerId") or "") if isinstance(PLAYER_STATE, dict) else ""
     incoming_owner = str(incoming.get("ownerId") or "")
-    # A new owner must start a fresh state. Otherwise a compact heartbeat from a
-    # newly claimed player could accidentally inherit the previous owner's queue.
     if isinstance(PLAYER_STATE, dict) and not full and previous_owner == incoming_owner:
         merged = dict(PLAYER_STATE)
         merged.update(incoming)
@@ -966,18 +1035,35 @@ async def publish_player_state(state, full=True):
         merged = incoming
     PLAYER_STATE = merged
     PLAYER_STATE_UPDATED_AT = time.time()
+    if full or PLAYER_STATE_UPDATED_AT - PLAYER_STATE_LAST_PERSISTED_AT >= PLAYER_STATE_PERSIST_INTERVAL_SECONDS:
+        try:
+            await asyncio.to_thread(_persist_player_state_sync, merged, PLAYER_STATE_UPDATED_AT)
+            PLAYER_STATE_LAST_PERSISTED_AT = PLAYER_STATE_UPDATED_AT
+        except Exception as exc:
+            print("Warning: could not persist player session:", exc)
     outbound = dict(merged) if full else _compact_player_state(merged)
     outbound["_serverUpdatedAt"] = PLAYER_STATE_UPDATED_AT
     await manager.broadcast({"type": "player_state", "state": outbound})
 
 
 def get_player_state():
+    global PLAYER_STATE, PLAYER_STATE_UPDATED_AT
     if not isinstance(PLAYER_STATE, dict):
-        return None
+        persisted = _load_persisted_player_state_sync()
+        if persisted:
+            PLAYER_STATE = persisted["state"]
+            PLAYER_STATE_UPDATED_AT = persisted["updated_at"]
+        else:
+            return None
     age = time.time() - PLAYER_STATE_UPDATED_AT if PLAYER_STATE_UPDATED_AT else float("inf")
     if age > PLAYER_STATE_MAX_AGE_SECONDS:
-        return None
-    return {"state": dict(PLAYER_STATE), "updated_at": PLAYER_STATE_UPDATED_AT}
+        return {"state": None, "updated_at": PLAYER_STATE_UPDATED_AT, "stale": True, "persistent": True}
+    return {
+        "state": dict(PLAYER_STATE),
+        "updated_at": PLAYER_STATE_UPDATED_AT,
+        "stale": False,
+        "persistent": True,
+    }
 
 
 async def notify_task_update(task, force_save=False):
@@ -1275,7 +1361,47 @@ def _path_metadata_fallback(path):
         "channels": 0,
         "bit_depth": 0,
         "album_artist": artist,
+        "replaygain_track_gain": None,
+        "replaygain_album_gain": None,
+        "replaygain_track_peak": None,
+        "replaygain_album_peak": None,
+        "has_artwork": False,
     }
+
+
+def _parse_replaygain_db(value):
+    if value is None:
+        return None
+    text = str(value).strip().lower().replace("db", "").strip()
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_peak(value):
+    if value is None:
+        return None
+    try:
+        peak = float(str(value).strip())
+        return peak if peak > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _mutagen_has_artwork(audio):
+    if not audio:
+        return False
+    try:
+        if hasattr(audio, "pictures") and audio.pictures:
+            return True
+        tags = getattr(audio, "tags", None)
+        if not tags:
+            return False
+        keys = {str(k).lower() for k in tags.keys()}
+        return bool({"apic:cover", "covr", "metadata_block_picture"} & keys) or any(k.startswith("apic") for k in keys)
+    except Exception:
+        return False
 
 
 def read_metadata_sync(path):
@@ -1329,6 +1455,10 @@ def read_metadata_sync(path):
                 "sample_rate": safe_int(audio_stream.get("sample_rate"), 0),
                 "channels": safe_int(audio_stream.get("channels"), 0),
                 "bit_depth": safe_int(audio_stream.get("bits_per_raw_sample") or audio_stream.get("bits_per_sample"), 0),
+                "replaygain_track_gain": _parse_replaygain_db(first_tag("replaygain_track_gain")),
+                "replaygain_album_gain": _parse_replaygain_db(first_tag("replaygain_album_gain")),
+                "replaygain_track_peak": _parse_peak(first_tag("replaygain_track_peak")),
+                "replaygain_album_peak": _parse_peak(first_tag("replaygain_album_peak")),
             })
             if metadata["bit_rate"] <= 0:
                 metadata["bit_rate"] = safe_int(safe_float(fmt.get("bit_rate"), 0) / 1000, 0)
@@ -1356,6 +1486,11 @@ def read_metadata_sync(path):
                 metadata["year"] = mt("date", "year") or metadata["year"]
                 metadata["track"] = parse_tag_int(mt("tracknumber"), metadata["track"])
                 metadata["disc"] = parse_tag_int(mt("discnumber"), metadata["disc"])
+                metadata["replaygain_track_gain"] = _parse_replaygain_db(mt("replaygain_track_gain")) if mt("replaygain_track_gain") else metadata.get("replaygain_track_gain")
+                metadata["replaygain_album_gain"] = _parse_replaygain_db(mt("replaygain_album_gain")) if mt("replaygain_album_gain") else metadata.get("replaygain_album_gain")
+                metadata["replaygain_track_peak"] = _parse_peak(mt("replaygain_track_peak")) if mt("replaygain_track_peak") else metadata.get("replaygain_track_peak")
+                metadata["replaygain_album_peak"] = _parse_peak(mt("replaygain_album_peak")) if mt("replaygain_album_peak") else metadata.get("replaygain_album_peak")
+                metadata["has_artwork"] = _mutagen_has_artwork(audio)
                 if getattr(audio, "info", None):
                     metadata["duration"] = safe_float(getattr(audio.info, "length", 0), metadata["duration"])
                     metadata["bit_rate"] = safe_int(getattr(audio.info, "bitrate", 0) / 1000, metadata["bit_rate"])
@@ -1590,6 +1725,11 @@ async def build_library(force=False):
                 "bit_depth": safe_int(metadata.get("bit_depth"), 0),
                 "sample_rate": safe_int(metadata.get("sample_rate"), 0),
                 "channels": safe_int(metadata.get("channels"), 0),
+                "replaygain_track_gain": metadata.get("replaygain_track_gain"),
+                "replaygain_album_gain": metadata.get("replaygain_album_gain"),
+                "replaygain_track_peak": metadata.get("replaygain_track_peak"),
+                "replaygain_album_peak": metadata.get("replaygain_album_peak"),
+                "has_artwork": bool(metadata.get("has_artwork")),
                 "path": path,
                 "suffix": path.suffix.lower(),
                 "size": stat.st_size,
@@ -3267,6 +3407,11 @@ async def api_library():
             item["year"] = song.get("year", "")
             item["track"] = song.get("track", 0)
             item["duration"] = song.get("duration", 0)
+            item["replaygain_track_gain"] = song.get("replaygain_track_gain")
+            item["replaygain_album_gain"] = song.get("replaygain_album_gain")
+            item["replaygain_track_peak"] = song.get("replaygain_track_peak")
+            item["replaygain_album_peak"] = song.get("replaygain_album_peak")
+            item["has_artwork"] = bool(song.get("has_artwork"))
             item["play_count"] = play_counts.get(song["id"], 0)
             item["cover"] = "/api/library/cover/" + urllib.parse.quote(item["name"], safe="/")
             item["stream"] = "/api/library/stream/" + urllib.parse.quote(item["name"], safe="/")
@@ -3425,6 +3570,62 @@ async def api_library_statistics():
         "sample_rates": [{"name": k, "count": v} for k, v in sorted(sample_rates.items(), key=lambda x: (-x[1], x[0]))[:10]],
         "channels": [{"name": k, "count": v} for k, v in sorted(channel_counts.items(), key=lambda x: (-x[1], x[0]))[:10]],
         "top_artists": top_artists_list, "recent_favorites": top_recent,
+    }
+
+
+@app.get("/api/library/intelligence")
+async def api_library_intelligence():
+    """Actionable library quality checks: duplicates, missing tags/artwork, and ReplayGain coverage."""
+    library = await build_library()
+    songs = library.get("songs", [])
+    duplicate_groups = defaultdict(list)
+    missing_metadata = []
+    missing_artwork = []
+    replaygain_missing = []
+    suspicious_names = []
+
+    for song in songs:
+        title = str(song.get("title") or "").strip()
+        artist = str(song.get("artist") or "").strip()
+        album = str(song.get("album") or "").strip()
+        key = "|".join([re.sub(r"\s+", " ", artist).casefold(), re.sub(r"\s+", " ", title).casefold(), re.sub(r"\s+", " ", album).casefold()])
+        duplicate_groups[key].append(song)
+        issues = []
+        if not title or title.casefold() in {"unknown track", "unknown"}: issues.append("title")
+        if not artist or artist.casefold() in {"unknown artist", "unknown"}: issues.append("artist")
+        if not album or album.casefold() in {"unknown album", "unknown"}: issues.append("album")
+        if issues:
+            missing_metadata.append({"id": song["id"], "title": title or song.get("path", Path("track")).stem, "artist": artist or "Unknown Artist", "album": album or "Unknown Album", "issues": issues})
+        if not song.get("has_artwork"):
+            missing_artwork.append({"id": song["id"], "title": title or song.get("path", Path("track")).stem, "artist": artist or "Unknown Artist", "album": album or "Unknown Album"})
+        if song.get("replaygain_track_gain") is None and song.get("replaygain_album_gain") is None:
+            replaygain_missing.append({"id": song["id"], "title": title or song.get("path", Path("track")).stem, "artist": artist or "Unknown Artist"})
+        name = Path(str(song.get("path") or "")).name
+        if re.search(r"(?:\[?\(?(?:official|lyric|lyrics|music video|video|visualizer)|\d{1,3}[-_. ])", name, re.I):
+            suspicious_names.append({"id": song["id"], "name": name, "title": title, "artist": artist})
+
+    duplicate_groups_out = []
+    for key, group in duplicate_groups.items():
+        if len(group) < 2:
+            continue
+        files = []
+        for song in group[:20]:
+            files.append({"id": song["id"], "name": str(song["path"].relative_to(DOWNLOAD_DIR)), "title": song["title"], "artist": song["artist"], "album": song["album"], "duration": song["duration"], "size": song["size"]})
+        duplicate_groups_out.append({"key": key, "count": len(group), "files": files})
+    duplicate_groups_out.sort(key=lambda x: (-x["count"], x["key"]))
+
+    return {
+        "track_count": len(songs),
+        "duplicate_groups": duplicate_groups_out[:100],
+        "duplicate_tracks": sum(max(0, x["count"] - 1) for x in duplicate_groups_out),
+        "missing_metadata": missing_metadata[:200],
+        "missing_metadata_count": len(missing_metadata),
+        "missing_artwork": missing_artwork[:200],
+        "missing_artwork_count": len(missing_artwork),
+        "replaygain_missing": replaygain_missing[:200],
+        "replaygain_missing_count": len(replaygain_missing),
+        "suspicious_names": suspicious_names[:200],
+        "suspicious_names_count": len(suspicious_names),
     }
 
 
@@ -6474,9 +6675,24 @@ async def api_player_state_update(payload: dict = Body(...)):
     if not owner_id:
         raise HTTPException(400, "state.ownerId is required")
     state = _sanitize_player_state(state)
+    force = bool(payload.get("takeover") or state.get("takeover"))
+
+    # The server is the cross-device source of truth. A live owner cannot be
+    # silently replaced by another browser; explicit Take Over sends force=true.
+    current = get_player_state()
+    current_state = current.get("state") if isinstance(current, dict) else None
+    current_owner = str(current_state.get("ownerId") or "").strip() if isinstance(current_state, dict) else ""
+    current_updated = float(current.get("updated_at") or 0) if isinstance(current, dict) else 0.0
+    current_age = time.time() - current_updated if current_updated else float("inf")
+    if current_owner and current_owner != owner_id and current_age <= PLAYER_STATE_MAX_AGE_SECONDS and not force:
+        raise HTTPException(409, {
+            "status": "owned",
+            "ownerId": current_owner,
+            "updated_at": current_updated,
+        })
+
     state["at"] = time.time()
-    full = bool(payload.get("full", False) or state.get("force"))
-    await publish_player_state(state, full=full)
+    await publish_player_state(state, full=force or bool(payload.get("full", False)))
     return {"status": "ok", "updated_at": PLAYER_STATE_UPDATED_AT}
 
 
