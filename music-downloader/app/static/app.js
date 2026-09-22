@@ -367,7 +367,7 @@ function buildPlayerSyncState(includeQueue = true) {
         src: audio.src || "",
         currentTime: Number(audio.currentTime || 0),
         duration: Number(audio.duration || 0),
-        volume: Number(audio.volume || 0.8),
+        volume: Number.isFinite(Number(audio.volume)) ? Number(audio.volume) : 0.8,
         title: playerTitle?.textContent || "",
         artist: playerArtist?.textContent || "",
         art: playerArt?.src || "",
@@ -682,11 +682,14 @@ function takeoverRemotePlayer(force = false) {
     currentPlayerSource = state.source === "home" ? "home" : "library";
     updatePlayerInfo(state.title, state.artist, state.art);
     audio.dataset.xrobSongId = String(state.songId || "");
-    audio.src = state.src;
+    const expectedSource = new URL(state.src, location.href).href;
+    const loadGeneration = ++audioLoadGeneration;
+    audio.src = expectedSource;
     activePreviewBtn = null;
     const target = Number.isFinite(Number(state.currentTime)) ? Math.max(0, Number(state.currentTime)) : 0;
     const shouldPlay = !Boolean(state.paused);
     const restore = () => {
+        if (loadGeneration !== audioLoadGeneration || audio.src !== expectedSource) return;
         if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.25));
         if (shouldPlay) { initAudioContext(); audio.play().catch(() => {}); }
         else updatePlayingState(false);
@@ -1416,6 +1419,7 @@ window.addEventListener(
    ============================================================ */
 
 let lastPlayerStateSavedAt = 0;
+let audioLoadGeneration = 0;
 function savePlayerState(force = false) {
     if (!audio) return;
     const now = Date.now();
@@ -1424,7 +1428,7 @@ function savePlayerState(force = false) {
         clientId: PLAYER_CLIENT_ID,
         src: audio.src || "",
         currentTime: Number(audio.currentTime || 0),
-        volume: Number(audio.volume || 0.8),
+        volume: Number.isFinite(Number(audio.volume)) ? Number(audio.volume) : 0.8,
         title: playerTitle?.textContent || "",
         artist: playerArtist?.textContent || "",
         art: playerArt?.src || "",
@@ -1482,8 +1486,13 @@ function restorePlayerState() {
         audio.dataset.xrobSongId = String(state.songId || "");
         updatePlayerInfo(state.title, state.artist, state.art);
         if (player) player.style.display = "grid";
-        audio.addEventListener("loadedmetadata", restorePosition, { once: true });
-        audio.src = state.src;
+        const loadGeneration = ++audioLoadGeneration;
+        const expectedSource = new URL(state.src, location.href).href;
+        audio.addEventListener("loadedmetadata", () => {
+            if (loadGeneration !== audioLoadGeneration || audio.src !== expectedSource) return;
+            restorePosition();
+        }, { once: true });
+        audio.src = expectedSource;
         audio.load();
     } catch (error) {
         console.warn("Could not restore player:", error);
@@ -1723,7 +1732,7 @@ function maybeStartCrossfade() {
     if (crossfadeTimer) return true;
     const targetUrl = crossfadePrepared.url;
     crossfadeAudio.currentTime = 0;
-    crossfadeAudio.volume = Number(audio.volume || 1);
+    crossfadeAudio.volume = Number.isFinite(Number(audio.volume)) ? Number(audio.volume) : 1;
     if (crossfadeSourceNode && audioContext) crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime);
     crossfadeAudio.play().catch(() => { crossfadeTimer = null; crossfadeActive = false; });
     const remaining = Math.max(0, duration - current - fade);
@@ -1758,9 +1767,12 @@ function finalizePreparedTrackIfNeeded() {
     if (currentPlayerSource === "library") { enhancedQueueIndex = idx; currentLibraryIndex = idx; }
     else window.xrobHomeQueueIndex = idx;
     audio.pause();
-    audio.src = prepared.url;
+    const loadGeneration = ++audioLoadGeneration;
+    const expectedSource = new URL(prepared.url, location.href).href;
+    audio.src = expectedSource;
     audio.load();
     audio.addEventListener("loadedmetadata", () => {
+        if (loadGeneration !== audioLoadGeneration || audio.src !== expectedSource || crossfadePrepared) return;
         audio.currentTime = Math.min(carried, Math.max(0, Number(audio.duration || carried) - 0.05));
         updatePlayerInfo(prepared.track.title, prepared.track.artist, prepared.track.cover);
         audio.dataset.xrobSongId = String(prepared.track.id || "");
@@ -1864,23 +1876,49 @@ function updateMediaSession() {
     if (!("mediaSession" in navigator) || !("MediaMetadata" in window)) return;
     const title = playerTitle?.textContent || "Unknown Track";
     const artist = playerArtist?.textContent || "Unknown Artist";
-    const artwork = playerArt?.src ? [{ src: playerArt.src, sizes: "512x512", type: "image/png" }] : [];
+    const artwork = playerArt?.src ? [{ src: playerArt.src, sizes: "512x512" }] : [];
     try {
         navigator.mediaSession.metadata = new MediaMetadata({ title, artist, album: "Xrob Music", artwork });
-        navigator.mediaSession.playbackState = audio?.paused ? "paused" : "playing";
+        const remotePlayback = isRemotePlayerOwner() && remotePlayerState;
+        navigator.mediaSession.playbackState = (remotePlayback ? Boolean(remotePlayerState.paused) : Boolean(audio?.paused)) ? "paused" : "playing";
     } catch (_) {}
 }
 
 function installMediaSession() {
     if (!("mediaSession" in navigator)) return;
     const actions = {
-        play: () => { if (audio?.src) audio.play().catch(() => {}); },
-        pause: () => audio?.pause(),
-        previoustrack: () => playPreviousTrack(),
-        nexttrack: () => playNextTrack(),
-        seekbackward: details => { if (audio) audio.currentTime = Math.max(0, audio.currentTime - Number(details.seekOffset || 10)); },
-        seekforward: details => { if (audio && Number.isFinite(audio.duration)) audio.currentTime = Math.min(audio.duration, audio.currentTime + Number(details.seekOffset || 10)); },
-        seekto: details => { if (audio && Number.isFinite(details.seekTime)) { audio.currentTime = Math.max(0, Math.min(audio.duration || details.seekTime, details.seekTime)); } },
+        play: () => {
+            if (isRemotePlayerOwner()) { if (sendPlayerCommand("play")) updateRemotePlayerOptimistic({ paused: false }); }
+            else if (audio?.src) { setPlayerOwner(); audio.play().catch(() => {}); }
+        },
+        pause: () => {
+            if (isRemotePlayerOwner()) { if (sendPlayerCommand("pause")) updateRemotePlayerOptimistic({ paused: true }); }
+            else audio?.pause();
+        },
+        previoustrack: () => {
+            if (isRemotePlayerOwner()) sendPlayerCommand("previous");
+            else { setPlayerOwner(); playPreviousTrack(); }
+        },
+        nexttrack: () => {
+            if (isRemotePlayerOwner()) sendPlayerCommand("next");
+            else { setPlayerOwner(); playNextTrack(); }
+        },
+        seekbackward: details => {
+            const offset = Math.max(1, Number(details.seekOffset || 10));
+            if (isRemotePlayerOwner()) { const time = Math.max(0, Number(remotePlayerState?.currentTime || 0) - offset); if (sendPlayerCommand("seek", { time })) updateRemotePlayerOptimistic({ currentTime: time }); }
+            else if (audio) audio.currentTime = Math.max(0, audio.currentTime - offset);
+        },
+        seekforward: details => {
+            const offset = Math.max(1, Number(details.seekOffset || 10));
+            if (isRemotePlayerOwner()) { const base = Number(remotePlayerState?.currentTime || 0); const duration = Number(remotePlayerState?.duration || 0); const time = Math.min(duration > 0 ? duration : base + offset, base + offset); if (sendPlayerCommand("seek", { time })) updateRemotePlayerOptimistic({ currentTime: time }); }
+            else if (audio && Number.isFinite(audio.duration)) audio.currentTime = Math.min(audio.duration, audio.currentTime + offset);
+        },
+        seekto: details => {
+            if (!Number.isFinite(Number(details.seekTime))) return;
+            const time = Math.max(0, Number(details.seekTime));
+            if (isRemotePlayerOwner()) { if (sendPlayerCommand("seek", { time })) updateRemotePlayerOptimistic({ currentTime: time }); }
+            else if (audio) audio.currentTime = Math.min(audio.duration || time, time);
+        },
     };
     Object.entries(actions).forEach(([action, handler]) => {
         try { navigator.mediaSession.setActionHandler(action, handler); } catch (_) {}
@@ -2025,13 +2063,17 @@ function toggleAudioStream(
     if (type) currentPlayerSource = type === "search" ? "home" : type;
     savePlayerState();
     stopCrossfadePreload();
+    const loadGeneration = ++audioLoadGeneration;
     audio.src = absoluteUrl;
 
     audio.load();
 
 
     const selectedTrack = activeQueueTrack() || { id: songId, title, artist, cover: art };
-    audio.addEventListener("loadedmetadata", () => applyReplayGainToActiveAudio(selectedTrack), { once: true });
+    audio.addEventListener("loadedmetadata", () => {
+        if (loadGeneration !== audioLoadGeneration || audio.src !== absoluteUrl) return;
+        applyReplayGainToActiveAudio(selectedTrack);
+    }, { once: true });
 
     audio.play()
         .then(() => {
@@ -2297,7 +2339,7 @@ function bindPlayerControls() {
         seek.value = String(ratio * 100);
         const targetTime = ratio * duration;
         if (isRemotePlayerOwner()) {
-            sendPlayerCommand("seek", { time: targetTime });
+            scheduleRemoteSeek(targetTime);
             updateRemotePlayerOptimistic({ currentTime: targetTime });
         } else {
             setPlayerOwner();
@@ -2453,7 +2495,13 @@ async function resetSettings() {
         scan_enabled: true,
         scan_interval_minutes: 60,
         title_cleanup_rules: "(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",
-        daily_mix_track_count: 30
+        daily_mix_track_count: 30,
+        replaygain_enabled: true,
+        replaygain_mode: "track",
+        replaygain_preamp_db: 0,
+        replaygain_prevent_clipping: true,
+        crossfade_seconds: 0,
+        gapless_playback: true
     };
     try {
         const response = await apiFetch("api/settings", {
