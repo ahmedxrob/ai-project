@@ -540,6 +540,16 @@
           </div>
          </div>
         </div>
+        <div class="library-intelligence-panel">
+         <div class="dashboard-panel-head"><strong>Library intelligence</strong><span>Actionable cleanup checks</span></div>
+         <div class="library-intel-stats">
+          <div><strong id="intelDuplicateCount">0</strong><span>Duplicate groups</span></div>
+          <div><strong id="intelMissingMeta">0</strong><span>Metadata issues</span></div>
+          <div><strong id="intelMissingArtwork">0</strong><span>Missing artwork</span></div>
+          <div><strong id="intelReplayGain">0</strong><span>Without ReplayGain</span></div>
+         </div>
+         <div class="library-intelligence-list" id="libraryIntelligenceList"></div>
+        </div>
        </div>
        <div aria-live="polite" class="xrob-loading" id="libraryLoading">
         <div aria-hidden="true" class="xrob-spinner">
@@ -725,6 +735,34 @@
           </div>
          </div>
          <input id="set_daily_mix_count" min="5" max="50" step="1" style="max-width:120px" type="number" value="30"/>
+        </div>
+       </div>
+       <div class="settings-card page-section">
+        <div class="settings-divider">Playback
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">ReplayGain</div><div class="setting-desc">Normalize loudness using embedded ReplayGain track or album tags.</div></div>
+         <label class="switch"><input id="set_replaygain_enabled" type="checkbox"/><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">ReplayGain mode</div><div class="setting-desc">Choose track gain or album gain when available.</div></div>
+         <select id="set_replaygain_mode"><option value="track">Track</option><option value="album">Album</option></select>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Preamp</div><div class="setting-desc">Additional gain before normalization, from −12 to +12 dB.</div></div>
+         <input id="set_replaygain_preamp" max="12" min="-12" step="0.5" style="max-width:120px" type="number" value="0"/>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Prevent clipping</div><div class="setting-desc">Use recorded peak data to avoid excessive digital gain.</div></div>
+         <label class="switch"><input id="set_replaygain_clip" type="checkbox"/><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Crossfade</div><div class="setting-desc">Blend the current track into the next track.</div></div>
+         <input id="set_crossfade" max="12" min="0" step="0.5" style="max-width:120px" type="number" value="0"/>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload the next local track to reduce transition gaps when crossfade is off.</div></div>
+         <label class="switch"><input id="set_gapless" type="checkbox"/><span class="slider"></span></label>
         </div>
        </div>
        <div class="settings-card page-section">
@@ -1067,6 +1105,8 @@
     </div>
     <!-- PLAYER EXTRA -->
     <div class="gp-extra">
+     <span class="gp-device-state" id="gp-device-status" data-remote="false">Playing on this device</span>
+     <button class="gp-device-takeover" id="gp-device-takeover" type="button" hidden>Take over</button>
      <canvas aria-hidden="true" height="30" id="visualizer-canvas" width="90">
      </canvas>
      <span aria-hidden="true" class="gp-volume-icon">
