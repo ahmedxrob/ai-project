@@ -1117,30 +1117,31 @@ a { color:inherit; }
     border-radius: 99px;
 }
 .gp-seek-fill {
+    --seek-ratio: 0;
     position: absolute;
     left: 0;
     top: 50%;
-    width: 0%;
+    width: 100%;
     height: 4px;
-    transform: translateY(-50%);
+    transform: translate3d(0, -50%, 0) scaleX(var(--seek-ratio));
+    transform-origin: left center;
     background: var(--accent);
     border-radius: 99px;
     pointer-events: none;
-    will-change: width;
+    will-change: transform;
+    z-index: 1;
 }
 .gp-seek-thumb {
     position: absolute;
-    left: 0%;
+    right: 0;
     top: 50%;
     width: 11px;
     height: 11px;
-    transform: translate(-50%, -50%);
+    transform: translate(50%, -50%);
     border-radius: 50%;
     background: var(--text-primary);
     box-shadow: 0 1px 5px rgba(0, 0, 0, .25);
     pointer-events: none;
-    will-change: left;
-    z-index: 1;
 }
 .gp-seek-wrap input {
     position: absolute;
