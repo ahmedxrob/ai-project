@@ -148,7 +148,15 @@ function apiUrl(path) {
 function websocketUrl() {
     const base = appBaseUrl();
     base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
-    return new URL("ws", base).href;
+    const url = new URL("ws", base);
+    url.searchParams.set("deviceId", PLAYER_DEVICE_ID);
+    url.searchParams.set("clientId", PLAYER_CLIENT_ID);
+    url.searchParams.set("ownerId", PLAYER_TAB_ID);
+    url.searchParams.set("deviceName", playerDeviceName());
+    url.searchParams.set("kind", playerDeviceKind());
+    url.searchParams.set("platform", playerDevicePlatform());
+    url.searchParams.set("browser", playerDeviceBrowser());
+    return url.href;
 }
 
 async function apiFetch(input, options = {}) {
@@ -214,6 +222,50 @@ const PLAYER_SYNC_STATE_KEY = "xrob_music_player_sync_state";
 const PLAYER_SYNC_COMMAND_KEY = "xrob_music_player_sync_command";
 const PLAYER_OWNER_KEY = "xrob_music_player_owner";
 const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const PLAYER_DEVICE_ID = (() => {
+    const key = "xrob_music_device_id_v1";
+    try {
+        const saved = storageGet(key);
+        if (saved) return saved;
+        const value = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2, 8)}`;
+        storageSet(key, value);
+        return value;
+    } catch (_) {
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+})();
+
+function playerDeviceKind() {
+    try {
+        const ua = String(navigator.userAgent || "").toLowerCase();
+        if (/iphone|ipad|ipod|android|mobile/.test(ua)) return "phone";
+        if (/tv|smarttv|tizen|webos/.test(ua)) return "tv";
+        return "computer";
+    } catch (_) { return "computer"; }
+}
+
+function playerDeviceName() {
+    const kind = playerDeviceKind();
+    if (kind === "phone") return "Phone";
+    if (kind === "tv") return "Living Room";
+    return "This PC";
+}
+
+function playerDevicePlatform() {
+    try { return String(navigator.userAgentData?.platform || navigator.platform || "").slice(0, 80); } catch (_) { return ""; }
+}
+
+function playerDeviceBrowser() {
+    try {
+        const ua = String(navigator.userAgent || "");
+        return /Edg\//i.test(ua) ? "Edge" : /OPR\//i.test(ua) ? "Opera" : /Chrome\//i.test(ua) ? "Chrome" : /Firefox\//i.test(ua) ? "Firefox" : /Safari\//i.test(ua) ? "Safari" : "Browser";
+    } catch (_) { return "Browser"; }
+}
+
+let connectedDevices = [];
+let deviceHeartbeatTimer = null;
+let deviceListRefreshTimer = null;
+
 const PLAYER_CLIENT_ID = (() => {
     const key = "xrob_music_player_client_id";
     try {
@@ -334,6 +386,10 @@ function updateDeviceOwnershipUI() {
     const hasRemoteSession = Boolean(remotePlayerState?.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID && remotePlayerState?.src);
     const stale = Boolean(remotePlayerState?._serverStale);
     const remoteName = String(remotePlayerState?.deviceName || "another device").trim();
+    const pickerLabel = document.getElementById("gp-device-picker-label");
+    if (pickerLabel) pickerLabel.textContent = (remote || hasRemoteSession)
+        ? String(remoteName || "Remote device")
+        : playerDeviceName();
     if (status) {
         if (remote || hasRemoteSession) {
             const paused = Boolean(remotePlayerState?.paused);
@@ -1027,6 +1083,151 @@ function applyRemoteCommand(message) {
     if (message.command !== "load-play") schedulePlayerStateBroadcast(true);
 }
 
+async function sendDeviceHeartbeat() {
+    try {
+        const response = await apiFetch("api/player/device-heartbeat", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            timeoutMs: 7000,
+            body: JSON.stringify({
+                deviceId: PLAYER_DEVICE_ID,
+                clientId: PLAYER_CLIENT_ID,
+                ownerId: PLAYER_TAB_ID,
+                name: playerDeviceName(),
+                kind: playerDeviceKind(),
+                platform: playerDevicePlatform(),
+                browser: playerDeviceBrowser()
+            })
+        });
+        if (response.ok) {
+            const result = await response.json().catch(() => ({}));
+            if (Array.isArray(result?.devices)) {
+                connectedDevices = result.devices;
+                renderDevicePicker();
+            }
+        }
+    } catch (_) {}
+}
+
+async function loadConnectedDevices() {
+    try {
+        const response = await apiFetch("api/player/devices", { cache: "no-store", timeoutMs: 7000 });
+        if (!response.ok) return;
+        const result = await response.json().catch(() => ({}));
+        connectedDevices = Array.isArray(result?.devices) ? result.devices : [];
+        renderDevicePicker();
+    } catch (_) {}
+}
+
+function deviceStatusText(device) {
+    if (!device?.online) return "Offline";
+    if (device.active && device.playing) return "Playing";
+    if (device.active && device.paused) return "Paused";
+    return "Available";
+}
+
+function deviceIconName(device) {
+    if (device?.kind === "phone") return "smartphone";
+    if (device?.kind === "tv") return "tv";
+    return "monitor";
+}
+
+function renderDevicePicker() {
+    const list = document.getElementById("deviceList");
+    const status = document.getElementById("devicePickerStatus");
+    const dot = document.getElementById("topbarDeviceDot");
+    if (!list) return;
+
+    const devices = Array.isArray(connectedDevices) ? connectedDevices : [];
+    const local = devices.find(d => d.deviceId === PLAYER_DEVICE_ID);
+    const active = devices.find(d => d.active);
+    if (dot) dot.dataset.online = active?.online ? "true" : "false";
+    if (status) {
+        status.textContent = devices.length
+            ? `${devices.filter(d => d.online).length} device${devices.filter(d => d.online).length === 1 ? "" : "s"} online`
+            : "No other devices detected";
+    }
+
+    list.innerHTML = "";
+    if (!devices.length) {
+        list.innerHTML = `<div class="device-empty"><i data-lucide="radio-tower"></i><strong>No devices yet</strong><span>Open Xrob Music on another browser or phone connected to this server.</span></div>`;
+        if (typeof lucide !== "undefined") lucide.createIcons();
+        return;
+    }
+
+    devices.forEach(device => {
+        const isLocal = device.deviceId === PLAYER_DEVICE_ID;
+        const statusText = isLocal && device.active ? "Playing here" : deviceStatusText(device);
+        const track = device.track;
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = `device-row${device.active ? " is-active" : ""}${isLocal ? " is-local" : ""}${!device.online ? " is-offline" : ""}`;
+        card.disabled = !isLocal && (!device.online || !device.ownerId);
+        card.innerHTML = `
+            <span class="device-row-icon"><i data-lucide="${deviceIconName(device)}"></i></span>
+            <span class="device-row-copy">
+                <strong>${escapeHtml(device.name || "Device")}${isLocal ? ` <small>YOU</small>` : ""}</strong>
+                <span>${escapeHtml(statusText)}${track?.title ? ` · ${escapeHtml(track.title)}` : ""}</span>
+            </span>
+            <span class="device-row-state ${device.online ? "online" : "offline"}">
+                <span class="device-presence-dot"></span>${escapeHtml(statusText)}
+            </span>
+        `;
+        if (!isLocal) {
+            card.addEventListener("click", () => transferPlaybackToDevice(device));
+        }
+        list.appendChild(card);
+    });
+    if (typeof lucide !== "undefined") lucide.createIcons();
+}
+
+async function openDevicePicker() {
+    const modal = document.getElementById("device-modal");
+    if (!modal) return;
+    modal.hidden = false;
+    await sendDeviceHeartbeat();
+    await loadConnectedDevices();
+}
+
+function closeDevicePicker() {
+    const modal = document.getElementById("device-modal");
+    if (modal) modal.hidden = true;
+}
+
+async function transferPlaybackToDevice(device) {
+    if (!device?.online || !device.ownerId || device.deviceId === PLAYER_DEVICE_ID) return;
+    if (!confirm(`Switch playback to ${device.name}?`)) return;
+    try {
+        const current = await apiFetch("api/player/state", { cache: "no-store", timeoutMs: 7000 });
+        const stateResult = await current.json().catch(() => ({}));
+        const state = stateResult?.state;
+        if (!state?.src) {
+            showToast("Nothing is currently playing.");
+            return;
+        }
+        const response = await apiFetch("api/player/handoff", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            timeoutMs: PLAYER_HANDOFF_TIMEOUT_MS,
+            body: JSON.stringify({
+                newOwnerId: device.ownerId,
+                clientId: device.clientId || "",
+                deviceName: device.name || "Device",
+                expectedOwnerId: state.ownerId || ""
+            })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result?.detail || "Transfer failed");
+        closeDevicePicker();
+        showToast(`Playback transferred to ${device.name}.`);
+        await loadServerPlayerState();
+        await loadConnectedDevices();
+    } catch (error) {
+        showToast(error?.message || "Could not transfer playback.");
+    }
+}
+
 async function sendPlayerHeartbeat() {
     if (!audio || playerOwnerId !== PLAYER_TAB_ID || isRemotePlayerOwner()) return;
     try {
@@ -1101,6 +1302,14 @@ async function initPlayerSync() {
             try { const owner = JSON.parse(event.newValue); if (owner?.id) playerOwnerId = owner.id; } catch (_) {}
         }
     });
+    sendDeviceHeartbeat().catch(() => {});
+    loadConnectedDevices().catch(() => {});
+    deviceHeartbeatTimer = window.setInterval(() => {
+        sendDeviceHeartbeat().catch(() => {});
+    }, 5000);
+    deviceListRefreshTimer = window.setInterval(() => {
+        loadConnectedDevices().catch(() => {});
+    }, 8000);
     playerSyncHeartbeat = window.setInterval(() => {
         heartbeatPlayerOwner();
         sendPlayerHeartbeat();
@@ -1112,6 +1321,10 @@ async function initPlayerSync() {
         clearPlayerOwner();
         if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
         playerSyncHeartbeat = null;
+        if (deviceHeartbeatTimer) window.clearInterval(deviceHeartbeatTimer);
+        deviceHeartbeatTimer = null;
+        if (deviceListRefreshTimer) window.clearInterval(deviceListRefreshTimer);
+        deviceListRefreshTimer = null;
         stopRemoteProgressTicker();
         if (playerOwnerClaimTimer) window.clearTimeout(playerOwnerClaimTimer);
         if (playerProgressBroadcastTimer) window.clearTimeout(playerProgressBroadcastTimer);
@@ -4501,6 +4714,26 @@ function updateQueueCounters(tasks) {
 }
 
 
+function taskStageIndex(task) {
+    const status = String(task?.status || "queued").toLowerCase();
+    const step = String(task?.step || "").toLowerCase();
+    if (status === "completed" || step.includes("ready") || step.includes("library")) return 5;
+    if (step.includes("artwork") || step.includes("thumbnail")) return 3;
+    if (step.includes("metadata") || step.includes("finaliz")) return 2;
+    if (status === "processing") return 2;
+    if (status === "downloading") return 1;
+    return 0;
+}
+
+function renderTaskPipeline(task) {
+    const stages = ["Queued", "Downloading", "Processing", "Metadata", "Artwork", "Library"];
+    const active = taskStageIndex(task);
+    return `<div class="download-pipeline" aria-label="Download pipeline">${
+        stages.map((stage, index) => `<span class="${index <= active ? "is-done" : ""}${index === active && active < 5 ? " is-current" : ""}">${escapeHtml(stage)}</span>`).join('<i aria-hidden="true">›</i>')
+    }</div>`;
+}
+
+
 function createDownloadCard(
     task,
     position = null
@@ -4629,6 +4862,8 @@ function createDownloadCard(
             </div>
 
 
+            ${renderTaskPipeline(task)}
+
             <div class="download-bottom">
 
                 <div class="download-message">
@@ -4732,6 +4967,19 @@ function renderDownloads(tasks) {
             ? tasks
             : [];
 
+    const summary = document.getElementById("downloadsSummary");
+    if (summary) {
+        const queued = safeTasks.filter(t => ["queued"].includes(String(t.status || "").toLowerCase())).length;
+        const downloading = safeTasks.filter(t => ["downloading","processing"].includes(String(t.status || "").toLowerCase())).length;
+        const failed = safeTasks.filter(t => ["error","failed"].includes(String(t.status || "").toLowerCase())).length;
+        const completed = safeTasks.filter(t => String(t.status || "").toLowerCase() === "completed").length;
+        summary.innerHTML = `
+            <div><strong>${queued}</strong><span>Queued</span></div>
+            <div><strong>${downloading}</strong><span>Active</span></div>
+            <div><strong>${failed}</strong><span>Failed</span></div>
+            <div><strong>${completed}</strong><span>Completed</span></div>
+        `;
+    }
 
     const active =
         safeTasks.filter(
@@ -5201,6 +5449,63 @@ async function startDownload(
     }
 }
 
+
+function openBatchDownloadModal() {
+    const modal = document.getElementById("batch-download-modal");
+    if (!modal) return;
+    modal.hidden = false;
+    const input = document.getElementById("batchDownloadInput");
+    window.setTimeout(() => input?.focus(), 40);
+}
+
+function closeBatchDownloadModal() {
+    const modal = document.getElementById("batch-download-modal");
+    if (modal) modal.hidden = true;
+}
+
+async function submitBatchDownloads() {
+    const input = document.getElementById("batchDownloadInput");
+    const button = document.getElementById("batchDownloadStart");
+    const lines = String(input?.value || "").split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+    if (!lines.length) {
+        showToast("Add at least one URL.");
+        return;
+    }
+
+    const items = [];
+    for (const line of lines) {
+        const parts = line.split("|").map(v => v.trim());
+        const url = parts.shift();
+        if (!url) continue;
+        items.push({
+            url,
+            title: parts[0] || "",
+            artist: parts[1] || "",
+            album: parts[2] || ""
+        });
+    }
+    if (!items.length) return;
+
+    if (button) { button.disabled = true; button.textContent = "Queuing…"; }
+    try {
+        const response = await apiFetch("api/download/batch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Batch download failed.");
+        closeBatchDownloadModal();
+        if (input) input.value = "";
+        await pollTasks(true);
+        openDownloadsDrawer();
+        showToast(`Added ${Number(data.queued || 0)} download job${Number(data.queued || 0) === 1 ? "" : "s"}.`);
+    } catch (error) {
+        showToast(error?.message || "Batch download failed.");
+    } finally {
+        if (button) { button.disabled = false; button.innerHTML = `<i data-lucide="download"></i> Queue downloads`; if (typeof lucide !== "undefined") lucide.createIcons(); }
+    }
+}
 
 async function cancelTask(taskId) {
 
@@ -6757,6 +7062,13 @@ function installEnhancedFeatures(){
     document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
+    document.getElementById("devicePickerClose")?.addEventListener("click", closeDevicePicker);
+    document.getElementById("deviceRefreshButton")?.addEventListener("click", () => loadConnectedDevices());
+    document.getElementById("batchDownloadOpen")?.addEventListener("click", openBatchDownloadModal);
+    document.getElementById("batchSearchButton")?.addEventListener("click", openBatchDownloadModal);
+    document.getElementById("batchDownloadClose")?.addEventListener("click", closeBatchDownloadModal);
+    document.getElementById("batchDownloadCancel")?.addEventListener("click", closeBatchDownloadModal);
+    document.getElementById("batchDownloadStart")?.addEventListener("click", submitBatchDownloads);
     document.getElementById("topbarDownloadsBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDownloadsDrawer(); });
     // Drawers remain independent, but retain the familiar click-outside behavior.
     // Clicking inside one drawer never closes it; clicking outside a drawer closes
