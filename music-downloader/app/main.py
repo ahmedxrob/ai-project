@@ -51,7 +51,7 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.0"
+SERVER_VERSION = "3.7.2"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -144,7 +144,7 @@ PLAYER_STATE_PERSIST_INTERVAL_SECONDS = 5.0
 PLAYER_STATE_DB_KEY = "default"
 PLAYER_STATE_LAST_PERSISTED_AT = 0.0
 PLAYER_STATE_LOCK = asyncio.Lock()
-PLAYER_DEVICE_MAX_AGE_SECONDS = 45.0
+PLAYER_DEVICE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 PLAYER_DEVICE_ACTIVE_SECONDS = 12.0
 PLAYER_DEVICES_MAX = 100
 
@@ -301,7 +301,6 @@ DEFAULT_SETTINGS = {
     "crossfade_seconds": 0.0,
     "gapless_playback": True,
     "fade_on_pause": True,
-    "resume_enabled": True,
     "subsonic_user": "admin",
     "subsonic_password": "",
     "web_username": os.getenv("XROB_USERNAME", "admin"),
@@ -568,7 +567,6 @@ def load_settings():
         settings["crossfade_seconds"] = 0.0
     settings["gapless_playback"] = bool(settings.get("gapless_playback", True))
     settings["fade_on_pause"] = bool(settings.get("fade_on_pause", True))
-    settings["resume_enabled"] = bool(settings.get("resume_enabled", True))
     settings.pop("max_results", None)
 
     return settings
@@ -584,7 +582,7 @@ def save_settings(data: dict):
         "embed_metadata", "organize_by_artist", "scan_enabled",
         "scan_interval_minutes", "title_cleanup_rules", "metadata_mode", "daily_mix_track_count",
         "replaygain_enabled", "replaygain_mode", "replaygain_preamp_db", "replaygain_prevent_clipping",
-        "crossfade_seconds", "gapless_playback", "fade_on_pause", "resume_enabled", "web_username", "web_password",
+        "crossfade_seconds", "gapless_playback", "fade_on_pause", "web_username", "web_password",
     }
 
     old_user = str(settings.get("web_username") or "")
@@ -640,7 +638,6 @@ def save_settings(data: dict):
         settings["crossfade_seconds"] = 0.0
     settings["gapless_playback"] = bool(settings.get("gapless_playback", True))
     settings["fade_on_pause"] = bool(settings.get("fade_on_pause", True))
-    settings["resume_enabled"] = bool(settings.get("resume_enabled", True))
     settings["web_username"] = str(settings.get("web_username") or os.getenv("XROB_USERNAME", "admin"))[:64]
     # Keep a verifier, never persist web passwords in plaintext.
     if settings.get("web_password") and not settings.get("web_password_hash"):
@@ -2832,15 +2829,6 @@ async def websocket_endpoint(websocket: WebSocket):
 # WEB APP
 # ============================================================
 
-@app.get("/manifest.webmanifest")
-async def pwa_manifest():
-    return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
-
-
-@app.get("/sw.js")
-async def pwa_service_worker():
-    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
-
 
 @app.get("/")
 async def home():
@@ -2944,14 +2932,10 @@ async def youtube_search(
     stdout, stderr = await communicate_with_timeout(process, SUBPROCESS_TIMEOUT_SECONDS, "YouTube search")
 
     if process.returncode != 0:
-
-        raise RuntimeError(
-            stderr.decode(
-                "utf-8",
-                errors="ignore",
-            )[-2000:]
-            or "yt-dlp search failed."
-        )
+        error_text = stderr.decode("utf-8", errors="ignore")[-2000:]
+        if "no module named yt_dlp" in error_text.lower():
+            raise RuntimeError("yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed.")
+        raise RuntimeError(error_text or "yt-dlp search failed.")
 
     try:
 
@@ -3123,8 +3107,12 @@ async def api_search(
             item["source"] = "youtube"
         return results
 
+    except RuntimeError as error:
+        message = str(error)
+        status = 503 if "yt-dlp is not installed" in message.lower() else 500
+        raise HTTPException(status_code=status, detail=message) from error
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error))
+        raise HTTPException(status_code=500, detail="Search failed. Check the search provider and server logs.") from error
 
 
 # ============================================================
@@ -3173,21 +3161,11 @@ async def api_preview(
 
     stdout, stderr = await communicate_with_timeout(process, PREVIEW_LOOKUP_TIMEOUT_SECONDS, "Preview lookup")
 
-    if (
-        process.returncode != 0
-        or not stdout
-    ):
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                stderr.decode(
-                    "utf-8",
-                    errors="ignore",
-                )[-1000:]
-                or "Preview unavailable."
-            ),
-        )
+    if process.returncode != 0 or not stdout:
+        error_text = stderr.decode("utf-8", errors="ignore")[-1000:]
+        if "no module named yt_dlp" in error_text.lower():
+            raise HTTPException(status_code=503, detail="yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed.")
+        raise HTTPException(status_code=500, detail=error_text or "Preview unavailable.")
 
     direct_url = (
         stdout.decode(
@@ -6991,6 +6969,10 @@ async def api_player_state_update(payload: dict = Body(...)):
     if not owner_id:
         raise HTTPException(400, "state.ownerId is required")
     state = _sanitize_player_state(state)
+    if not state.get("deviceId"):
+        state["deviceId"] = owner_id
+    if str(state.get("deviceId") or "") != owner_id:
+        raise HTTPException(400, "state.ownerId must match state.deviceId")
     force = bool(payload.get("takeover") or state.get("takeover"))
     state.pop("takeover", None)
 
@@ -7001,8 +6983,7 @@ async def api_player_state_update(payload: dict = Body(...)):
         current_state = current.get("state") if isinstance(current, dict) else None
         current_owner = str(current_state.get("ownerId") or "").strip() if isinstance(current_state, dict) else ""
         current_updated = float(current.get("updated_at") or 0) if isinstance(current, dict) else 0.0
-        current_age = time.time() - current_updated if current_updated else float("inf")
-        if current_owner and current_owner != owner_id and current_age <= PLAYER_STATE_MAX_AGE_SECONDS and not force:
+        if current_owner and current_owner != owner_id and not force:
             raise HTTPException(409, {
                 "status": "owned",
                 "ownerId": current_owner,
@@ -7061,42 +7042,31 @@ def _sanitize_player_command_payload(command, payload):
 
 @app.post("/api/player/command")
 async def api_player_command(payload: dict = Body(...)):
-    target_id = str(payload.get("targetId") or "").strip()
+    target_device_id = str(payload.get("targetDeviceId") or payload.get("targetId") or "").strip()[:200]
+    target_client_id = str(payload.get("targetClientId") or "").strip()[:200]
     command = str(payload.get("command") or "").strip()
-    if not target_id or not command:
-        raise HTTPException(400, "targetId and command are required")
+    if not target_device_id or not command:
+        raise HTTPException(400, "targetDeviceId and command are required")
     allowed_commands = {"play", "pause", "seek", "next", "previous", "volume", "shuffle", "repeat", "load-play"}
     if command not in allowed_commands:
         raise HTTPException(400, "Unsupported player command")
 
-    message = {
-        "type": "command",
-        "targetId": target_id[:200],
-        "command": command[:64],
-        "payload": _sanitize_player_command_payload(command, payload.get("payload")),
-        "id": str(payload.get("id") or "")[:300],
-    }
-
-    # Commands are state changes, not fire-and-forget events. Persist the resulting
-    # player state so a device that is temporarily offline/reconnecting still
-    # converges to the requested state when it reconnects. The target must remain
-    # the current player owner, otherwise an old device could mutate a newer session.
     async with PLAYER_STATE_LOCK:
         current = await get_player_state_async()
         current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
-        current_owner = str(current_state.get("ownerId") or "").strip()
-        if current_owner != target_id:
-            if not current_owner:
-                raise HTTPException(409, "No active player owner")
-            raise HTTPException(409, {"status": "owned", "ownerId": current_owner})
+        current_owner_device = str(current_state.get("deviceId") or current_state.get("ownerId") or "").strip()
+        current_owner_client = str(current_state.get("clientId") or "").strip()
+        if current_owner_device != target_device_id:
+            raise HTTPException(409, {"status": "owned", "ownerId": current_owner_device, "deviceId": current_owner_device})
+        if target_client_id and current_owner_client and target_client_id != current_owner_client:
+            raise HTTPException(409, {"status": "owned", "ownerId": current_owner_device, "deviceId": current_owner_device, "clientId": current_owner_client})
 
         now = time.time()
-        # Commands start from the server's live playback clock, not the last browser snapshot.
         current_state["currentTime"] = _effective_player_position(current_state, now)
         current_state["positionUpdatedAt"] = now
         current_state["lastSeenAt"] = now
         next_state = dict(current_state)
-        command_payload = message["payload"]
+        command_payload = _sanitize_player_command_payload(command, payload.get("payload"))
         if command == "play":
             next_state["paused"] = False
         elif command == "pause":
@@ -7126,34 +7096,27 @@ async def api_player_command(payload: dict = Body(...)):
                 direction = 1 if command == "next" else -1
                 next_index = current_index + direction
                 if next_index < 0 or next_index >= len(queue):
-                    if repeat != "queue":
-                        next_index = current_index
-                    else:
-                        next_index = 0 if command == "next" else len(queue) - 1
+                    next_index = 0 if (repeat == "queue" and command == "next") else (len(queue) - 1 if repeat == "queue" else current_index)
                 track = queue[next_index] if 0 <= next_index < len(queue) else None
                 if isinstance(track, dict) and next_index != current_index:
                     next_state["queueIndex"] = next_index
                     for key in ("id", "name", "title", "artist", "album", "duration", "cover", "stream"):
                         if key in track:
-                            if key == "id":
-                                next_state["songId"] = track[key]
-                            elif key == "stream":
-                                next_state["src"] = track[key]
-                            elif key == "cover":
-                                next_state["art"] = track[key]
-                            else:
-                                next_state[key] = track[key]
+                            if key == "id": next_state["songId"] = track[key]
+                            elif key == "stream": next_state["src"] = track[key]
+                            elif key == "cover": next_state["art"] = track[key]
+                            else: next_state[key] = track[key]
                     next_state["currentTime"] = 0.0
                     next_state["paused"] = False
 
-        next_state["seq"] = max(safe_int(current_state.get("seq"), 0) + 1, safe_int(payload.get("seq"), 0))
+        next_state["ownerId"] = current_owner_device
+        next_state["deviceId"] = current_owner_device
+        next_state["clientId"] = current_owner_client
+        next_state["seq"] = safe_int(current_state.get("seq"), 0) + 1
         await publish_player_state(next_state, full=True)
-
-    # The live target receives the command immediately as well. The client deduplicates
-    # the same command ID when both WebSocket and BroadcastChannel paths deliver it.
-    await manager.broadcast(message)
-    return {"status": "ok", "state": next_state}
-
+        response_state = dict(PLAYER_STATE)
+        response_state["currentTime"] = _effective_player_position(response_state, time.time())
+        return {"status": "ok", "state": response_state, "updated_at": PLAYER_STATE_UPDATED_AT}
 
 @app.post("/api/player/heartbeat")
 async def api_player_heartbeat(request: Request, payload: dict = Body(...)):
@@ -7165,7 +7128,12 @@ async def api_player_heartbeat(request: Request, payload: dict = Body(...)):
         raise HTTPException(400, "ownerId is required")
     current = await get_player_state_async()
     current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
-    is_owner = bool(current_state and str(current_state.get("ownerId") or "") == owner_id)
+    is_owner = bool(
+        current_state
+        and str(current_state.get("deviceId") or current_state.get("ownerId") or "") == device_id
+        and str(current_state.get("clientId") or "") == client_id
+        and str(current_state.get("ownerId") or "") == owner_id
+    )
     if is_owner:
         async with PLAYER_STATE_LOCK:
             current = await get_player_state_async()
@@ -7203,16 +7171,15 @@ async def api_player_device_heartbeat(request: Request, payload: dict = Body(...
         raise HTTPException(400, "deviceId is required")
     current = await get_player_state_async()
     current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
-    owner_id = str(current_state.get("ownerId") or "") if current_state else ""
-    owner = owner_id and owner_id == str(payload.get("ownerId") or "")
+    owner_id = str(current_state.get("ownerId") or current_state.get("deviceId") or "") if current_state else ""
+    owner = bool(current_state and str(current_state.get("deviceId") or current_state.get("ownerId") or "") == device_id and str(current_state.get("clientId") or "") == client_id)
     state_for_device = current_state if owner else None
     await asyncio.to_thread(register_player_device_sync, device_id, client_id, device_name, request.headers.get("user-agent", ""), owner_id if owner else "", state_for_device)
     def pending_sync():
         now = time.time()
         with db_connect() as conn:
+            conn.execute("UPDATE player_device_requests SET consumed_at=? WHERE consumed_at=0 AND created_at < ?", (now, now - 300))
             rows = conn.execute("SELECT id,requester_device_id,requester_name,created_at FROM player_device_requests WHERE target_device_id=? AND consumed_at=0 AND created_at>=? ORDER BY created_at ASC LIMIT 10", (device_id, now - 300)).fetchall()
-            for row in rows:
-                conn.execute("UPDATE player_device_requests SET consumed_at=? WHERE id=?", (now, row[0]))
             conn.commit()
         return [dict(row) for row in rows]
     requests = await asyncio.to_thread(pending_sync)
@@ -7229,8 +7196,12 @@ async def api_player_device_transfer(payload: dict = Body(...)):
     request_id = uuid.uuid4().hex
     now = time.time()
     with db_connect() as conn:
-        conn.execute("INSERT INTO player_device_requests(id,target_device_id,requester_device_id,requester_name,created_at,consumed_at) VALUES(?,?,?,?,?,0)", (request_id, target_device_id, requester_device_id, requester_name, now))
-        conn.commit()
+        recent = conn.execute("SELECT id FROM player_device_requests WHERE target_device_id=? AND requester_device_id=? AND consumed_at=0 AND created_at>=? ORDER BY created_at DESC LIMIT 1", (target_device_id, requester_device_id, now - 10)).fetchone()
+        if recent:
+            request_id = str(recent[0])
+        else:
+            conn.execute("INSERT INTO player_device_requests(id,target_device_id,requester_device_id,requester_name,created_at,consumed_at) VALUES(?,?,?,?,?,0)", (request_id, target_device_id, requester_device_id, requester_name, now))
+            conn.commit()
     await manager.broadcast({"type": "device_takeover_request", "targetDeviceId": target_device_id, "requesterDeviceId": requester_device_id, "requesterName": requester_name, "id": request_id})
     return {"status": "queued", "request_id": request_id}
 
@@ -7245,11 +7216,12 @@ async def api_player_devices():
 
 @app.post("/api/player/handoff")
 async def api_player_handoff(payload: dict = Body(...)):
-    new_owner_id = str(payload.get("newOwnerId") or "").strip()[:200]
+    new_device_id = str(payload.get("deviceId") or payload.get("newOwnerId") or "").strip()[:200]
+    new_owner_id = str(payload.get("newOwnerId") or new_device_id).strip()[:200]
     new_client_id = str(payload.get("clientId") or "").strip()[:200]
     new_device_name = str(payload.get("deviceName") or "This device").strip()[:120]
-    new_device_id = str(payload.get("deviceId") or "").strip()[:200]
     expected_owner_id = str(payload.get("expectedOwnerId") or "").strip()[:200]
+    request_id = str(payload.get("requestId") or "").strip()[:128]
     if not new_owner_id:
         raise HTTPException(400, "newOwnerId is required")
 
@@ -7261,18 +7233,22 @@ async def api_player_handoff(payload: dict = Body(...)):
             raise HTTPException(409, "No active player session")
         if expected_owner_id and expected_owner_id != current_owner:
             raise HTTPException(409, {"status": "owned", "ownerId": current_owner})
-        if current_owner == new_owner_id:
+        current_device_id = str(current_state.get("deviceId") or current_owner or "").strip()
+        if current_device_id == new_device_id and str(current_state.get("clientId") or "") == new_client_id:
+            if request_id:
+                with db_connect() as conn:
+                    conn.execute("UPDATE player_device_requests SET consumed_at=? WHERE id=? AND target_device_id=? AND consumed_at=0", (time.time(), request_id, new_device_id))
+                    conn.commit()
             return {"status": "already_owner", "state": current_state}
 
         now = time.time()
         live_position = _effective_player_position(current_state, now)
         previous_owner = current_owner
         next_state = dict(current_state)
-        next_state["ownerId"] = new_owner_id
+        next_state["ownerId"] = new_device_id
         if new_client_id:
             next_state["clientId"] = new_client_id
-        if new_device_id:
-            next_state["deviceId"] = new_device_id
+        next_state["deviceId"] = new_device_id
         next_state["deviceName"] = new_device_name
         next_state["currentTime"] = live_position
         next_state["positionUpdatedAt"] = now
@@ -7289,10 +7265,14 @@ async def api_player_handoff(payload: dict = Body(...)):
         outbound_state["currentTime"] = live_position
         outbound_state["_handoffFrom"] = previous_owner
         outbound_state["_handoffTo"] = new_owner_id
+        if request_id:
+            with db_connect() as conn:
+                conn.execute("UPDATE player_device_requests SET consumed_at=? WHERE id=? AND target_device_id=? AND consumed_at=0", (now, request_id, new_device_id))
+                conn.commit()
         await manager.broadcast({
             "type": "player_handoff",
             "fromOwnerId": previous_owner,
-            "toOwnerId": new_owner_id,
+            "toOwnerId": new_device_id,
             "state": outbound_state,
         })
         return {"status": "ok", "state": outbound_state, "updated_at": PLAYER_STATE_UPDATED_AT}
@@ -7311,7 +7291,12 @@ def register_player_device_sync(device_id, client_id, device_name, user_agent=""
     with db_connect() as conn:
         conn.execute(
             "INSERT INTO player_devices(device_id,client_id,device_name,user_agent,last_seen,first_seen,owner_id,state_json) VALUES(?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(device_id) DO UPDATE SET client_id=excluded.client_id,device_name=excluded.device_name,user_agent=excluded.user_agent,last_seen=excluded.last_seen,owner_id=excluded.owner_id,state_json=excluded.state_json",
+            "ON CONFLICT(device_id) DO UPDATE SET client_id=CASE WHEN excluded.owner_id<>'' THEN excluded.client_id ELSE player_devices.client_id END, "
+            "device_name=CASE WHEN excluded.owner_id<>'' THEN excluded.device_name ELSE player_devices.device_name END, "
+            "user_agent=CASE WHEN excluded.owner_id<>'' THEN excluded.user_agent ELSE player_devices.user_agent END, "
+            "last_seen=excluded.last_seen, "
+            "owner_id=CASE WHEN excluded.owner_id<>'' THEN excluded.owner_id ELSE player_devices.owner_id END, "
+            "state_json=CASE WHEN excluded.owner_id<>'' THEN excluded.state_json ELSE player_devices.state_json END",
             (device_id, client_id, device_name, user_agent, now, now, owner_id, payload),
         )
         conn.commit()
@@ -7370,14 +7355,6 @@ def save_player_position_sync(song_id, position, duration, now, device_id="", de
         conn.commit()
 
 
-def continue_positions_sync(limit=12):
-    with db_connect() as conn:
-        rows = conn.execute(
-            "SELECT song_id,position,duration,updated_at,device_id,device_name,last_played_at,completion_pct FROM playback_positions WHERE completion_pct < 98 AND position > 2 ORDER BY last_played_at DESC, updated_at DESC LIMIT ?",
-            (max(1, min(50, int(limit or 12))),),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
 
 def get_player_positions_sync():
     with db_connect() as conn:
@@ -7404,51 +7381,25 @@ async def api_player_positions():
 
 @app.post("/api/player/position")
 async def api_player_position(payload: dict = Body(...)):
-    song_id=str(payload.get("song_id") or "").strip()[:512]
+    song_id=str(payload.get("song_id") or payload.get("songId") or "").strip()[:512]
     if not song_id: raise HTTPException(400, "song_id is required")
     position = finite_nonnegative_float(payload.get("position", 0), "position")
     duration = finite_nonnegative_float(payload.get("duration", 0), "duration")
     now=time.time()
-    device_id = str(payload.get("device_id") or "").strip()[:200]
-    device_name = str(payload.get("device_name") or "This device").strip()[:120]
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()[:200]
+    device_name = str(payload.get("device_name") or payload.get("deviceName") or "This device").strip()[:120]
     await asyncio.to_thread(save_player_position_sync, song_id, position, duration, now, device_id, device_name)
     return {"status":"ok", "completion_pct": round((position / duration * 100.0), 2) if duration > 0 else 0}
 
 
 @app.post("/api/player/history")
 async def api_player_history(payload: dict = Body(...)):
-    song_id=str(payload.get("song_id") or "").strip()[:512]
+    song_id=str(payload.get("song_id") or payload.get("songId") or "").strip()[:512]
     if not song_id: raise HTTPException(400, "song_id is required")
     duration = finite_nonnegative_float(payload.get("duration") or 0, "duration")
     position = finite_nonnegative_float(payload.get("position") or 0, "position")
     total_plays = await asyncio.to_thread(save_player_history_sync, song_id, duration, position)
     return {"status":"ok", "all_play_count": total_plays}
-
-
-@app.get("/api/player/continue")
-async def api_player_continue(limit: int = Query(12, ge=1, le=50)):
-    positions = await asyncio.to_thread(continue_positions_sync, limit)
-    library = await build_library()
-    by_id = {str(song.get("id")): song for song in library.get("songs", [])}
-    result = []
-    for item in positions:
-        song = by_id.get(str(item.get("song_id")))
-        if not song:
-            continue
-        try:
-            rel = str(song["path"].relative_to(DOWNLOAD_DIR))
-        except Exception:
-            continue
-        enc = urllib.parse.quote(rel, safe="/")
-        result.append({
-            "id": song["id"], "title": song.get("title") or "Unknown Track", "artist": song.get("artist") or "Unknown Artist",
-            "album": song.get("album") or "", "duration": float(item.get("duration") or song.get("duration") or 0),
-            "position": float(item.get("position") or 0), "completion_pct": float(item.get("completion_pct") or 0),
-            "last_played_at": float(item.get("last_played_at") or item.get("updated_at") or 0),
-            "last_device": item.get("device_name") or "This device",
-            "cover": "/api/library/cover/" + enc, "stream": "/api/library/stream/" + enc,
-        })
-    return {"tracks": result}
 
 
 @app.get("/api/library/recent-most")
