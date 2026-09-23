@@ -76,7 +76,7 @@ let crossfadeGainNode = null;
 let crossfadePrepared = null;
 let crossfadeTimer = null;
 let crossfadeActive = false;
-let playerSettings = { replaygain_enabled: true, replaygain_mode: "track", replaygain_preamp_db: 0, replaygain_prevent_clipping: true, crossfade_seconds: 0, gapless_playback: true, fade_on_pause: true, resume_enabled: true };
+let playerSettings = { replaygain_enabled: true, replaygain_mode: "track", replaygain_preamp_db: 0, replaygain_prevent_clipping: true, crossfade_seconds: 0, gapless_playback: true, fade_on_pause: true };
 
 let savedPlayerState = {
     track: null,
@@ -210,62 +210,51 @@ async function apiFetch(input, options = {}) {
 }
 
 
-const PLAYER_SYNC_CHANNEL = "xrob_music_player_sync_v2";
-const PLAYER_SYNC_STATE_KEY = "xrob_music_player_sync_state";
-const PLAYER_SYNC_COMMAND_KEY = "xrob_music_player_sync_command";
-const PLAYER_OWNER_KEY = "xrob_music_player_owner";
-const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 const PLAYER_DEVICE_ID = (() => {
     const key = "xrob_music_device_id";
     try {
-        const saved = storageGet(key);
+        const saved = window.localStorage.getItem(key);
         if (saved) return saved;
         const value = `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-        storageSet(key, value);
+        window.localStorage.setItem(key, value);
         return value;
     } catch (_) {
         return `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     }
 })();
 const PLAYER_CLIENT_ID = (() => {
-    const key = "xrob_music_player_client_id";
+    const key = "xrob_music_player_client_id_v2";
     try {
-        const saved = storageGet(key);
+        const saved = window.sessionStorage.getItem(key);
         if (saved) return saved;
-        const value = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-        storageSet(key, value);
+        const value = `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        window.sessionStorage.setItem(key, value);
         return value;
     } catch (_) {
-        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     }
 })();
-const PLAYER_OWNER_STALE_MS = 15000;
 const PLAYER_SERVER_STATE_STALE_MS = 12000;
 const PLAYER_HEARTBEAT_MS = 2500;
-const PLAYER_OWNER_CLAIM_DELAY_MS = 650;
 const PLAYER_PROGRESS_BROADCAST_MS = 450;
 const PLAYER_SERVER_SYNC_MS = 1500;
 const PLAYER_HANDOFF_TIMEOUT_MS = 15000;
-let playerOwnerClaimTimer = null;
+const PLAYER_DEVICE_HEARTBEAT_MS = 8000;
 let playerProgressBroadcastTimer = null;
 let playerServerSyncTimer = null;
-let playerHeartbeatTimer = null;
+let playerSyncHeartbeat = null;
+let playerDeviceHeartbeatTimer = null;
 let playerHandoffInFlight = false;
 let playerHandoffStoppingRemote = false;
 let serverPlayerStateLoaded = false;
 let remoteDisplayTime = 0;
 const DAILY_MIX_STATE_KEY = "xrob_music_daily_mix_state_v2";
-let playerSyncChannel = null;
-let playerSyncHeartbeat = null;
-let playerDeviceHeartbeatTimer = null;
-let deferredInstallPrompt = null;
 let lastDeviceList = [];
 let playerOwnerId = null;
 let applyingRemotePlayerCommand = false;
 let suppressLocalOwnershipUntil = 0;
 let playerTakeoverPending = false;
 let remotePlayerState = null;
-let remotePlayerReceivedAt = 0;
 let remotePlayerTimer = null;
 let remoteRangeLastUpdatedAt = 0;
 let visualizerFrame = null;
@@ -273,58 +262,20 @@ let visualizerData = null;
 let playerSyncSequence = 0;
 let lastRemoteOwnerId = null;
 let lastRemoteSequence = -1;
-const processedPlayerCommandIds = new Set();
 let dailyMixTracks = [];
 let dailyMixVariant = Number(storageGet("xrob_daily_mix_variant") || 0);
 
-
-
-function getLocalDateKey(date = new Date()) {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
+function localPlayerSessionMatches(state) {
+    if (!state || typeof state !== "object") return false;
+    const ownerId = String(state.ownerId || state.deviceId || "");
+    const deviceId = String(state.deviceId || ownerId || "");
+    const clientId = String(state.clientId || "");
+    return ownerId === PLAYER_DEVICE_ID && deviceId === PLAYER_DEVICE_ID && clientId === PLAYER_CLIENT_ID;
 }
 
-function getPlayerOwner() {
-    try {
-        const raw = storageGet(PLAYER_OWNER_KEY);
-        return raw ? JSON.parse(raw) : null;
-    } catch (_) { return null; }
-}
-
-function ownerIsFresh(owner) {
-    return Boolean(owner?.id && Number.isFinite(Number(owner.at)) && (Date.now() - Number(owner.at)) < PLAYER_OWNER_STALE_MS);
-}
-
-function setPlayerOwner(force = false) {
-    const current = getPlayerOwner();
-    if (!force && current?.id && current.id !== PLAYER_TAB_ID && ownerIsFresh(current)) {
-        playerOwnerId = current.id;
-        return false;
-    }
-    playerOwnerId = PLAYER_TAB_ID;
-    remotePlayerState = null;
-    lastRemoteOwnerId = null;
-    lastRemoteSequence = -1;
-    stopRemoteProgressTicker();
-    try { storageSet(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
-    updateDeviceOwnershipUI();
-    if (typeof sendPlayerHeartbeat === "function") {
-        window.setTimeout(() => { sendPlayerHeartbeat().catch(() => {}); }, 0);
-    }
-    return true;
-}
-
-function heartbeatPlayerOwner() {
-    const current = getPlayerOwner();
-    if (!current?.id || current.id === PLAYER_TAB_ID) {
-        if (playerOwnerId === PLAYER_TAB_ID) {
-            try { storageSet(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
-        }
-        return;
-    }
-    playerOwnerId = current.id;
+function isLocalPlayerDevice(state) {
+    if (!state || typeof state !== "object") return false;
+    return String(state.deviceId || state.ownerId || "") === PLAYER_DEVICE_ID;
 }
 
 function localDeviceLabel() {
@@ -346,27 +297,26 @@ function localDeviceLabel() {
 async function sendDeviceHeartbeat() {
     try {
         const response = await apiFetch("api/player/devices/heartbeat", {
-            method: "POST", credentials: "same-origin",
-            headers: { "Content-Type": "application/json" }, timeoutMs: 7000,
-            body: JSON.stringify({
-                deviceId: PLAYER_DEVICE_ID, clientId: PLAYER_CLIENT_ID,
-                deviceName: localDeviceLabel(), ownerId: playerOwnerId === PLAYER_TAB_ID ? PLAYER_TAB_ID : ""
-            })
+            method: "POST", credentials: "same-origin", cache: "no-store", timeoutMs: 7000,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deviceId: PLAYER_DEVICE_ID, clientId: PLAYER_CLIENT_ID, deviceName: localDeviceLabel() })
         });
-        if (!response.ok) return false;
         const data = await response.json().catch(() => ({}));
+        if (!response.ok) return false;
         const requests = Array.isArray(data.transfer_requests) ? data.transfer_requests : [];
-        if (requests.length && !isRemotePlayerOwner()) {
-            await loadServerPlayerState();
-            if (remotePlayerState?.src && remotePlayerState.ownerId !== PLAYER_TAB_ID) {
-                const moved = await takeoverRemotePlayer(false);
+        if (requests.length) {
+            const request = requests[0];
+            const remote = remotePlayerState;
+            if (remote?.src && !localPlayerSessionMatches(remote)) {
+                const moved = await takeoverRemotePlayer(false, request.id);
                 if (moved) showToast(`▶ Playback moved to ${localDeviceLabel()}`);
+            } else if (!remote && !isLocalPlayerDevice(data.state)) {
+                await loadServerPlayerState();
             }
         }
         return true;
     } catch (_) { return false; }
 }
-
 
 function deviceIcon(name) {
     const text = String(name || "").toLowerCase();
@@ -386,43 +336,63 @@ function renderDeviceList(devices) {
     const list = document.getElementById("devicesList");
     if (!list) return;
     lastDeviceList = Array.isArray(devices) ? devices : [];
-    const currentOwner = String(remotePlayerState?.ownerId || playerOwnerId || "");
-    list.innerHTML = "";
     const all = [...lastDeviceList];
-    if (!all.some(d => d.device_id === PLAYER_DEVICE_ID)) all.unshift({ device_id: PLAYER_DEVICE_ID, device_name: localDeviceLabel(), online: true, owner: currentOwner === PLAYER_TAB_ID, owner_id: currentOwner === PLAYER_TAB_ID ? PLAYER_TAB_ID : "" });
+    if (!all.some(d => d.device_id === PLAYER_DEVICE_ID)) {
+        all.unshift({ device_id: PLAYER_DEVICE_ID, client_id: PLAYER_CLIENT_ID, device_name: localDeviceLabel(), online: true, owner: localPlayerSessionMatches(remotePlayerState), owner_id: localPlayerSessionMatches(remotePlayerState) ? PLAYER_DEVICE_ID : "" });
+    }
     if (!all.length) {
-        list.innerHTML = '<div class="devices-empty">No devices are online yet.</div>';
+        list.innerHTML = '<div class="devices-empty">No devices have checked in yet.</div>';
         return;
     }
+    const currentState = remotePlayerState;
+    const currentOwnerId = String(currentState?.ownerId || playerOwnerId || "");
+    list.innerHTML = "";
     all.forEach(device => {
         const row = document.createElement("button");
-        row.type = "button"; row.className = "device-row";
+        row.type = "button";
+        row.className = "device-row";
         const isCurrentDevice = device.device_id === PLAYER_DEVICE_ID;
-        const isPlayingDevice = Boolean(device.owner || (device.owner_id && device.owner_id === currentOwner));
-        const remote = !isCurrentDevice;
-        const status = isCurrentDevice ? (isPlayingDevice ? "Playing here" : "This device") : (isPlayingDevice ? (device.paused ? "Paused" : "Playing") : (device.online ? "Available" : "Offline"));
+        const isCurrentClient = isCurrentDevice && (!device.client_id || device.client_id === PLAYER_CLIENT_ID);
+        const isPlayingDevice = Boolean(device.owner || (device.owner_id && device.owner_id === currentOwnerId));
+        const status = isCurrentDevice
+            ? (isCurrentClient && isPlayingDevice ? "Playing here" : (isPlayingDevice ? "Playing in another tab" : "This device"))
+            : (isPlayingDevice ? (device.paused ? "Paused" : "Playing") : (device.online ? "Available" : "Offline"));
         const trackLine = device.track_title ? ` · ${escapeHtml(device.track_title)}${device.track_artist ? ` — ${escapeHtml(device.track_artist)}` : ""}` : "";
-        row.innerHTML = `<span class="device-row-icon"><i data-lucide="${deviceIcon(device.device_name)}" aria-hidden="true"></i></span><span class="device-row-main"><strong>${escapeHtml(device.device_name || "Xrob Music Device")}</strong><span>${escapeHtml(status)}${trackLine}</span></span><span class="device-row-action">${remote && device.online ? "Connect" : isCurrentDevice ? "✓" : ""}</span>`;
-        row.disabled = !isCurrentDevice && !device.online;
+        const action = !isCurrentDevice && device.online ? "Connect" : (isCurrentDevice && isPlayingDevice && !isCurrentClient ? "Use here" : (isCurrentDevice && isCurrentClient ? "✓" : ""));
+        row.innerHTML = `<span class="device-row-icon"><i data-lucide="${deviceIcon(device.device_name)}" aria-hidden="true"></i></span><span class="device-row-main"><strong>${escapeHtml(device.device_name || "Xrob Music Device")}</strong><span>${escapeHtml(status)}${trackLine}</span></span><span class="device-row-action">${action}</span>`;
+        const canConnect = (isCurrentDevice && isPlayingDevice && !isCurrentClient) || (!isCurrentDevice && device.online);
+        row.disabled = !canConnect && !isCurrentDevice;
         row.addEventListener("click", async () => {
-            if (isCurrentDevice) { closeDevicePicker(); return; }
-            if (device.device_id === PLAYER_DEVICE_ID) return;
-            const request = { targetDeviceId: device.device_id, requesterDeviceId: PLAYER_DEVICE_ID, requesterName: localDeviceLabel() };
-            try { await apiFetch("api/player/device-transfer", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, timeoutMs: 7000, body: JSON.stringify(request) }); } catch (_) {
-                try { playerSyncChannel?.postMessage({ type: "device_takeover_request", ...request, id: `${PLAYER_DEVICE_ID}:${Date.now()}` }); } catch (_) {}
+            if (isCurrentDevice && isCurrentClient && !isPlayingDevice) { closeDevicePicker(); return; }
+            const remoteState = remotePlayerState;
+            if (isCurrentDevice && isPlayingDevice && !isCurrentClient) {
+                if (remoteState?.src) await takeoverRemotePlayer(false);
+                else await loadServerPlayerState();
+                closeDevicePicker();
+                return;
             }
-            showToast(`↗ Requesting playback on ${device.device_name}`);
+            if (!device.device_id || device.device_id === PLAYER_DEVICE_ID) { closeDevicePicker(); return; }
+            try {
+                await apiFetch("api/player/device-transfer", {
+                    method: "POST", credentials: "same-origin", timeoutMs: 7000,
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ targetDeviceId: device.device_id, requesterDeviceId: PLAYER_DEVICE_ID, requesterName: localDeviceLabel() })
+                });
+                showToast(`↗ Requesting playback on ${device.device_name}`);
+            } catch (error) {
+                showToast(`❌ ${error.message || "Could not contact device"}`);
+            }
             closeDevicePicker();
         });
         list.appendChild(row);
     });
-    if (window.lucide?.createIcons) window.lucide.createIcons();
+    renderLocalIcons(list);
 }
 
 async function refreshDevices() {
     const updated = document.getElementById("devicesUpdatedAt");
     try {
-        const response = await apiFetch("api/player/devices", { cache: "no-store", credentials: "same-origin" });
+        const response = await apiFetch("api/player/devices", { cache: "no-store", credentials: "same-origin", timeoutMs: 7000 });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
         renderDeviceList(data.devices || []);
@@ -435,67 +405,46 @@ async function refreshDevices() {
 function openDevicePicker() {
     const modal = document.getElementById("devices-modal");
     if (!modal) return;
-    modal.hidden = false; modal.setAttribute("aria-hidden", "false");
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
     refreshDevices();
 }
 
 function updateDeviceOwnershipUI() {
     const status = document.getElementById("gp-device-status");
     const btn = document.getElementById("gp-device-takeover");
-    const remote = isRemotePlayerOwner();
-    const hasRemoteSession = Boolean(remotePlayerState?.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID && remotePlayerState?.src);
+    const remote = Boolean(remotePlayerState?.src && !localPlayerSessionMatches(remotePlayerState));
     const stale = Boolean(remotePlayerState?._serverStale);
     const remoteName = String(remotePlayerState?.deviceName || "another device").trim();
     if (status) {
-        if (remote || hasRemoteSession) {
+        if (remote) {
             const paused = Boolean(remotePlayerState?.paused);
-            status.textContent = stale
-                ? `Last played on ${remoteName}`
-                : `${paused ? "Paused on" : "Playing on"} ${remoteName}`;
-            status.title = stale
-                ? "Saved player session from another device"
-                : (paused ? "Playback is paused on another device" : "Another Xrob Music device currently controls playback");
+            status.textContent = stale ? `Last known on ${remoteName}` : `${paused ? "Paused on" : "Playing on"} ${remoteName}`;
+            status.title = stale ? "Saved player session from another device" : "Another Xrob Music device currently controls playback";
         } else {
             status.textContent = `Playing on ${localDeviceLabel()}`;
             status.title = "This device controls playback";
         }
-        status.dataset.remote = String(remote || hasRemoteSession);
+        status.dataset.remote = String(remote);
     }
     if (btn) {
-        btn.hidden = !hasRemoteSession;
-        btn.disabled = !hasRemoteSession;
+        btn.hidden = !remote;
+        btn.disabled = !remote || playerHandoffInFlight;
         btn.textContent = stale ? "Resume here" : "Take over";
     }
 }
 
 function clearPlayerOwner() {
-    const owner = getPlayerOwner();
-    if (!owner || owner.id !== PLAYER_TAB_ID) return;
-    try { storageRemove(PLAYER_OWNER_KEY); } catch (_) {}
     playerOwnerId = null;
     updateDeviceOwnershipUI();
 }
 
 function isRemotePlayerOwner() {
-    const owner = getPlayerOwner();
-    const localOwnerIsFresh = Boolean(owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner));
-    if (localOwnerIsFresh) {
-        playerOwnerId = owner.id;
+    if (remotePlayerState?.src && !localPlayerSessionMatches(remotePlayerState)) {
+        playerOwnerId = String(remotePlayerState.ownerId || remotePlayerState.deviceId || "") || null;
         return true;
     }
-    if (remotePlayerState?._serverSynced && remotePlayerState.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID) {
-        const sameClient = remotePlayerState.clientId && remotePlayerState.clientId === PLAYER_CLIENT_ID;
-        const age = Date.now() - remotePlayerReceivedAt;
-        if (!sameClient && age < PLAYER_SERVER_STATE_STALE_MS) {
-            playerOwnerId = remotePlayerState.ownerId;
-            return true;
-        }
-    }
-    if (owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner)) {
-        playerOwnerId = owner.id;
-        return true;
-    }
-    return false;
+    return Boolean(playerOwnerId && playerOwnerId !== PLAYER_DEVICE_ID);
 }
 
 function syncResourceUrl(value) {
@@ -534,7 +483,7 @@ function setSynchronizedHomeQueue(queue, index = -1) {
 function buildPlayerSyncState(includeQueue = true) {
     if (!audio) return null;
     const state = {
-        ownerId: PLAYER_TAB_ID,
+        ownerId: PLAYER_DEVICE_ID,
         clientId: PLAYER_CLIENT_ID,
         deviceId: PLAYER_DEVICE_ID,
         src: syncResourceUrl(audio.src || ""),
@@ -569,54 +518,37 @@ function buildPlayerSyncState(includeQueue = true) {
 }
 
 function broadcastPlayerState(force = false, unload = false) {
-    if (!audio || (playerOwnerId && playerOwnerId !== PLAYER_TAB_ID) || isRemotePlayerOwner()) return;
+    if (!audio || isRemotePlayerOwner() || playerOwnerId !== PLAYER_DEVICE_ID) return;
     const state = buildPlayerSyncState(force);
     if (!state) return;
     state.seq = ++playerSyncSequence;
     if (force) state.force = true;
     if (playerTakeoverPending) { state.takeover = true; playerTakeoverPending = false; }
-    if (force) {
-        try { storageSet(PLAYER_SYNC_STATE_KEY, JSON.stringify(state)); } catch (_) {}
-    }
-    try { playerSyncChannel?.postMessage({ type: "state", state }); } catch (_) {}
     publishPlayerStateToServer(state, force, unload);
 }
 
 function publishPlayerStateToServer(state, force = false, unload = false) {
-    if (!state || state.ownerId !== PLAYER_TAB_ID) return;
+    if (!state || state.ownerId !== PLAYER_DEVICE_ID || state.deviceId !== PLAYER_DEVICE_ID || state.clientId !== PLAYER_CLIENT_ID) return;
     const send = (nextState, full, useUnloadTransport = false) => {
         const payload = JSON.stringify({ state: nextState, full, takeover: Boolean(nextState?.takeover) });
         try {
             if (useUnloadTransport && typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" && typeof Blob !== "undefined") {
-                const ok = navigator.sendBeacon(
-                    apiUrl("api/player/state"),
-                    new Blob([payload], { type: "application/json" })
-                );
-                if (ok) return;
+                if (navigator.sendBeacon(apiUrl("api/player/state"), new Blob([payload], { type: "application/json" }))) return;
             }
             apiFetch("api/player/state", {
-                method: "POST",
-                credentials: "same-origin",
-                keepalive: useUnloadTransport,
+                method: "POST", credentials: "same-origin", keepalive: useUnloadTransport,
                 timeoutMs: useUnloadTransport ? 5000 : API_DEFAULT_TIMEOUT_MS,
-                headers: { "Content-Type": "application/json" },
-                body: payload
+                headers: { "Content-Type": "application/json" }, body: payload
             }).then(async response => {
                 let details = null;
                 try { details = await response.clone().json(); } catch (_) {}
-                const serverSeq = Number(details?.seq ?? details?.state?.seq);
+                const serverState = details?.state;
+                const serverSeq = Number(details?.seq ?? serverState?.seq);
                 if (Number.isFinite(serverSeq)) playerSyncSequence = Math.max(playerSyncSequence, serverSeq);
                 if (response.status === 409 && !useUnloadTransport) {
-                    const detail = details?.detail;
-                    const isOwnedByAnotherDevice = detail?.status === "owned" &&
-                        detail?.ownerId && detail.ownerId !== PLAYER_TAB_ID;
-                    // A stale/out-of-order state from this same tab must never pause
-                    // playback. Only a real ownership conflict can stop the local player.
-                    if (isOwnedByAnotherDevice) {
-                        try { audio?.pause(); } catch (_) {}
-                        try { clearPlayerOwner(); } catch (_) {}
-                        loadServerPlayerState();
-                    }
+                    try { audio?.pause(); } catch (_) {}
+                    clearPlayerOwner();
+                    await loadServerPlayerState();
                 }
             }).catch(() => {});
         } catch (_) {}
@@ -629,30 +561,27 @@ function publishPlayerStateToServer(state, force = false, unload = false) {
     if (playerServerSyncTimer) return;
     playerServerSyncTimer = window.setTimeout(() => {
         playerServerSyncTimer = null;
-        if (!audio || isRemotePlayerOwner()) return;
+        if (!audio || isRemotePlayerOwner() || playerOwnerId !== PLAYER_DEVICE_ID) return;
         const fresh = buildPlayerSyncState(false);
-        if (fresh) send(fresh, false);
+        if (fresh) { fresh.seq = ++playerSyncSequence; send(fresh, false); }
     }, PLAYER_SERVER_SYNC_MS);
 }
 
 function applyAuthoritativeOwnedPlayerState(state, force = false) {
-    if (!audio || !state || state.ownerId !== PLAYER_TAB_ID) return false;
+    if (!audio || !localPlayerSessionMatches(state)) return false;
     const incomingSeq = Number(state.seq || 0);
-    const shouldReconcile = force || incomingSeq > playerSyncSequence;
+    if (!force && incomingSeq && incomingSeq <= playerSyncSequence) return false;
     playerSyncSequence = Math.max(playerSyncSequence, incomingSeq);
-    if (!shouldReconcile) return false;
-
     const previousApplying = applyingRemotePlayerCommand;
     applyingRemotePlayerCommand = true;
     try {
+        playerOwnerId = PLAYER_DEVICE_ID;
+        remotePlayerState = null;
+        stopRemoteProgressTicker();
         if (state.repeatMode && ["off", "track", "queue"].includes(String(state.repeatMode))) {
-            playerRepeatMode = String(state.repeatMode);
-            storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode);
-            applyRepeatLabel();
+            playerRepeatMode = String(state.repeatMode); storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode); applyRepeatLabel();
         }
-        if (state.shuffle !== undefined && Boolean(state.shuffle) !== playerShuffle) {
-            setShuffle(Boolean(state.shuffle));
-        }
+        if (state.shuffle !== undefined && Boolean(state.shuffle) !== playerShuffle) setShuffle(Boolean(state.shuffle));
         if (Array.isArray(state.queue) && state.queue.length) {
             const queue = normalizeSyncQueue(state.queue);
             if (state.source === "home") setSynchronizedHomeQueue(queue, state.queueIndex);
@@ -660,419 +589,235 @@ function applyAuthoritativeOwnedPlayerState(state, force = false) {
         }
         updatePlayerInfo(state.title, state.artist, state.art);
         if (player) player.style.display = "grid";
-        if (volume && Number.isFinite(Number(state.volume))) {
-            volume.value = Math.max(0, Math.min(1, Number(state.volume)));
-            audio.volume = Math.max(0, Math.min(1, Number(state.volume)));
-        }
+        if (volume && Number.isFinite(Number(state.volume))) { audio.volume = Math.max(0, Math.min(1, Number(state.volume))); volume.value = audio.volume; }
         audio.muted = Boolean(state.muted);
         currentPlayerSource = state.source === "home" ? "home" : (state.source ? "library" : currentPlayerSource);
         audio.dataset.xrobSongId = String(state.songId || "");
-
         const incomingSrc = syncResourceUrl(state.src || "");
         const currentSrc = syncResourceUrl(audio.src || "");
+        const target = Number.isFinite(Number(state._serverCurrentTime)) ? Math.max(0, Number(state._serverCurrentTime)) : Math.max(0, Number(state.currentTime || 0));
         const trackChanged = Boolean(incomingSrc) && incomingSrc !== currentSrc;
-        const target = Number.isFinite(Number(state.currentTime)) ? Math.max(0, Number(state.currentTime)) : 0;
-
         if (trackChanged) {
-            persistCurrentPosition(true);
             stopCrossfadePreload();
             const expectedSource = new URL(incomingSrc, location.href).href;
-            const loadGeneration = ++audioLoadGeneration;
+            const generation = ++audioLoadGeneration;
             audio.src = expectedSource;
             audio.load();
-            const restore = () => {
-                if (loadGeneration !== audioLoadGeneration || audio.src !== expectedSource) return;
-                if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.25));
-                if (state.paused) audio.pause();
-                else { initAudioContext(); audio.play().catch(() => {}); }
+            audio.addEventListener("loadedmetadata", () => {
+                if (generation !== audioLoadGeneration || audio.src !== expectedSource) return;
+                try { if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.25)); } catch (_) {}
+                if (state.paused) audio.pause(); else audio.play().catch(() => {});
                 applyReplayGainToActiveAudio(activeQueueTrack());
-            };
-            audio.addEventListener("loadedmetadata", restore, { once: true });
+            }, { once: true });
         } else {
             const diff = Math.abs(Number(audio.currentTime || 0) - target);
-            if (diff > 1.5 && (state.paused || force)) {
-                try { audio.currentTime = target; } catch (_) {}
-            }
+            if (diff > 1.75 && (state.paused || force)) { try { audio.currentTime = target; } catch (_) {} }
             if (state.paused && !audio.paused) audio.pause();
-            else if (!state.paused && audio.paused && audio.src) audio.play().catch(() => {});
+            else if (!state.paused && audio.paused && audio.src && !playerTakeoverPending) audio.play().catch(() => {});
         }
-        updateProgress();
-        updatePlayingState(!Boolean(state.paused));
-        updateMediaSession();
-        updateDeviceOwnershipUI();
+        updateProgress(); updatePlayingState(!Boolean(state.paused)); updateMediaSession(); updateDeviceOwnershipUI();
         return true;
-    } finally {
-        applyingRemotePlayerCommand = previousApplying;
-    }
+    } finally { applyingRemotePlayerCommand = previousApplying; }
 }
 
 async function loadServerPlayerState() {
     try {
-        const response = await apiFetch("api/player/state", { cache: "no-store", credentials: "same-origin" });
+        const response = await apiFetch("api/player/state", { cache: "no-store", credentials: "same-origin", timeoutMs: 7000 });
         if (!response.ok) return false;
         const data = await response.json().catch(() => ({}));
-        if (data?.state?.ownerId === PLAYER_TAB_ID) {
-            const firstServerState = !serverPlayerStateLoaded;
-            applyAuthoritativeOwnedPlayerState(data.state, firstServerState);
-            serverPlayerStateLoaded = true;
-            return true;
-        }
-        if (data?.state?.ownerId && data.state.ownerId !== PLAYER_TAB_ID) {
-            const serverUpdatedAt = Number(data.updated_at || 0);
-            const serverLastSeenAt = Number(data.last_seen_at || data.state?._serverLastSeenAt || serverUpdatedAt || 0);
-            const ageMs = serverLastSeenAt ? (Date.now() - serverLastSeenAt * 1000) : Infinity;
-            const persistent = Boolean(data.persistent || data.stale);
-            if (!persistent && serverLastSeenAt && ageMs > PLAYER_SERVER_STATE_STALE_MS) return false;
-            const enriched = { ...data.state, _serverUpdatedAt: serverUpdatedAt, _serverLastSeenAt: serverLastSeenAt, _serverActive: Boolean(data.active), _serverPersistent: persistent, _serverStale: Boolean(data.stale) || ageMs > PLAYER_SERVER_STATE_STALE_MS };
-            serverPlayerStateLoaded = true;
-            if (enriched.clientId && enriched.clientId === PLAYER_CLIENT_ID && enriched.src) {
-                remotePlayerState = enriched;
-                return takeoverRemotePlayer(true);
-            }
-            applyRemotePlayerState(enriched, true);
+        if (!data?.state) {
+            playerOwnerId = null;
+            remotePlayerState = null;
+            serverPlayerStateLoaded = false;
             updateDeviceOwnershipUI();
+            return false;
+        }
+        const state = { ...data.state, _serverUpdatedAt: Number(data.updated_at || 0), _serverLastSeenAt: Number(data.last_seen_at || data.updated_at || 0), _serverActive: Boolean(data.active), _serverStale: Boolean(data.stale), _serverPersistent: Boolean(data.persistent), _serverCurrentTime: Number(data.state._serverCurrentTime ?? data.state.currentTime ?? 0) };
+        serverPlayerStateLoaded = true;
+        if (localPlayerSessionMatches(state)) {
+            playerOwnerId = PLAYER_DEVICE_ID;
+            applyAuthoritativeOwnedPlayerState(state, true);
             return true;
         }
-    } catch (_) {}
+        playerOwnerId = String(state.ownerId || state.deviceId || "") || null;
+        applyRemotePlayerState(state, true);
+        return true;
+    } catch (_) { return false; }
+}
+
+function claimLocalPlayerWhenOwnerIsGone() {
+    if (remotePlayerState?.src && !remotePlayerState._serverStale) return false;
+    if (!remotePlayerState?.src) {
+        playerOwnerId = PLAYER_DEVICE_ID;
+        return true;
+    }
     return false;
 }
 
 function schedulePlayerStateBroadcast(force = false) {
-    if (force) {
-        if (playerProgressBroadcastTimer) {
-            window.clearTimeout(playerProgressBroadcastTimer);
-            playerProgressBroadcastTimer = null;
-        }
-        broadcastPlayerState(true);
-        return;
-    }
-    if (playerProgressBroadcastTimer || typeof window === "undefined") return;
+    if (force) { broadcastPlayerState(true); return; }
+    if (playerProgressBroadcastTimer) return;
     playerProgressBroadcastTimer = window.setTimeout(() => {
         playerProgressBroadcastTimer = null;
         broadcastPlayerState(false);
     }, PLAYER_PROGRESS_BROADCAST_MS);
 }
 
-function claimLocalPlayerWhenOwnerIsGone() {
-    const owner = getPlayerOwner();
-    if (!owner?.id || owner.id === PLAYER_TAB_ID || !ownerIsFresh(owner)) {
-        setPlayerOwner();
-        return true;
-    }
-    if (remotePlayerState?.ownerId === owner.id) return false;
-    setPlayerOwner();
-    remotePlayerState = null;
-    playerOwnerId = PLAYER_TAB_ID;
+function sendPlayerCommand(command, payload = {}) {
+    const targetDeviceId = String(remotePlayerState?.deviceId || remotePlayerState?.ownerId || "");
+    const targetClientId = String(remotePlayerState?.clientId || "");
+    if (!targetDeviceId || !command || localPlayerSessionMatches(remotePlayerState)) return false;
+    const message = { targetDeviceId, targetClientId, command, payload, requestId: `${PLAYER_DEVICE_ID}:${PLAYER_CLIENT_ID}:${Date.now()}:${Math.random().toString(36).slice(2)}` };
+    apiFetch("api/player/command", { method: "POST", credentials: "same-origin", timeoutMs: 7000, headers: { "Content-Type": "application/json" }, body: JSON.stringify(message) })
+        .then(async response => {
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                await loadServerPlayerState();
+                throw new Error(data.detail?.status === "owned" ? "Playback changed on another device" : (data.detail || "Remote control failed"));
+            }
+            if (data.state) applyRemotePlayerState({ ...data.state, _serverUpdatedAt: Number(data.updated_at || Date.now()/1000), _serverCurrentTime: Number(data.state.currentTime || 0) }, true);
+        })
+        .catch(error => console.warn("Remote player command:", error));
     return true;
 }
 
-function sendPlayerCommand(command, payload = {}) {
-    let targetId = null;
-    if (remotePlayerState?._serverSynced && remotePlayerState.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID) {
-        targetId = remotePlayerState.ownerId;
-    } else {
-        const owner = getPlayerOwner();
-        if (owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner)) targetId = owner.id;
-    }
-    if (!targetId) return false;
-    const message = { type: "command", targetId, command, payload, id: `${PLAYER_TAB_ID}:${Date.now()}:${Math.random().toString(36).slice(2)}` };
-    let sent = false;
-    if (playerSyncChannel) {
-        try { playerSyncChannel.postMessage(message); sent = true; } catch (_) {}
-    }
-    try { storageSet(PLAYER_SYNC_COMMAND_KEY, JSON.stringify(message)); sent = true; } catch (_) {}
-    try {
-        apiFetch("api/player/command", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(message)
-        }).catch(() => {});
-        sent = true;
-    } catch (_) {}
-    return sent;
-}
-
 function updateRemoteProgress(animationFrame = false) {
-    if (!remotePlayerState || !remotePlayerState.ownerId || remotePlayerState.ownerId === PLAYER_TAB_ID) return;
-    const base = Number(remotePlayerState._serverCurrentTime ?? remotePlayerState.currentTime ?? 0);
-    const duration = Number(remotePlayerState.duration || 0);
-    const elapsed = remotePlayerState.paused ? 0 : Math.max(0, (Date.now() - remotePlayerReceivedAt) / 1000);
-    let current = duration > 0 ? Math.min(duration, base + elapsed) : base + elapsed;
-    if (!remotePlayerState.paused) current = Math.max(current, remoteDisplayTime);
+    if (!remotePlayerState?.ownerId || localPlayerSessionMatches(remotePlayerState)) return;
+    const anchorSeconds = Number(remotePlayerState._serverUpdatedAt || 0);
+    const anchorMs = anchorSeconds > 1e12 ? anchorSeconds : anchorSeconds * 1000;
+    const base = Math.max(0, Number(remotePlayerState._serverCurrentTime ?? remotePlayerState.currentTime ?? 0));
+    const elapsed = !remotePlayerState.paused && anchorMs ? Math.max(0, (Date.now() - anchorMs) / 1000) : 0;
+    const duration = Math.max(0, Number(remotePlayerState.duration || 0));
+    const current = duration > 0 ? Math.min(duration, base + elapsed) : base + elapsed;
     remoteDisplayTime = current;
-    if (curTime) {
-        const formatted = formatSeconds(current);
-        if (curTime.textContent !== formatted) curTime.textContent = formatted;
-    }
-    if (durTime) {
-        const formattedDuration = formatSeconds(duration);
-        if (durTime.textContent !== formattedDuration) durTime.textContent = formattedDuration;
-    }
-    if (seek && duration > 0 && !isSeeking) {
-        const percent = Math.max(0, Math.min(100, current / duration * 100));
-        if (!animationFrame || (Date.now() - remoteRangeLastUpdatedAt) >= 200) {
-            seek.value = percent.toFixed(3);
-            remoteRangeLastUpdatedAt = Date.now();
-        }
-        renderSeekVisual(percent);
-    }
+    if (seek && !isSeeking) { const pct = duration > 0 ? Math.max(0, Math.min(100, current / duration * 100)) : 0; seek.value = pct; renderSeekVisual(pct); }
+    if (curTime) curTime.textContent = formatSeconds(current);
+    if (durTime && duration > 0) durTime.textContent = formatSeconds(duration);
+    if (animationFrame && remotePlayerTimer) window.requestAnimationFrame(() => {});
 }
 
 function startRemoteProgressTicker() {
-    if (remotePlayerTimer) return;
+    stopRemoteProgressTicker();
+    if (!remotePlayerState || localPlayerSessionMatches(remotePlayerState)) return;
     const tick = () => {
-        remotePlayerTimer = requestAnimationFrame(tick);
-        if (remotePlayerState && !isRemotePlayerOwner()) {
-            stopRemoteProgressTicker();
-            return;
-        }
+        if (!remotePlayerState || localPlayerSessionMatches(remotePlayerState)) { remotePlayerTimer = null; return; }
         updateRemoteProgress(true);
+        remotePlayerTimer = window.setTimeout(tick, 1000);
     };
-    remotePlayerTimer = requestAnimationFrame(tick);
+    tick();
 }
 
 function stopRemoteProgressTicker() {
-    if (remotePlayerTimer) {
-        cancelAnimationFrame(remotePlayerTimer);
-        remotePlayerTimer = null;
-    }
+    if (remotePlayerTimer) window.clearTimeout(remotePlayerTimer);
+    remotePlayerTimer = null;
 }
-
 
 function updateRemotePlayerOptimistic(patch = {}) {
     if (!remotePlayerState) return;
     remotePlayerState = { ...remotePlayerState, ...patch };
-    remotePlayerReceivedAt = Date.now();
-    if (patch.currentTime !== undefined && Number.isFinite(Number(patch.currentTime))) {
-        remoteDisplayTime = Math.max(0, Number(patch.currentTime));
-    }
-    if (patch.title !== undefined || patch.artist !== undefined || patch.art !== undefined) {
-        updatePlayerInfo(remotePlayerState.title, remotePlayerState.artist, remotePlayerState.art);
-    }
-    if (patch.volume !== undefined && volume) volume.value = Math.max(0, Math.min(1, Number(remotePlayerState.volume || 0)));
+    if (patch.currentTime !== undefined) { remotePlayerState._serverCurrentTime = Number(patch.currentTime) || 0; remotePlayerState._serverUpdatedAt = Date.now()/1000; }
+    if (patch.paused !== undefined) remotePlayerState._serverUpdatedAt = Date.now()/1000;
     updateRemoteProgress();
-    if (patch.paused !== undefined) updatePlayingState(!remotePlayerState.paused);
-}
-
-function applyRemoteDailyMixState(state, persist = true) {
-    if (!state || !Array.isArray(state.tracks) || !state.tracks.length) return false;
-    dailyMixTracks = state.tracks.map(track => ({ ...track }));
-    dailyMixVariant = Number.isFinite(Number(state.variant)) ? Number(state.variant) : dailyMixVariant;
-    renderDailyMixCards(state.title || "Daily Mix", state.subtitle || "Personalized from your listening");
-    const row = document.getElementById("dailyMixTracks");
-    if (row && Number.isFinite(Number(state.scrollLeft))) {
-        row.scrollLeft = Math.max(0, Math.min(Number(state.scrollLeft), Math.max(0, row.scrollWidth - row.clientWidth)));
-    }
-    if (persist) {
-        try { storageSet(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, tracks: dailyMixTracks, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
-    }
-    return true;
-}
-
-function loadPersistedDailyMixState() {
-    try {
-        const raw = storageGet(DAILY_MIX_STATE_KEY);
-        if (!raw) return false;
-        const state = JSON.parse(raw);
-        const configured = Math.max(5, Math.min(50, Number(storageGet("xrob_music_daily_mix_count") || 30)));
-        if (!Array.isArray(state?.tracks) || !state.tracks.length) return false;
-        if (state.date && state.date !== getLocalDateKey()) return false;
-        if (Number(state.trackCount || state.tracks.length) !== configured) return false;
-        return applyRemoteDailyMixState(state, false);
-    } catch (_) {
-        return false;
-    }
+    if (patch.repeatMode) applyRepeatLabel();
+    if (patch.shuffle !== undefined) updateShuffleButtons();
+    updateDeviceOwnershipUI();
 }
 
 function applyRemotePlayerState(state, fromServer = false) {
-    if (!state || state.ownerId === PLAYER_TAB_ID) return;
-    const serverUpdatedAt = Number(state._serverUpdatedAt || 0);
-    const serverUpdatedAtMs = serverUpdatedAt > 0
-        ? (serverUpdatedAt > 1e12 ? serverUpdatedAt : serverUpdatedAt * 1000)
-        : 0;
-    const serverLastSeenAtRaw = Number(state._serverLastSeenAt || 0);
-    const serverLastSeenAtMs = serverLastSeenAtRaw > 1e12 ? serverLastSeenAtRaw : serverLastSeenAtRaw * 1000;
-    const freshnessAnchor = serverLastSeenAtMs || serverUpdatedAtMs;
-    const serverStale = Boolean(state._serverStale || (freshnessAnchor && (Date.now() - freshnessAnchor) > PLAYER_SERVER_STATE_STALE_MS));
-    if (fromServer && serverStale && !state._serverPersistent) return;
-
-    const owner = getPlayerOwner();
-    if (!fromServer && owner?.id && owner.id !== state.ownerId && ownerIsFresh(owner)) return;
+    if (!state || localPlayerSessionMatches(state)) return false;
     const sequence = Number(state.seq ?? 0);
-    if (lastRemoteOwnerId === state.ownerId && sequence && sequence <= lastRemoteSequence && !state.force) return;
-
-    const previous = remotePlayerState;
-    const ownerChanged = lastRemoteOwnerId !== state.ownerId;
-    // Server state carries a timestamped playback clock. Use it as the anchor instead
-    // of the browser message-arrival time, which can be delayed by network jitter.
-    const serverClockTime = Number.isFinite(Number(state._serverCurrentTime))
-        ? Math.max(0, Number(state._serverCurrentTime))
-        : Math.max(0, Number(state.currentTime || 0));
-    const serverClockAnchor = serverUpdatedAtMs || Date.now();
-    // Never carry a previous owner's queue/Daily Mix into a newly claimed player.
-    const merged = { ...(ownerChanged ? {} : (previous || {})), ...state, currentTime: serverClockTime, _serverSynced: Boolean(fromServer || state._serverSynced) };
-    if (ownerChanged) {
-        lastRemoteSequence = -1;
-        remoteDisplayTime = serverClockTime;
-    }
-    const nextTime = serverClockTime;
-    const previousTime = Number(previous?.currentTime || 0);
-    const wasPlaying = Boolean(previous && !previous.paused);
-    const isNormalPlaybackTick = wasPlaying && !merged.paused && Math.abs(nextTime - previousTime) <= 2.0;
-    if (!isNormalPlaybackTick || merged.paused || ownerChanged) remoteDisplayTime = nextTime;
-    else remoteDisplayTime = Math.max(remoteDisplayTime, nextTime);
-
-    lastRemoteOwnerId = state.ownerId;
-    lastRemoteSequence = sequence;
+    const ownerId = String(state.ownerId || state.deviceId || "");
+    const receivedServerAt = Number(state._serverUpdatedAt || 0);
+    const receivedMs = receivedServerAt > 1e12 ? receivedServerAt : receivedServerAt * 1000;
+    const staleByTime = receivedMs > 0 && (Date.now() - receivedMs) > PLAYER_SERVER_STATE_STALE_MS;
+    if (fromServer && staleByTime && !state._serverPersistent && !state.src) return false;
+    if (ownerId && lastRemoteOwnerId === ownerId && sequence && sequence < lastRemoteSequence && !state.force) return false;
+    const ownerChanged = lastRemoteOwnerId !== ownerId;
+    const base = Number(state._serverCurrentTime ?? state.currentTime ?? 0);
+    const merged = { ...(ownerChanged ? {} : (remotePlayerState || {})), ...state, ownerId, deviceId: String(state.deviceId || ownerId), currentTime: Math.max(0, base), _serverSynced: Boolean(fromServer || state._serverSynced) };
+    lastRemoteOwnerId = ownerId;
+    lastRemoteSequence = Math.max(lastRemoteSequence, sequence);
     remotePlayerState = merged;
-    remotePlayerReceivedAt = serverClockAnchor;
-    playerOwnerId = state.ownerId;
-    if (merged.repeatMode && ["off", "track", "queue"].includes(String(merged.repeatMode))) {
-        playerRepeatMode = String(merged.repeatMode);
-        storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode);
-        applyRepeatLabel();
-    }
-    if (merged.shuffle !== undefined) {
-        playerShuffle = Boolean(merged.shuffle);
-        storageSet("xrob_music_shuffle", String(playerShuffle));
-        updateShuffleButtons();
-    }
+    playerOwnerId = ownerId || null;
+    if (merged.repeatMode && ["off", "track", "queue"].includes(String(merged.repeatMode))) { playerRepeatMode = String(merged.repeatMode); storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode); applyRepeatLabel(); }
+    if (merged.shuffle !== undefined) { playerShuffle = Boolean(merged.shuffle); storageSet("xrob_music_shuffle", String(playerShuffle)); updateShuffleButtons(); }
     if (Array.isArray(merged.queue) && merged.queue.length) {
-        const syncedQueue = normalizeSyncQueue(merged.queue);
-        if (merged.source === "home") setSynchronizedHomeQueue(syncedQueue, merged.queueIndex);
-        else syncLibraryQueue(syncedQueue, merged.queueIndex);
+        const q = normalizeSyncQueue(merged.queue);
+        if (merged.source === "home") setSynchronizedHomeQueue(q, merged.queueIndex); else syncLibraryQueue(q, merged.queueIndex);
     }
     if (merged.dailyMix) applyRemoteDailyMixState(merged.dailyMix);
     updatePlayerInfo(merged.title, merged.artist, merged.art);
     if (player) player.style.display = "grid";
     if (volume && Number.isFinite(Number(merged.volume))) volume.value = Math.max(0, Math.min(1, Number(merged.volume)));
     updateRemoteProgress(false);
-    updatePlayingState(!merged.paused);
+    updatePlayingState(!Boolean(merged.paused));
     startRemoteProgressTicker();
     updateDeviceOwnershipUI();
+    return true;
 }
 
-async function takeoverRemotePlayer(force = false) {
+async function takeoverRemotePlayer(force = false, transferRequestId = "") {
     const state = remotePlayerState;
-    if (!audio || !state?.src || (!force && isRemotePlayerOwner()) || playerHandoffInFlight) return false;
-
+    if (!audio || !state?.src || localPlayerSessionMatches(state) || playerHandoffInFlight) return false;
     playerHandoffInFlight = true;
     const button = document.getElementById("gp-device-takeover");
     const oldButtonText = button?.textContent;
     if (button) { button.disabled = true; button.textContent = "Connecting…"; }
-
     try {
-        // Ownership changes atomically on the server. This is the critical handoff
-        // step: no local pause/claim/state race can reset the source to 0:00.
         const response = await apiFetch("api/player/handoff", {
-            method: "POST",
-            credentials: "same-origin",
+            method: "POST", credentials: "same-origin", timeoutMs: PLAYER_HANDOFF_TIMEOUT_MS,
             headers: { "Content-Type": "application/json" },
-            timeoutMs: PLAYER_HANDOFF_TIMEOUT_MS,
-            body: JSON.stringify({
-                newOwnerId: PLAYER_TAB_ID,
-                clientId: PLAYER_CLIENT_ID,
-                deviceName: localDeviceLabel(),
-                expectedOwnerId: state.ownerId,
-            })
+            body: JSON.stringify({ newOwnerId: PLAYER_DEVICE_ID, deviceId: PLAYER_DEVICE_ID, clientId: PLAYER_CLIENT_ID, deviceName: localDeviceLabel(), expectedOwnerId: state.ownerId, force: Boolean(force), requestId: transferRequestId || "" })
         });
         const result = await response.json().catch(() => ({}));
-        if (!response.ok || !result?.state?.src) {
-            await loadServerPlayerState();
-            return false;
-        }
-
+        if (!response.ok || !result?.state?.src) { await loadServerPlayerState(); return false; }
         const synced = { ...result.state };
-        const serverSeq = Number(synced.seq);
-        if (Number.isFinite(serverSeq)) playerSyncSequence = Math.max(playerSyncSequence, serverSeq);
-        const target = Math.max(0, Number(synced._serverCurrentTime ?? synced.currentTime ?? 0));
+        const serverSeq = Number(synced.seq); if (Number.isFinite(serverSeq)) playerSyncSequence = Math.max(playerSyncSequence, serverSeq);
+        const target = Math.max(0, Number(synced.currentTime || 0));
         const duration = Math.max(0, Number(synced.duration || 0));
         const shouldPlay = !Boolean(synced.paused);
         const expectedSource = new URL(syncResourceUrl(synced.src), location.href).href;
-        const loadGeneration = ++audioLoadGeneration;
-
-        // Now that the server has granted ownership, this tab becomes the only
-        // controller. Suppress the normal play-event owner claim during loading.
-        setPlayerOwner(true);
+        const generation = ++audioLoadGeneration;
+        playerOwnerId = PLAYER_DEVICE_ID;
         suppressLocalOwnershipUntil = Date.now() + 8000;
         remotePlayerState = null;
         stopRemoteProgressTicker();
-
         if (Array.isArray(synced.queue) && synced.queue.length) {
             const queue = normalizeSyncQueue(synced.queue);
-            if (synced.source === "home") setSynchronizedHomeQueue(queue, synced.queueIndex);
-            else syncLibraryQueue(queue, Number(synced.queueIndex ?? 0));
+            if (synced.source === "home") setSynchronizedHomeQueue(queue, synced.queueIndex); else syncLibraryQueue(queue, Number(synced.queueIndex ?? 0));
         }
         currentPlayerSource = synced.source === "home" ? "home" : (synced.source ? "library" : currentPlayerSource);
         updatePlayerInfo(synced.title, synced.artist, synced.art);
         audio.dataset.xrobSongId = String(synced.songId || "");
         activePreviewBtn = null;
-        if (Number.isFinite(Number(synced.volume))) {
-            audio.volume = Math.max(0, Math.min(1, Number(synced.volume)));
-            if (volume) volume.value = audio.volume;
-        }
+        if (Number.isFinite(Number(synced.volume))) { audio.volume = Math.max(0, Math.min(1, Number(synced.volume))); if (volume) volume.value = audio.volume; }
         audio.muted = Boolean(synced.muted);
         playerTakeoverPending = true;
         if (player) player.style.display = "grid";
         stopCrossfadePreload();
-
         const loaded = await new Promise(resolve => {
             let settled = false;
-            const finish = ok => {
-                if (settled) return;
-                settled = true;
-                resolve(ok);
-            };
-            const onMetadata = () => finish(true);
-            const onError = () => finish(false);
-            audio.addEventListener("loadedmetadata", onMetadata, { once: true });
-            audio.addEventListener("error", onError, { once: true });
+            const finish = ok => { if (!settled) { settled = true; resolve(ok); } };
+            audio.addEventListener("loadedmetadata", () => finish(true), { once: true });
+            audio.addEventListener("error", () => finish(false), { once: true });
             window.setTimeout(() => finish(false), PLAYER_HANDOFF_TIMEOUT_MS);
-            audio.src = expectedSource;
-            audio.load();
+            audio.src = expectedSource; audio.load();
             if (audio.readyState >= 1) queueMicrotask(() => finish(true));
         });
-        if (!loaded || loadGeneration !== audioLoadGeneration || audio.src !== expectedSource) {
-            await loadServerPlayerState();
-            return false;
-        }
-
-        const safeTarget = duration > 0
-            ? Math.min(target, Math.max(0, Number(audio.duration || duration) - 0.25))
-            : target;
-        try { audio.currentTime = safeTarget; } catch (_) {}
-        applyReplayGainToActiveAudio(activeQueueTrack());
-        updateProgress();
-        updateMediaSession();
-        updateDeviceOwnershipUI();
+        if (!loaded || generation !== audioLoadGeneration || audio.src !== expectedSource) { await loadServerPlayerState(); return false; }
+        try { audio.currentTime = duration > 0 ? Math.min(target, Math.max(0, Number(audio.duration || duration) - 0.25)) : target; } catch (_) {}
+        applyReplayGainToActiveAudio(activeQueueTrack()); updateProgress(); updateMediaSession(); updateDeviceOwnershipUI();
         if (shouldPlay) {
             initAudioContext();
-            try {
-                await audio.play();
-            } catch (error) {
-                // Browser autoplay policy may require one explicit tap on the new device.
-                updatePlayingState(false);
-                showToast("▶ Tap Play to continue from the current position");
-                console.debug("Playback handoff requires user gesture:", error);
-            }
-        } else {
-            audio.pause();
-            updatePlayingState(false);
-        }
-        playerTakeoverPending = true;
-        schedulePlayerStateBroadcast(true);
+            try { await audio.play(); schedulePlayerStateBroadcast(true); }
+            catch (error) { updatePlayingState(false); showToast("▶ Tap Play to continue on this device"); console.debug("Playback handoff needs user gesture:", error); }
+        } else { audio.pause(); updatePlayingState(false); schedulePlayerStateBroadcast(true); }
         return true;
     } catch (error) {
-        console.warn("Playback handoff failed:", error);
-        try { await loadServerPlayerState(); } catch (_) {}
-        return false;
+        console.warn("Playback handoff failed:", error); await loadServerPlayerState().catch(() => {}); return false;
     } finally {
         playerHandoffInFlight = false;
-        if (button) {
-            button.disabled = false;
-            button.textContent = oldButtonText || "Take over";
-        }
+        if (button) { button.disabled = false; button.textContent = oldButtonText || "Take over"; }
         updateDeviceOwnershipUI();
     }
 }
@@ -1082,164 +827,54 @@ function applyRemoteHandoff(message) {
     const toOwnerId = String(message?.toOwnerId || "");
     const state = message?.state;
     if (!fromOwnerId || !toOwnerId || !state) return;
-
-    if (fromOwnerId === PLAYER_TAB_ID && toOwnerId !== PLAYER_TAB_ID) {
-        // Server already granted another device ownership. Stop locally without
-        // publishing an obsolete paused/0:00 snapshot back over the handoff.
+    if (fromOwnerId === PLAYER_DEVICE_ID && toOwnerId !== PLAYER_DEVICE_ID) {
         const previousApplying = applyingRemotePlayerCommand;
         applyingRemotePlayerCommand = true;
-        try {
-            playerHandoffStoppingRemote = true;
-            audio?.pause();
-            clearPlayerOwner();
-        } catch (_) {}
-        finally {
-            playerHandoffStoppingRemote = false;
-            applyingRemotePlayerCommand = previousApplying;
-        }
-        remotePlayerState = { ...state, _serverSynced: true };
-        remotePlayerReceivedAt = Number(state._serverUpdatedAt || Date.now());
-        applyRemotePlayerState(remotePlayerState, true);
+        playerHandoffStoppingRemote = true;
+        try { audio?.pause(); } catch (_) {}
+        finally { playerHandoffStoppingRemote = false; applyingRemotePlayerCommand = previousApplying; }
+        playerOwnerId = toOwnerId;
+        applyRemotePlayerState(state, true);
         return;
     }
-
-    if (toOwnerId !== PLAYER_TAB_ID) {
-        applyRemotePlayerState(state, true);
-    }
-}
-
-function applyRemoteCommand(message) {
-    if (!audio || message?.targetId !== PLAYER_TAB_ID) return;
-    if (message.id) {
-        if (processedPlayerCommandIds.has(message.id)) return;
-        processedPlayerCommandIds.add(message.id);
-        if (processedPlayerCommandIds.size > 200) processedPlayerCommandIds.delete(processedPlayerCommandIds.values().next().value);
-    }
-    const p = message.payload || {};
-    applyingRemotePlayerCommand = true;
-    suppressLocalOwnershipUntil = Date.now() + 5000;
-    try {
-        if (message.command === "play") audio.play().catch(() => {});
-        else if (message.command === "pause") audio.pause();
-        else if (message.command === "seek" && Number.isFinite(Number(p.time))) audio.currentTime = Math.max(0, Number(p.time));
-        else if (message.command === "next") playNextTrack();
-        else if (message.command === "previous") playPreviousTrack();
-        else if (message.command === "shuffle") setShuffle(Boolean(p.enabled));
-        else if (message.command === "repeat") { const mode = String(p.mode || "off"); if (["off", "track", "queue"].includes(mode)) { playerRepeatMode = mode; storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode); applyRepeatLabel(); } }
-        else if (message.command === "volume" && Number.isFinite(Number(p.volume))) { audio.volume = Math.max(0, Math.min(1, Number(p.volume))); if (volume) volume.value = audio.volume; }
-        else if (message.command === "load-play") {
-            if (Array.isArray(p.queue) && p.queue.length) {
-                if (p.source === "home") setSynchronizedHomeQueue(p.queue, Number(p.queueIndex ?? 0));
-                else syncLibraryQueue(normalizeSyncQueue(p.queue), Number(p.queueIndex ?? 0));
-            }
-            toggleAudioStream(document.createElement("button"), p.src, p.source || "library", p.title, p.artist, p.art, p.songId || null, true);
-        }
-    } finally {
-        applyingRemotePlayerCommand = false;
-    }
-    if (message.command !== "load-play") schedulePlayerStateBroadcast(true);
+    if (toOwnerId !== PLAYER_DEVICE_ID) applyRemotePlayerState(state, true);
 }
 
 async function sendPlayerHeartbeat() {
-    if (!audio || playerOwnerId !== PLAYER_TAB_ID || isRemotePlayerOwner()) return;
+    if (!audio || playerOwnerId !== PLAYER_DEVICE_ID || isRemotePlayerOwner()) return;
     try {
-        const response = await apiFetch("api/player/heartbeat", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            timeoutMs: 7000,
-            body: JSON.stringify({ ownerId: PLAYER_TAB_ID, clientId: PLAYER_CLIENT_ID, deviceId: PLAYER_DEVICE_ID, deviceName: localDeviceLabel() })
-        });
+        const response = await apiFetch("api/player/heartbeat", { method: "POST", credentials: "same-origin", timeoutMs: 7000, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ownerId: PLAYER_DEVICE_ID, clientId: PLAYER_CLIENT_ID, deviceId: PLAYER_DEVICE_ID, deviceName: localDeviceLabel() }) });
         const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-            if (response.status === 409) {
-                try { audio.pause(); } catch (_) {}
-                clearPlayerOwner();
-                await loadServerPlayerState();
-            }
-            return;
-        }
+        if (!response.ok) { if (response.status === 409) { try { audio.pause(); } catch (_) {} clearPlayerOwner(); await loadServerPlayerState(); } return; }
         const serverState = result?.state;
-        const serverSeq = Number(serverState?.seq);
-        if (Number.isFinite(serverSeq)) playerSyncSequence = Math.max(playerSyncSequence, serverSeq);
+        const serverSeq = Number(serverState?.seq); if (Number.isFinite(serverSeq)) playerSyncSequence = Math.max(playerSyncSequence, serverSeq);
     } catch (_) {}
 }
 
 async function initPlayerSync() {
-    if (playerSyncChannel || typeof window === "undefined") return;
-    try { playerSyncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(PLAYER_SYNC_CHANNEL) : null; } catch (_) { playerSyncChannel = null; }
-    playerSyncChannel?.addEventListener("message", (event) => {
-        const msg = event.data || {};
-        if (msg.type === "request-state") {
-            const owner = getPlayerOwner();
-            if (owner?.id === PLAYER_TAB_ID) schedulePlayerStateBroadcast(true);
-        } else if (msg.type === "state") {
-            if (msg.state?.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(msg.state);
-        } else if (msg.type === "command") {
-            applyRemoteCommand(msg);
-        } else if (msg.type === "device_takeover_request" && msg.targetDeviceId === PLAYER_DEVICE_ID) {
-            takeoverRemotePlayer(false).then(moved => { if (moved) showToast(`▶ Playback moved to ${localDeviceLabel()}`); }).catch(() => {});
-        } else if (msg.type === "player_handoff") {
-            applyRemoteHandoff(msg);
-        } else if (msg.type === "owner-closing" && msg.ownerId === playerOwnerId) {
-            remotePlayerState = null;
-            playerOwnerId = null;
-            stopRemoteProgressTicker();
-            updatePlayingState(false);
-        }
-    });
-    const owner = getPlayerOwner();
-    if (ownerIsFresh(owner)) playerOwnerId = owner.id;
+    if (typeof window === "undefined") return;
+    if (playerSyncHeartbeat) return;
+    serverPlayerStateLoaded = false;
     await loadServerPlayerState();
-    const raw = storageGet(PLAYER_SYNC_STATE_KEY);
-    // When another tab owns the player, trust a live BroadcastChannel response
-    // instead of blindly restoring an old state snapshot from localStorage.
-    if (!serverPlayerStateLoaded && !(ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID) && raw) {
-        try { applyRemotePlayerState(JSON.parse(raw)); } catch (_) {}
-    }
-    try { playerSyncChannel?.postMessage({ type: "request-state", requesterId: PLAYER_TAB_ID }); } catch (_) {}
-    if (ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID && !remotePlayerState) {
-        playerOwnerClaimTimer = window.setTimeout(() => {
-            playerOwnerClaimTimer = null;
-            if (!remotePlayerState) claimLocalPlayerWhenOwnerIsGone();
-        }, PLAYER_OWNER_CLAIM_DELAY_MS);
-    }
+    await sendDeviceHeartbeat();
+    playerSyncHeartbeat = window.setInterval(() => { sendPlayerHeartbeat().catch(() => {}); }, PLAYER_HEARTBEAT_MS);
+    playerDeviceHeartbeatTimer = window.setInterval(() => { sendDeviceHeartbeat().catch(() => {}); }, PLAYER_DEVICE_HEARTBEAT_MS);
     window.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") loadServerPlayerState();
-    });
-    window.addEventListener("storage", (event) => {
-        if (event.key === PLAYER_SYNC_STATE_KEY && event.newValue) {
-            try { const state = JSON.parse(event.newValue); if (state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state); } catch (_) {}
-        } else if (event.key === PLAYER_SYNC_COMMAND_KEY && event.newValue) {
-            try { const message = JSON.parse(event.newValue); if (message.type === "device_takeover_request" && message.targetDeviceId === PLAYER_DEVICE_ID) takeoverRemotePlayer(false).catch(() => {}); else if (message.targetId === PLAYER_TAB_ID) applyRemoteCommand(message); } catch (_) {}
-        } else if (event.key === PLAYER_OWNER_KEY && event.newValue) {
-            try { const owner = JSON.parse(event.newValue); if (owner?.id) playerOwnerId = owner.id; } catch (_) {}
-        }
-    });
-    playerSyncHeartbeat = window.setInterval(() => {
-        heartbeatPlayerOwner();
-        sendPlayerHeartbeat();
-    }, PLAYER_HEARTBEAT_MS);
-    sendDeviceHeartbeat();
-    playerDeviceHeartbeatTimer = window.setInterval(sendDeviceHeartbeat, 8000);
-    window.addEventListener("online", () => { sendDeviceHeartbeat(); loadServerPlayerState(); });
+        if (document.visibilityState === "visible") { loadServerPlayerState().catch(() => {}); sendDeviceHeartbeat().catch(() => {}); }
+    }, { passive: true });
+    window.addEventListener("online", () => { loadServerPlayerState().catch(() => {}); sendDeviceHeartbeat().catch(() => {}); }, { passive: true });
     window.addEventListener("beforeunload", () => {
         try { persistCurrentPosition(true, true); } catch (_) {}
         try { broadcastPlayerState(true, true); } catch (_) {}
-        try { playerSyncChannel?.postMessage({ type: "owner-closing", ownerId: PLAYER_TAB_ID }); } catch (_) {}
-        clearPlayerOwner();
         if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
-        playerSyncHeartbeat = null;
         if (playerDeviceHeartbeatTimer) window.clearInterval(playerDeviceHeartbeatTimer);
-        playerDeviceHeartbeatTimer = null;
-        stopRemoteProgressTicker();
-        if (playerOwnerClaimTimer) window.clearTimeout(playerOwnerClaimTimer);
+        playerSyncHeartbeat = null; playerDeviceHeartbeatTimer = null;
         if (playerProgressBroadcastTimer) window.clearTimeout(playerProgressBroadcastTimer);
         if (playerServerSyncTimer) window.clearTimeout(playerServerSyncTimer);
-        try { playerSyncChannel?.close(); } catch (_) {}
+        playerProgressBroadcastTimer = playerServerSyncTimer = null;
+        stopRemoteProgressTicker();
     }, { once: true });
 }
-
 
 function currentSongId() {
     const useEnhanced = currentPlayerSource === "library" && enhancedQueue.length;
@@ -1285,7 +920,6 @@ async function loadEnhancedPositions() {
 let lastPositionPersistId = "";
 let lastPositionPersistSecond = -1;
 function persistCurrentPosition(force = false, unload = false) {
-    if (playerSettings.resume_enabled === false) return;
     const id = audio?.dataset?.xrobSongId || currentSongId();
     if(!id || !audio) return;
     const position=Number(audio.currentTime||0), duration=Number(audio.duration||0);
@@ -1905,7 +1539,7 @@ function savePlayerState(force = false) {
 }
 
 function restorePlayerState() {
-    if (!audio) return;
+    if (!audio || serverPlayerStateLoaded) return;
     if (isRemotePlayerOwner()) {
         // A remote owner must have a live state message; an orphaned owner key
         // from a closed/crashed tab should never block the restored local player.
@@ -1961,20 +1595,6 @@ function restorePlayerState() {
     } catch (error) {
         console.warn("Could not restore player:", error);
     }
-}
-
-function formatRelativePlayedAt(value) {
-    const timestamp = Number(value || 0) * 1000;
-    if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
-    const diff = Math.max(0, Date.now() - timestamp);
-    const minute = 60 * 1000;
-    const hour = 60 * minute;
-    const day = 24 * hour;
-    if (diff < minute) return "just now";
-    if (diff < hour) return `${Math.max(1, Math.floor(diff / minute))}m ago`;
-    if (diff < day) return `${Math.max(1, Math.floor(diff / hour))}h ago`;
-    if (diff < 7 * day) return `${Math.max(1, Math.floor(diff / day))}d ago`;
-    try { return new Date(timestamp).toLocaleDateString([], { month: "short", day: "numeric" }); } catch (_) { return ""; }
 }
 
 function formatSeconds(seconds) {
@@ -2561,7 +2181,7 @@ function toggleAudioStream(
 
 
     const selectedTrack = activeQueueTrack() || { id: songId, title, artist, cover: art };
-    const savedResume = playerSettings.resume_enabled !== false && songId ? enhancedSongPositions[String(songId)] : null;
+    const savedResume = songId ? enhancedSongPositions[String(songId)] : null;
     const resumePosition = Number(savedResume?.position || 0);
     audio.addEventListener("loadedmetadata", () => {
         if (loadGeneration !== audioLoadGeneration || audio.src !== absoluteUrl) return;
@@ -2622,22 +2242,6 @@ function toggleAudioStream(
 /* ============================================================
    AUDIO EVENTS
    ============================================================ */
-
-function initPwaInstall() {
-    window.addEventListener("beforeinstallprompt", event => {
-        event.preventDefault(); deferredInstallPrompt = event;
-        const button = document.getElementById("installPwaButton"); if (button) button.hidden = false;
-    });
-    window.addEventListener("appinstalled", () => { deferredInstallPrompt = null; const button=document.getElementById("installPwaButton"); if(button) button.hidden=true; showToast("✓ Xrob Music installed"); });
-    document.getElementById("installPwaButton")?.addEventListener("click", async () => {
-        if (!deferredInstallPrompt) { showToast("Use your browser menu to install Xrob Music"); return; }
-        deferredInstallPrompt.prompt();
-        try { await deferredInstallPrompt.userChoice; } catch (_) {}
-        deferredInstallPrompt = null;
-        const button=document.getElementById("installPwaButton"); if(button) button.hidden=true;
-    });
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
-}
 
 function bindAudioEvents() {
 
@@ -3032,8 +2636,7 @@ async function resetSettings() {
         replaygain_prevent_clipping: true,
         crossfade_seconds: 0,
         gapless_playback: true,
-        fade_on_pause: true,
-        resume_enabled: true
+        fade_on_pause: true
     };
     try {
         const response = await apiFetch("api/settings", {
@@ -3065,8 +2668,8 @@ function applySettingsToForm(settings) {
     const dailyMixCount = Math.max(5, Math.min(50, Number(settings.daily_mix_track_count || 30)));
     setValue("set_daily_mix_count", dailyMixCount);
     storageSet("xrob_music_daily_mix_count", String(dailyMixCount));
-    playerSettings = { ...playerSettings, replaygain_enabled: settings.replaygain_enabled !== false, replaygain_mode: settings.replaygain_mode || "track", replaygain_preamp_db: Number(settings.replaygain_preamp_db || 0), replaygain_prevent_clipping: settings.replaygain_prevent_clipping !== false, crossfade_seconds: Number(settings.crossfade_seconds || 0), gapless_playback: settings.gapless_playback !== false, fade_on_pause: settings.fade_on_pause !== false, resume_enabled: settings.resume_enabled !== false };
-    try { const localPrefs = JSON.parse(storageGet("xrob_music_playback_prefs") || "null"); if (localPrefs && typeof localPrefs === "object") { playerSettings.fade_on_pause = localPrefs.fade_on_pause !== false; playerSettings.resume_enabled = localPrefs.resume_enabled !== false; } } catch (_) {}
+    playerSettings = { ...playerSettings, replaygain_enabled: settings.replaygain_enabled !== false, replaygain_mode: settings.replaygain_mode || "track", replaygain_preamp_db: Number(settings.replaygain_preamp_db || 0), replaygain_prevent_clipping: settings.replaygain_prevent_clipping !== false, crossfade_seconds: Number(settings.crossfade_seconds || 0), gapless_playback: settings.gapless_playback !== false, fade_on_pause: settings.fade_on_pause !== false };
+    try { const localPrefs = JSON.parse(storageGet("xrob_music_playback_prefs") || "null"); if (localPrefs && typeof localPrefs === "object") { playerSettings.fade_on_pause = localPrefs.fade_on_pause !== false; } } catch (_) {}
     setChecked("set_replaygain_enabled", playerSettings.replaygain_enabled);
     setValue("set_replaygain_mode", playerSettings.replaygain_mode);
     setValue("set_replaygain_preamp", playerSettings.replaygain_preamp_db);
@@ -3074,7 +2677,6 @@ function applySettingsToForm(settings) {
     setValue("set_crossfade", playerSettings.crossfade_seconds);
     setChecked("set_gapless", playerSettings.gapless_playback);
     setChecked("set_fade_pause", settings.fade_on_pause !== false);
-    setChecked("set_resume_enabled", settings.resume_enabled !== false);
         setValue("set_web_username", settings.web_username || "admin");
     setValue("set_web_password", "");
     renderStorage(settings.storage);
@@ -3137,7 +2739,6 @@ async function saveSettings() {
         crossfade_seconds: Math.max(0, Math.min(12, Number(getValue("set_crossfade") || 0))),
         gapless_playback: getChecked("set_gapless"),
         fade_on_pause: getChecked("set_fade_pause"),
-        resume_enabled: getChecked("set_resume_enabled"),
         web_username: getValue("set_web_username") || "admin",
         ...(getValue("set_web_password") ? {web_password:getValue("set_web_password")} : {}),
     };
@@ -3194,9 +2795,8 @@ async function saveSettings() {
             crossfade_seconds: Math.max(0, Math.min(12, Number(data.crossfade_seconds || 0))),
             gapless_playback: Boolean(data.gapless_playback),
             fade_on_pause: data.fade_on_pause !== false,
-            resume_enabled: data.resume_enabled !== false
         };
-        try { storageSet("xrob_music_playback_prefs", JSON.stringify({ fade_on_pause: playerSettings.fade_on_pause, resume_enabled: playerSettings.resume_enabled })); } catch (_) {}
+        try { storageSet("xrob_music_playback_prefs", JSON.stringify({ fade_on_pause: playerSettings.fade_on_pause })); } catch (_) {}
         if (msg) {
 
             msg.textContent =
@@ -4739,15 +4339,8 @@ function createDownloadCard(
     card.innerHTML = `
 
         <div class="download-art">
-
-            <div class="download-art-icon">
-                🎵
-            </div>
-
-            <div class="download-art-overlay">
-                ${icon}
-            </div>
-
+            ${(task.thumbnail || task.thumbnail_url || task.cover) ? `<img src="${escapeHtml(task.thumbnail || task.thumbnail_url || task.cover)}" alt="" loading="lazy" onerror="this.closest('.download-art')?.classList.add('image-failed'); this.remove();">` : '<div class="download-art-icon"><i data-lucide="music-2" aria-hidden="true"></i></div>'}
+            <div class="download-art-overlay">${icon}</div>
         </div>
 
 
@@ -4869,11 +4462,9 @@ function createDownloadCard(
     if (isActiveTask(task)) {
 
         actionButton.className =
-            "btn-danger";
+            "download-action-btn danger";
 
-
-        actionButton.textContent =
-            "✕ Cancel";
+        actionButton.innerHTML = '<i data-lucide="x" aria-hidden="true"></i><span>Cancel</span>';
 
 
         actionButton.addEventListener(
@@ -4885,273 +4476,76 @@ function createDownloadCard(
         );
 
     } else if (["error", "failed", "cancelled", "canceled"].includes(String(task.status || "").toLowerCase())) {
-        actionButton.className = "save-btn";
-        actionButton.textContent = "↻ Retry";
+        actionButton.className = "download-action-btn";
+        actionButton.innerHTML = '<i data-lucide="rotate-cw" aria-hidden="true"></i><span>Retry</span>';
         actionButton.addEventListener("click", () => retryTask(task.id));
     } else {
-        actionButton.className = "download-remove-btn";
-        actionButton.textContent = "Remove";
+        actionButton.className = "download-action-btn ghost";
+        actionButton.innerHTML = '<i data-lucide="trash-2" aria-hidden="true"></i><span class="sr-only">Remove</span>';
         actionButton.addEventListener("click", () => removeDownloadTask(task.id));
     }
 
 
-    actions.appendChild(
-        actionButton
-    );
-
-
+    actions.appendChild(actionButton);
     return card;
 }
 
 
+let downloadDrawerFilter = "all";
+
 function renderDownloads(tasks) {
+    const list = document.getElementById("downloadsList");
+    if (!list) return;
+    const allTasks = Array.isArray(tasks) ? [...tasks] : [];
+    const active = allTasks.filter(isActiveTask);
+    const completed = allTasks.filter(task => String(task?.status || "").toLowerCase() === "completed");
+    const failed = allTasks.filter(task => ["error", "failed", "cancelled", "canceled"].includes(String(task?.status || "").toLowerCase()));
+    const filters = {
+        all: allTasks,
+        active,
+        completed,
+        failed,
+    };
+    const visible = filters[downloadDrawerFilter] || allTasks;
 
-    const list =
-        document.getElementById(
-            "downloadsList"
-        );
+    const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = String(value); };
+    setText("downloadsAllCount", allTasks.length);
+    setText("downloadsActiveCount", active.length);
+    setText("downloadsCompletedCount", completed.length);
+    setText("downloadsFailedCount", failed.length);
+    setText("downloadsSummary", `${active.length} active · ${completed.length} complete${failed.length ? ` · ${failed.length} attention` : ""}`);
+    document.querySelectorAll(".downloads-filter").forEach(btn => {
+        const activeTab = btn.dataset.downloadFilter === downloadDrawerFilter;
+        btn.classList.toggle("active", activeTab);
+        btn.setAttribute("role", "tab");
+        btn.setAttribute("aria-selected", activeTab ? "true" : "false");
+        btn.tabIndex = activeTab ? 0 : -1;
+    });
 
-
-    if (!list) {
+    list.innerHTML = "";
+    if (!visible.length) {
+        const empty = document.createElement("div");
+        empty.className = "downloads-empty downloads-empty-modern";
+        const title = downloadDrawerFilter === "all" ? "No downloads yet" : downloadDrawerFilter === "active" ? "Nothing is downloading" : downloadDrawerFilter === "completed" ? "No completed downloads" : "No failed downloads";
+        const body = downloadDrawerFilter === "failed" ? "Failed jobs will appear here with a Retry action." : "Search for music and press Download to add a job.";
+        empty.innerHTML = `<div class="downloads-empty-icon"><i data-lucide="download-cloud" aria-hidden="true"></i></div><strong>${title}</strong><span>${body}</span>${downloadDrawerFilter === "all" ? '<button type="button" class="save-btn downloads-empty-action"><i data-lucide="search" aria-hidden="true"></i> Search Music</button>' : ''}`;
+        empty.querySelector(".downloads-empty-action")?.addEventListener("click", () => { closeDownloadsDrawer(); navigate("search"); });
+        list.appendChild(empty);
+        renderLocalIcons(list);
         return;
     }
 
-
-    const safeTasks =
-        Array.isArray(tasks)
-            ? tasks
-            : [];
-
-
-    const active =
-        safeTasks.filter(
-            isActiveTask
-        );
-
-
-    const finished =
-        safeTasks.filter(
-            isFinishedTask
-        );
-
-
-    list.innerHTML = "";
-
-
-    /* ACTIVE */
-
-    const activeSection =
-        document.createElement(
-            "section"
-        );
-
-
-    activeSection.className =
-        "downloads-section";
-
-
-    activeSection.innerHTML = `
-
-        <div class="downloads-section-header">
-
-            <div>
-
-                <div class="downloads-section-title">
-                    Active Queue
-                </div>
-
-                <div class="downloads-section-subtitle">
-                    ${
-                        active.length
-                            ? "Tracks waiting or downloading"
-                            : "Nothing is currently downloading"
-                    }
-                </div>
-
-            </div>
-
-            <span class="section-count">
-                ${active.length}
-            </span>
-
-        </div>
-    `;
-
-
-    if (active.length) {
-
-        const stack =
-            document.createElement(
-                "div"
-            );
-
-
-        stack.className =
-            "download-stack";
-
-
-        active.forEach(
-            (
-                task,
-                index
-            ) => {
-
-                stack.appendChild(
-                    createDownloadCard(
-                        task,
-                        index + 1
-                    )
-                );
-            }
-        );
-
-
-        activeSection.appendChild(
-            stack
-        );
-
-    } else {
-
-        const empty =
-            document.createElement(
-                "div"
-            );
-
-
-        empty.className =
-            "downloads-empty";
-
-
-        empty.innerHTML = `
-
-            <div class="empty-icon">
-                🎧
-            </div>
-
-            <div class="empty-title">
-                Queue is empty
-            </div>
-
-            <div class="empty-text">
-                Search for music and press Download.
-            </div>
-
-            <button
-                type="button"
-                class="save-btn"
-            >
-                🔍 Search Music
-            </button>
-        `;
-
-
-        empty
-            .querySelector("button")
-            ?.addEventListener(
-                "click",
-                () =>
-                    navigate("search")
-            );
-
-
-        activeSection.appendChild(
-            empty
-        );
-    }
-
-
-    list.appendChild(
-        activeSection
-    );
-
-
-    /* HISTORY */
-
-    const history =
-        document.createElement(
-            "section"
-        );
-
-
-    history.className =
-        "downloads-section";
-
-
-    history.innerHTML = `
-
-        <div class="downloads-section-header">
-
-            <div>
-
-                <div class="downloads-section-title">
-                    Recent Downloads
-                </div>
-
-                <div class="downloads-section-subtitle">
-                    Completed and previous jobs
-                </div>
-
-            </div>
-
-            <span class="section-count">
-                ${finished.length}
-            </span>
-
-        </div>
-    `;
-
-
-    if (finished.length) {
-
-        const stack =
-            document.createElement(
-                "div"
-            );
-
-
-        stack.className =
-            "download-stack";
-
-
-        finished.forEach(
-            task =>
-                stack.appendChild(
-                    createDownloadCard(
-                        task
-                    )
-                )
-        );
-
-
-        history.appendChild(
-            stack
-        );
-
-    } else {
-
-        const empty =
-            document.createElement(
-                "div"
-            );
-
-
-        empty.className =
-            "downloads-history-empty";
-
-
-        empty.textContent =
-            "No completed downloads yet.";
-
-
-        history.appendChild(
-            empty
-        );
-    }
-
-
-    list.appendChild(
-        history
-    );
+    const stack = document.createElement("div");
+    stack.className = "download-stack download-stack-modern";
+    visible.forEach((task, index) => stack.appendChild(createDownloadCard(task, isActiveTask(task) ? index + 1 : null)));
+    list.appendChild(stack);
+    renderLocalIcons(list);
+}
+
+function setDownloadDrawerFilter(filter) {
+    if (!["all", "active", "completed", "failed"].includes(filter)) return;
+    downloadDrawerFilter = filter;
+    renderDownloads(latestTasks);
 }
 
 
@@ -5175,97 +4569,46 @@ function taskSignature(tasks) {
 }
 
 
+let taskPollInFlight = null;
+let taskPollQueuedForce = false;
+
 async function pollTasks(force = false) {
-
-    try {
-
-        const response =
-            await apiFetch(
-                "/api/tasks",
-                {
-                    cache: "no-store"
+    if (taskPollInFlight) {
+        taskPollQueuedForce = taskPollQueuedForce || Boolean(force);
+        return taskPollInFlight;
+    }
+    taskPollInFlight = (async () => {
+        try {
+            const response = await apiFetch("/api/tasks", { cache: "no-store", timeoutMs: 7000 });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const tasks = await response.json();
+            latestTasks = Array.isArray(tasks) ? tasks : [];
+            latestTasks.forEach(task => {
+                if (task.status === "completed" && !completedSet.has(task.id)) {
+                    completedSet.add(task.id);
+                    showToast(`🎉 ${task.title || "Track"} is ready`);
                 }
-            );
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                `HTTP ${response.status}`
-            );
-        }
-
-
-        const tasks =
-            await response.json();
-
-
-        latestTasks =
-            Array.isArray(tasks)
-                ? tasks
-                : [];
-
-
-        latestTasks.forEach(
-            task => {
-
-                if (
-                    task.status === "completed" &&
-                    !completedSet.has(task.id)
-                ) {
-
-                    completedSet.add(
-                        task.id
-                    );
-
-
-                    showToast(
-                        `🎉 ${
-                            task.title ||
-                            "Track"
-                        } is ready`
-                    );
-                }
+            });
+            updateQueueCounters(latestTasks);
+            const signature = taskSignature(latestTasks);
+            const changed = signature !== lastTaskSignature;
+            if (force || changed) renderDownloads(latestTasks);
+            if (changed && latestTasks.some(task => task.status === "completed")) {
+                loadStats().catch(() => {});
+                loadHome().catch(() => {});
             }
-        );
-
-
-        updateQueueCounters(
-            latestTasks
-        );
-
-
-        const signature =
-            taskSignature(
-                latestTasks
-            );
-
-
-        const taskChanged = signature !== lastTaskSignature;
-        if (
-            force ||
-            taskChanged
-        ) {
-
-            renderDownloads(
-                latestTasks
-            );
+            lastTaskSignature = signature;
+        } catch (error) {
+            console.warn("Tasks:", error);
         }
-
-        if (taskChanged && latestTasks.some(task => task.status === "completed")) {
-            loadStats().catch(() => {});
-            loadHome().catch(() => {});
+    })();
+    try { await taskPollInFlight; }
+    finally {
+        taskPollInFlight = null;
+        if (taskPollQueuedForce) {
+            taskPollQueuedForce = false;
+            queueMicrotask(() => pollTasks(false));
         }
-
-        lastTaskSignature =
-            signature;
-
-    } catch (error) {
-
-        console.warn(
-            "Tasks:",
-            error
-        );
     }
 }
 
@@ -5810,44 +5153,8 @@ function renderRecentlyAdded(
 }
 
 
-async function loadContinueListening() {
-    const card = document.getElementById("continueListeningCard");
-    const list = document.getElementById("continueListeningList");
-    if (!card || !list) return;
-    try {
-        const response = await apiFetch("api/player/continue?limit=10", { cache: "no-store" });
-        if (!response.ok) throw new Error("continue unavailable");
-        const data = await response.json();
-        const tracks = Array.isArray(data.tracks) ? data.tracks : [];
-        if (!tracks.length) { card.hidden = true; return; }
-        card.hidden = false; list.innerHTML = "";
-        tracks.forEach(track => {
-            const item = document.createElement("article");
-            item.className = "continue-track";
-            const duration = Number(track.duration || 0);
-            const position = Math.max(0, Math.min(Number(track.position || 0), duration || Number(track.position || 0)));
-            const pct = duration > 0 ? Math.max(0, Math.min(100, position / duration * 100)) : Number(track.completion_pct || 0);
-            const playedAt = formatRelativePlayedAt(track.last_played_at);
-            const resumeMeta = [`${formatSeconds(position)} / ${formatSeconds(duration)}`, track.last_device || "", playedAt].filter(Boolean).join(" · ");
-            item.innerHTML = `<img src="${escapeHtml(track.cover || "static/logo.png")}" alt="" loading="lazy"><div class="continue-track-body"><strong>${escapeHtml(track.title || "Unknown Track")}</strong><span>${escapeHtml(track.artist || "Unknown Artist")}</span><small>${escapeHtml(resumeMeta)}</small><div class="continue-progress"><span style="width:${pct.toFixed(2)}%"></span></div></div><button type="button" class="continue-play" aria-label="Resume ${escapeHtml(track.title || "track")}"><i data-lucide="play" aria-hidden="true"></i></button>`;
-            const resume = () => {
-                const queue = Array.isArray(rawLibraryFiles) ? rawLibraryFiles : [];
-                const idx = queue.findIndex(x => String(x.id || x.name || "") === String(track.id));
-                setEnhancedQueue(queue.length ? queue : [track], idx >= 0 ? idx : 0);
-                currentPlayerSource = "library";
-                toggleAudioStream(item.querySelector(".continue-play"), track.stream, "library", track.title, track.artist, track.cover, track.id, false);
-                window.setTimeout(() => { if (audio && track.id === audio.dataset.xrobSongId && Number(track.position) > 0) { try { audio.currentTime = Math.min(Number(track.position), Math.max(0, Number(audio.duration || track.duration) - 0.25)); } catch (_) {} } }, 800);
-            };
-            item.addEventListener("click", resume);
-            list.appendChild(item);
-        });
-        if (window.lucide?.createIcons) window.lucide.createIcons();
-    } catch (_) { card.hidden = true; }
-}
-
 async function loadHome() {
 
-    loadContinueListening();
     const container =
         document.getElementById(
             "recentTracks"
@@ -6116,13 +5423,11 @@ function initWebSocket() {
                     pollTasks();
 
                 } else if (data.type === "player_state") {
-                    if (data.state?.ownerId === PLAYER_TAB_ID) {
+                    if (localPlayerSessionMatches(data.state)) {
                         applyAuthoritativeOwnedPlayerState(data.state, false);
                     } else {
                         applyRemotePlayerState(data.state, true);
                     }
-                } else if (data.type === "command") {
-                    applyRemoteCommand(data);
                 } else if (data.type === "player_handoff") {
                     applyRemoteHandoff(data);
                 }
@@ -6310,7 +5615,7 @@ async function refreshLibrary() {
 }
 
 
-function renderLocalIcons() {
+function renderLocalIcons(root = document) {
     const paths = {
         house: [['path','M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z'],['path','M9 21v-6h6v6']],
         search: [['circle','11 11 7 7'],['path','m20 20-4-4']],
@@ -6320,6 +5625,7 @@ function renderLocalIcons() {
         'sliders-horizontal': [['path','M4 7h16'],['path','M4 17h16'],['circle','9 7 2'],['circle','15 17 2']],
         save: [['path','M5 3h12l3 3v15H4V3z'],['path','M8 3v6h8V3'],['path','M8 21v-6h8v6']],
         'rotate-ccw': [['path','M3 12a9 9 0 1 0 3-6.7'],['path','M3 4v5h5']],
+        'rotate-cw': [['path','M21 12a9 9 0 1 1-3-6.7'],['path','M21 4v5h-5']],
         plus: [['path','M12 5v14'],['path','M5 12h14']],
         'music-2': [['path','M9 18V5l10-2v13'],['circle','6 18 3'],['circle','16 16 3']],
         'user-round': [['circle','12 7 4'],['path','M18 20a6 6 0 0 0-12 0']],
@@ -6351,9 +5657,16 @@ function renderLocalIcons() {
         monitor: [['rect','3 4 18 14'],['path','M8 21h8'],['path','M12 18v3']],
         smartphone: [['rect','7 2 10 20'],['path','M11 18h2']],
         'list-music': [['path','M8 6h13'],['path','M8 12h13'],['path','M8 18h9'],['path','M3 6h.01'],['path','M3 12h.01'],['path','M3 18h.01']],
+        'list-plus': [['path','M8 6h13'],['path','M8 12h13'],['path','M8 18h8'],['path','M3 6h.01'],['path','M3 12h.01'],['path','M3 18h.01'],['path','M19 16v6'],['path','M16 19h6']],
+        'bar-chart-3': [['path','M4 20V10'],['path','M10 20V4'],['path','M16 20v-7'],['path','M22 20V7']],
+        'folder-open': [['path','M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H5.5a2.5 2.5 0 0 0-2.4 1.8L2 16V7z'],['path','M2 16l1.4-4.2A2.5 2.5 0 0 1 5.8 10H21l-1.5 7.5A2 2 0 0 1 17.5 19H4a2 2 0 0 1-2-2.4L2 16z']],
+        'settings-2': [['path','M20 7h-9'],['path','M14 17H4'],['circle','17 7 2.5'],['circle','7 17 2.5']],
+        sparkles: [['path','m12 3-1.4 4.2L6.4 9 10.6 10.4 12 15l1.4-4.6L17.6 9l-4.2-1.8L12 3z'],['path','m19 14-.7 2.3L16 17l2.3.7L19 20l.7-2.3L22 17l-2.3-.7L19 14z']],
+        'download-cloud': [['path','M12 3v10'],['path','m8 9 4 4 4-4'],['path','M20 18.5a4.5 4.5 0 0 0-2.2-8.4A6 6 0 0 0 6.2 8.5 4 4 0 0 0 6 16.5h14']],
     };
     const ns = 'http://www.w3.org/2000/svg';
-    document.querySelectorAll('[data-lucide]').forEach(el => {
+    const scope = root && typeof root.querySelectorAll === 'function' ? root : document;
+    scope.querySelectorAll('[data-lucide]').forEach(el => {
         const name = el.getAttribute('data-lucide') || '';
         const defs = paths[name];
         if (!defs) return;
@@ -6405,7 +5718,6 @@ async function initializeApp() {
 async function startAppAfterAuth() {
 
     cacheDom();
-    initPwaInstall();
 
     toggleTheme(
         storageGet(
@@ -7007,6 +6319,9 @@ function installEnhancedFeatures(){
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
     document.getElementById("topbarDownloadsBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDownloadsDrawer(); });
+    document.querySelectorAll(".downloads-filter").forEach(button => button.addEventListener("click", () => setDownloadDrawerFilter(button.dataset.downloadFilter || "all")));
+    document.getElementById("downloadsRefresh")?.addEventListener("click", () => pollTasks(true));
+    document.getElementById("downloadsClear")?.addEventListener("click", clearDoneTasks);
     // Drawers remain independent, but retain the familiar click-outside behavior.
     // Clicking inside one drawer never closes it; clicking outside a drawer closes
     // that drawer only, so Queue and Downloads never become coupled again.
