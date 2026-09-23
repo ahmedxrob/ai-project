@@ -14,7 +14,7 @@
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="static/style.css?v=311" rel="stylesheet"/>
+  <link href="static/style.css?v=318" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
   <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -77,6 +77,10 @@
       </nav>
 
       <div class="topbar-actions">
+       <button class="topbar-icon topbar-device-icon" id="topbarDevicesBtn" type="button" onclick="openDevicePicker()" aria-label="Connect to a device" title="Connect">
+        <i aria-hidden="true" data-lucide="radio"></i>
+        <span class="topbar-device-dot" id="topbarDeviceDot"></span>
+       </button>
        <button class="topbar-icon topbar-settings-icon" type="button" onclick="navigate('settings')" aria-label="Open settings" title="Settings">
         <i aria-hidden="true" data-lucide="sliders-horizontal"></i>
        </button>
@@ -229,9 +233,12 @@
        <div class="search-card page-section">
         <input autocomplete="off" id="query" placeholder="Search YouTube music..." spellcheck="false" type="search"/>
         <button id="searchBtn" type="button">
-         <i aria-hidden="true" data-lucide="search">
-         </i>
+         <i aria-hidden="true" data-lucide="search"></i>
          Search
+        </button>
+        <button class="btn-refresh" id="batchSearchButton" type="button" title="Download multiple URLs at once">
+         <i aria-hidden="true" data-lucide="list-plus"></i>
+         Batch
         </button>
        </div>
        <!-- SEARCH LOADING -->
@@ -1105,6 +1112,10 @@
     </div>
     <!-- PLAYER EXTRA -->
     <div class="gp-extra">
+     <button class="gp-device-picker" id="gp-device-picker" type="button" onclick="openDevicePicker()" title="Connect to a device">
+      <i aria-hidden="true" data-lucide="radio"></i>
+      <span id="gp-device-picker-label">This device</span>
+     </button>
      <span class="gp-device-state" id="gp-device-status" data-remote="false">Playing on this device</span>
      <button class="gp-device-takeover" id="gp-device-takeover" type="button" hidden>Take over</button>
      <canvas aria-hidden="true" height="30" id="visualizer-canvas" width="90">
@@ -1122,13 +1133,16 @@
    <div class="downloads-drawer-head">
     <div>
      <span class="downloads-drawer-kicker">DOWNLOADS</span>
-     <strong>Activity</strong>
+     <strong>Download Center</strong>
+     <span class="downloads-drawer-live" id="downloadsLiveState">Live queue</span>
     </div>
     <div class="downloads-drawer-head-actions">
+     <button class="btn-refresh" id="batchDownloadOpen" type="button" title="Add multiple download jobs"><i aria-hidden="true" data-lucide="list-plus"></i><span>Batch</span></button>
      <button class="btn-refresh" onclick="clearDoneTasks()" type="button" title="Clear completed downloads"><i aria-hidden="true" data-lucide="broom"></i><span>Clear</span></button>
      <button aria-label="Close downloads" class="icon-btn" id="downloadsClose" title="Close downloads" type="button"><i aria-hidden="true" data-lucide="x"></i></button>
     </div>
    </div>
+   <div class="downloads-summary" id="downloadsSummary"></div>
    <div class="downloads-drawer-list downloads-list" id="downloadsList"></div>
   </aside>
   <aside aria-label="Up Next queue" class="queue-drawer overlay-panel" hidden="" id="queue-drawer">
@@ -1157,6 +1171,42 @@
     </button>
    </div>
   </aside>
+  </div>
+  <div class="xrob-modal overlay-region" hidden id="device-modal">
+   <div class="xrob-modal-card device-picker-modal">
+    <div class="xrob-modal-head">
+     <div>
+      <span class="modal-kicker">XROB CONNECT</span>
+      <strong>Connect to a device</strong>
+      <div class="modal-subtitle">Switch playback without losing your position.</div>
+     </div>
+     <button aria-label="Close device picker" class="icon-btn" id="devicePickerClose" title="Close" type="button"><i aria-hidden="true" data-lucide="x"></i></button>
+    </div>
+    <div class="device-picker-status" id="devicePickerStatus">Looking for devices…</div>
+    <div class="device-list" id="deviceList"></div>
+    <div class="device-picker-foot">
+     <span><i aria-hidden="true" data-lucide="shield-check"></i> Device presence uses a short heartbeat. No audio is transferred through the control channel.</span>
+     <button class="btn-refresh" id="deviceRefreshButton" type="button"><i aria-hidden="true" data-lucide="refresh-cw"></i> Refresh</button>
+    </div>
+   </div>
+  </div>
+  <div class="xrob-modal overlay-region" hidden id="batch-download-modal">
+   <div class="xrob-modal-card batch-download-modal">
+    <div class="xrob-modal-head">
+     <div>
+      <span class="modal-kicker">DOWNLOAD CENTER</span>
+      <strong>Batch downloads</strong>
+      <div class="modal-subtitle">One URL per line. Optional format: URL | Title | Artist.</div>
+     </div>
+     <button aria-label="Close batch downloads" class="icon-btn" id="batchDownloadClose" title="Close" type="button"><i aria-hidden="true" data-lucide="x"></i></button>
+    </div>
+    <textarea id="batchDownloadInput" class="batch-download-input" rows="9" placeholder="https://www.youtube.com/watch?v=… | Track title | Artist"></textarea>
+    <div class="batch-download-help">Duplicates are checked before jobs enter the queue. Failed jobs can be retried and interrupted downloads keep resumable partial files.</div>
+    <div class="batch-download-actions">
+     <button class="btn-refresh" id="batchDownloadCancel" type="button">Cancel</button>
+     <button class="save-btn" id="batchDownloadStart" type="button"><i aria-hidden="true" data-lucide="download"></i> Queue downloads</button>
+    </div>
+   </div>
   </div>
   <div class="xrob-modal overlay-region" hidden="" id="metadata-modal">
    <div class="xrob-modal-card">
@@ -1258,7 +1308,7 @@
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=311">
+  <script src="static/app.js?v=318">
   </script>
 
 
