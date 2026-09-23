@@ -148,15 +148,7 @@ function apiUrl(path) {
 function websocketUrl() {
     const base = appBaseUrl();
     base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
-    const url = new URL("ws", base);
-    url.searchParams.set("deviceId", PLAYER_DEVICE_ID);
-    url.searchParams.set("clientId", PLAYER_CLIENT_ID);
-    url.searchParams.set("ownerId", PLAYER_TAB_ID);
-    url.searchParams.set("deviceName", playerDeviceName());
-    url.searchParams.set("kind", playerDeviceKind());
-    url.searchParams.set("platform", playerDevicePlatform());
-    url.searchParams.set("browser", playerDeviceBrowser());
-    return url.href;
+    return new URL("ws", base).href;
 }
 
 async function apiFetch(input, options = {}) {
@@ -222,50 +214,6 @@ const PLAYER_SYNC_STATE_KEY = "xrob_music_player_sync_state";
 const PLAYER_SYNC_COMMAND_KEY = "xrob_music_player_sync_command";
 const PLAYER_OWNER_KEY = "xrob_music_player_owner";
 const PLAYER_TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-const PLAYER_DEVICE_ID = (() => {
-    const key = "xrob_music_device_id_v1";
-    try {
-        const saved = storageGet(key);
-        if (saved) return saved;
-        const value = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2, 8)}`;
-        storageSet(key, value);
-        return value;
-    } catch (_) {
-        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    }
-})();
-
-function playerDeviceKind() {
-    try {
-        const ua = String(navigator.userAgent || "").toLowerCase();
-        if (/iphone|ipad|ipod|android|mobile/.test(ua)) return "phone";
-        if (/tv|smarttv|tizen|webos/.test(ua)) return "tv";
-        return "computer";
-    } catch (_) { return "computer"; }
-}
-
-function playerDeviceName() {
-    const kind = playerDeviceKind();
-    if (kind === "phone") return "Phone";
-    if (kind === "tv") return "Living Room";
-    return "This PC";
-}
-
-function playerDevicePlatform() {
-    try { return String(navigator.userAgentData?.platform || navigator.platform || "").slice(0, 80); } catch (_) { return ""; }
-}
-
-function playerDeviceBrowser() {
-    try {
-        const ua = String(navigator.userAgent || "");
-        return /Edg\//i.test(ua) ? "Edge" : /OPR\//i.test(ua) ? "Opera" : /Chrome\//i.test(ua) ? "Chrome" : /Firefox\//i.test(ua) ? "Firefox" : /Safari\//i.test(ua) ? "Safari" : "Browser";
-    } catch (_) { return "Browser"; }
-}
-
-let connectedDevices = [];
-let deviceHeartbeatTimer = null;
-let deviceListRefreshTimer = null;
-
 const PLAYER_CLIENT_ID = (() => {
     const key = "xrob_music_player_client_id";
     try {
@@ -386,10 +334,6 @@ function updateDeviceOwnershipUI() {
     const hasRemoteSession = Boolean(remotePlayerState?.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID && remotePlayerState?.src);
     const stale = Boolean(remotePlayerState?._serverStale);
     const remoteName = String(remotePlayerState?.deviceName || "another device").trim();
-    const pickerLabel = document.getElementById("gp-device-picker-label");
-    if (pickerLabel) pickerLabel.textContent = (remote || hasRemoteSession)
-        ? String(remoteName || "Remote device")
-        : playerDeviceName();
     if (status) {
         if (remote || hasRemoteSession) {
             const paused = Boolean(remotePlayerState?.paused);
@@ -1083,151 +1027,6 @@ function applyRemoteCommand(message) {
     if (message.command !== "load-play") schedulePlayerStateBroadcast(true);
 }
 
-async function sendDeviceHeartbeat() {
-    try {
-        const response = await apiFetch("api/player/device-heartbeat", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            timeoutMs: 7000,
-            body: JSON.stringify({
-                deviceId: PLAYER_DEVICE_ID,
-                clientId: PLAYER_CLIENT_ID,
-                ownerId: PLAYER_TAB_ID,
-                name: playerDeviceName(),
-                kind: playerDeviceKind(),
-                platform: playerDevicePlatform(),
-                browser: playerDeviceBrowser()
-            })
-        });
-        if (response.ok) {
-            const result = await response.json().catch(() => ({}));
-            if (Array.isArray(result?.devices)) {
-                connectedDevices = result.devices;
-                renderDevicePicker();
-            }
-        }
-    } catch (_) {}
-}
-
-async function loadConnectedDevices() {
-    try {
-        const response = await apiFetch("api/player/devices", { cache: "no-store", timeoutMs: 7000 });
-        if (!response.ok) return;
-        const result = await response.json().catch(() => ({}));
-        connectedDevices = Array.isArray(result?.devices) ? result.devices : [];
-        renderDevicePicker();
-    } catch (_) {}
-}
-
-function deviceStatusText(device) {
-    if (!device?.online) return "Offline";
-    if (device.active && device.playing) return "Playing";
-    if (device.active && device.paused) return "Paused";
-    return "Available";
-}
-
-function deviceIconName(device) {
-    if (device?.kind === "phone") return "smartphone";
-    if (device?.kind === "tv") return "tv";
-    return "monitor";
-}
-
-function renderDevicePicker() {
-    const list = document.getElementById("deviceList");
-    const status = document.getElementById("devicePickerStatus");
-    const dot = document.getElementById("topbarDeviceDot");
-    if (!list) return;
-
-    const devices = Array.isArray(connectedDevices) ? connectedDevices : [];
-    const local = devices.find(d => d.deviceId === PLAYER_DEVICE_ID);
-    const active = devices.find(d => d.active);
-    if (dot) dot.dataset.online = active?.online ? "true" : "false";
-    if (status) {
-        status.textContent = devices.length
-            ? `${devices.filter(d => d.online).length} device${devices.filter(d => d.online).length === 1 ? "" : "s"} online`
-            : "No other devices detected";
-    }
-
-    list.innerHTML = "";
-    if (!devices.length) {
-        list.innerHTML = `<div class="device-empty"><i data-lucide="radio-tower"></i><strong>No devices yet</strong><span>Open Xrob Music on another browser or phone connected to this server.</span></div>`;
-        if (typeof lucide !== "undefined") lucide.createIcons();
-        return;
-    }
-
-    devices.forEach(device => {
-        const isLocal = device.deviceId === PLAYER_DEVICE_ID;
-        const statusText = isLocal && device.active ? "Playing here" : deviceStatusText(device);
-        const track = device.track;
-        const card = document.createElement("button");
-        card.type = "button";
-        card.className = `device-row${device.active ? " is-active" : ""}${isLocal ? " is-local" : ""}${!device.online ? " is-offline" : ""}`;
-        card.disabled = !isLocal && (!device.online || !device.ownerId);
-        card.innerHTML = `
-            <span class="device-row-icon"><i data-lucide="${deviceIconName(device)}"></i></span>
-            <span class="device-row-copy">
-                <strong>${escapeHtml(device.name || "Device")}${isLocal ? ` <small>YOU</small>` : ""}</strong>
-                <span>${escapeHtml(statusText)}${track?.title ? ` · ${escapeHtml(track.title)}` : ""}</span>
-            </span>
-            <span class="device-row-state ${device.online ? "online" : "offline"}">
-                <span class="device-presence-dot"></span>${escapeHtml(statusText)}
-            </span>
-        `;
-        if (!isLocal) {
-            card.addEventListener("click", () => transferPlaybackToDevice(device));
-        }
-        list.appendChild(card);
-    });
-    if (typeof lucide !== "undefined") lucide.createIcons();
-}
-
-async function openDevicePicker() {
-    const modal = document.getElementById("device-modal");
-    if (!modal) return;
-    modal.hidden = false;
-    await sendDeviceHeartbeat();
-    await loadConnectedDevices();
-}
-
-function closeDevicePicker() {
-    const modal = document.getElementById("device-modal");
-    if (modal) modal.hidden = true;
-}
-
-async function transferPlaybackToDevice(device) {
-    if (!device?.online || !device.ownerId || device.deviceId === PLAYER_DEVICE_ID) return;
-    if (!confirm(`Switch playback to ${device.name}?`)) return;
-    try {
-        const current = await apiFetch("api/player/state", { cache: "no-store", timeoutMs: 7000 });
-        const stateResult = await current.json().catch(() => ({}));
-        const state = stateResult?.state;
-        if (!state?.src) {
-            showToast("Nothing is currently playing.");
-            return;
-        }
-        const response = await apiFetch("api/player/handoff", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            timeoutMs: PLAYER_HANDOFF_TIMEOUT_MS,
-            body: JSON.stringify({
-                newOwnerId: device.ownerId,
-                clientId: device.clientId || "",
-                deviceName: device.name || "Device",
-                expectedOwnerId: state.ownerId || ""
-            })
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result?.detail || "Transfer failed");
-        closeDevicePicker();
-        showToast(`Playback transferred to ${device.name}.`);
-        await loadServerPlayerState();
-        await loadConnectedDevices();
-    } catch (error) {
-        showToast(error?.message || "Could not transfer playback.");
-    }
-}
-
 async function sendPlayerHeartbeat() {
     if (!audio || playerOwnerId !== PLAYER_TAB_ID || isRemotePlayerOwner()) return;
     try {
@@ -1302,14 +1101,6 @@ async function initPlayerSync() {
             try { const owner = JSON.parse(event.newValue); if (owner?.id) playerOwnerId = owner.id; } catch (_) {}
         }
     });
-    sendDeviceHeartbeat().catch(() => {});
-    loadConnectedDevices().catch(() => {});
-    deviceHeartbeatTimer = window.setInterval(() => {
-        sendDeviceHeartbeat().catch(() => {});
-    }, 5000);
-    deviceListRefreshTimer = window.setInterval(() => {
-        loadConnectedDevices().catch(() => {});
-    }, 8000);
     playerSyncHeartbeat = window.setInterval(() => {
         heartbeatPlayerOwner();
         sendPlayerHeartbeat();
@@ -1321,10 +1112,6 @@ async function initPlayerSync() {
         clearPlayerOwner();
         if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
         playerSyncHeartbeat = null;
-        if (deviceHeartbeatTimer) window.clearInterval(deviceHeartbeatTimer);
-        deviceHeartbeatTimer = null;
-        if (deviceListRefreshTimer) window.clearInterval(deviceListRefreshTimer);
-        deviceListRefreshTimer = null;
         stopRemoteProgressTicker();
         if (playerOwnerClaimTimer) window.clearTimeout(playerOwnerClaimTimer);
         if (playerProgressBroadcastTimer) window.clearTimeout(playerProgressBroadcastTimer);
@@ -4154,10 +3941,6 @@ async function searchMusic() {
 
         hasMoreResults = data.length >= 20;
         renderItems(data);
-        // Refresh the local library cache in the background for the Library view,
-        // without delaying the search results themselves.
-        refreshLibraryCache().catch(() => {});
-
 
         /*
          * Search ready.
@@ -4714,26 +4497,6 @@ function updateQueueCounters(tasks) {
 }
 
 
-function taskStageIndex(task) {
-    const status = String(task?.status || "queued").toLowerCase();
-    const step = String(task?.step || "").toLowerCase();
-    if (status === "completed" || step.includes("ready") || step.includes("library")) return 5;
-    if (step.includes("artwork") || step.includes("thumbnail")) return 3;
-    if (step.includes("metadata") || step.includes("finaliz")) return 2;
-    if (status === "processing") return 2;
-    if (status === "downloading") return 1;
-    return 0;
-}
-
-function renderTaskPipeline(task) {
-    const stages = ["Queued", "Downloading", "Processing", "Metadata", "Artwork", "Library"];
-    const active = taskStageIndex(task);
-    return `<div class="download-pipeline" aria-label="Download pipeline">${
-        stages.map((stage, index) => `<span class="${index <= active ? "is-done" : ""}${index === active && active < 5 ? " is-current" : ""}">${escapeHtml(stage)}</span>`).join('<i aria-hidden="true">›</i>')
-    }</div>`;
-}
-
-
 function createDownloadCard(
     task,
     position = null
@@ -4862,8 +4625,6 @@ function createDownloadCard(
             </div>
 
 
-            ${renderTaskPipeline(task)}
-
             <div class="download-bottom">
 
                 <div class="download-message">
@@ -4967,19 +4728,6 @@ function renderDownloads(tasks) {
             ? tasks
             : [];
 
-    const summary = document.getElementById("downloadsSummary");
-    if (summary) {
-        const queued = safeTasks.filter(t => ["queued"].includes(String(t.status || "").toLowerCase())).length;
-        const downloading = safeTasks.filter(t => ["downloading","processing"].includes(String(t.status || "").toLowerCase())).length;
-        const failed = safeTasks.filter(t => ["error","failed"].includes(String(t.status || "").toLowerCase())).length;
-        const completed = safeTasks.filter(t => String(t.status || "").toLowerCase() === "completed").length;
-        summary.innerHTML = `
-            <div><strong>${queued}</strong><span>Queued</span></div>
-            <div><strong>${downloading}</strong><span>Active</span></div>
-            <div><strong>${failed}</strong><span>Failed</span></div>
-            <div><strong>${completed}</strong><span>Completed</span></div>
-        `;
-    }
 
     const active =
         safeTasks.filter(
@@ -5449,63 +5197,6 @@ async function startDownload(
     }
 }
 
-
-function openBatchDownloadModal() {
-    const modal = document.getElementById("batch-download-modal");
-    if (!modal) return;
-    modal.hidden = false;
-    const input = document.getElementById("batchDownloadInput");
-    window.setTimeout(() => input?.focus(), 40);
-}
-
-function closeBatchDownloadModal() {
-    const modal = document.getElementById("batch-download-modal");
-    if (modal) modal.hidden = true;
-}
-
-async function submitBatchDownloads() {
-    const input = document.getElementById("batchDownloadInput");
-    const button = document.getElementById("batchDownloadStart");
-    const lines = String(input?.value || "").split(/\r?\n/).map(v => v.trim()).filter(Boolean);
-    if (!lines.length) {
-        showToast("Add at least one URL.");
-        return;
-    }
-
-    const items = [];
-    for (const line of lines) {
-        const parts = line.split("|").map(v => v.trim());
-        const url = parts.shift();
-        if (!url) continue;
-        items.push({
-            url,
-            title: parts[0] || "",
-            artist: parts[1] || "",
-            album: parts[2] || ""
-        });
-    }
-    if (!items.length) return;
-
-    if (button) { button.disabled = true; button.textContent = "Queuing…"; }
-    try {
-        const response = await apiFetch("api/download/batch", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items })
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || "Batch download failed.");
-        closeBatchDownloadModal();
-        if (input) input.value = "";
-        await pollTasks(true);
-        openDownloadsDrawer();
-        showToast(`Added ${Number(data.queued || 0)} download job${Number(data.queued || 0) === 1 ? "" : "s"}.`);
-    } catch (error) {
-        showToast(error?.message || "Batch download failed.");
-    } finally {
-        if (button) { button.disabled = false; button.innerHTML = `<i data-lucide="download"></i> Queue downloads`; if (typeof lucide !== "undefined") lucide.createIcons(); }
-    }
-}
 
 async function cancelTask(taskId) {
 
@@ -7062,13 +6753,6 @@ function installEnhancedFeatures(){
     document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
-    document.getElementById("devicePickerClose")?.addEventListener("click", closeDevicePicker);
-    document.getElementById("deviceRefreshButton")?.addEventListener("click", () => loadConnectedDevices());
-    document.getElementById("batchDownloadOpen")?.addEventListener("click", openBatchDownloadModal);
-    document.getElementById("batchSearchButton")?.addEventListener("click", openBatchDownloadModal);
-    document.getElementById("batchDownloadClose")?.addEventListener("click", closeBatchDownloadModal);
-    document.getElementById("batchDownloadCancel")?.addEventListener("click", closeBatchDownloadModal);
-    document.getElementById("batchDownloadStart")?.addEventListener("click", submitBatchDownloads);
     document.getElementById("topbarDownloadsBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDownloadsDrawer(); });
     // Drawers remain independent, but retain the familiar click-outside behavior.
     // Clicking inside one drawer never closes it; clicking outside a drawer closes
@@ -7210,6 +6894,299 @@ if (
     initializeApp();
 }
 
+
+/* ============================================================
+   XROB MUSIC 3.7 — CONNECT, DOWNLOAD CENTER, MOBILE + HARDENING
+   ============================================================ */
+let v37DeviceTimer = null;
+let v37DeviceRefreshTimer = null;
+let v37Devices = [];
+let v37DownloadFilter = "active";
+let v37DownloadHistory = [];
+const v37EtaSamples = new Map();
+const v37LibraryRenderStates = new WeakMap();
+let v37SearchTimer = null;
+let v37LastTaskFetch = 0;
+let v37TaskFetchPromise = null;
+let v37LastStatsFetch = 0;
+let v37StatsFetchPromise = null;
+
+function v37DeviceId() {
+    return PLAYER_CLIENT_ID;
+}
+function v37DeviceType() {
+    const ua = String(navigator.userAgent || "").toLowerCase();
+    if (/smart-tv|hbbtv|appletv|googletv|netcast|webos.tv/.test(ua)) return "tv";
+    if (/ipad|tablet|android(?!.*mobile)/.test(ua)) return "tablet";
+    if (/iphone|ipod|android.*mobile|windows phone/.test(ua)) return "phone";
+    return "desktop";
+}
+function v37DeviceName() {
+    return storageGet("xrob_music_device_name") || (v37DeviceType() === "phone" ? "Phone" : v37DeviceType() === "tablet" ? "Tablet" : v37DeviceType() === "tv" ? "Living Room" : "This PC");
+}
+function v37Capabilities() {
+    return { audio: true, mediaSession: Boolean("mediaSession" in navigator), websocket: Boolean(window.WebSocket), touch: navigator.maxTouchPoints > 0, remoteControl: true };
+}
+function v37DevicePayload() {
+    return { deviceId:v37DeviceId(), clientId:PLAYER_CLIENT_ID, tabId:PLAYER_TAB_ID, name:v37DeviceName(), deviceType:v37DeviceType(), platform:String(navigator.userAgentData?.platform || navigator.platform || ""), browser:localDeviceLabel().split(" · ").pop() || "Browser", capabilities:v37Capabilities() };
+}
+async function registerV37Device() {
+    try {
+        const r = await apiFetch("api/devices/register", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(v37DevicePayload()), timeoutMs:8000 });
+        if (!r.ok) return;
+        const d = await r.json().catch(()=>({}));
+        v37Devices = Array.isArray(d.devices) ? d.devices : v37Devices;
+        renderV37Devices();
+        updateDeviceOwnershipUIV37();
+    } catch (_) {}
+}
+async function heartbeatV37Device() {
+    if (document.visibilityState === "hidden" || navigator.onLine === false) return;
+    try { await apiFetch("api/devices/heartbeat", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(v37DevicePayload()), timeoutMs:7000}); } catch (_) {}
+}
+async function loadV37Devices() {
+    try {
+        const r = await apiFetch("api/devices", {cache:"no-store", timeoutMs:8000});
+        if (!r.ok) throw new Error("Device list unavailable");
+        const d = await r.json();
+        v37Devices = Array.isArray(d.devices) ? d.devices : [];
+        renderV37Devices();
+        updateDeviceOwnershipUIV37();
+    } catch (err) { console.warn("Devices:", err); }
+}
+function v37DeviceIcon(type) {
+    return type === "phone" ? "smartphone" : type === "tablet" ? "tablet" : type === "tv" ? "tv" : "monitor";
+}
+function v37DeviceStateLabel(device) {
+    if (!device?.online) return "Offline";
+    if (device.isOwner) return device.state === "paused" ? "Paused · Playing here" : "Playing now";
+    return device.state === "paused" ? "Paused" : device.state === "playing" ? "Playing" : "Available";
+}
+function v37DeviceTrack(device) {
+    if (!device?.track?.title) return "Ready for playback";
+    return `${device.track.title}${device.track.artist ? ` · ${device.track.artist}` : ""}`;
+}
+function renderV37Devices() {
+    const list=document.getElementById("deviceList"); if(!list) return;
+    const currentId=v37DeviceId();
+    const rows=[...v37Devices];
+    if (!rows.some(d=>d.deviceId===currentId)) rows.unshift({...v37DevicePayload(),online:true,isOwner:!isRemotePlayerOwner(),state:isRemotePlayerOwner()?"available":"paused",ageSeconds:0,track:null});
+    list.innerHTML="";
+    if (!rows.length) { list.innerHTML='<div class="device-empty"><i data-lucide="wifi-off"></i><strong>No devices found</strong><span>Open Xrob Music on another device to connect it automatically.</span></div>'; renderLocalIcons(); return; }
+    rows.forEach(device=>{
+        const card=document.createElement("article"); card.className=`device-card${device.deviceId===currentId?" is-current":""}${device.isOwner?" is-owner":""}`;
+        const dot=device.online?"online":"offline";
+        const actions=document.createElement("div"); actions.className="device-card-actions";
+        if (device.deviceId===currentId) {
+            const current=document.createElement("span"); current.className="device-current-badge"; current.textContent="This device"; actions.appendChild(current);
+        } else if (device.online && device.tabId) {
+            const switchBtn=document.createElement("button"); switchBtn.type="button"; switchBtn.className="save-btn compact"; switchBtn.innerHTML='<i data-lucide="radio"></i> Switch'; switchBtn.addEventListener("click",()=>v37SwitchToDevice(device)); actions.appendChild(switchBtn);
+            if (device.isOwner) {
+                const action=document.createElement("button"); action.type="button"; action.className="btn-refresh compact"; action.innerHTML=device.state==="playing"?'<i data-lucide="pause"></i> Pause':'<i data-lucide="play"></i> Play'; action.addEventListener("click",()=>v37RemoteCommand(device,device.state==="playing"?"pause":"play")); actions.appendChild(action);
+            }
+        }
+        const browserLabel = device.browser ? " · " + escapeHtml(device.browser) : "";
+        const heartbeatLabel = device.online ? `Heartbeat ${Math.max(0,Math.round(device.ageSeconds||0))}s ago` : "Last seen offline";
+        const trackLabel = escapeHtml(v37DeviceTrack(device));
+        card.innerHTML=`<div class="device-icon ${dot}"><i data-lucide="${v37DeviceIcon(device.deviceType)}"></i><span></span></div><div class="device-copy"><div class="device-title-row"><strong>${escapeHtml(device.name||"Device")}</strong><span class="device-status-pill ${dot}">${escapeHtml(v37DeviceStateLabel(device))}</span></div><span class="device-meta">${escapeHtml(device.platform||"")}${browserLabel}</span><span class="device-track">${trackLabel}</span><span class="device-heartbeat">${heartbeatLabel}</span></div>`;
+        card.appendChild(actions); list.appendChild(card);
+    });
+    renderLocalIcons();
+}
+async function v37RemoteCommand(device, command, payload={}) {
+    if (!device?.tabId || !device.online) { showToast("⚠️ Device is offline"); return; }
+    try {
+        const r=await apiFetch("api/player/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({targetId:device.tabId,command,payload,id:`${PLAYER_CLIENT_ID}-${Date.now()}-${Math.random().toString(36).slice(2)}`})});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(d.detail||"Remote player command failed");
+        showToast(command==="play"?"▶ Resumed on device":command==="pause"?"⏸ Paused on device":"✅ Command sent");
+        setTimeout(loadV37Devices,250);
+    } catch(err){ showToast("❌ "+(err.message||"Device command failed")); }
+}
+async function v37SwitchToDevice(device) {
+    if (!device?.tabId || device.deviceId===v37DeviceId()) return;
+    const currentOwner = remotePlayerState?.ownerId || getPlayerOwner()?.id || PLAYER_TAB_ID;
+    if (!device.online) { showToast("⚠️ Device is offline"); return; }
+    try {
+        const r=await apiFetch("api/player/handoff",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({newOwnerId:device.tabId,clientId:device.clientId||device.deviceId,deviceName:device.name||"Device",expectedOwnerId:currentOwner})});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(typeof d.detail==="object"?`Playback changed on another device`:(d.detail||"Could not transfer playback"));
+        document.getElementById("connect-modal").hidden=true;
+        showToast(`▶ Playback moved to ${device.name||"device"}`);
+        await loadV37Devices();
+    } catch(err){ showToast("❌ "+(err.message||"Playback transfer failed")); await loadV37Devices(); }
+}
+function updateDeviceOwnershipUIV37() {
+    const button=document.getElementById("gp-connect-btn");
+    const takeover=document.getElementById("gp-device-takeover");
+    const local = !isRemotePlayerOwner();
+    const ownerName = v37Devices.find(d=>d.tabId===String(remotePlayerState?.ownerId||"") || d.isOwner)?.name || remotePlayerState?.deviceName || "another device";
+    const label = document.getElementById("gp-device-status");
+    if (label) label.textContent = local ? v37DeviceName() : ownerName;
+    if (button) { button.dataset.remote=String(!local); button.title=local?"Choose a playback device":"Playback device"; }
+    if (takeover) { const hasRemote=Boolean(remotePlayerState?.src && remotePlayerState?.ownerId && remotePlayerState.ownerId!==PLAYER_TAB_ID); takeover.hidden=!hasRemote; takeover.disabled=!hasRemote; takeover.textContent="Resume here"; }
+}
+function openV37Connect() { const m=document.getElementById("connect-modal"); if(!m)return; m.hidden=false; loadV37Devices(); renderV37Devices(); }
+function closeV37Connect() { const m=document.getElementById("connect-modal"); if(m)m.hidden=true; }
+
+// Remote command helper for direct device-picker controls.
+function sendPlayerCommandToTarget(targetId, command, payload={}) { const d=v37Devices.find(x=>x.tabId===targetId); if(d) return v37RemoteCommand(d,command,payload); return false; }
+
+function v37PipelineIndex(task) {
+    const s=String(task?.step||"").toLowerCase(), status=String(task?.status||"").toLowerCase();
+    if(status==="queued") return 0;
+    if(s.includes("download")) return 1;
+    if(s.includes("processing") || s.includes("audio") || s.includes("finalizing")) return 2;
+    if(s.includes("metadata")) return 3;
+    if(s.includes("artwork") || s.includes("thumbnail")) return 4;
+    if(s.includes("library") || status==="completed") return 5;
+    return status==="downloading"?1:2;
+}
+function v37PipelineHtml(task) {
+    const stages=["Queued","Downloading","Processing","Metadata","Artwork","Library"], idx=v37PipelineIndex(task);
+    return `<div class="download-pipeline">${stages.map((stage,i)=>`<span class="${i<idx?"done ":""}${i===idx?"current":""}${i>idx?"pending":""}"><i></i>${stage}</span>`).join("")}</div>`;
+}
+function v37Eta(task) {
+    const p=Math.max(0,Math.min(100,Number(task?.percent)||0)), id=String(task?.id||task?.task_id||""); if(!id || !(p>0 && p<100)) return p>=100?"Complete":"—";
+    const now=performance.now(), previous=v37EtaSamples.get(id);
+    v37EtaSamples.set(id,{p,t:now});
+    if(!previous || p<=previous.p || now<=previous.t) return "Calculating…";
+    const rate=(p-previous.p)/((now-previous.t)/1000); if(!(rate>0)) return "Calculating…";
+    const seconds=(100-p)/rate; if(!Number.isFinite(seconds)||seconds>86400) return "Calculating…";
+    const m=Math.floor(seconds/60), s=Math.round(seconds%60); return m?`${m}m ${s}s`:`${s}s`;
+}
+function v37DownloadStatus(task) {
+    const st=String(task?.status||"").toLowerCase();
+    if(st==="queued") return "Queued"; if(st==="downloading") return "Downloading"; if(st==="processing") return task.step||"Processing"; if(st==="completed") return "Ready"; if(st==="cancelled"||st==="canceled") return "Cancelled"; return "Failed";
+}
+function createDownloadCardV37(task, index=0) {
+    const card=document.createElement("article"); card.className="download-card v37-download-card";
+    const isHistory=Boolean(task?.history), failed=["error","failed","cancelled","canceled"].includes(String(task?.status||"").toLowerCase());
+    const title=task?.title||task?.final_name||"Unknown Track", artist=task?.artist||"Unknown Artist", album=task?.album||"";
+    const progress=Math.max(0,Math.min(100,Number(task?.percent)||0));
+    const cover=task?.cover||"static/logo.png";
+    card.innerHTML=`<div class="download-art"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="download-status-dot ${isHistory?"history":failed?"failed":"active"}"></span></div><div class="download-copy"><div class="download-topline"><strong>${escapeHtml(title)}</strong><span class="download-percent">${Math.round(progress)}%</span></div><span class="download-artist">${escapeHtml(artist)}${album?` · ${escapeHtml(album)}`:""}</span><span class="download-source">${escapeHtml(task?.url||"Local source")}</span><div class="download-progress-track"><i style="width:${progress}%"></i></div><div class="download-metrics"><span>${escapeHtml(v37DownloadStatus(task))}</span><span>${escapeHtml(task?.speed||"")}</span><span>ETA ${escapeHtml(v37Eta(task))}</span></div>${v37PipelineHtml(task)}${task?.error?`<div class="download-error-line"><i data-lucide="circle-alert"></i>${escapeHtml(String(task.error).slice(0,280))}</div>`:""}</div><div class="download-actions v37-download-actions"></div>`;
+    const actions=card.querySelector(".v37-download-actions");
+    if(failed && !isHistory){const b=document.createElement("button");b.className="save-btn compact";b.type="button";b.innerHTML=task.resume_available?'<i data-lucide="play"></i> Resume':'<i data-lucide="refresh-cw"></i> Retry';b.onclick=()=>retryTask(task.id);actions.appendChild(b);}
+    if(isActiveTask(task)){const b=document.createElement("button");b.className="btn-danger compact";b.type="button";b.innerHTML='<i data-lucide="x"></i> Cancel';b.onclick=()=>cancelTask(task.id);actions.appendChild(b);}
+    const detail=document.createElement("button"); detail.className="btn-refresh compact"; detail.type="button"; detail.innerHTML='<i data-lucide="ellipsis"></i> Details'; detail.onclick=()=>v37ShowDownloadDetails(task); actions.appendChild(detail);
+    if(isHistory){detail.title="View download details";}
+    card.querySelector("img")?.addEventListener("error",e=>{e.currentTarget.src="static/logo.png"},{once:true});
+    return card;
+}
+async function v37ShowDownloadDetails(task) {
+    const modal=document.getElementById("download-detail-modal"); if(!modal)return;
+    document.getElementById("downloadDetailTitle").textContent=task?.title||task?.final_name||"Download details";
+    document.getElementById("downloadDetailSubtitle").textContent=`${task?.artist||"Unknown Artist"}${task?.album?` · ${task.album}`:""}`;
+    const lines=[`Status: ${v37DownloadStatus(task)}`,`Pipeline: ${task?.step||"—"}`,`Progress: ${Number(task?.percent||0).toFixed(1)}%`,`Speed: ${task?.speed||"—"}`,`ETA: ${v37Eta(task)}`,`URL: ${task?.url||"—"}`,`File: ${task?.final_name||"—"}`,`Retries: ${task?.retry_count||0}`,`Resume available: ${task?.resume_available?"Yes":"No"}`,`Metadata source: ${task?.metadata_source||"—"}`,`Metadata confidence: ${task?.metadata_confidence??"—"}${task?.metadata_confidence!==undefined?"%":""}`,`Error: ${task?.error||"—"}`];
+    document.getElementById("downloadDetailContent").textContent=lines.join("\n"); modal.hidden=false;
+}
+async function loadV37DownloadHistory(){
+    try{const r=await apiFetch("api/downloads/history",{cache:"no-store",timeoutMs:10000});if(!r.ok)throw new Error("History unavailable");const d=await r.json();v37DownloadHistory=(Array.isArray(d.history)?d.history:[]).map(x=>({...x,id:x.task_id,history:true}));updateV37DownloadSummary();if(v37DownloadFilter==="history")renderDownloadsV37(latestTasks);}catch(err){console.warn("Download history:",err);}
+}
+function updateV37DownloadSummary(){
+    const active=latestTasks.filter(isActiveTask).length, queued=latestTasks.filter(t=>String(t.status||"")==="queued").length, failed=latestTasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())).length;
+    [["downloadsActiveCount",active],["downloadsQueuedCount",queued],["downloadsFailedCount",failed],["downloadsHistoryCount",v37DownloadHistory.length]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.textContent=n;});
+    const head=document.getElementById("downloadsHeadStatus");if(head)head.textContent=active?`${active} active · ${queued} queued`:`${v37DownloadHistory.length} in history`;
+}
+function renderDownloadsV37(tasks){
+    const list=document.getElementById("downloadsList"); if(!list)return;
+    updateV37DownloadSummary();
+    const filter=v37DownloadFilter;
+    const rows=filter==="history"?v37DownloadHistory.slice():filter==="queued"?tasks.filter(t=>String(t.status||"")==="queued"):filter==="failed"?tasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())):tasks.filter(t=>isActiveTask(t)&&String(t.status||"")!=="queued");
+    const hint=document.getElementById("downloadsFilterHint"); if(hint)hint.textContent=filter==="active"?"Currently running jobs":filter==="queued"?"Waiting to start":filter==="failed"?"Retryable failures and cancellations":"Persistent download history";
+    const clear=document.getElementById("downloadsClearHistory");if(clear)clear.hidden=filter!=="history";
+    list.innerHTML="";
+    if(!rows.length){list.innerHTML=`<div class="downloads-empty v37-empty"><div class="empty-icon"><i data-lucide="download-cloud"></i></div><div class="empty-title">${filter==="history"?"No download history":filter==="failed"?"No failed jobs":filter==="queued"?"Queue is clear":"No active downloads"}</div><div class="empty-text">${filter==="active"?"Start a download from Search or use Batch.":filter==="history"?"Completed and previous jobs will appear here.":"Everything is up to date."}</div></div>`;renderLocalIcons();return;}
+    const stack=document.createElement("div");stack.className="download-stack";rows.forEach((task,i)=>stack.appendChild(createDownloadCard(task,i+1)));list.appendChild(stack);renderLocalIcons();
+}
+async function v37BatchDownloads(){const modal=document.getElementById("batch-download-modal");if(modal)modal.hidden=false;}
+async function v37SubmitBatch(event){event.preventDefault();const urls=(document.getElementById("batchDownloadUrls")?.value||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!urls.length){showToast("❌ Add at least one URL");return;}if(urls.length>200){showToast("❌ Maximum 200 URLs per batch");return;}const body={urls,artist:document.getElementById("batchDownloadArtist")?.value||"",album:document.getElementById("batchDownloadAlbum")?.value||""};const btn=document.querySelector("#batchDownloadForm button[type=submit]");if(btn)btn.disabled=true;try{const r=await apiFetch("api/download/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),timeoutMs:20000});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Batch download failed");const queued=(d.results||[]).filter(x=>["ok","already_queued"].includes(x.status)).length;document.getElementById("batch-download-modal").hidden=true;document.getElementById("batchDownloadUrls").value="";showToast(`✅ ${queued} download${queued===1?"":"s"} added`);await pollTasks(true);}catch(err){showToast("❌ "+(err.message||"Batch download failed"));}finally{if(btn)btn.disabled=false;}}
+async function clearV37History(){try{const r=await apiFetch("api/downloads/history",{method:"DELETE"});if(!r.ok)throw new Error("Could not clear history");v37DownloadHistory=[];renderDownloadsV37(latestTasks);showToast("🧹 Download history cleared");}catch(err){showToast("❌ "+(err.message||"Clear history failed"));}}
+
+async function backupV37(){try{const r=await apiFetch("api/backup",{cache:"no-store",timeoutMs:30000});if(!r.ok)throw new Error("Backup failed");const blob=await r.blob();const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`xrob-music-backup-${new Date().toISOString().replace(/[:.]/g,"-")}.zip`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);showToast("✅ Backup created");}catch(err){showToast("❌ "+(err.message||"Backup failed"));}}
+async function restoreV37(){const input=document.getElementById("restoreFile");if(!input?.files?.[0]){showToast("Select a backup ZIP first");return;}if(!confirm("Restore this backup? A safety copy of the current database will be kept."))return;const form=new FormData();form.append("file",input.files[0]);try{const r=await apiFetch("api/restore",{method:"POST",body:form,timeoutMs:30000});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Restore failed");showToast("✅ Backup restored. Reloading…");setTimeout(()=>location.reload(),700);}catch(err){showToast("❌ "+(err.message||"Restore failed"));}}
+async function diagnosticsV37(){const modal=document.getElementById("diagnostics-modal"),box=document.getElementById("diagnosticsContent");if(!modal||!box)return;modal.hidden=false;box.innerHTML='<div class="queue-empty">Running checks…</div>';try{const r=await apiFetch("api/diagnostics",{cache:"no-store",timeoutMs:30000});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Diagnostics unavailable");const sections=[];for(const [key,val] of Object.entries(d)){if(key==="runtime"&&val){sections.push(`<section class="diag-section"><h3>Runtime</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);continue;}if(key==="tools"&&val){sections.push(`<section class="diag-section"><h3>Tools</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);continue;}if(val&&typeof val==="object")sections.push(`<section class="diag-section"><h3>${escapeHtml(key)}</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);}box.innerHTML=sections.join("");}catch(err){box.innerHTML=`<div class="queue-empty">${escapeHtml(err.message||"Diagnostics failed")}</div>`;}}
+
+function renderLibraryTracksV37(list, query){
+    const files=rawLibraryFiles.filter(file=>{const hay=`${file.title||file.name||""} ${file.artist||""} ${file.album||""} ${file.name||""}`.toLowerCase();return !query||hay.includes(query);});
+    list.innerHTML=""; if(!files.length){renderEmpty(list,"music-2",rawLibraryFiles.length?"No matching tracks":"Your library is empty",rawLibraryFiles.length?"Try another search.":"Downloaded tracks will appear here.");return;}
+    const token={files, index:0, query};v37LibraryRenderStates.set(list,token);
+    const sentinel=document.createElement("div"); sentinel.className="library-window-sentinel";
+    const observer=new IntersectionObserver(entries=>{if(!entries.some(e=>e.isIntersecting))return;const state=v37LibraryRenderStates.get(list);if(!state||state!==token)return;const fragment=document.createDocumentFragment();const end=Math.min(state.index+60,state.files.length);for(;state.index<end;state.index++)fragment.appendChild(createTrackCard(state.files[state.index],state.files));list.insertBefore(fragment,sentinel);if(state.index>=state.files.length)observer.disconnect();},{rootMargin:"900px"});
+    list.appendChild(sentinel);observer.observe(sentinel);const initial=token.files.slice(0,60);const fragment=document.createDocumentFragment();initial.forEach(f=>fragment.appendChild(createTrackCard(f,files)));list.insertBefore(fragment,sentinel);token.index=initial.length;if(token.index>=token.files.length)observer.disconnect();
+}
+function renderTracksV37(list,query){return renderLibraryTracksV37(list,query);}
+
+function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";input.addEventListener("input",()=>{if(v37SearchTimer)clearTimeout(v37SearchTimer);const q=input.value.trim();if(!q){searchMusic();return;}v37SearchTimer=setTimeout(()=>searchMusic(),420);});}
+
+function v37InstallKeyboard(){document.addEventListener("keydown",event=>{if(event.target?.matches?.("input,textarea,select,[contenteditable=true]"))return;if(event.key===" "){event.preventDefault();playBtn?.click();}else if(event.key==="ArrowRight"&&event.shiftKey){event.preventDefault();seekFromKeyboard(10);}else if(event.key==="ArrowLeft"&&event.shiftKey){event.preventDefault();seekFromKeyboard(-10);}else if(event.key.toLowerCase()==="m"){event.preventDefault();if(audio)audio.muted=!audio.muted;}});}
+function seekFromKeyboard(delta){const current=isRemotePlayerOwner()?Number(remotePlayerState?.currentTime||0):Number(audio?.currentTime||0),duration=isRemotePlayerOwner()?Number(remotePlayerState?.duration||0):Number(audio?.duration||0),next=Math.max(0,Math.min(duration||Infinity,current+delta));if(isRemotePlayerOwner())sendPlayerCommand("seek",{time:next});else if(audio){audio.currentTime=next;persistCurrentPosition(true);schedulePlayerStateBroadcast(true);}}
+
+function v37InstallDrawerSwipe(){["downloads-drawer","queue-drawer"].forEach(id=>{const el=document.getElementById(id);if(!el||el.dataset.v37Swipe)return;el.dataset.v37Swipe="1";let startX=0;let startY=0;el.addEventListener("touchstart",e=>{const t=e.touches[0];if(!t)return;startX=t.clientX;startY=t.clientY;},{passive:true});el.addEventListener("touchend",e=>{const t=e.changedTouches[0];if(!t)return;const dx=t.clientX-startX,dy=t.clientY-startY;if(window.innerWidth<=700&&Math.abs(dx)>90&&Math.abs(dx)>Math.abs(dy)*1.25){if(id==="downloads-drawer")closeDownloadsDrawer();else closeQueueDrawer();}},{passive:true});});}
+function v37NoOverflow(){document.documentElement.style.overflowX="hidden";document.body.style.overflowX="hidden";}
+
+function saveV37DeviceName(){const value=(document.getElementById("set_device_name")?.value||"").trim();if(value){storageSet("xrob_music_device_name",value);apiFetch("api/devices/rename",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({deviceId:v37DeviceId(),name:value})}).catch(()=>{});}else storageRemove("xrob_music_device_name");}
+function applySettingsToFormV37(settings){
+    const setValue=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??""}; const setChecked=(id,v)=>{const e=document.getElementById(id);if(e)e.checked=Boolean(v)};
+    setValue("set_format",settings.audio_format||"mp3");setValue("set_quality",settings.audio_quality||"320K");setValue("set_metadata_mode",settings.metadata_mode||"auto");const artworkMode=settings.artwork_behavior||((settings.embed_thumbnail!==false)?"embed":"none");setValue("set_artwork_behavior",artworkMode);setChecked("set_thumb",artworkMode!=="none");setChecked("set_meta",settings.embed_metadata);setChecked("set_organize",settings.organize_by_artist);setChecked("set_scan_enabled",settings.scan_enabled!==false);setValue("set_scan_interval",settings.scan_interval_minutes||60);setValue("set_title_cleanup_rules",settings.title_cleanup_rules||"");setValue("set_daily_mix_count",Math.max(5,Math.min(50,Number(settings.daily_mix_track_count||30))));storageSet("xrob_music_daily_mix_count",String(settings.daily_mix_track_count||30));
+    playerSettings={...playerSettings,replaygain_enabled:settings.replaygain_enabled!==false,replaygain_mode:settings.replaygain_mode||"track",replaygain_preamp_db:Number(settings.replaygain_preamp_db||0),replaygain_prevent_clipping:settings.replaygain_prevent_clipping!==false,crossfade_seconds:Number(settings.crossfade_seconds||0),gapless_playback:settings.gapless_playback!==false};
+    setChecked("set_replaygain_enabled",playerSettings.replaygain_enabled);setValue("set_replaygain_mode",playerSettings.replaygain_mode);setValue("set_replaygain_preamp",playerSettings.replaygain_preamp_db);setChecked("set_replaygain_clip",playerSettings.replaygain_prevent_clipping);setValue("set_crossfade",playerSettings.crossfade_seconds);setChecked("set_gapless",playerSettings.gapless_playback);
+    setValue("set_download_location",settings.download_location||"");setValue("set_max_concurrent",settings.max_concurrent_downloads||3);setChecked("set_auto_retry",settings.auto_retry_downloads!==false);setValue("set_retry_limit",settings.download_retry_limit??2);setValue("set_retry_backoff",settings.download_retry_backoff_seconds||3);setValue("set_filename_mode",settings.filename_mode||"title");setValue("set_cache_size",settings.cache_size_mb||256);setValue("set_stats_retention",settings.stats_retention_days||365);setValue("set_device_name",v37DeviceName());setValue("set_web_username",settings.web_username||"admin");setValue("set_web_password","");renderStorage(settings.storage);updateQualityState();
+}
+async function saveSettingsV37(){
+    const gv=id=>document.getElementById(id)?.value||"",gc=id=>document.getElementById(id)?.checked??false;
+    const artwork=gv("set_artwork_behavior")|| (gc("set_thumb")?"embed":"none");
+    const data={audio_format:gv("set_format")||"mp3",audio_quality:gv("set_quality")||"320K",metadata_mode:gv("set_metadata_mode")||"auto",embed_thumbnail:artwork==="embed",embed_metadata:gc("set_meta"),organize_by_artist:gc("set_organize"),scan_enabled:gc("set_scan_enabled"),scan_interval_minutes:Math.max(5,Number(gv("set_scan_interval")||60)),title_cleanup_rules:gv("set_title_cleanup_rules"),daily_mix_track_count:Math.max(5,Math.min(50,Number(gv("set_daily_mix_count")||30))),replaygain_enabled:gc("set_replaygain_enabled"),replaygain_mode:gv("set_replaygain_mode")||"track",replaygain_preamp_db:Math.max(-12,Math.min(12,Number(gv("set_replaygain_preamp")||0))),replaygain_prevent_clipping:gc("set_replaygain_clip"),crossfade_seconds:Math.max(0,Math.min(12,Number(gv("set_crossfade")||0))),gapless_playback:gc("set_gapless"),web_username:gv("set_web_username")||"admin",download_location:gv("set_download_location").trim(),max_concurrent_downloads:Math.max(1,Math.min(8,Number(gv("set_max_concurrent")||3))),auto_retry_downloads:gc("set_auto_retry"),download_retry_limit:Math.max(0,Math.min(5,Number(gv("set_retry_limit")||2))),download_retry_backoff_seconds:Math.max(1,Math.min(60,Number(gv("set_retry_backoff")||3))),artwork_behavior:artwork,filename_mode:gv("set_filename_mode")||"title",cache_size_mb:Math.max(32,Math.min(2048,Number(gv("set_cache_size")||256))),stats_retention_days:Math.max(30,Math.min(3650,Number(gv("set_stats_retention")||365))),...(gv("set_web_password")?{web_password:gv("set_web_password")}: {})};
+    try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Failed to save settings.");applySettingsToFormV37(d);saveV37DeviceName();showToast("✅ Settings saved");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent=data.download_location?"Settings saved. Restart Xrob Music to apply a changed download location.":"Settings saved.";loadV37Devices();}catch(err){const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="❌ "+(err.message||"Failed to save settings.");showToast("❌ "+(err.message||"Failed to save settings."));}
+}
+async function resetSettingsV37(){const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,download_location:"",max_concurrent_downloads:3,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",cache_size_mb:256,stats_retention_days:365};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToFormV37(d);showToast("↺ Settings reset");}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
+
+function v37WrapFetchers(){
+    const rawPoll= pollTasks;
+    pollTasks=async function(force=false){const now=Date.now();if(!force&&v37TaskFetchPromise)return v37TaskFetchPromise;if(!force&&now-v37LastTaskFetch<4500)return;v37TaskFetchPromise=rawPoll(force).finally(()=>{v37LastTaskFetch=Date.now();v37TaskFetchPromise=null;});return v37TaskFetchPromise;};
+    const rawStats=loadStats;
+    loadStats=async function(){const now=Date.now();if(v37StatsFetchPromise)return v37StatsFetchPromise;if(now-v37LastStatsFetch<30000)return;v37StatsFetchPromise=rawStats().finally(()=>{v37LastStatsFetch=Date.now();v37StatsFetchPromise=null;});return v37StatsFetchPromise;};
+}
+// Install the hardened v3.7 overrides before authenticated app startup.
+updateDeviceOwnershipUI = updateDeviceOwnershipUIV37;
+createDownloadCard = createDownloadCardV37;
+renderDownloads = renderDownloadsV37;
+renderTracks = renderTracksV37;
+applySettingsToForm = applySettingsToFormV37;
+saveSettings = saveSettingsV37;
+resetSettings = resetSettingsV37;
+
+function v37Install(){
+    try{v37WrapFetchers();}catch(_){}
+    // Replace handlers/functions after the original startup has installed its base listeners.
+    document.getElementById("gp-connect-btn")?.addEventListener("click",e=>{e.preventDefault();e.stopPropagation();openV37Connect();});
+    document.getElementById("connectClose")?.addEventListener("click",closeV37Connect);
+    document.getElementById("openDevicesButton")?.addEventListener("click",openV37Connect);
+    document.getElementById("downloadsBatchButton")?.addEventListener("click",v37BatchDownloads);
+    document.getElementById("batchDownloadClose")?.addEventListener("click",()=>document.getElementById("batch-download-modal").hidden=true);
+    document.getElementById("downloadDetailClose")?.addEventListener("click",()=>document.getElementById("download-detail-modal").hidden=true);
+    document.getElementById("diagnosticsClose")?.addEventListener("click",()=>document.getElementById("diagnostics-modal").hidden=true);
+    document.getElementById("batchDownloadForm")?.addEventListener("submit",v37SubmitBatch);
+    document.getElementById("downloadsClearHistory")?.addEventListener("click",clearV37History);
+    document.querySelectorAll("[data-download-filter]").forEach(btn=>btn.addEventListener("click",()=>{v37DownloadFilter=btn.dataset.downloadFilter||"active";document.querySelectorAll("[data-download-filter]").forEach(b=>b.classList.toggle("active",b===btn));renderDownloadsV37(latestTasks);if(v37DownloadFilter==="history")loadV37DownloadHistory();}));
+    document.getElementById("backupButton")?.addEventListener("click",backupV37);document.getElementById("restoreButton")?.addEventListener("click",()=>document.getElementById("restoreFile")?.click());document.getElementById("restoreFile")?.addEventListener("change",()=>{if(document.getElementById("restoreFile")?.files?.[0])restoreV37();});document.getElementById("diagnosticsButton")?.addEventListener("click",diagnosticsV37);
+    document.getElementById("set_device_name")?.addEventListener("change",saveV37DeviceName);
+    const artworkSelect=document.getElementById("set_artwork_behavior");
+    const artworkToggle=document.getElementById("set_thumb");
+    artworkSelect?.addEventListener("change",()=>{if(artworkToggle)artworkToggle.checked=artworkSelect.value!=="none";});
+    artworkToggle?.addEventListener("change",()=>{if(artworkSelect)artworkSelect.value=artworkToggle.checked?"embed":"none";});
+    if(typeof window._xrobOriginalRenderLibraryView==="function"){ /* keep enhanced library wrapper */ }
+    // Function bindings used by existing listeners resolve these latest function declarations.
+    renderV37Devices();v37BindSearchDebounce();v37InstallKeyboard();v37InstallDrawerSwipe();v37NoOverflow();
+    registerV37Device();heartbeatV37Device();loadV37Devices();loadV37DownloadHistory();
+    if(v37DeviceTimer)clearInterval(v37DeviceTimer);v37DeviceTimer=setInterval(heartbeatV37Device,8000);
+    if(v37DeviceRefreshTimer)clearInterval(v37DeviceRefreshTimer);v37DeviceRefreshTimer=setInterval(()=>{if(!document.getElementById("connect-modal")?.hidden)loadV37Devices();},5000);
+    window.addEventListener("online",()=>{registerV37Device();loadV37Devices();loadServerPlayerState?.();},{passive:true});
+    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){heartbeatV37Device();loadV37Devices();}});
+}
+
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",v37Install,{once:true});else setTimeout(v37Install,0);
 
 /* ============================================================
    GLOBAL FUNCTIONS
