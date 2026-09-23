@@ -51,6 +51,7 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+SERVER_VERSION = "3.6.16"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -74,7 +75,7 @@ async def app_lifespan(_app):
 
 app = FastAPI(
     title="Xrob Music",
-    version="3.5.23",
+    version=SERVER_VERSION,
     lifespan=app_lifespan,
 )
 
@@ -251,7 +252,6 @@ def _is_authenticated(token):
 ADDON_OPTIONS_FILE = Path("/data/options.json")
 
 SUBSONIC_VERSION = "1.16.1"
-SERVER_VERSION = "3.5.23"
 
 MAX_CONCURRENT_DOWNLOADS = 3
 LIBRARY_METADATA_CONCURRENCY = max(4, min(12, int(os.getenv("XROB_LIBRARY_METADATA_CONCURRENCY", "8"))))
@@ -983,6 +983,11 @@ def _sanitize_player_state(state):
             cleaned["queueIndex"] = -1
         cleaned["queueIndex"] = max(-1, cleaned["queueIndex"])
 
+    if "repeatMode" in cleaned:
+        cleaned["repeatMode"] = cleaned.get("repeatMode") if cleaned.get("repeatMode") in {"off", "track", "queue"} else "off"
+    if "shuffle" in cleaned:
+        cleaned["shuffle"] = bool(cleaned.get("shuffle"))
+
     for key in ("paused", "muted", "force", "takeover"):
         if key in cleaned:
             cleaned[key] = bool(cleaned.get(key))
@@ -1037,7 +1042,7 @@ def _compact_player_state(state):
     keys = (
         "ownerId", "clientId", "src", "currentTime", "duration",
         "volume", "title", "artist", "art", "songId", "source", "deviceName",
-        "queueIndex", "paused", "muted", "at", "seq", "force",
+        "queueIndex", "paused", "muted", "repeatMode", "shuffle", "at", "seq", "force",
     )
     return {key: state[key] for key in keys if key in state}
 
@@ -3546,10 +3551,11 @@ async def api_library():
 
 @app.post("/api/library/scan")
 async def api_library_scan():
-    invalidate_library_cache()
-    library = await build_library(force=True)
-    storage = await asyncio.to_thread(storage_info_sync)
-    return {"status": "ok", "tracks": len(library["songs"]), "artists": len(library["artists"]), "albums": len(library["albums"]), "storage": storage}
+    # Keep the legacy endpoint on the same serialized scan path as quick/full scans
+    # so a manual scan cannot race the scheduled scanner or another refresh.
+    result = await api_library_scan_mode("quick")
+    result["storage"] = await asyncio.to_thread(storage_info_sync)
+    return result
 
 
 @app.get("/api/library/statistics")
@@ -6850,10 +6856,10 @@ async def api_player_state_update(payload: dict = Body(...)):
             })
         incoming_seq = safe_int(state.get("seq"), 0)
         current_seq = safe_int(current_state.get("seq"), 0) if isinstance(current_state, dict) else 0
-        if current_owner == owner_id and not force and not bool(payload.get("full", False)) and current_seq > incoming_seq:
-            # State updates are asynchronous and may arrive out of order.
-            # An older heartbeat from the same owner is harmless and must not
-            # be surfaced as an ownership conflict to the playback client.
+        if current_owner == owner_id and not force and current_seq > incoming_seq:
+            # Every state snapshot is ordered by the owner's monotonically increasing
+            # sequence number. Network retries, background timers and browser lifecycle
+            # events can otherwise deliver an older snapshot after a newer one.
             return {
                 "status": "ignored_stale",
                 "updated_at": current.get("updated_at", 0) if isinstance(current, dict) else 0,
@@ -6882,9 +6888,17 @@ def _sanitize_player_command_payload(command, payload):
         except (TypeError, ValueError):
             return {}
         return {"volume": min(1.0, max(0.0, value)) if math.isfinite(value) else 0.8}
+    if command in {"next", "previous"}:
+        repeat = str(data.get("repeat") or "off")
+        return {"repeat": repeat if repeat in {"off", "track", "queue"} else "off"}
+    if command == "shuffle":
+        return {"enabled": bool(data.get("enabled"))}
+    if command == "repeat":
+        mode = str(data.get("mode") or "off")
+        return {"mode": mode if mode in {"off", "track", "queue"} else "off"}
     if command == "load-play":
         state = _sanitize_player_state(data)
-        allowed = {"src", "source", "title", "artist", "art", "songId", "queueIndex", "queue", "dailyMix"}
+        allowed = {"src", "source", "title", "artist", "art", "songId", "queueIndex", "queue", "dailyMix", "repeatMode", "shuffle"}
         return {key: state[key] for key in allowed if key in state}
     return {}
 
@@ -6895,9 +6909,10 @@ async def api_player_command(payload: dict = Body(...)):
     command = str(payload.get("command") or "").strip()
     if not target_id or not command:
         raise HTTPException(400, "targetId and command are required")
-    allowed_commands = {"play", "pause", "seek", "next", "previous", "volume", "load-play"}
+    allowed_commands = {"play", "pause", "seek", "next", "previous", "volume", "shuffle", "repeat", "load-play"}
     if command not in allowed_commands:
         raise HTTPException(400, "Unsupported player command")
+
     message = {
         "type": "command",
         "targetId": target_id[:200],
@@ -6905,8 +6920,81 @@ async def api_player_command(payload: dict = Body(...)):
         "payload": _sanitize_player_command_payload(command, payload.get("payload")),
         "id": str(payload.get("id") or "")[:300],
     }
+
+    # Commands are state changes, not fire-and-forget events. Persist the resulting
+    # player state so a device that is temporarily offline/reconnecting still
+    # converges to the requested state when it reconnects. The target must remain
+    # the current player owner, otherwise an old device could mutate a newer session.
+    async with PLAYER_STATE_LOCK:
+        current = await get_player_state_async()
+        current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
+        current_owner = str(current_state.get("ownerId") or "").strip()
+        if current_owner != target_id:
+            if not current_owner:
+                raise HTTPException(409, "No active player owner")
+            raise HTTPException(409, {"status": "owned", "ownerId": current_owner})
+
+        next_state = dict(current_state)
+        command_payload = message["payload"]
+        if command == "play":
+            next_state["paused"] = False
+        elif command == "pause":
+            next_state["paused"] = True
+        elif command == "seek":
+            next_state["currentTime"] = max(0.0, float(command_payload.get("time", 0)))
+            duration = float(next_state.get("duration") or 0)
+            if duration > 0:
+                next_state["currentTime"] = min(next_state["currentTime"], duration)
+        elif command == "volume":
+            next_state["volume"] = min(1.0, max(0.0, float(command_payload.get("volume", 0.8))))
+        elif command == "shuffle":
+            next_state["shuffle"] = bool(command_payload.get("enabled"))
+        elif command == "repeat":
+            next_state["repeatMode"] = command_payload.get("mode", "off") if command_payload.get("mode") in {"off", "track", "queue"} else "off"
+        elif command == "load-play":
+            for key in ("src", "source", "title", "artist", "art", "songId", "queueIndex", "queue", "dailyMix", "repeatMode", "shuffle"):
+                if key in command_payload:
+                    next_state[key] = command_payload[key]
+            next_state["currentTime"] = 0.0
+            next_state["paused"] = False
+        elif command in {"next", "previous"}:
+            queue = next_state.get("queue") if isinstance(next_state.get("queue"), list) else []
+            current_index = safe_int(next_state.get("queueIndex"), 0)
+            repeat = command_payload.get("repeat") or next_state.get("repeatMode") or "off"
+            if queue:
+                direction = 1 if command == "next" else -1
+                next_index = current_index + direction
+                if next_index < 0 or next_index >= len(queue):
+                    if repeat != "queue":
+                        # Match the client: Repeat Off/Track keeps the current item when
+                        # Next/Previous is pressed at the queue boundary.
+                        next_index = current_index
+                    else:
+                        next_index = 0 if command == "next" else len(queue) - 1
+                track = queue[next_index] if 0 <= next_index < len(queue) else None
+                if isinstance(track, dict) and next_index != current_index:
+                    next_state["queueIndex"] = next_index
+                    for key in ("id", "name", "title", "artist", "album", "duration", "cover", "stream"):
+                        if key in track:
+                            if key == "id":
+                                next_state["songId"] = track[key]
+                            elif key == "stream":
+                                next_state["src"] = track[key]
+                            elif key == "cover":
+                                next_state["art"] = track[key]
+                            else:
+                                next_state[key] = track[key]
+                    next_state["currentTime"] = 0.0
+                    next_state["paused"] = False
+
+        next_state["seq"] = max(safe_int(current_state.get("seq"), 0) + 1, safe_int(payload.get("seq"), 0))
+        next_state["at"] = time.time()
+        await publish_player_state(next_state, full=True)
+
+    # The live target receives the command immediately as well. The client deduplicates
+    # the same command ID when both WebSocket and BroadcastChannel paths deliver it.
     await manager.broadcast(message)
-    return {"status": "ok"}
+    return {"status": "ok", "state": next_state}
 
 
 def get_player_positions_sync():
