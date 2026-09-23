@@ -820,7 +820,25 @@ function applyRemotePlayerState(state, fromServer = false) {
 function takeoverRemotePlayer(force = false) {
     const state = remotePlayerState;
     if (!audio || !state?.src || (!force && isRemotePlayerOwner())) return false;
-    if (state.ownerId && state.ownerId !== PLAYER_TAB_ID) sendPlayerCommand("pause");
+
+    // Snapshot the live remote position BEFORE changing ownership. When the remote
+    // device is playing, its server state is a point-in-time value, so account for
+    // the time elapsed since that snapshot was received. This is the handoff point
+    // that makes switching devices behave like Spotify Connect instead of restarting.
+    const receivedAt = Number(remotePlayerReceivedAt || Date.now());
+    const baseTime = Number.isFinite(Number(state.currentTime)) ? Math.max(0, Number(state.currentTime)) : 0;
+    const duration = Number.isFinite(Number(state.duration)) ? Math.max(0, Number(state.duration)) : 0;
+    const elapsed = state.paused ? 0 : Math.max(0, (Date.now() - receivedAt) / 1000);
+    const liveTarget = duration > 0
+        ? Math.min(duration, baseTime + elapsed)
+        : Math.max(0, baseTime + elapsed);
+    const shouldPlay = !Boolean(state.paused);
+    const previousOwnerId = state.ownerId && state.ownerId !== PLAYER_TAB_ID ? state.ownerId : null;
+
+    // Tell the previous owner to stop only after we have captured its live position.
+    // The command is persisted server-side but does not reset currentTime.
+    if (previousOwnerId) sendPlayerCommand("pause");
+
     setPlayerOwner(true);
     if (Array.isArray(state.queue) && state.queue.length) {
         const queue = normalizeSyncQueue(state.queue);
@@ -832,25 +850,43 @@ function takeoverRemotePlayer(force = false) {
     audio.dataset.xrobSongId = String(state.songId || "");
     const expectedSource = new URL(state.src, location.href).href;
     const loadGeneration = ++audioLoadGeneration;
+    const target = liveTarget;
     audio.src = expectedSource;
     activePreviewBtn = null;
-    const target = Number.isFinite(Number(state.currentTime)) ? Math.max(0, Number(state.currentTime)) : 0;
-    const shouldPlay = !Boolean(state.paused);
-    const restore = () => {
+
+    const finalizeTakeover = () => {
         if (loadGeneration !== audioLoadGeneration || audio.src !== expectedSource) return;
-        if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.25));
-        if (shouldPlay) { initAudioContext(); audio.play().catch(() => {}); }
-        else updatePlayingState(false);
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+            audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.25));
+        } else {
+            try { audio.currentTime = target; } catch (_) {}
+        }
+        if (shouldPlay) {
+            initAudioContext();
+            const playPromise = audio.play();
+            if (playPromise?.catch) playPromise.catch(() => {});
+        } else {
+            audio.pause();
+            updatePlayingState(false);
+        }
         applyReplayGainToActiveAudio(activeQueueTrack());
+
+        // Do NOT publish the state while the new audio element is still at 0s.
+        // Publish only after the target position has been restored so the server's
+        // durable cross-device state remains correct.
+        playerTakeoverPending = true;
+        schedulePlayerStateBroadcast(true);
+        updateProgress();
+        updateMediaSession();
+        updateDeviceOwnershipUI();
     };
-    audio.addEventListener("loadedmetadata", restore, { once: true });
+
+    audio.addEventListener("loadedmetadata", finalizeTakeover, { once: true });
     audio.load();
     if (player) player.style.display = "grid";
     remotePlayerState = null;
     stopRemoteProgressTicker();
     updateDeviceOwnershipUI();
-    playerTakeoverPending = true;
-    schedulePlayerStateBroadcast(true);
     return true;
 }
 
