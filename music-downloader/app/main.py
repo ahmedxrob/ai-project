@@ -145,6 +145,94 @@ PLAYER_STATE_DB_KEY = "default"
 PLAYER_STATE_LAST_PERSISTED_AT = 0.0
 PLAYER_STATE_LOCK = asyncio.Lock()
 
+# Cross-device registry. Player state remains the single source of truth; this
+# registry only answers which clients are online and what they are doing.
+DEVICE_REGISTRY = {}
+DEVICE_REGISTRY_LOCK = asyncio.Lock()
+DEVICE_ONLINE_TTL_SECONDS = 15.0
+DEVICE_RETENTION_SECONDS = 86400.0
+
+
+def _sanitize_device_payload(payload):
+    data = payload if isinstance(payload, dict) else {}
+    device_id = str(data.get("deviceId") or "").strip()[:200]
+    if not device_id:
+        return None
+    return {
+        "deviceId": device_id,
+        "clientId": str(data.get("clientId") or "").strip()[:200],
+        "ownerId": str(data.get("ownerId") or "").strip()[:200],
+        "name": str(data.get("name") or "This device").strip()[:120] or "This device",
+        "kind": str(data.get("kind") or "computer").strip()[:32] or "computer",
+        "platform": str(data.get("platform") or "").strip()[:80],
+        "browser": str(data.get("browser") or "").strip()[:80],
+    }
+
+
+async def _register_device(payload, websocket=None):
+    device = _sanitize_device_payload(payload)
+    if not device:
+        return None
+    now = time.time()
+    async with DEVICE_REGISTRY_LOCK:
+        current = DEVICE_REGISTRY.get(device["deviceId"], {})
+        current.update(device)
+        current["lastSeenAt"] = now
+        current["online"] = True
+        if websocket is not None:
+            current["websocket"] = websocket
+        DEVICE_REGISTRY[device["deviceId"]] = current
+    return device
+
+
+async def _mark_device_disconnected(device_id):
+    if not device_id:
+        return
+    async with DEVICE_REGISTRY_LOCK:
+        row = DEVICE_REGISTRY.get(device_id)
+        if row:
+            row["online"] = False
+            row["lastSeenAt"] = time.time()
+            row["websocket"] = None
+
+
+async def _device_snapshot():
+    now = time.time()
+    state = await get_player_state_async()
+    player = dict(state.get("state") or {}) if isinstance(state, dict) else {}
+    active_owner = str(player.get("ownerId") or "")
+    result = []
+    async with DEVICE_REGISTRY_LOCK:
+        for device_id, row in list(DEVICE_REGISTRY.items()):
+            age = max(0.0, now - float(row.get("lastSeenAt") or 0))
+            if age > DEVICE_RETENTION_SECONDS:
+                DEVICE_REGISTRY.pop(device_id, None)
+                continue
+            online = age <= DEVICE_ONLINE_TTL_SECONDS
+            owner_id = str(row.get("ownerId") or "")
+            is_owner = bool(active_owner and owner_id == active_owner)
+            result.append({
+                "deviceId": device_id,
+                "clientId": row.get("clientId", ""),
+                "ownerId": owner_id,
+                "name": row.get("name") or "This device",
+                "kind": row.get("kind") or "computer",
+                "platform": row.get("platform", ""),
+                "browser": row.get("browser", ""),
+                "online": online,
+                "lastSeenAt": row.get("lastSeenAt", 0),
+                "active": is_owner and online,
+                "playing": is_owner and online and not bool(player.get("paused")) and bool(player.get("src")),
+                "paused": is_owner and online and bool(player.get("paused")),
+                "track": {
+                    "title": player.get("title", ""),
+                    "artist": player.get("artist", ""),
+                    "art": player.get("art", ""),
+                } if is_owner and player.get("src") else None,
+            })
+    result.sort(key=lambda d: (not d["active"], not d["online"], d["name"].lower()))
+    return result
+
 
 def _auth_token():
     return secrets.token_urlsafe(32)
@@ -2034,11 +2122,21 @@ async def resolve_cover_id(item_id):
 # DUPLICATES
 # ============================================================
 
-def cleanup_task_files(task_id):
+def cleanup_task_files(task_id, preserve_resume=False):
     for path in DOWNLOAD_DIR.rglob(f"*{task_id}*"):
         try:
-            if path.is_file():
-                path.unlink()
+            if not path.is_file():
+                continue
+            name = path.name
+            if preserve_resume and (
+                name.startswith(f"{task_id}.")
+                and path.suffix.lower() in {".part", ".ytdl", ".temp"}
+            ):
+                continue
+            if preserve_resume and name.startswith(f"{task_id}.") and not name.startswith(f"clean_{task_id}"):
+                # Keep the raw yt-dlp output so a retry can continue/verify it.
+                continue
+            path.unlink()
         except Exception:
             pass
 
@@ -2278,6 +2376,27 @@ async def download_worker():
 
             settings = await load_settings_async()
 
+            # URL-only/batch jobs can arrive without metadata. Resolve the source
+            # before duplicate checking so they enter the same safe pipeline as
+            # normal search results.
+            if (
+                not str(task.get("title") or "").strip()
+                or str(task.get("title") or "").strip().casefold() in {"unknown track", "pending metadata"}
+            ):
+                source_meta = await youtube_source_metadata(task.get("url", ""))
+                if source_meta.get("title"):
+                    task["title"] = normalize_catalog_title(
+                        source_meta["title"],
+                        settings.get("title_cleanup_rules", ""),
+                    )
+                if source_meta.get("artist"):
+                    task["artist"] = clean_metadata_text(source_meta["artist"], "Unknown Artist")
+                if source_meta.get("album"):
+                    task["album"] = source_meta["album"]
+                if source_meta:
+                    task["last_updated"] = time.time() * 1000
+                    await notify_task_update(task, force_save=True)
+
             # Re-check the lightweight library index at worker time as well. This
             # prevents a duplicate when the library changed after Save was clicked.
             existing = await find_existing_track(
@@ -2305,6 +2424,7 @@ async def download_worker():
             )
 
             task["status"] = "downloading"
+            task["stage"] = "Downloading"
             task["step"] = "Downloading stream..."
             task["last_updated"] = (
                 time.time() * 1000
@@ -2329,6 +2449,7 @@ async def download_worker():
                 "--audio-quality",
                 quality,
                 "--newline",
+                "--continue",
                 "-o",
                 output_template,
             ]
@@ -2425,21 +2546,26 @@ async def download_worker():
                         task
                     )
 
+                elif "[EmbedThumbnail]" in text:
+                    task["status"] = "processing"
+                    task["stage"] = "Artwork"
+                    task["percent"] = 96
+                    task["step"] = "Artwork..."
+                    task["last_updated"] = time.time() * 1000
+                    await notify_task_update(task, force_save=True)
                 elif any(
                     marker in text
                     for marker in (
                         "[ExtractAudio]",
-                        "[EmbedThumbnail]",
                         "[Metadata]",
                         "[Fixup]",
                     )
                 ):
-
                     task["status"] = "processing"
+                    task["stage"] = "Processing"
                     task["percent"] = 92
-                    task["step"] = (
-                        "Processing metadata..."
-                    )
+                    task["step"] = "Processing audio..."
+
                     task["last_updated"] = (
                         time.time() * 1000
                     )
@@ -2483,9 +2609,11 @@ async def download_worker():
                 await asyncio.to_thread(
                     cleanup_task_files,
                     task_id,
+                    True,
                 )
 
                 task["status"] = "error"
+                task["resume_available"] = True
                 task["step"] = "Download failed"
                 task["error"] = (
                     error_text[-1200:]
@@ -2544,6 +2672,7 @@ async def download_worker():
 
             if settings.get("embed_metadata", True):
                 task["status"] = "processing"
+                task["stage"] = "Metadata"
                 task["percent"] = 96
                 task["step"] = "Finalizing metadata..."
                 task["last_updated"] = time.time() * 1000
@@ -2611,6 +2740,12 @@ async def download_worker():
                 )
             )
 
+            task["stage"] = "Library"
+            task["step"] = "Adding to library..."
+            task["percent"] = 99
+            task["last_updated"] = time.time() * 1000
+            await notify_task_update(task, force_save=True)
+
             async with DOWNLOAD_GUARD:
                 if settings.get("organize_by_artist", False):
                     final_dir = DOWNLOAD_DIR / artist
@@ -2631,10 +2766,12 @@ async def download_worker():
             )
 
             task["status"] = "completed"
+            task["stage"] = "Library"
             task["percent"] = 100
             task["speed"] = ""
             task["step"] = "Ready"
             task["error"] = ""
+            task["resume_available"] = False
             task["last_updated"] = (
                 time.time() * 1000
             )
@@ -2666,11 +2803,13 @@ async def download_worker():
             await asyncio.to_thread(
                 cleanup_task_files,
                 task_id,
+                True,
             )
 
             if task:
 
                 task["status"] = "error"
+                task["resume_available"] = True
                 task["step"] = (
                     "Unexpected error"
                 )
@@ -2729,6 +2868,8 @@ async def startup_event():
             task["step"] = (
                 "Recovered after restart"
             )
+            task["stage"] = "Downloading"
+            task["resume_available"] = True
             task["cancel_requested"] = False
             task["last_updated"] = now
             task["queue_token"] = uuid.uuid4().hex
@@ -2770,6 +2911,18 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=1008)
         return
 
+    device_id = str(websocket.query_params.get("deviceId") or "").strip()[:200]
+    if device_id:
+        await _register_device({
+            "deviceId": device_id,
+            "clientId": websocket.query_params.get("clientId"),
+            "ownerId": websocket.query_params.get("ownerId"),
+            "name": websocket.query_params.get("deviceName"),
+            "kind": websocket.query_params.get("kind"),
+            "platform": websocket.query_params.get("platform"),
+            "browser": websocket.query_params.get("browser"),
+        }, websocket=websocket)
+
     await manager.connect(websocket)
     current_state = await get_player_state_async()
     if current_state:
@@ -2793,8 +2946,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_text("pong")
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+        await _mark_device_disconnected(device_id)
     except Exception:
         manager.disconnect(websocket)
+        await _mark_device_disconnected(device_id)
 
 
 # WEB APP
@@ -2860,6 +3015,32 @@ async def communicate_with_timeout(process, timeout, label="process"):
         except Exception:
             pass
         raise RuntimeError(f"{label} timed out after {timeout} seconds")
+
+async def youtube_source_metadata(url):
+    """Fetch lightweight source metadata for batch/URL-only downloads."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *YT_DLP_COMMAND,
+            "--dump-single-json",
+            "--skip-download",
+            "--no-warnings",
+            "--no-playlist",
+            url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await communicate_with_timeout(process, 25, "Source metadata lookup")
+        if process.returncode != 0:
+            return {}
+        data = json.loads(stdout.decode("utf-8", errors="ignore"))
+        return {
+            "title": str(data.get("track") or data.get("title") or "").strip(),
+            "artist": str(data.get("artist") or data.get("creator") or data.get("uploader") or "").strip(),
+            "album": str(data.get("album") or "").strip(),
+        }
+    except Exception:
+        return {}
+
 
 async def youtube_search(
     query,
@@ -3305,6 +3486,10 @@ async def api_download(
             "cancel_requested": False,
             "created_at": time.time() * 1000,
             "queue_token": uuid.uuid4().hex,
+            "retry_count": 0,
+            "resume_available": False,
+            "pipeline": ["Queued", "Downloading", "Processing", "Metadata", "Artwork", "Library"],
+            "stage": "Queued",
         }
         TASKS[task_id] = task
         queue_token = task["queue_token"]
@@ -3317,6 +3502,37 @@ async def api_download(
         "task_id": task_id,
         "task": task,
     }
+
+
+@app.post("/api/download/batch")
+async def api_download_batch(payload: dict = Body(...)):
+    raw_items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(raw_items, list):
+        raise HTTPException(400, "items must be a list")
+    if len(raw_items) > 100:
+        raise HTTPException(400, "Batch limit is 100 items")
+    queued = 0
+    already = 0
+    results = []
+    for item in raw_items:
+        if not isinstance(item, dict) or not str(item.get("url") or "").strip():
+            continue
+        try:
+            result = await api_download({
+                "url": item.get("url"),
+                "title": item.get("title") or "",
+                "artist": item.get("artist") or "",
+                "album": item.get("album") or "",
+                "elementId": item.get("elementId") or "",
+            })
+            results.append(result)
+            if result.get("status") == "ok":
+                queued += 1
+            else:
+                already += 1
+        except HTTPException as exc:
+            results.append({"status": "error", "detail": str(exc.detail)})
+    return {"status": "ok", "queued": queued, "skipped": already, "results": results}
 
 
 @app.get("/api/tasks")
@@ -3400,6 +3616,9 @@ async def api_retry_task(task_id: str):
     task["created_at"] = time.time() * 1000
     task["last_updated"] = task["created_at"]
     task["queue_token"] = uuid.uuid4().hex
+    task["retry_count"] = safe_int(task.get("retry_count"), 0) + 1
+    task["resume_available"] = True
+    task["stage"] = "Queued"
 
     await notify_task_update(task, force_save=True)
     await TASK_QUEUE.put((task_id, task["queue_token"]))
@@ -6889,6 +7108,19 @@ def _playlist_row_to_dict(row):
     d["public"] = bool(d.get("public", 0))
     d["kind"] = "smart" if str(d.get("kind") or "").lower() == "smart" else "manual"
     return d
+
+
+@app.get("/api/player/devices")
+async def api_player_devices():
+    return {"devices": await _device_snapshot()}
+
+
+@app.post("/api/player/device-heartbeat")
+async def api_player_device_heartbeat(payload: dict = Body(...)):
+    device = await _register_device(payload)
+    if not device:
+        raise HTTPException(400, "deviceId is required")
+    return {"status": "ok", "device": device, "devices": await _device_snapshot()}
 
 
 @app.get("/api/player/state")
