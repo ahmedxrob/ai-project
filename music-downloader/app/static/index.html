@@ -5,21 +5,14 @@
   <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
   <meta content="#121212" name="theme-color"/>
   <meta content="Xrob Music self-hosted music downloader, library and OpenSubsonic server" name="description"/>
-  <meta content="yes" name="mobile-web-app-capable"/>
-  <meta content="yes" name="apple-mobile-web-app-capable"/>
-  <meta content="default" name="mobile-web-app-status-bar-style"/>
-  <meta content="Xrob Music" name="apple-mobile-web-app-title"/>
   <title>
    Xrob Music
   </title>
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="static/style.css?v=321" rel="stylesheet"/>
-  <link href="static/manifest.webmanifest" rel="manifest"/>
+  <link href="static/style.css?v=322" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
-  <link href="static/icon-180.png" rel="apple-touch-icon"/>
-  <meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
  </head>
  <body class="music-app">
   <div class="login-screen auth-shell" id="login-screen">
@@ -155,16 +148,6 @@
          <div class="home-stat-copy"><strong id="homePlays">0</strong><span>Total Plays</span></div>
         </div>
        </div>
-       <section class="continue-card page-section" id="continueListeningCard" hidden>
-        <div class="home-section-header">
-         <div>
-          <h3>Continue Listening</h3>
-          <p>Pick up exactly where you left off</p>
-         </div>
-         <button class="btn-refresh" id="continueRefresh" type="button"><i aria-hidden="true" data-lucide="refresh-cw"></i> Refresh</button>
-        </div>
-        <div class="continue-grid" id="continueListeningList"></div>
-       </section>
        <section class="daily-mix-card page-section" id="dailyMixCard">
         <div class="daily-mix-header">
          <div>
@@ -779,12 +762,7 @@
         <div class="setting-row">
          <div><div class="setting-label">Fade on pause / stop</div><div class="setting-desc">Apply a short audio fade when pausing or stopping to avoid clicks.</div></div>
          <label class="switch"><input id="set_fade_pause" type="checkbox" checked/><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">Remember playback position</div><div class="setting-desc">Save your listening position automatically so Continue Listening stays current.</div></div>
-         <label class="switch"><input id="set_resume_enabled" type="checkbox" checked/><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
+        </div><div class="setting-row">
          <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload the next local track to reduce transition gaps when crossfade is off.</div></div>
          <label class="switch"><input id="set_gapless" type="checkbox"/><span class="slider"></span></label>
         </div>
@@ -889,15 +867,6 @@
           </div>
          </div>
          <input id="set_scan_interval" min="5" step="5" style="max-width:120px" type="number" value="60"/>
-        </div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider">
-         <i aria-hidden="true" data-lucide="smartphone"></i> App
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">Install Xrob Music</div><div class="setting-desc">Install the app on Windows, Android, iPhone or iPad for faster access and a persistent app shell.</div></div>
-         <button class="save-btn" id="installPwaButton" type="button" hidden>Install app</button>
         </div>
        </div>
        <div class="settings-card settings-info-card page-section">
@@ -1161,16 +1130,27 @@
    </section>
   </div>
   <div class="overlay-drawers-stack" aria-live="polite">
-  <aside aria-label="Downloads" class="downloads-drawer overlay-panel" hidden="" id="downloads-drawer">
+  <aside aria-label="Downloads" class="downloads-drawer overlay-panel" hidden id="downloads-drawer">
    <div class="downloads-drawer-head">
-    <div>
-     <span class="downloads-drawer-kicker">DOWNLOADS</span>
-     <strong>Activity</strong>
+    <div class="downloads-drawer-title-row">
+     <span class="downloads-drawer-icon"><i aria-hidden="true" data-lucide="download"></i></span>
+     <div>
+      <span class="downloads-drawer-kicker">DOWNLOADS</span>
+      <strong>Download activity</strong>
+      <span class="downloads-drawer-summary" id="downloadsSummary">0 active · 0 complete</span>
+     </div>
     </div>
     <div class="downloads-drawer-head-actions">
-     <button class="btn-refresh" onclick="clearDoneTasks()" type="button" title="Clear completed downloads"><i aria-hidden="true" data-lucide="broom"></i><span>Clear</span></button>
+     <button class="icon-btn" id="downloadsRefresh" type="button" title="Refresh downloads" aria-label="Refresh downloads"><i aria-hidden="true" data-lucide="refresh-cw"></i></button>
+     <button class="btn-refresh" id="downloadsClear" type="button" title="Clear finished downloads"><i aria-hidden="true" data-lucide="broom"></i><span>Clear finished</span></button>
      <button aria-label="Close downloads" class="icon-btn" id="downloadsClose" title="Close downloads" type="button"><i aria-hidden="true" data-lucide="x"></i></button>
     </div>
+   </div>
+   <div class="downloads-toolbar" role="tablist" aria-label="Download filters">
+    <button class="downloads-filter active" data-download-filter="all" type="button" role="tab" aria-selected="true" tabindex="0">All <span id="downloadsAllCount">0</span></button>
+    <button class="downloads-filter" data-download-filter="active" type="button" role="tab" aria-selected="false" tabindex="-1">Active <span id="downloadsActiveCount">0</span></button>
+    <button class="downloads-filter" data-download-filter="completed" type="button" role="tab" aria-selected="false" tabindex="-1">Completed <span id="downloadsCompletedCount">0</span></button>
+    <button class="downloads-filter" data-download-filter="failed" type="button" role="tab" aria-selected="false" tabindex="-1">Failed <span id="downloadsFailedCount">0</span></button>
    </div>
    <div class="downloads-drawer-list downloads-list" id="downloadsList"></div>
   </aside>
@@ -1301,7 +1281,7 @@
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=313">
+  <script src="static/app.js?v=314">
   </script>
 
 
