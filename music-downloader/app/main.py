@@ -51,7 +51,7 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.6.18"
+SERVER_VERSION = "3.7.0"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -144,6 +144,9 @@ PLAYER_STATE_PERSIST_INTERVAL_SECONDS = 5.0
 PLAYER_STATE_DB_KEY = "default"
 PLAYER_STATE_LAST_PERSISTED_AT = 0.0
 PLAYER_STATE_LOCK = asyncio.Lock()
+PLAYER_DEVICE_MAX_AGE_SECONDS = 45.0
+PLAYER_DEVICE_ACTIVE_SECONDS = 12.0
+PLAYER_DEVICES_MAX = 100
 
 
 def _auth_token():
@@ -297,6 +300,8 @@ DEFAULT_SETTINGS = {
     "replaygain_prevent_clipping": True,
     "crossfade_seconds": 0.0,
     "gapless_playback": True,
+    "fade_on_pause": True,
+    "resume_enabled": True,
     "subsonic_user": "admin",
     "subsonic_password": "",
     "web_username": os.getenv("XROB_USERNAME", "admin"),
@@ -562,6 +567,8 @@ def load_settings():
     except (TypeError, ValueError):
         settings["crossfade_seconds"] = 0.0
     settings["gapless_playback"] = bool(settings.get("gapless_playback", True))
+    settings["fade_on_pause"] = bool(settings.get("fade_on_pause", True))
+    settings["resume_enabled"] = bool(settings.get("resume_enabled", True))
     settings.pop("max_results", None)
 
     return settings
@@ -577,7 +584,7 @@ def save_settings(data: dict):
         "embed_metadata", "organize_by_artist", "scan_enabled",
         "scan_interval_minutes", "title_cleanup_rules", "metadata_mode", "daily_mix_track_count",
         "replaygain_enabled", "replaygain_mode", "replaygain_preamp_db", "replaygain_prevent_clipping",
-        "crossfade_seconds", "gapless_playback", "web_username", "web_password",
+        "crossfade_seconds", "gapless_playback", "fade_on_pause", "resume_enabled", "web_username", "web_password",
     }
 
     old_user = str(settings.get("web_username") or "")
@@ -632,6 +639,8 @@ def save_settings(data: dict):
     except (TypeError, ValueError):
         settings["crossfade_seconds"] = 0.0
     settings["gapless_playback"] = bool(settings.get("gapless_playback", True))
+    settings["fade_on_pause"] = bool(settings.get("fade_on_pause", True))
+    settings["resume_enabled"] = bool(settings.get("resume_enabled", True))
     settings["web_username"] = str(settings.get("web_username") or os.getenv("XROB_USERNAME", "admin"))[:64]
     # Keep a verifier, never persist web passwords in plaintext.
     if settings.get("web_password") and not settings.get("web_password_hash"):
@@ -751,7 +760,20 @@ def init_db():
             """
         )
 
-        conn.execute("""CREATE TABLE IF NOT EXISTS playback_positions (song_id TEXT PRIMARY KEY, position REAL DEFAULT 0, duration REAL DEFAULT 0, updated_at REAL)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS playback_positions (song_id TEXT PRIMARY KEY, position REAL DEFAULT 0, duration REAL DEFAULT 0, updated_at REAL, device_id TEXT DEFAULT '', device_name TEXT DEFAULT '', last_played_at REAL DEFAULT 0, completion_pct REAL DEFAULT 0)""")
+        position_cols = {row[1] for row in conn.execute("PRAGMA table_info(playback_positions)")}
+        for col, ddl in {
+            "device_id": "TEXT DEFAULT ''",
+            "device_name": "TEXT DEFAULT ''",
+            "last_played_at": "REAL DEFAULT 0",
+            "completion_pct": "REAL DEFAULT 0",
+        }.items():
+            if col not in position_cols:
+                conn.execute(f"ALTER TABLE playback_positions ADD COLUMN {col} {ddl}")
+        conn.execute("""CREATE TABLE IF NOT EXISTS player_devices (device_id TEXT PRIMARY KEY, client_id TEXT DEFAULT '', device_name TEXT DEFAULT '', user_agent TEXT DEFAULT '', last_seen REAL NOT NULL DEFAULT 0, first_seen REAL NOT NULL DEFAULT 0, owner_id TEXT DEFAULT '', state_json TEXT DEFAULT '{}')""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_player_devices_last_seen ON player_devices(last_seen DESC)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS player_device_requests (id TEXT PRIMARY KEY, target_device_id TEXT NOT NULL, requester_device_id TEXT DEFAULT '', requester_name TEXT DEFAULT '', created_at REAL NOT NULL, consumed_at REAL DEFAULT 0)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_player_device_requests_target ON player_device_requests(target_device_id, created_at)")
         conn.execute("""CREATE TABLE IF NOT EXISTS play_history (id INTEGER PRIMARY KEY AUTOINCREMENT, song_id TEXT NOT NULL, played_at REAL NOT NULL, duration REAL DEFAULT 0, position REAL DEFAULT 0)""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_play_history_song_id ON play_history(song_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_play_history_played_at ON play_history(played_at)")
@@ -952,6 +974,8 @@ def _sanitize_player_state(state):
         cleaned["ownerId"] = _bounded_text(cleaned.get("ownerId"), 200)
     if "clientId" in cleaned:
         cleaned["clientId"] = _bounded_text(cleaned.get("clientId"), 200)
+    if "deviceId" in cleaned:
+        cleaned["deviceId"] = _bounded_text(cleaned.get("deviceId"), 200)
     for key in ("src", "art"):
         if key in cleaned:
             cleaned[key] = _bounded_text(cleaned.get(key), PLAYER_STATE_MAX_URL)
@@ -1042,7 +1066,7 @@ def _sanitize_player_state(state):
 
 def _compact_player_state(state):
     keys = (
-        "ownerId", "clientId", "src", "currentTime", "duration",
+        "ownerId", "clientId", "deviceId", "src", "currentTime", "duration",
         "volume", "title", "artist", "art", "songId", "source", "deviceName",
         "queueIndex", "paused", "muted", "repeatMode", "shuffle", "at", "seq", "force",
     )
@@ -1148,6 +1172,12 @@ async def publish_player_state(state, full=True, preserve_position=False, broadc
             PLAYER_STATE_LAST_PERSISTED_AT = now
         except Exception as exc:
             print("Warning: could not persist player session:", exc)
+    device_id = str(merged.get("deviceId") or "").strip()
+    if device_id:
+        try:
+            await asyncio.to_thread(register_player_device_sync, device_id, str(merged.get("clientId") or ""), str(merged.get("deviceName") or "This device"), "", str(merged.get("ownerId") or ""), merged)
+        except Exception:
+            pass
     outbound = dict(merged) if full else _compact_player_state(merged)
     outbound["_serverUpdatedAt"] = PLAYER_STATE_UPDATED_AT
     outbound["_serverLastSeenAt"] = merged.get("lastSeenAt", PLAYER_STATE_UPDATED_AT)
@@ -2329,6 +2359,8 @@ async def download_worker():
                 "--audio-quality",
                 quality,
                 "--newline",
+                "--continue",
+                "--no-overwrites",
                 "-o",
                 output_template,
             ]
@@ -2799,6 +2831,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # WEB APP
 # ============================================================
+
+@app.get("/manifest.webmanifest")
+async def pwa_manifest():
+    return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+async def pwa_service_worker():
+    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
 
 @app.get("/")
 async def home():
@@ -3317,6 +3359,47 @@ async def api_download(
         "task_id": task_id,
         "task": task,
     }
+
+
+@app.post("/api/download/batch")
+async def api_download_batch(payload: dict = Body(...)):
+    urls = payload.get("urls") if isinstance(payload, dict) else []
+    if not isinstance(urls, list):
+        raise HTTPException(400, "urls must be an array")
+    urls = urls[:50]
+    settings = await load_settings_async()
+    created = []
+    skipped = []
+    async with DOWNLOAD_GUARD:
+        for item in urls:
+            if not isinstance(item, dict):
+                continue
+            try:
+                url = validate_media_url(item.get("url"))
+            except Exception as exc:
+                skipped.append({"url": str(item.get("url") or "")[:500], "reason": str(exc)})
+                continue
+            title = normalize_catalog_title(str(item.get("title") or "Unknown Track"), settings.get("title_cleanup_rules", ""))
+            artist = clean_metadata_text(str(item.get("artist") or "Unknown Artist"), "Unknown Artist")
+            album = str(item.get("album") or "").strip()[:256]
+            key = normalize_duplicate_key(title, artist)
+            existing = next((t for t in TASKS.values() if normalize_duplicate_key(t.get("title", ""), t.get("artist", "")) == key and t.get("status") in {"queued", "downloading", "processing"}), None)
+            if existing:
+                skipped.append({"url": url, "reason": "already_queued", "task_id": existing["id"]})
+                continue
+            existing_file = await find_existing_track(title, artist)
+            if existing_file:
+                skipped.append({"url": url, "reason": "already_downloaded", "file": existing_file})
+                continue
+            task_id = uuid.uuid4().hex[:12]
+            now_ms = time.time() * 1000
+            task = {"id": task_id, "title": title, "artist": artist, "album": album, "url": url, "elementId": str(item.get("elementId") or ""), "status": "queued", "percent": 0, "speed": "", "step": "Queued...", "error": "", "last_updated": now_ms, "final_name": "", "cancel_requested": False, "created_at": now_ms, "queue_token": uuid.uuid4().hex}
+            TASKS[task_id] = task
+            created.append(task)
+    for task in created:
+        await notify_task_update(task, force_save=True)
+        await TASK_QUEUE.put((task["id"], task["queue_token"]))
+    return {"status": "ok", "created": created, "created_count": len(created), "skipped": skipped}
 
 
 @app.get("/api/tasks")
@@ -7073,29 +7156,91 @@ async def api_player_command(payload: dict = Body(...)):
 
 
 @app.post("/api/player/heartbeat")
-async def api_player_heartbeat(payload: dict = Body(...)):
+async def api_player_heartbeat(request: Request, payload: dict = Body(...)):
     owner_id = str(payload.get("ownerId") or "").strip()[:200]
     client_id = str(payload.get("clientId") or "").strip()[:200]
+    device_id = str(payload.get("deviceId") or "").strip()[:200]
+    device_name = str(payload.get("deviceName") or "This device").strip()[:120]
     if not owner_id:
         raise HTTPException(400, "ownerId is required")
-    async with PLAYER_STATE_LOCK:
-        current = await get_player_state_async()
-        current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
-        if str(current_state.get("ownerId") or "") != owner_id:
-            raise HTTPException(409, {"status": "owned", "ownerId": current_state.get("ownerId")})
-        if client_id and current_state.get("clientId") and client_id != current_state.get("clientId"):
-            raise HTTPException(409, {"status": "owned", "ownerId": current_state.get("ownerId")})
-        # Heartbeats are not allowed to invent a position. Preserve the server clock.
+    current = await get_player_state_async()
+    current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
+    is_owner = bool(current_state and str(current_state.get("ownerId") or "") == owner_id)
+    if is_owner:
+        async with PLAYER_STATE_LOCK:
+            current = await get_player_state_async()
+            current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
+            if str(current_state.get("ownerId") or "") != owner_id:
+                raise HTTPException(409, {"status": "owned", "ownerId": current_state.get("ownerId")})
+            if client_id and current_state.get("clientId") and client_id != current_state.get("clientId"):
+                raise HTTPException(409, {"status": "owned", "ownerId": current_state.get("ownerId")})
+            now = time.time()
+            current_state["currentTime"] = _effective_player_position(current_state, now)
+            current_state["positionUpdatedAt"] = now
+            current_state["lastSeenAt"] = now
+            if device_id:
+                current_state["deviceId"] = device_id
+            if device_name:
+                current_state["deviceName"] = device_name
+            current_state["seq"] = safe_int(current_state.get("seq"), 0) + 1
+            await publish_player_state(current_state, full=False)
+            state = dict(PLAYER_STATE)
+            state["currentTime"] = _effective_player_position(state, time.time())
+            state["positionUpdatedAt"] = PLAYER_STATE_UPDATED_AT
+            return {"status": "ok", "state": state, "updated_at": PLAYER_STATE_UPDATED_AT, "role": "owner"}
+
+    if device_id:
+        await asyncio.to_thread(register_player_device_sync, device_id, client_id, device_name, request.headers.get("user-agent", ""), "", None)
+    return {"status": "ok", "role": "observer", "state": current_state or None, "updated_at": float(current.get("updated_at") or 0) if isinstance(current, dict) else 0}
+
+
+@app.post("/api/player/devices/heartbeat")
+async def api_player_device_heartbeat(request: Request, payload: dict = Body(...)):
+    device_id = str(payload.get("deviceId") or "").strip()[:200]
+    client_id = str(payload.get("clientId") or "").strip()[:200]
+    device_name = str(payload.get("deviceName") or "This device").strip()[:120]
+    if not device_id:
+        raise HTTPException(400, "deviceId is required")
+    current = await get_player_state_async()
+    current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
+    owner_id = str(current_state.get("ownerId") or "") if current_state else ""
+    owner = owner_id and owner_id == str(payload.get("ownerId") or "")
+    state_for_device = current_state if owner else None
+    await asyncio.to_thread(register_player_device_sync, device_id, client_id, device_name, request.headers.get("user-agent", ""), owner_id if owner else "", state_for_device)
+    def pending_sync():
         now = time.time()
-        current_state["currentTime"] = _effective_player_position(current_state, now)
-        current_state["positionUpdatedAt"] = now
-        current_state["lastSeenAt"] = now
-        current_state["seq"] = safe_int(current_state.get("seq"), 0) + 1
-        await publish_player_state(current_state, full=False)
-        state = dict(PLAYER_STATE)
-        state["currentTime"] = _effective_player_position(state, time.time())
-        state["positionUpdatedAt"] = PLAYER_STATE_UPDATED_AT
-        return {"status": "ok", "state": state, "updated_at": PLAYER_STATE_UPDATED_AT}
+        with db_connect() as conn:
+            rows = conn.execute("SELECT id,requester_device_id,requester_name,created_at FROM player_device_requests WHERE target_device_id=? AND consumed_at=0 AND created_at>=? ORDER BY created_at ASC LIMIT 10", (device_id, now - 300)).fetchall()
+            for row in rows:
+                conn.execute("UPDATE player_device_requests SET consumed_at=? WHERE id=?", (now, row[0]))
+            conn.commit()
+        return [dict(row) for row in rows]
+    requests = await asyncio.to_thread(pending_sync)
+    return {"status": "ok", "device_id": device_id, "owner": bool(owner), "online": True, "transfer_requests": requests}
+
+
+@app.post("/api/player/device-transfer")
+async def api_player_device_transfer(payload: dict = Body(...)):
+    target_device_id = str(payload.get("targetDeviceId") or "").strip()[:200]
+    requester_device_id = str(payload.get("requesterDeviceId") or "").strip()[:200]
+    requester_name = str(payload.get("requesterName") or "This device").strip()[:120]
+    if not target_device_id:
+        raise HTTPException(400, "targetDeviceId is required")
+    request_id = uuid.uuid4().hex
+    now = time.time()
+    with db_connect() as conn:
+        conn.execute("INSERT INTO player_device_requests(id,target_device_id,requester_device_id,requester_name,created_at,consumed_at) VALUES(?,?,?,?,?,0)", (request_id, target_device_id, requester_device_id, requester_name, now))
+        conn.commit()
+    await manager.broadcast({"type": "device_takeover_request", "targetDeviceId": target_device_id, "requesterDeviceId": requester_device_id, "requesterName": requester_name, "id": request_id})
+    return {"status": "queued", "request_id": request_id}
+
+
+@app.get("/api/player/devices")
+async def api_player_devices():
+    current = await get_player_state_async()
+    state = current.get("state") if isinstance(current, dict) else None
+    devices = await asyncio.to_thread(list_player_devices_sync, state)
+    return {"devices": devices, "server_time": time.time(), "owner_id": str((state or {}).get("ownerId") or "")}
 
 
 @app.post("/api/player/handoff")
@@ -7103,6 +7248,7 @@ async def api_player_handoff(payload: dict = Body(...)):
     new_owner_id = str(payload.get("newOwnerId") or "").strip()[:200]
     new_client_id = str(payload.get("clientId") or "").strip()[:200]
     new_device_name = str(payload.get("deviceName") or "This device").strip()[:120]
+    new_device_id = str(payload.get("deviceId") or "").strip()[:200]
     expected_owner_id = str(payload.get("expectedOwnerId") or "").strip()[:200]
     if not new_owner_id:
         raise HTTPException(400, "newOwnerId is required")
@@ -7125,6 +7271,8 @@ async def api_player_handoff(payload: dict = Body(...)):
         next_state["ownerId"] = new_owner_id
         if new_client_id:
             next_state["clientId"] = new_client_id
+        if new_device_id:
+            next_state["deviceId"] = new_device_id
         next_state["deviceName"] = new_device_name
         next_state["currentTime"] = live_position
         next_state["positionUpdatedAt"] = now
@@ -7150,20 +7298,95 @@ async def api_player_handoff(payload: dict = Body(...)):
         return {"status": "ok", "state": outbound_state, "updated_at": PLAYER_STATE_UPDATED_AT}
 
 
-def get_player_positions_sync():
+def register_player_device_sync(device_id, client_id, device_name, user_agent="", owner_id="", state=None):
+    now = time.time()
+    device_id = str(device_id or "").strip()[:200]
+    client_id = str(client_id or "").strip()[:200]
+    device_name = str(device_name or "This device").strip()[:120]
+    user_agent = str(user_agent or "").strip()[:512]
+    owner_id = str(owner_id or "").strip()[:200]
+    payload = json.dumps(_sanitize_player_state(state or {}), separators=(",", ":"), ensure_ascii=False)
+    if not device_id:
+        return None
     with db_connect() as conn:
-        rows = conn.execute("SELECT song_id,position,duration,updated_at FROM playback_positions").fetchall()
-    return {r[0]: {"position": r[1], "duration": r[2], "updated_at": r[3]} for r in rows}
+        conn.execute(
+            "INSERT INTO player_devices(device_id,client_id,device_name,user_agent,last_seen,first_seen,owner_id,state_json) VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(device_id) DO UPDATE SET client_id=excluded.client_id,device_name=excluded.device_name,user_agent=excluded.user_agent,last_seen=excluded.last_seen,owner_id=excluded.owner_id,state_json=excluded.state_json",
+            (device_id, client_id, device_name, user_agent, now, now, owner_id, payload),
+        )
+        conn.commit()
+    return {"device_id": device_id, "client_id": client_id, "device_name": device_name, "last_seen": now, "owner_id": owner_id}
 
 
-def save_player_position_sync(song_id, position, duration, now):
+def list_player_devices_sync(current_state=None):
+    now = time.time()
+    cutoff = now - PLAYER_DEVICE_MAX_AGE_SECONDS
+    with db_connect() as conn:
+        rows = conn.execute(
+            "SELECT device_id,client_id,device_name,user_agent,last_seen,first_seen,owner_id,state_json FROM player_devices WHERE last_seen >= ? ORDER BY last_seen DESC LIMIT ?",
+            (cutoff, PLAYER_DEVICES_MAX),
+        ).fetchall()
+    current_owner = str((current_state or {}).get("ownerId") or "")
+    result = []
+    seen = set()
+    for row in rows:
+        item = dict(row)
+        if item["device_id"] in seen:
+            continue
+        seen.add(item["device_id"])
+        age = max(0.0, now - float(item.get("last_seen") or 0))
+        try:
+            device_state = json.loads(item.get("state_json") or "{}")
+        except Exception:
+            device_state = {}
+        result.append({
+            "device_id": item["device_id"],
+            "client_id": item.get("client_id") or "",
+            "device_name": item.get("device_name") or "This device",
+            "last_seen": float(item.get("last_seen") or 0),
+            "online": age <= PLAYER_DEVICE_ACTIVE_SECONDS,
+            "owner": bool(item.get("owner_id") and item.get("owner_id") == current_owner),
+            "owner_id": item.get("owner_id") or "",
+            "track_title": str(device_state.get("title") or ""),
+            "track_artist": str(device_state.get("artist") or ""),
+            "paused": bool(device_state.get("paused", True)),
+        })
+    return result
+
+
+def save_player_position_sync(song_id, position, duration, now, device_id="", device_name=""):
     duration = max(0.0, min(86_400.0, float(duration or 0)))
     position = max(0.0, min(86_400.0, float(position or 0)))
     if duration > 0:
         position = min(position, duration)
+    completion = (position / duration * 100.0) if duration > 0 else 0.0
+    completion = max(0.0, min(100.0, completion))
     with db_connect() as conn:
-        conn.execute("INSERT INTO playback_positions(song_id,position,duration,updated_at) VALUES(?,?,?,?) ON CONFLICT(song_id) DO UPDATE SET position=excluded.position,duration=excluded.duration,updated_at=excluded.updated_at", (song_id, position, duration, now))
+        conn.execute(
+            "INSERT INTO playback_positions(song_id,position,duration,updated_at,device_id,device_name,last_played_at,completion_pct) VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(song_id) DO UPDATE SET position=excluded.position,duration=excluded.duration,updated_at=excluded.updated_at,device_id=excluded.device_id,device_name=excluded.device_name,last_played_at=excluded.last_played_at,completion_pct=excluded.completion_pct",
+            (song_id, position, duration, now, str(device_id or "")[:200], str(device_name or "")[:120], now, completion),
+        )
         conn.commit()
+
+
+def continue_positions_sync(limit=12):
+    with db_connect() as conn:
+        rows = conn.execute(
+            "SELECT song_id,position,duration,updated_at,device_id,device_name,last_played_at,completion_pct FROM playback_positions WHERE completion_pct < 98 AND position > 2 ORDER BY last_played_at DESC, updated_at DESC LIMIT ?",
+            (max(1, min(50, int(limit or 12))),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_player_positions_sync():
+    with db_connect() as conn:
+        rows = conn.execute("SELECT song_id,position,duration,updated_at,device_id,device_name,last_played_at,completion_pct FROM playback_positions").fetchall()
+    return {r[0]: {
+        "position": r[1], "duration": r[2], "updated_at": r[3],
+        "device_id": r[4] or "", "device_name": r[5] or "",
+        "last_played_at": r[6] or 0, "completion_pct": r[7] or 0,
+    } for r in rows}
 
 
 def save_player_history_sync(song_id, duration, position):
@@ -7186,8 +7409,10 @@ async def api_player_position(payload: dict = Body(...)):
     position = finite_nonnegative_float(payload.get("position", 0), "position")
     duration = finite_nonnegative_float(payload.get("duration", 0), "duration")
     now=time.time()
-    await asyncio.to_thread(save_player_position_sync, song_id, position, duration, now)
-    return {"status":"ok"}
+    device_id = str(payload.get("device_id") or "").strip()[:200]
+    device_name = str(payload.get("device_name") or "This device").strip()[:120]
+    await asyncio.to_thread(save_player_position_sync, song_id, position, duration, now, device_id, device_name)
+    return {"status":"ok", "completion_pct": round((position / duration * 100.0), 2) if duration > 0 else 0}
 
 
 @app.post("/api/player/history")
@@ -7198,6 +7423,32 @@ async def api_player_history(payload: dict = Body(...)):
     position = finite_nonnegative_float(payload.get("position") or 0, "position")
     total_plays = await asyncio.to_thread(save_player_history_sync, song_id, duration, position)
     return {"status":"ok", "all_play_count": total_plays}
+
+
+@app.get("/api/player/continue")
+async def api_player_continue(limit: int = Query(12, ge=1, le=50)):
+    positions = await asyncio.to_thread(continue_positions_sync, limit)
+    library = await build_library()
+    by_id = {str(song.get("id")): song for song in library.get("songs", [])}
+    result = []
+    for item in positions:
+        song = by_id.get(str(item.get("song_id")))
+        if not song:
+            continue
+        try:
+            rel = str(song["path"].relative_to(DOWNLOAD_DIR))
+        except Exception:
+            continue
+        enc = urllib.parse.quote(rel, safe="/")
+        result.append({
+            "id": song["id"], "title": song.get("title") or "Unknown Track", "artist": song.get("artist") or "Unknown Artist",
+            "album": song.get("album") or "", "duration": float(item.get("duration") or song.get("duration") or 0),
+            "position": float(item.get("position") or 0), "completion_pct": float(item.get("completion_pct") or 0),
+            "last_played_at": float(item.get("last_played_at") or item.get("updated_at") or 0),
+            "last_device": item.get("device_name") or "This device",
+            "cover": "/api/library/cover/" + enc, "stream": "/api/library/stream/" + enc,
+        })
+    return {"tracks": result}
 
 
 @app.get("/api/library/recent-most")
