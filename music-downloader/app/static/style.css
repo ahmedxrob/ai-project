@@ -4597,3 +4597,252 @@ body.music-app {
 #tab-home.active .daily-mix-track-row > * { scroll-snap-align: start; }
 #tab-home.active .daily-mix-track { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 #tab-home.active .daily-mix-track img { pointer-events: none; user-select: none; -webkit-user-drag: none; }
+
+
+/* ============================================================
+   3.7 CONNECT + DOWNLOAD CENTER
+   ============================================================ */
+.topbar-device-icon,
+.gp-device-picker {
+    position: relative;
+}
+.topbar-device-dot {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    right: 7px;
+    top: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: .35;
+}
+.topbar-device-dot[data-online="true"] { opacity: 1; }
+.gp-device-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    max-width: 170px;
+    padding: 7px 10px;
+    border: 1px solid var(--border, rgba(255,255,255,.10));
+    border-radius: 999px;
+    background: var(--surface-2, rgba(255,255,255,.045));
+    color: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.gp-device-picker span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.gp-device-state { max-width: 180px; }
+
+.device-picker-modal,
+.batch-download-modal {
+    width: min(620px, calc(100vw - 28px));
+}
+.device-picker-status {
+    padding: 10px 0 12px;
+    color: var(--muted, rgba(255,255,255,.60));
+    font-size: 12px;
+}
+.device-list {
+    display: grid;
+    gap: 8px;
+    max-height: min(58vh, 500px);
+    overflow: auto;
+}
+.device-row {
+    display: grid;
+    grid-template-columns: 42px minmax(0,1fr) auto;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border, rgba(255,255,255,.10));
+    border-radius: 14px;
+    background: var(--surface-2, rgba(255,255,255,.035));
+    color: inherit;
+    text-align: left;
+    transition: transform .16s ease, border-color .16s ease, background .16s ease;
+}
+.device-row:not(:disabled):hover {
+    transform: translateY(-1px);
+    border-color: currentColor;
+    background: rgba(255,255,255,.07);
+}
+.device-row.is-active { border-color: currentColor; }
+.device-row:disabled { opacity: .58; cursor: default; }
+.device-row-icon {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: rgba(255,255,255,.07);
+}
+.device-row-copy {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+}
+.device-row-copy strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.device-row-copy strong small {
+    font-size: 9px;
+    letter-spacing: .08em;
+    opacity: .6;
+}
+.device-row-copy > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted, rgba(255,255,255,.58));
+    font-size: 12px;
+}
+.device-row-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+.device-presence-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.device-row-state.offline { opacity: .45; }
+.device-empty {
+    display: grid;
+    place-items: center;
+    gap: 8px;
+    padding: 35px 18px;
+    text-align: center;
+    color: var(--muted, rgba(255,255,255,.58));
+}
+.device-empty strong { color: inherit; }
+.device-picker-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border, rgba(255,255,255,.08));
+    color: var(--muted, rgba(255,255,255,.5));
+    font-size: 10px;
+}
+.device-picker-foot > span {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.downloads-drawer {
+    width: min(760px, calc(100vw - 24px));
+}
+.downloads-drawer-head > div:first-child {
+    display: grid;
+    gap: 2px;
+}
+.downloads-drawer-live {
+    font-size: 10px;
+    color: var(--muted, rgba(255,255,255,.5));
+}
+.downloads-summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 7px;
+    padding: 12px 14px;
+}
+.downloads-summary > div {
+    display: grid;
+    gap: 2px;
+    padding: 9px 10px;
+    border: 1px solid var(--border, rgba(255,255,255,.08));
+    border-radius: 12px;
+    background: rgba(255,255,255,.025);
+}
+.downloads-summary strong { font-size: 17px; }
+.downloads-summary span { font-size: 9px; color: var(--muted, rgba(255,255,255,.52)); }
+.download-pipeline {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 9px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.download-pipeline::-webkit-scrollbar { display: none; }
+.download-pipeline span {
+    flex: 0 0 auto;
+    padding: 4px 7px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.045);
+    color: var(--muted, rgba(255,255,255,.42));
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: .02em;
+}
+.download-pipeline span.is-done {
+    background: rgba(255,255,255,.09);
+    color: inherit;
+}
+.download-pipeline span.is-current {
+    outline: 1px solid currentColor;
+}
+.download-pipeline i {
+    flex: 0 0 auto;
+    font-style: normal;
+    opacity: .25;
+    font-size: 10px;
+}
+.batch-download-input {
+    width: 100%;
+    min-height: 190px;
+    resize: vertical;
+    box-sizing: border-box;
+    border: 1px solid var(--border, rgba(255,255,255,.12));
+    border-radius: 14px;
+    background: rgba(0,0,0,.16);
+    color: inherit;
+    padding: 13px;
+    font: inherit;
+    font-size: 12px;
+    outline: none;
+}
+.batch-download-input:focus { border-color: currentColor; }
+.batch-download-help {
+    margin-top: 8px;
+    color: var(--muted, rgba(255,255,255,.55));
+    font-size: 10px;
+    line-height: 1.5;
+}
+.batch-download-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+}
+.modal-kicker {
+    display: block;
+    margin-bottom: 3px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .14em;
+    opacity: .55;
+}
+@media (max-width: 700px) {
+    .gp-device-picker { max-width: 38px; padding: 8px; }
+    .gp-device-picker span { display: none; }
+    .downloads-summary { grid-template-columns: repeat(2, 1fr); }
+    .device-row { grid-template-columns: 40px minmax(0,1fr); }
+    .device-row-state { display: none; }
+    .device-picker-foot { align-items: flex-start; flex-direction: column; }
+    .downloads-drawer { width: calc(100vw - 12px); }
+}
