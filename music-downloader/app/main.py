@@ -51,7 +51,7 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.6.16"
+SERVER_VERSION = "3.6.17"
 
 @asynccontextmanager
 async def app_lifespan(_app):
