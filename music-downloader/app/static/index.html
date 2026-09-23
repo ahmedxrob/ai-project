@@ -7,6 +7,7 @@
   <meta content="Xrob Music self-hosted music downloader, library and OpenSubsonic server" name="description"/>
   <meta content="yes" name="mobile-web-app-capable"/>
   <meta content="yes" name="apple-mobile-web-app-capable"/>
+  <meta content="default" name="mobile-web-app-status-bar-style"/>
   <meta content="Xrob Music" name="apple-mobile-web-app-title"/>
   <title>
    Xrob Music
@@ -14,9 +15,11 @@
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="static/style.css?v=311" rel="stylesheet"/>
+  <link href="static/style.css?v=321" rel="stylesheet"/>
+  <link href="static/manifest.webmanifest" rel="manifest"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
-  <link href="static/logo.png" rel="apple-touch-icon"/>
+  <link href="static/icon-180.png" rel="apple-touch-icon"/>
+  <meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
  </head>
  <body class="music-app">
   <div class="login-screen auth-shell" id="login-screen">
@@ -152,6 +155,16 @@
          <div class="home-stat-copy"><strong id="homePlays">0</strong><span>Total Plays</span></div>
         </div>
        </div>
+       <section class="continue-card page-section" id="continueListeningCard" hidden>
+        <div class="home-section-header">
+         <div>
+          <h3>Continue Listening</h3>
+          <p>Pick up exactly where you left off</p>
+         </div>
+         <button class="btn-refresh" id="continueRefresh" type="button"><i aria-hidden="true" data-lucide="refresh-cw"></i> Refresh</button>
+        </div>
+        <div class="continue-grid" id="continueListeningList"></div>
+       </section>
        <section class="daily-mix-card page-section" id="dailyMixCard">
         <div class="daily-mix-header">
          <div>
@@ -228,11 +241,14 @@
        </div>
        <div class="search-card page-section">
         <input autocomplete="off" id="query" placeholder="Search YouTube music..." spellcheck="false" type="search"/>
-        <button id="searchBtn" type="button">
+        <div class="search-actions">
+         <button class="btn-refresh" id="downloadSearchResults" type="button" disabled><i aria-hidden="true" data-lucide="download"></i> Download visible</button>
+         <button id="searchBtn" type="button">
          <i aria-hidden="true" data-lucide="search">
          </i>
          Search
         </button>
+        </div>
        </div>
        <!-- SEARCH LOADING -->
        <div aria-live="polite" class="xrob-loading" id="searchLoading" style="display:none;">
@@ -761,6 +777,14 @@
          <input id="set_crossfade" max="12" min="0" step="0.5" style="max-width:120px" type="number" value="0"/>
         </div>
         <div class="setting-row">
+         <div><div class="setting-label">Fade on pause / stop</div><div class="setting-desc">Apply a short audio fade when pausing or stopping to avoid clicks.</div></div>
+         <label class="switch"><input id="set_fade_pause" type="checkbox" checked/><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Remember playback position</div><div class="setting-desc">Save your listening position automatically so Continue Listening stays current.</div></div>
+         <label class="switch"><input id="set_resume_enabled" type="checkbox" checked/><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
          <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload the next local track to reduce transition gaps when crossfade is off.</div></div>
          <label class="switch"><input id="set_gapless" type="checkbox"/><span class="slider"></span></label>
         </div>
@@ -865,6 +889,15 @@
           </div>
          </div>
          <input id="set_scan_interval" min="5" step="5" style="max-width:120px" type="number" value="60"/>
+        </div>
+       </div>
+       <div class="settings-card page-section">
+        <div class="settings-divider">
+         <i aria-hidden="true" data-lucide="smartphone"></i> App
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Install Xrob Music</div><div class="setting-desc">Install the app on Windows, Android, iPhone or iPad for faster access and a persistent app shell.</div></div>
+         <button class="save-btn" id="installPwaButton" type="button" hidden>Install app</button>
         </div>
        </div>
        <div class="settings-card settings-info-card page-section">
@@ -1066,9 +1099,7 @@
      <div class="gp-main-controls">
       <!-- PREVIOUS -->
       <button aria-label="Shuffle playback" class="gp-skip-btn" id="gp-shuffle-btn" title="Shuffle playback" type="button">
-       <span aria-hidden="true" class="player-symbol">
-        &toea;
-       </span>
+       <i aria-hidden="true" data-lucide="shuffle"></i>
       </button>
       <button aria-label="Previous track" class="gp-skip-btn" id="gp-prev-btn" title="Previous track" type="button">
        <span aria-hidden="true" class="player-symbol">
@@ -1081,7 +1112,7 @@
       </button>
       <!-- NEXT -->
       <button aria-label="Open queue" class="gp-skip-btn" id="gp-queue-btn" title="Up Next" type="button">
-       ☰
+       <i aria-hidden="true" data-lucide="list-music"></i>
       </button>
       <button aria-label="Next track" class="gp-skip-btn" id="gp-next-btn" title="Next track" type="button">
        <span aria-hidden="true" class="player-symbol">
@@ -1105,6 +1136,7 @@
     </div>
     <!-- PLAYER EXTRA -->
     <div class="gp-extra">
+     <button class="gp-devices-btn" id="gp-devices-btn" type="button" aria-label="Open connected devices" title="Connected devices"><i aria-hidden="true" data-lucide="cast"></i><span class="gp-devices-label">Devices</span></button>
      <span class="gp-device-state" id="gp-device-status" data-remote="false">Playing on this device</span>
      <button class="gp-device-takeover" id="gp-device-takeover" type="button" hidden>Take over</button>
      <canvas aria-hidden="true" height="30" id="visualizer-canvas" width="90">
@@ -1116,6 +1148,17 @@
      <input aria-label="Volume" id="gp-volume" max="1" min="0" step=".01" type="range" value=".8"/>
     </div>
    </div>
+  </div>
+  <div class="devices-modal" id="devices-modal" hidden aria-hidden="true">
+   <div class="devices-modal-backdrop" data-close-devices="true"></div>
+   <section class="devices-modal-card" role="dialog" aria-modal="true" aria-labelledby="devicesModalTitle">
+    <header class="devices-modal-head">
+     <div><span class="devices-kicker">CONNECT</span><h3 id="devicesModalTitle">Choose a device</h3><p>Control playback from another Xrob Music device.</p></div>
+     <button class="icon-btn" id="devicesClose" type="button" aria-label="Close devices"><i data-lucide="x" aria-hidden="true"></i></button>
+    </header>
+    <div class="devices-list" id="devicesList"></div>
+    <div class="devices-modal-foot"><span id="devicesUpdatedAt">Checking devices…</span><button class="btn-refresh" id="devicesRefresh" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i> Refresh</button></div>
+   </section>
   </div>
   <div class="overlay-drawers-stack" aria-live="polite">
   <aside aria-label="Downloads" class="downloads-drawer overlay-panel" hidden="" id="downloads-drawer">
@@ -1258,7 +1301,7 @@
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=311">
+  <script src="static/app.js?v=313">
   </script>
 
 
