@@ -51,7 +51,7 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.6.17"
+SERVER_VERSION = "3.6.18"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -133,7 +133,9 @@ AUTH_LOGIN_MAX_ATTEMPTS = 5
 AUTH_BOOTSTRAP_FILE = DATA_DIR / "web_bootstrap.txt"
 PLAYER_STATE = None
 PLAYER_STATE_UPDATED_AT = 0.0
-PLAYER_STATE_MAX_AGE_SECONDS = 20.0
+PLAYER_STATE_MAX_AGE_SECONDS = 12.0
+PLAYER_STATE_ACTIVE_HEARTBEAT_SECONDS = 6.0
+PLAYER_STATE_HEARTBEAT_PERSIST_SECONDS = 5.0
 PLAYER_STATE_MAX_QUEUE_ITEMS = 500
 PLAYER_STATE_MAX_DAILY_MIX_ITEMS = 100
 PLAYER_STATE_MAX_TEXT = 512
@@ -1076,7 +1078,55 @@ def _persist_player_state_sync(state, updated_at):
         conn.commit()
 
 
-async def publish_player_state(state, full=True):
+def _finite_player_time(value, default=0.0):
+    try:
+        value = float(value)
+        return value if math.isfinite(value) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _effective_player_position(state, now=None):
+    """Return the server-authoritative playback position at *now*.
+
+    The position is anchored whenever a state transition/heartbeat is received.
+    While playing, elapsed wall-clock time is added to that anchor. This avoids
+    using the age of the browser's last websocket message as the playback clock.
+    """
+    if not isinstance(state, dict):
+        return 0.0
+    now = float(now if now is not None else time.time())
+    position = max(0.0, _finite_player_time(state.get("currentTime"), 0.0))
+    if not bool(state.get("paused")):
+        anchor = _finite_player_time(state.get("positionUpdatedAt") or state.get("at"), now)
+        if anchor <= 0 or anchor > now + 2:
+            anchor = now
+        position += max(0.0, now - anchor)
+    duration = max(0.0, _finite_player_time(state.get("duration"), 0.0))
+    return min(position, duration) if duration > 0 else position
+
+
+def _prepare_player_clock(state, now=None, preserve_position=False):
+    now = float(now if now is not None else time.time())
+    state = dict(state)
+    if preserve_position:
+        state["currentTime"] = _effective_player_position(state, now)
+    else:
+        state["currentTime"] = max(0.0, _finite_player_time(state.get("currentTime"), 0.0))
+    duration = max(0.0, _finite_player_time(state.get("duration"), 0.0))
+    if duration > 0:
+        state["currentTime"] = min(state["currentTime"], duration)
+    state["positionUpdatedAt"] = now
+    state["lastSeenAt"] = now
+    state["at"] = now
+    if state.get("paused"):
+        state.pop("playStartedAt", None)
+    else:
+        state["playStartedAt"] = now
+    return _sanitize_player_state(state)
+
+
+async def publish_player_state(state, full=True, preserve_position=False, broadcast=True):
     global PLAYER_STATE, PLAYER_STATE_UPDATED_AT, PLAYER_STATE_LAST_PERSISTED_AT
     if not isinstance(state, dict):
         return
@@ -1088,17 +1138,22 @@ async def publish_player_state(state, full=True):
         merged.update(incoming)
     else:
         merged = incoming
+    now = time.time()
+    merged = _prepare_player_clock(merged, now, preserve_position=preserve_position)
     PLAYER_STATE = merged
-    PLAYER_STATE_UPDATED_AT = time.time()
-    if full or PLAYER_STATE_UPDATED_AT - PLAYER_STATE_LAST_PERSISTED_AT >= PLAYER_STATE_PERSIST_INTERVAL_SECONDS:
+    PLAYER_STATE_UPDATED_AT = now
+    if full or now - PLAYER_STATE_LAST_PERSISTED_AT >= PLAYER_STATE_PERSIST_INTERVAL_SECONDS:
         try:
-            await asyncio.to_thread(_persist_player_state_sync, merged, PLAYER_STATE_UPDATED_AT)
-            PLAYER_STATE_LAST_PERSISTED_AT = PLAYER_STATE_UPDATED_AT
+            await asyncio.to_thread(_persist_player_state_sync, merged, now)
+            PLAYER_STATE_LAST_PERSISTED_AT = now
         except Exception as exc:
             print("Warning: could not persist player session:", exc)
     outbound = dict(merged) if full else _compact_player_state(merged)
     outbound["_serverUpdatedAt"] = PLAYER_STATE_UPDATED_AT
-    await manager.broadcast({"type": "player_state", "state": outbound})
+    outbound["_serverLastSeenAt"] = merged.get("lastSeenAt", PLAYER_STATE_UPDATED_AT)
+    outbound["_serverCurrentTime"] = _effective_player_position(merged, now)
+    if broadcast:
+        await manager.broadcast({"type": "player_state", "state": outbound})
 
 
 def get_player_state():
@@ -1110,11 +1165,22 @@ def get_player_state():
             PLAYER_STATE_UPDATED_AT = persisted["updated_at"]
         else:
             return None
-    age = time.time() - PLAYER_STATE_UPDATED_AT if PLAYER_STATE_UPDATED_AT else float("inf")
+    now = time.time()
+    last_seen = _finite_player_time(PLAYER_STATE.get("lastSeenAt"), PLAYER_STATE_UPDATED_AT)
+    age = now - last_seen if last_seen else float("inf")
+    state = dict(PLAYER_STATE)
+    state["currentTime"] = _effective_player_position(state, now)
+    # A read response is already anchored at `now`; callers can safely use the
+    # returned currentTime without accidentally advancing the clock twice.
+    state["positionUpdatedAt"] = now
+    state["_serverCurrentTime"] = state["currentTime"]
+    state["_serverLastSeenAt"] = last_seen
     return {
-        "state": dict(PLAYER_STATE),
+        "state": state,
         "updated_at": PLAYER_STATE_UPDATED_AT,
+        "last_seen_at": last_seen,
         "stale": age > PLAYER_STATE_MAX_AGE_SECONDS,
+        "active": age <= PLAYER_STATE_ACTIVE_HEARTBEAT_SECONDS,
         "persistent": True,
     }
 
@@ -2710,6 +2776,11 @@ async def websocket_endpoint(websocket: WebSocket):
         try:
             initial_state = dict(current_state["state"])
             initial_state["_serverUpdatedAt"] = current_state["updated_at"]
+            initial_state["_serverLastSeenAt"] = current_state.get("last_seen_at", current_state["updated_at"])
+            initial_state["_serverCurrentTime"] = current_state["state"].get("currentTime", 0)
+            initial_state["_serverActive"] = bool(current_state.get("active"))
+            initial_state["_serverStale"] = bool(current_state.get("stale"))
+            initial_state["_serverPersistent"] = bool(current_state.get("persistent"))
             await websocket.send_json({"type": "player_state", "state": initial_state})
         except Exception:
             manager.disconnect(websocket)
@@ -6867,9 +6938,11 @@ async def api_player_state_update(payload: dict = Body(...)):
                 "ownerId": owner_id,
             }
 
-        state["at"] = time.time()
+        # The browser sends a snapshot; the server re-anchors its authoritative clock here.
+        state.pop("positionUpdatedAt", None)
+        state.pop("playStartedAt", None)
         await publish_player_state(state, full=force or bool(payload.get("full", False)))
-        return {"status": "ok", "updated_at": PLAYER_STATE_UPDATED_AT}
+        return {"status": "ok", "updated_at": PLAYER_STATE_UPDATED_AT, "seq": safe_int(PLAYER_STATE.get("seq"), 0)}
 
 
 def _sanitize_player_command_payload(command, payload):
@@ -6934,6 +7007,11 @@ async def api_player_command(payload: dict = Body(...)):
                 raise HTTPException(409, "No active player owner")
             raise HTTPException(409, {"status": "owned", "ownerId": current_owner})
 
+        now = time.time()
+        # Commands start from the server's live playback clock, not the last browser snapshot.
+        current_state["currentTime"] = _effective_player_position(current_state, now)
+        current_state["positionUpdatedAt"] = now
+        current_state["lastSeenAt"] = now
         next_state = dict(current_state)
         command_payload = message["payload"]
         if command == "play":
@@ -6966,8 +7044,6 @@ async def api_player_command(payload: dict = Body(...)):
                 next_index = current_index + direction
                 if next_index < 0 or next_index >= len(queue):
                     if repeat != "queue":
-                        # Match the client: Repeat Off/Track keeps the current item when
-                        # Next/Previous is pressed at the queue boundary.
                         next_index = current_index
                     else:
                         next_index = 0 if command == "next" else len(queue) - 1
@@ -6988,13 +7064,90 @@ async def api_player_command(payload: dict = Body(...)):
                     next_state["paused"] = False
 
         next_state["seq"] = max(safe_int(current_state.get("seq"), 0) + 1, safe_int(payload.get("seq"), 0))
-        next_state["at"] = time.time()
         await publish_player_state(next_state, full=True)
 
     # The live target receives the command immediately as well. The client deduplicates
     # the same command ID when both WebSocket and BroadcastChannel paths deliver it.
     await manager.broadcast(message)
     return {"status": "ok", "state": next_state}
+
+
+@app.post("/api/player/heartbeat")
+async def api_player_heartbeat(payload: dict = Body(...)):
+    owner_id = str(payload.get("ownerId") or "").strip()[:200]
+    client_id = str(payload.get("clientId") or "").strip()[:200]
+    if not owner_id:
+        raise HTTPException(400, "ownerId is required")
+    async with PLAYER_STATE_LOCK:
+        current = await get_player_state_async()
+        current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
+        if str(current_state.get("ownerId") or "") != owner_id:
+            raise HTTPException(409, {"status": "owned", "ownerId": current_state.get("ownerId")})
+        if client_id and current_state.get("clientId") and client_id != current_state.get("clientId"):
+            raise HTTPException(409, {"status": "owned", "ownerId": current_state.get("ownerId")})
+        # Heartbeats are not allowed to invent a position. Preserve the server clock.
+        now = time.time()
+        current_state["currentTime"] = _effective_player_position(current_state, now)
+        current_state["positionUpdatedAt"] = now
+        current_state["lastSeenAt"] = now
+        current_state["seq"] = safe_int(current_state.get("seq"), 0) + 1
+        await publish_player_state(current_state, full=False)
+        state = dict(PLAYER_STATE)
+        state["currentTime"] = _effective_player_position(state, time.time())
+        state["positionUpdatedAt"] = PLAYER_STATE_UPDATED_AT
+        return {"status": "ok", "state": state, "updated_at": PLAYER_STATE_UPDATED_AT}
+
+
+@app.post("/api/player/handoff")
+async def api_player_handoff(payload: dict = Body(...)):
+    new_owner_id = str(payload.get("newOwnerId") or "").strip()[:200]
+    new_client_id = str(payload.get("clientId") or "").strip()[:200]
+    new_device_name = str(payload.get("deviceName") or "This device").strip()[:120]
+    expected_owner_id = str(payload.get("expectedOwnerId") or "").strip()[:200]
+    if not new_owner_id:
+        raise HTTPException(400, "newOwnerId is required")
+
+    async with PLAYER_STATE_LOCK:
+        current = await get_player_state_async()
+        current_state = dict(current.get("state") or {}) if isinstance(current, dict) else {}
+        current_owner = str(current_state.get("ownerId") or "").strip()
+        if not current_owner:
+            raise HTTPException(409, "No active player session")
+        if expected_owner_id and expected_owner_id != current_owner:
+            raise HTTPException(409, {"status": "owned", "ownerId": current_owner})
+        if current_owner == new_owner_id:
+            return {"status": "already_owner", "state": current_state}
+
+        now = time.time()
+        live_position = _effective_player_position(current_state, now)
+        previous_owner = current_owner
+        next_state = dict(current_state)
+        next_state["ownerId"] = new_owner_id
+        if new_client_id:
+            next_state["clientId"] = new_client_id
+        next_state["deviceName"] = new_device_name
+        next_state["currentTime"] = live_position
+        next_state["positionUpdatedAt"] = now
+        next_state["lastSeenAt"] = now
+        next_state["at"] = now
+        if next_state.get("paused"):
+            next_state.pop("playStartedAt", None)
+        else:
+            next_state["playStartedAt"] = now
+        next_state["seq"] = safe_int(current_state.get("seq"), 0) + 1
+        next_state["handoffId"] = str(uuid.uuid4())
+        await publish_player_state(next_state, full=True, broadcast=False)
+        outbound_state = dict(PLAYER_STATE)
+        outbound_state["currentTime"] = live_position
+        outbound_state["_handoffFrom"] = previous_owner
+        outbound_state["_handoffTo"] = new_owner_id
+        await manager.broadcast({
+            "type": "player_handoff",
+            "fromOwnerId": previous_owner,
+            "toOwnerId": new_owner_id,
+            "state": outbound_state,
+        })
+        return {"status": "ok", "state": outbound_state, "updated_at": PLAYER_STATE_UPDATED_AT}
 
 
 def get_player_positions_sync():
