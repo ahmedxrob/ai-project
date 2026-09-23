@@ -228,13 +228,17 @@ const PLAYER_CLIENT_ID = (() => {
 })();
 const PLAYER_OWNER_STALE_MS = 15000;
 const PLAYER_SERVER_STATE_STALE_MS = 12000;
-const PLAYER_HEARTBEAT_MS = 2000;
+const PLAYER_HEARTBEAT_MS = 2500;
 const PLAYER_OWNER_CLAIM_DELAY_MS = 650;
 const PLAYER_PROGRESS_BROADCAST_MS = 450;
-const PLAYER_SERVER_SYNC_MS = 1800;
+const PLAYER_SERVER_SYNC_MS = 1500;
+const PLAYER_HANDOFF_TIMEOUT_MS = 15000;
 let playerOwnerClaimTimer = null;
 let playerProgressBroadcastTimer = null;
 let playerServerSyncTimer = null;
+let playerHeartbeatTimer = null;
+let playerHandoffInFlight = false;
+let playerHandoffStoppingRemote = false;
 let serverPlayerStateLoaded = false;
 let remoteDisplayTime = 0;
 const DAILY_MIX_STATE_KEY = "xrob_music_daily_mix_state_v2";
@@ -290,6 +294,9 @@ function setPlayerOwner(force = false) {
     stopRemoteProgressTicker();
     try { storageSet(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
     updateDeviceOwnershipUI();
+    if (typeof sendPlayerHeartbeat === "function") {
+        window.setTimeout(() => { sendPlayerHeartbeat().catch(() => {}); }, 0);
+    }
     return true;
 }
 
@@ -298,7 +305,6 @@ function heartbeatPlayerOwner() {
     if (!current?.id || current.id === PLAYER_TAB_ID) {
         if (playerOwnerId === PLAYER_TAB_ID) {
             try { storageSet(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
-            broadcastPlayerState();
         }
         return;
     }
@@ -330,8 +336,13 @@ function updateDeviceOwnershipUI() {
     const remoteName = String(remotePlayerState?.deviceName || "another device").trim();
     if (status) {
         if (remote || hasRemoteSession) {
-            status.textContent = stale ? `Last played on ${remoteName}` : `Playing on ${remoteName}`;
-            status.title = stale ? "Saved player session from another device" : "Another Xrob Music device currently controls playback";
+            const paused = Boolean(remotePlayerState?.paused);
+            status.textContent = stale
+                ? `Last played on ${remoteName}`
+                : `${paused ? "Paused on" : "Playing on"} ${remoteName}`;
+            status.title = stale
+                ? "Saved player session from another device"
+                : (paused ? "Playback is paused on another device" : "Another Xrob Music device currently controls playback");
         } else {
             status.textContent = `Playing on ${localDeviceLabel()}`;
             status.title = "This device controls playback";
@@ -478,9 +489,11 @@ function publishPlayerStateToServer(state, force = false, unload = false) {
                 headers: { "Content-Type": "application/json" },
                 body: payload
             }).then(async response => {
+                let details = null;
+                try { details = await response.clone().json(); } catch (_) {}
+                const serverSeq = Number(details?.seq ?? details?.state?.seq);
+                if (Number.isFinite(serverSeq)) playerSyncSequence = Math.max(playerSyncSequence, serverSeq);
                 if (response.status === 409 && !useUnloadTransport) {
-                    let details = null;
-                    try { details = await response.clone().json(); } catch (_) {}
                     const detail = details?.detail;
                     const isOwnedByAnotherDevice = detail?.status === "owned" &&
                         detail?.ownerId && detail.ownerId !== PLAYER_TAB_ID;
@@ -593,10 +606,11 @@ async function loadServerPlayerState() {
         }
         if (data?.state?.ownerId && data.state.ownerId !== PLAYER_TAB_ID) {
             const serverUpdatedAt = Number(data.updated_at || 0);
-            const ageMs = serverUpdatedAt ? (Date.now() - serverUpdatedAt * 1000) : Infinity;
+            const serverLastSeenAt = Number(data.last_seen_at || data.state?._serverLastSeenAt || serverUpdatedAt || 0);
+            const ageMs = serverLastSeenAt ? (Date.now() - serverLastSeenAt * 1000) : Infinity;
             const persistent = Boolean(data.persistent || data.stale);
-            if (!persistent && serverUpdatedAt && ageMs > PLAYER_SERVER_STATE_STALE_MS) return false;
-            const enriched = { ...data.state, _serverUpdatedAt: serverUpdatedAt, _serverPersistent: persistent, _serverStale: ageMs > PLAYER_SERVER_STATE_STALE_MS };
+            if (!persistent && serverLastSeenAt && ageMs > PLAYER_SERVER_STATE_STALE_MS) return false;
+            const enriched = { ...data.state, _serverUpdatedAt: serverUpdatedAt, _serverLastSeenAt: serverLastSeenAt, _serverActive: Boolean(data.active), _serverPersistent: persistent, _serverStale: Boolean(data.stale) || ageMs > PLAYER_SERVER_STATE_STALE_MS };
             serverPlayerStateLoaded = true;
             if (enriched.clientId && enriched.clientId === PLAYER_CLIENT_ID && enriched.src) {
                 remotePlayerState = enriched;
@@ -668,7 +682,7 @@ function sendPlayerCommand(command, payload = {}) {
 
 function updateRemoteProgress(animationFrame = false) {
     if (!remotePlayerState || !remotePlayerState.ownerId || remotePlayerState.ownerId === PLAYER_TAB_ID) return;
-    const base = Number(remotePlayerState.currentTime || 0);
+    const base = Number(remotePlayerState._serverCurrentTime ?? remotePlayerState.currentTime ?? 0);
     const duration = Number(remotePlayerState.duration || 0);
     const elapsed = remotePlayerState.paused ? 0 : Math.max(0, (Date.now() - remotePlayerReceivedAt) / 1000);
     let current = duration > 0 ? Math.min(duration, base + elapsed) : base + elapsed;
@@ -764,7 +778,10 @@ function applyRemotePlayerState(state, fromServer = false) {
     const serverUpdatedAtMs = serverUpdatedAt > 0
         ? (serverUpdatedAt > 1e12 ? serverUpdatedAt : serverUpdatedAt * 1000)
         : 0;
-    const serverStale = Boolean(state._serverStale || (serverUpdatedAtMs && (Date.now() - serverUpdatedAtMs) > PLAYER_SERVER_STATE_STALE_MS));
+    const serverLastSeenAtRaw = Number(state._serverLastSeenAt || 0);
+    const serverLastSeenAtMs = serverLastSeenAtRaw > 1e12 ? serverLastSeenAtRaw : serverLastSeenAtRaw * 1000;
+    const freshnessAnchor = serverLastSeenAtMs || serverUpdatedAtMs;
+    const serverStale = Boolean(state._serverStale || (freshnessAnchor && (Date.now() - freshnessAnchor) > PLAYER_SERVER_STATE_STALE_MS));
     if (fromServer && serverStale && !state._serverPersistent) return;
 
     const owner = getPlayerOwner();
@@ -774,23 +791,29 @@ function applyRemotePlayerState(state, fromServer = false) {
 
     const previous = remotePlayerState;
     const ownerChanged = lastRemoteOwnerId !== state.ownerId;
+    // Server state carries a timestamped playback clock. Use it as the anchor instead
+    // of the browser message-arrival time, which can be delayed by network jitter.
+    const serverClockTime = Number.isFinite(Number(state._serverCurrentTime))
+        ? Math.max(0, Number(state._serverCurrentTime))
+        : Math.max(0, Number(state.currentTime || 0));
+    const serverClockAnchor = serverUpdatedAtMs || Date.now();
     // Never carry a previous owner's queue/Daily Mix into a newly claimed player.
-    const merged = { ...(ownerChanged ? {} : (previous || {})), ...state, _serverSynced: Boolean(fromServer || state._serverSynced) };
+    const merged = { ...(ownerChanged ? {} : (previous || {})), ...state, currentTime: serverClockTime, _serverSynced: Boolean(fromServer || state._serverSynced) };
     if (ownerChanged) {
         lastRemoteSequence = -1;
-        remoteDisplayTime = Number(merged.currentTime || 0);
+        remoteDisplayTime = serverClockTime;
     }
-    const nextTime = Number(merged.currentTime || 0);
+    const nextTime = serverClockTime;
     const previousTime = Number(previous?.currentTime || 0);
     const wasPlaying = Boolean(previous && !previous.paused);
-    const isNormalPlaybackTick = wasPlaying && !merged.paused && Math.abs(nextTime - previousTime) <= 1.25;
+    const isNormalPlaybackTick = wasPlaying && !merged.paused && Math.abs(nextTime - previousTime) <= 2.0;
     if (!isNormalPlaybackTick || merged.paused || ownerChanged) remoteDisplayTime = nextTime;
     else remoteDisplayTime = Math.max(remoteDisplayTime, nextTime);
 
     lastRemoteOwnerId = state.ownerId;
     lastRemoteSequence = sequence;
     remotePlayerState = merged;
-    remotePlayerReceivedAt = serverUpdatedAtMs || Date.now();
+    remotePlayerReceivedAt = serverClockAnchor;
     playerOwnerId = state.ownerId;
     if (merged.repeatMode && ["off", "track", "queue"].includes(String(merged.repeatMode))) {
         playerRepeatMode = String(merged.repeatMode);
@@ -817,79 +840,160 @@ function applyRemotePlayerState(state, fromServer = false) {
     updateDeviceOwnershipUI();
 }
 
-function takeoverRemotePlayer(force = false) {
+async function takeoverRemotePlayer(force = false) {
     const state = remotePlayerState;
-    if (!audio || !state?.src || (!force && isRemotePlayerOwner())) return false;
+    if (!audio || !state?.src || (!force && isRemotePlayerOwner()) || playerHandoffInFlight) return false;
 
-    // Snapshot the live remote position BEFORE changing ownership. When the remote
-    // device is playing, its server state is a point-in-time value, so account for
-    // the time elapsed since that snapshot was received. This is the handoff point
-    // that makes switching devices behave like Spotify Connect instead of restarting.
-    const receivedAt = Number(remotePlayerReceivedAt || Date.now());
-    const baseTime = Number.isFinite(Number(state.currentTime)) ? Math.max(0, Number(state.currentTime)) : 0;
-    const duration = Number.isFinite(Number(state.duration)) ? Math.max(0, Number(state.duration)) : 0;
-    const elapsed = state.paused ? 0 : Math.max(0, (Date.now() - receivedAt) / 1000);
-    const liveTarget = duration > 0
-        ? Math.min(duration, baseTime + elapsed)
-        : Math.max(0, baseTime + elapsed);
-    const shouldPlay = !Boolean(state.paused);
-    const previousOwnerId = state.ownerId && state.ownerId !== PLAYER_TAB_ID ? state.ownerId : null;
+    playerHandoffInFlight = true;
+    const button = document.getElementById("gp-device-takeover");
+    const oldButtonText = button?.textContent;
+    if (button) { button.disabled = true; button.textContent = "Connecting…"; }
 
-    // Tell the previous owner to stop only after we have captured its live position.
-    // The command is persisted server-side but does not reset currentTime.
-    if (previousOwnerId) sendPlayerCommand("pause");
-
-    setPlayerOwner(true);
-    if (Array.isArray(state.queue) && state.queue.length) {
-        const queue = normalizeSyncQueue(state.queue);
-        if (state.source === "home") setSynchronizedHomeQueue(queue, state.queueIndex);
-        else syncLibraryQueue(queue, Number(state.queueIndex ?? 0));
-    }
-    currentPlayerSource = state.source === "home" ? "home" : "library";
-    updatePlayerInfo(state.title, state.artist, state.art);
-    audio.dataset.xrobSongId = String(state.songId || "");
-    const expectedSource = new URL(state.src, location.href).href;
-    const loadGeneration = ++audioLoadGeneration;
-    const target = liveTarget;
-    audio.src = expectedSource;
-    activePreviewBtn = null;
-
-    const finalizeTakeover = () => {
-        if (loadGeneration !== audioLoadGeneration || audio.src !== expectedSource) return;
-        if (Number.isFinite(audio.duration) && audio.duration > 0) {
-            audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.25));
-        } else {
-            try { audio.currentTime = target; } catch (_) {}
+    try {
+        // Ownership changes atomically on the server. This is the critical handoff
+        // step: no local pause/claim/state race can reset the source to 0:00.
+        const response = await apiFetch("api/player/handoff", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            timeoutMs: PLAYER_HANDOFF_TIMEOUT_MS,
+            body: JSON.stringify({
+                newOwnerId: PLAYER_TAB_ID,
+                clientId: PLAYER_CLIENT_ID,
+                deviceName: localDeviceLabel(),
+                expectedOwnerId: state.ownerId,
+            })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result?.state?.src) {
+            await loadServerPlayerState();
+            return false;
         }
+
+        const synced = { ...result.state };
+        const serverSeq = Number(synced.seq);
+        if (Number.isFinite(serverSeq)) playerSyncSequence = Math.max(playerSyncSequence, serverSeq);
+        const target = Math.max(0, Number(synced._serverCurrentTime ?? synced.currentTime ?? 0));
+        const duration = Math.max(0, Number(synced.duration || 0));
+        const shouldPlay = !Boolean(synced.paused);
+        const expectedSource = new URL(syncResourceUrl(synced.src), location.href).href;
+        const loadGeneration = ++audioLoadGeneration;
+
+        // Now that the server has granted ownership, this tab becomes the only
+        // controller. Suppress the normal play-event owner claim during loading.
+        setPlayerOwner(true);
+        suppressLocalOwnershipUntil = Date.now() + 8000;
+        remotePlayerState = null;
+        stopRemoteProgressTicker();
+
+        if (Array.isArray(synced.queue) && synced.queue.length) {
+            const queue = normalizeSyncQueue(synced.queue);
+            if (synced.source === "home") setSynchronizedHomeQueue(queue, synced.queueIndex);
+            else syncLibraryQueue(queue, Number(synced.queueIndex ?? 0));
+        }
+        currentPlayerSource = synced.source === "home" ? "home" : (synced.source ? "library" : currentPlayerSource);
+        updatePlayerInfo(synced.title, synced.artist, synced.art);
+        audio.dataset.xrobSongId = String(synced.songId || "");
+        activePreviewBtn = null;
+        if (Number.isFinite(Number(synced.volume))) {
+            audio.volume = Math.max(0, Math.min(1, Number(synced.volume)));
+            if (volume) volume.value = audio.volume;
+        }
+        audio.muted = Boolean(synced.muted);
+        playerTakeoverPending = true;
+        if (player) player.style.display = "grid";
+        stopCrossfadePreload();
+
+        const loaded = await new Promise(resolve => {
+            let settled = false;
+            const finish = ok => {
+                if (settled) return;
+                settled = true;
+                resolve(ok);
+            };
+            const onMetadata = () => finish(true);
+            const onError = () => finish(false);
+            audio.addEventListener("loadedmetadata", onMetadata, { once: true });
+            audio.addEventListener("error", onError, { once: true });
+            window.setTimeout(() => finish(false), PLAYER_HANDOFF_TIMEOUT_MS);
+            audio.src = expectedSource;
+            audio.load();
+            if (audio.readyState >= 1) queueMicrotask(() => finish(true));
+        });
+        if (!loaded || loadGeneration !== audioLoadGeneration || audio.src !== expectedSource) {
+            await loadServerPlayerState();
+            return false;
+        }
+
+        const safeTarget = duration > 0
+            ? Math.min(target, Math.max(0, Number(audio.duration || duration) - 0.25))
+            : target;
+        try { audio.currentTime = safeTarget; } catch (_) {}
+        applyReplayGainToActiveAudio(activeQueueTrack());
+        updateProgress();
+        updateMediaSession();
+        updateDeviceOwnershipUI();
         if (shouldPlay) {
             initAudioContext();
-            const playPromise = audio.play();
-            if (playPromise?.catch) playPromise.catch(() => {});
+            try {
+                await audio.play();
+            } catch (error) {
+                // Browser autoplay policy may require one explicit tap on the new device.
+                updatePlayingState(false);
+                showToast("▶ Tap Play to continue from the current position");
+                console.debug("Playback handoff requires user gesture:", error);
+            }
         } else {
             audio.pause();
             updatePlayingState(false);
         }
-        applyReplayGainToActiveAudio(activeQueueTrack());
-
-        // Do NOT publish the state while the new audio element is still at 0s.
-        // Publish only after the target position has been restored so the server's
-        // durable cross-device state remains correct.
         playerTakeoverPending = true;
         schedulePlayerStateBroadcast(true);
-        updateProgress();
-        updateMediaSession();
+        return true;
+    } catch (error) {
+        console.warn("Playback handoff failed:", error);
+        try { await loadServerPlayerState(); } catch (_) {}
+        return false;
+    } finally {
+        playerHandoffInFlight = false;
+        if (button) {
+            button.disabled = false;
+            button.textContent = oldButtonText || "Take over";
+        }
         updateDeviceOwnershipUI();
-    };
-
-    audio.addEventListener("loadedmetadata", finalizeTakeover, { once: true });
-    audio.load();
-    if (player) player.style.display = "grid";
-    remotePlayerState = null;
-    stopRemoteProgressTicker();
-    updateDeviceOwnershipUI();
-    return true;
+    }
 }
 
+function applyRemoteHandoff(message) {
+    const fromOwnerId = String(message?.fromOwnerId || "");
+    const toOwnerId = String(message?.toOwnerId || "");
+    const state = message?.state;
+    if (!fromOwnerId || !toOwnerId || !state) return;
+
+    if (fromOwnerId === PLAYER_TAB_ID && toOwnerId !== PLAYER_TAB_ID) {
+        // Server already granted another device ownership. Stop locally without
+        // publishing an obsolete paused/0:00 snapshot back over the handoff.
+        const previousApplying = applyingRemotePlayerCommand;
+        applyingRemotePlayerCommand = true;
+        try {
+            playerHandoffStoppingRemote = true;
+            audio?.pause();
+            clearPlayerOwner();
+        } catch (_) {}
+        finally {
+            playerHandoffStoppingRemote = false;
+            applyingRemotePlayerCommand = previousApplying;
+        }
+        remotePlayerState = { ...state, _serverSynced: true };
+        remotePlayerReceivedAt = Number(state._serverUpdatedAt || Date.now());
+        applyRemotePlayerState(remotePlayerState, true);
+        return;
+    }
+
+    if (toOwnerId !== PLAYER_TAB_ID) {
+        applyRemotePlayerState(state, true);
+    }
+}
 
 function applyRemoteCommand(message) {
     if (!audio || message?.targetId !== PLAYER_TAB_ID) return;
@@ -920,7 +1024,32 @@ function applyRemoteCommand(message) {
     } finally {
         applyingRemotePlayerCommand = false;
     }
-    schedulePlayerStateBroadcast(true);
+    if (message.command !== "load-play") schedulePlayerStateBroadcast(true);
+}
+
+async function sendPlayerHeartbeat() {
+    if (!audio || playerOwnerId !== PLAYER_TAB_ID || isRemotePlayerOwner()) return;
+    try {
+        const response = await apiFetch("api/player/heartbeat", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            timeoutMs: 7000,
+            body: JSON.stringify({ ownerId: PLAYER_TAB_ID, clientId: PLAYER_CLIENT_ID })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            if (response.status === 409) {
+                try { audio.pause(); } catch (_) {}
+                clearPlayerOwner();
+                await loadServerPlayerState();
+            }
+            return;
+        }
+        const serverState = result?.state;
+        const serverSeq = Number(serverState?.seq);
+        if (Number.isFinite(serverSeq)) playerSyncSequence = Math.max(playerSyncSequence, serverSeq);
+    } catch (_) {}
 }
 
 async function initPlayerSync() {
@@ -935,6 +1064,8 @@ async function initPlayerSync() {
             if (msg.state?.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(msg.state);
         } else if (msg.type === "command") {
             applyRemoteCommand(msg);
+        } else if (msg.type === "player_handoff") {
+            applyRemoteHandoff(msg);
         } else if (msg.type === "owner-closing" && msg.ownerId === playerOwnerId) {
             remotePlayerState = null;
             playerOwnerId = null;
@@ -970,13 +1101,17 @@ async function initPlayerSync() {
             try { const owner = JSON.parse(event.newValue); if (owner?.id) playerOwnerId = owner.id; } catch (_) {}
         }
     });
-    playerSyncHeartbeat = window.setInterval(heartbeatPlayerOwner, PLAYER_HEARTBEAT_MS);
+    playerSyncHeartbeat = window.setInterval(() => {
+        heartbeatPlayerOwner();
+        sendPlayerHeartbeat();
+    }, PLAYER_HEARTBEAT_MS);
     window.addEventListener("beforeunload", () => {
         try { persistCurrentPosition(true, true); } catch (_) {}
         try { broadcastPlayerState(true, true); } catch (_) {}
         try { playerSyncChannel?.postMessage({ type: "owner-closing", ownerId: PLAYER_TAB_ID }); } catch (_) {}
         clearPlayerOwner();
         if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
+        playerSyncHeartbeat = null;
         stopRemoteProgressTicker();
         if (playerOwnerClaimTimer) window.clearTimeout(playerOwnerClaimTimer);
         if (playerProgressBroadcastTimer) window.clearTimeout(playerProgressBroadcastTimer);
@@ -2400,12 +2535,12 @@ function bindAudioEvents() {
     audio.addEventListener(
         "pause",
         () => {
-            persistCurrentPosition(true);
+            if (!playerHandoffStoppingRemote) persistCurrentPosition(true);
             stopVisualizer();
             updatePlayingState(false);
             updateMediaSession();
             stopPlayerProgressFrame();
-            schedulePlayerStateBroadcast(true);
+            if (!applyingRemotePlayerCommand && !isRemotePlayerOwner()) schedulePlayerStateBroadcast(true);
         }
     );
 
@@ -2499,18 +2634,18 @@ function bindPlayerControls() {
             }
 
             const remoteOwner = isRemotePlayerOwner();
+            if (remoteOwner && !audio.src && remotePlayerState?.src) {
+                takeoverRemotePlayer().then(moved => {
+                    if (moved && audio.paused && !remotePlayerState) audio.play().catch(() => {});
+                }).catch(() => {});
+                return;
+            }
             if (remoteOwner) {
                 const remotePaused = remotePlayerState ? Boolean(remotePlayerState.paused) : Boolean(audio.paused);
                 if (sendPlayerCommand(remotePaused ? "play" : "pause")) {
                     updateRemotePlayerOptimistic({ paused: !remotePaused });
                 }
                 return;
-            }
-            if (!audio.src && remotePlayerState?.src) {
-                if (takeoverRemotePlayer()) {
-                    audio.play().catch(() => {});
-                    return;
-                }
             }
             if (!audio.src) return;
             setPlayerOwner();
@@ -2536,8 +2671,9 @@ function bindPlayerControls() {
         else { setPlayerOwner(); playNextTrack(); }
     });
 
-    document.getElementById("gp-device-takeover")?.addEventListener("click", () => {
-        if (takeoverRemotePlayer()) showToast("▶ Playback moved to this device");
+    document.getElementById("gp-device-takeover")?.addEventListener("click", async () => {
+        const moved = await takeoverRemotePlayer();
+        if (moved) showToast("▶ Playback moved to this device");
     });
 
     document.getElementById("gp-shuffle-btn")?.addEventListener("click", () => setShuffle(!playerShuffle));
@@ -5744,6 +5880,8 @@ function initWebSocket() {
                     }
                 } else if (data.type === "command") {
                     applyRemoteCommand(data);
+                } else if (data.type === "player_handoff") {
+                    applyRemoteHandoff(data);
                 }
 
             } catch (error) {
