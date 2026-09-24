@@ -54,7 +54,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.6"
+SERVER_VERSION = "3.7.5"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -327,7 +327,6 @@ AUDIO_QUALITY_VALUES = {"0", "5", "64K", "96K", "128K", "160K", "192K", "256K", 
 # Always invoke yt-dlp through the running Python environment.
 # This works reliably inside the add-on even when the console script is not on PATH.
 YT_DLP_COMMAND = [sys.executable, "-m", "yt_dlp"]
-YT_DLP_RUNTIME_ARGS = ["--js-runtimes", "deno"]
 FFMPEG_COMMAND = [shutil.which("ffmpeg") or "ffmpeg"]
 
 try:
@@ -2283,14 +2282,11 @@ def cleanup_task_files(task_id):
 _METADATA_CACHE = {}
 _METADATA_LAST_MB_CALL = 0.0
 _METADATA_RATE_LOCK = asyncio.Lock()
-MB_USER_AGENT = "Xrob-Music/3.7.6 (MusicBrainz metadata resolver; https://github.com/ahmedxrob/ai-project)"
 
 
 def _compact_identity(value):
     text = clean_metadata_text(value, "")
     text = re.sub(r"\b(feat\.?|ft\.?|featuring)\b.*$", "", text, flags=re.I)
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
     return re.sub(r"\s+", " ", text).strip().casefold()
 
@@ -2302,84 +2298,7 @@ def _similarity(a, b):
         return 0.0
     if a1 == b1:
         return 1.0
-    if a1 in b1 or b1 in a1:
-        return max(0.88, difflib.SequenceMatcher(None, a1, b1).ratio())
     return difflib.SequenceMatcher(None, a1, b1).ratio()
-
-
-def _artist_similarity(a, b):
-    """Be conservative with artist names; shared generic words must not be enough."""
-    a1 = _compact_identity(a)
-    b1 = _compact_identity(b)
-    if not a1 or not b1:
-        return 0.0
-    if a1 == b1:
-        return 1.0
-    at = set(a1.split())
-    bt = set(b1.split())
-    overlap = at & bt
-    if overlap:
-        jaccard = len(overlap) / max(1, len(at | bt))
-        if jaccard >= 0.75:
-            return 0.95
-        if jaccard >= 0.5 and min(len(at), len(bt)) >= 2:
-            return 0.88
-        if jaccard >= 0.5:
-            return 0.78
-    seq = difflib.SequenceMatcher(None, a1, b1).ratio()
-    # Without meaningful token overlap, edit distance alone is weak evidence.
-    return seq * 0.55 if len(at) > 1 or len(bt) > 1 else seq * 0.70
-
-
-def _duration_similarity(source_seconds, candidate_ms):
-    source = safe_float(source_seconds, 0)
-    candidate = safe_float(candidate_ms, 0) / 1000.0
-    if source <= 0 or candidate <= 0:
-        return 0.0
-    delta = abs(source - candidate)
-    if delta <= 2.0:
-        return 1.0
-    if delta >= 20.0:
-        return 0.0
-    return max(0.0, 1.0 - (delta - 2.0) / 18.0)
-
-
-def _extract_artist_credit(credits, fallback=""):
-    parts = []
-    for credit in credits or []:
-        if not isinstance(credit, dict):
-            continue
-        name = str(credit.get("name") or credit.get("artist", {}).get("name") or "").strip()
-        if name:
-            parts.append(name)
-        joinphrase = str(credit.get("joinphrase") or "")
-        if joinphrase:
-            parts.append(joinphrase)
-    return clean_metadata_text("".join(parts).strip(), fallback)
-
-
-def _release_choice(releases):
-    usable = [r for r in (releases or []) if isinstance(r, dict) and str(r.get("title") or "").strip()]
-    if not usable:
-        return {}
-    def score(release):
-        status = str(release.get("status") or "").casefold()
-        rg = release.get("release-group") or {}
-        primary = str(rg.get("primary-type") or release.get("type") or "").casefold()
-        value = 0
-        if status == "official":
-            value += 5
-        elif status == "promotional":
-            value -= 2
-        if primary == "album":
-            value += 4
-        elif primary == "ep":
-            value += 3
-        elif primary == "single":
-            value += 1
-        date = str(release.get("date") or "9999-99-99")
-        return value, date
-    return sorted(usable, key=score, reverse=True)[0]
 
 
 def _http_json_sync(url, headers=None, timeout=12):
@@ -2389,125 +2308,55 @@ def _http_json_sync(url, headers=None, timeout=12):
     return json.loads(raw)
 
 
-async def _musicbrainz_request(url):
+async def _musicbrainz_lookup(artist, title, cleanup_rules=""):
     global _METADATA_LAST_MB_CALL
-    last_error = None
-    for attempt in range(MB_MAX_RETRIES):
-        async with _METADATA_RATE_LOCK:
-            wait = MB_MIN_REQUEST_INTERVAL_SECONDS - (time.monotonic() - _METADATA_LAST_MB_CALL)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            _METADATA_LAST_MB_CALL = time.monotonic()
-            try:
-                return await asyncio.to_thread(
-                    _http_json_sync,
-                    url,
-                    {"User-Agent": MB_USER_AGENT, "Accept": "application/json"},
-                    MB_REQUEST_TIMEOUT_SECONDS,
-                )
-            except urllib.error.HTTPError as exc:
-                last_error = exc
-                retry_after = exc.headers.get("Retry-After") if getattr(exc, "headers", None) else None
-                retryable = exc.code in {429, 500, 502, 503, 504}
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
-                last_error = exc
-                retry_after = None
-                retryable = True
-        if attempt + 1 >= MB_MAX_RETRIES or not retryable:
-            break
-        delay = safe_float(retry_after, 0) if retry_after else 0
-        if delay <= 0:
-            delay = min(8.0, 1.5 * (2 ** attempt)) + random.uniform(0, 0.35)
-        await asyncio.sleep(delay)
-    if last_error:
-        raise last_error
-    return None
-
-
-def _mb_candidate_from_recording(rec, artist_hint="", title_hint="", duration_seconds=0):
-    if not isinstance(rec, dict):
-        return None
-    rec_title = clean_metadata_text(rec.get("title"), "")
-    credits = rec.get("artist-credit") or []
-    rec_artist = _extract_artist_credit(credits, artist_hint)
-    if not rec_title:
-        return None
-    title_score = _similarity(title_hint, rec_title)
-    artist_score = _artist_similarity(artist_hint, rec_artist) if artist_hint and rec_artist else 0.0
-    duration_score = _duration_similarity(duration_seconds, rec.get("length"))
-    score = title_score * 0.62 + artist_score * 0.33 + duration_score * 0.05
-    if rec.get("video") is True:
-        score -= 0.04
-    release = _release_choice(rec.get("releases") or [])
-    rg = release.get("release-group") or {}
-    return {
-        "title": rec_title,
-        "artist": rec_artist or artist_hint,
-        "album": clean_metadata_text(release.get("title"), ""),
-        "score": max(0.0, min(1.0, score)),
-        "source": "MusicBrainz",
-        "id": rec.get("id"),
-        "recording_id": rec.get("id") or "",
-        "release_id": release.get("id") or "",
-        "release_group_id": rg.get("id") or "",
-        "release_date": release.get("date") or "",
-        "isrcs": [str(v).strip() for v in (rec.get("isrcs") or []) if str(v).strip()],
-    }
-
-
-async def _musicbrainz_lookup(artist, title, cleanup_rules="", duration_seconds=0, isrc=""):
     artist = clean_metadata_text(artist, "")
     title = clean_title_with_rules(title, cleanup_rules)
-    isrc = clean_metadata_text(isrc, "").upper().replace(" ", "")
-    cache_key = ("mb", _compact_identity(artist), _compact_identity(title), isrc, round(safe_float(duration_seconds, 0), 1))
+    cache_key = ("mb", _compact_identity(artist), _compact_identity(title))
     if cache_key in _METADATA_CACHE:
         return _METADATA_CACHE[cache_key]
-    if not title and not isrc:
+    if not artist or not title:
         return None
-
-    queries = []
-    if isrc:
-        queries.append(("isrc", f"https://musicbrainz.org/ws/2/isrc/{urllib.parse.quote(isrc, safe='')}?" + urllib.parse.urlencode({"fmt": "json", "inc": "releases+release-groups+artist-credits+isrcs"})))
-    if artist and title:
-        queries.append(("search", "https://musicbrainz.org/ws/2/recording?" + urllib.parse.urlencode({
-            "query": f'artist:"{artist}" AND recording:"{title}"', "fmt": "json", "limit": 12, "inc": "releases+release-groups+artist-credits+isrcs",
-        })))
-    if title:
-        queries.append(("search", "https://musicbrainz.org/ws/2/recording?" + urllib.parse.urlencode({
-            "query": f'recording:"{title}"', "fmt": "json", "limit": 20, "inc": "releases+release-groups+artist-credits+isrcs",
-        })))
-
-    best = None
-    for kind, url in queries:
+    async with _METADATA_RATE_LOCK:
+        wait = 1.05 - (time.monotonic() - _METADATA_LAST_MB_CALL)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _METADATA_LAST_MB_CALL = time.monotonic()
+        query = f'artist:"{artist}" AND recording:"{title}"'
+        url = "https://musicbrainz.org/ws/2/recording?" + urllib.parse.urlencode({
+            "query": query,
+            "fmt": "json",
+            "limit": 8,
+            "inc": "releases+artist-credits",
+        })
         try:
-            data = await _musicbrainz_request(url)
-        except Exception as exc:
-            await write_app_error("musicbrainz_lookup", str(exc))
-            continue
-        recordings = []
-        if kind == "isrc":
-            recordings = data.get("recordings") or []
-        else:
-            recordings = data.get("recordings") or []
-        for rec in recordings:
-            candidate = _mb_candidate_from_recording(rec, artist, title, duration_seconds)
-            if not candidate:
-                continue
-            if isrc and isrc in candidate.get("isrcs", []):
-                candidate["score"] = max(candidate["score"], 0.99)
-                candidate["reason"] = "Exact ISRC match"
-            elif not candidate.get("reason"):
-                candidate["reason"] = "Matched title, artist and available duration evidence"
-            if best is None or candidate["score"] > best["score"]:
-                best = candidate
-        if best and best["score"] >= METADATA_ACCEPT_SCORE:
-            break
-        # Stop after a reasonably strong combined match; otherwise allow the
-        # title-only search to rescue cases where YouTube supplied a poor artist hint.
-        if kind == "search" and artist and title and len(queries) > 1 and best and best["score"] >= METADATA_REVIEW_SCORE:
-            # The only reason to continue now would be a later title-only query.
-            continue
-
+            data = await asyncio.to_thread(_http_json_sync, url, {
+                "User-Agent": "Xrob-Music/2.9.3 (metadata lookup)",
+                "Accept": "application/json",
+            })
+        except Exception:
+            return None
+    recordings = data.get("recordings") or []
+    best = None
+    for rec in recordings:
+        rec_title = rec.get("title") or ""
+        credits = rec.get("artist-credit") or []
+        rec_artist = " ".join(str(x.get("name") or x.get("artist", {}).get("name") or "").strip() for x in credits).strip()
+        title_score = _similarity(title, rec_title)
+        artist_score = _similarity(artist, rec_artist)
+        score = title_score * 0.72 + artist_score * 0.28
+        releases = rec.get("releases") or []
+        release = next((r for r in releases if (r.get("title") or "").strip()), None)
+        candidate = {
+            "title": rec_title,
+            "artist": rec_artist or artist,
+            "album": (release or {}).get("title") or "",
+            "score": score,
+            "source": "MusicBrainz",
+            "id": rec.get("id"),
+        }
+        if best is None or candidate["score"] > best["score"]:
+            best = candidate
     if best:
         _cache_set_bounded(_METADATA_CACHE, cache_key, best, METADATA_CACHE_MAX)
     return best
@@ -2552,142 +2401,61 @@ async def _itunes_lookup(artist, title, cleanup_rules=""):
     return best
 
 
-def _strip_topic_suffix(value):
-    text = clean_metadata_text(value, "")
-    return re.sub(r"\s+-\s+(?:topic|vevo)$", "", text, flags=re.I).strip()
-
-
-def parse_source_track_hints(title, uploader="", artist=""):
-    raw_title = clean_metadata_text(title, "Unknown Track")
-    source_artist = _strip_topic_suffix(artist or "")
-    uploader_artist = _strip_topic_suffix(uploader or "")
-    lower_uploader = uploader_artist.casefold()
-    if lower_uploader in {"unknown artist", "unknown", "vevo", "official", "youtube"} or lower_uploader.endswith(" official"):
-        uploader_artist = ""
-    cleaned = normalize_catalog_title(raw_title)
-    artist_hint = source_artist or ""
-    track_hint = cleaned
-    if not artist_hint:
-        match = re.match(r"^(.{1,100}?)\s+[-–—|:•]\s+(.{1,180})$", cleaned)
-        if match:
-            left, right = match.group(1).strip(), match.group(2).strip()
-            # Avoid treating obvious version labels as artists. Prefer the left side
-            # when it looks like a plausible artist name and the uploader supports it.
-            if uploader_artist and _similarity(left, uploader_artist) >= 0.55:
-                artist_hint, track_hint = left, right
-            elif len(left.split()) <= 6 and not re.search(r"\b(official|video|lyrics?|audio|visualizer|remix)\b", left, re.I):
-                artist_hint, track_hint = left, right
-    return {
-        "title": track_hint or cleaned,
-        "artist": artist_hint or uploader_artist,
-        "album": "",
-    }
-
-
 async def resolve_source_metadata(url):
-    """Extract YouTube metadata once, with track/artist fields preferred over uploader names."""
+    """Ask yt-dlp for authoritative source metadata for URL-only/batch jobs."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *YT_DLP_COMMAND, *YT_DLP_RUNTIME_ARGS, "--no-playlist", "--skip-download", "--dump-single-json", "--no-warnings", url,
+            *YT_DLP_COMMAND, "--no-playlist", "--skip-download", "--dump-single-json", "--no-warnings", url,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=SOURCE_METADATA_TIMEOUT_SECONDS)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
         if proc.returncode != 0:
-            raise RuntimeError(err.decode("utf-8", errors="ignore")[-1000:] or "Source metadata lookup failed")
+            raise RuntimeError(err.decode("utf-8", errors="ignore")[-600:] or "Source metadata lookup failed")
         payload = json.loads(out.decode("utf-8", errors="ignore"))
         if not isinstance(payload, dict):
             return {}
-        hints = parse_source_track_hints(
-            payload.get("track") or payload.get("title"),
-            payload.get("uploader") or payload.get("channel"),
-            payload.get("artist") or payload.get("artist_name") or "",
-        )
-        artist = clean_metadata_text(payload.get("artist") or payload.get("artist_name"), "") or hints["artist"]
-        album = clean_metadata_text(payload.get("album") or payload.get("album_name") or payload.get("series"), "")
-        isrc = clean_metadata_text(payload.get("isrc"), "").upper().replace(" ", "")
-        return {
-            "title": hints["title"],
-            "artist": artist,
-            "album": album,
-            "album_artist": clean_metadata_text(payload.get("album_artist") or payload.get("artist"), ""),
-            "duration": safe_float(payload.get("duration"), 0),
-            "isrc": isrc,
-            "uploader": clean_metadata_text(payload.get("uploader") or payload.get("channel"), ""),
-        }
+        title = clean_metadata_text(payload.get("track") or payload.get("title"), "")
+        artist = clean_metadata_text(payload.get("artist") or payload.get("uploader") or payload.get("channel"), "")
+        album = clean_metadata_text(payload.get("album") or payload.get("series"), "")
+        return {"title": title, "artist": artist, "album": album}
     except Exception as exc:
         await write_app_error("source_metadata", str(exc))
         return {}
 
 
-async def resolve_download_metadata(raw_title, artist, album, settings, source_meta=None):
+async def resolve_download_metadata(raw_title, artist, album, settings):
     rules_text = settings.get("title_cleanup_rules", "")
-    source_meta = source_meta if isinstance(source_meta, dict) else {}
-    source_hints = parse_source_track_hints(
-        source_meta.get("title") or raw_title,
-        source_meta.get("uploader"),
-        source_meta.get("artist"),
-    )
-    title = clean_title_with_rules(source_meta.get("title") or raw_title or "Unknown Track", rules_text)
+    title = clean_title_with_rules(raw_title or "Unknown Track", rules_text)
     catalog_title = normalize_catalog_title(title, rules_text)
-    supplied_artist = clean_metadata_text(artist, "")
-    source_artist = clean_metadata_text(source_meta.get("artist"), "")
-    artist_hint = source_artist or source_hints.get("artist") or supplied_artist
+    artist = clean_metadata_text(artist, "Unknown Artist")
     supplied_album = clean_metadata_text(album, "")
-    source_album = clean_metadata_text(source_meta.get("album"), "")
-    result = {
-        "title": catalog_title,
-        "artist": artist_hint or "Unknown Artist",
-        "album": supplied_album or source_album or artist_hint or "Unknown Artist",
-        "confidence": 0.32 if artist_hint else 0.22,
-        "source": "YouTube source metadata" if source_meta else "Supplied metadata",
-        "reason": "",
-        "recording_id": "",
-        "release_id": "",
-        "release_group_id": "",
-        "isrc": clean_metadata_text(source_meta.get("isrc"), "").upper().replace(" ", ""),
-        "release_date": "",
-    }
+    result = {"title": catalog_title, "artist": artist, "album": supplied_album or artist, "confidence": 0.25, "source": "Supplied metadata", "reason": ""}
 
     mode = str(settings.get("metadata_mode") or "auto").lower()
     if mode == "off":
         return result
 
     candidates = []
-    mb = await _musicbrainz_lookup(
-        artist_hint,
-        catalog_title,
-        rules_text,
-        duration_seconds=safe_float(source_meta.get("duration"), 0),
-        isrc=result["isrc"],
-    ) if mode in {"auto", "musicbrainz"} else None
-    it = None
-    if mode == "auto" and (not mb or mb.get("score", 0) < METADATA_REVIEW_SCORE):
-        it = await _itunes_lookup(artist_hint, catalog_title, rules_text)
+    mb = await _musicbrainz_lookup(artist, catalog_title, rules_text) if mode in {"auto", "musicbrainz"} else {}
+    it = await _itunes_lookup(artist, catalog_title, rules_text) if mode == "auto" else {}
     for cand in (mb, it):
-        if cand and cand.get("score", 0) >= METADATA_REVIEW_SCORE:
+        if cand and cand.get("score", 0) >= 0.55:
             candidates.append(cand)
 
     if candidates:
-        best = max(candidates, key=lambda x: x.get("score", 0))
-        score = float(best.get("score", 0.0))
-        # Never replace a clearly supplied album unless catalog evidence is strong.
-        chosen_album = supplied_album or source_album or clean_metadata_text(best.get("album"), "")
+        candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+        best = candidates[0]
+        # Catalog data is evidence, never a reason to overwrite a clearly supplied album.
+        chosen_album = supplied_album or clean_metadata_text(best.get("album"), "")
         result.update({
             "title": normalize_catalog_title(best.get("title") or catalog_title, rules_text),
-            "artist": clean_metadata_text(best.get("artist"), artist_hint) or artist_hint or "Unknown Artist",
-            "album": chosen_album or clean_metadata_text(best.get("artist"), artist_hint) or "Unknown Artist",
-            "confidence": score,
+            "artist": clean_metadata_text(best.get("artist"), artist),
+            "album": chosen_album or artist,
+            "confidence": float(best.get("score", 0.0)),
             "source": best.get("source") or "Catalog",
-            "reason": best.get("reason") or ("Strong catalog match" if score >= METADATA_ACCEPT_SCORE else "Catalog match needs review"),
-            "recording_id": best.get("recording_id") or best.get("id") or "",
-            "release_id": best.get("release_id") or "",
-            "release_group_id": best.get("release_group_id") or "",
-            "release_date": best.get("release_date") or "",
         })
-        if not result["isrc"] and best.get("isrcs"):
-            result["isrc"] = str(best["isrcs"][0])
     else:
-        result["reason"] = "No confident catalog match; keeping source metadata"
+        result["title"] = catalog_title
 
     result["album"] = clean_metadata_text(result.get("album"), "") or result["artist"] or "Unknown Artist"
     return result
@@ -2763,19 +2531,14 @@ async def download_worker():
 
             settings = await load_settings_async()
 
-            source_meta = await resolve_source_metadata(str(task.get("url") or ""))
-            if source_meta:
-                task["source_title"] = source_meta.get("title") or task.get("title") or ""
-                task["source_artist"] = source_meta.get("artist") or ""
-                task["source_album"] = source_meta.get("album") or ""
-                task["source_duration"] = safe_float(source_meta.get("duration"), 0)
-                task["source_isrc"] = source_meta.get("isrc") or ""
-                task["title"] = normalize_catalog_title(source_meta.get("title") or task.get("title") or "Unknown Track", settings.get("title_cleanup_rules", ""))
-                if source_meta.get("artist"):
+            if str(task.get("title") or "").strip().casefold() in {"unknown track", "unknown", ""}:
+                source_meta = await resolve_source_metadata(str(task.get("url") or ""))
+                if source_meta:
+                    task["title"] = normalize_catalog_title(source_meta.get("title") or task.get("title") or "Unknown Track", settings.get("title_cleanup_rules", ""))
                     task["artist"] = clean_metadata_text(source_meta.get("artist"), task.get("artist") or "Unknown Artist")
-                if source_meta.get("album"):
                     task["album"] = clean_metadata_text(source_meta.get("album"), task.get("album") or "")
-                task["identity_key"] = f"{normalize_duplicate_key(task.get('title',''), task.get('artist',''))}|{hashlib.sha256(str(task.get('url','')).encode('utf-8')).hexdigest()}"
+                    task["identity_key"] = f"{normalize_duplicate_key(task.get('title',''), task.get('artist',''))}|{hashlib.sha256(str(task.get('url','')).encode('utf-8')).hexdigest()}"
+                    await notify_task_update(task, force_save=True)
 
             # Re-check the lightweight library index at worker time as well. This
             # prevents a duplicate when the library changed after Save was clicked.
@@ -2804,7 +2567,7 @@ async def download_worker():
             )
 
             task["status"] = "downloading"
-            task["step"] = "Downloading audio..."
+            task["step"] = "Downloading stream..."
             task["last_updated"] = (
                 time.time() * 1000
             )
@@ -2821,10 +2584,8 @@ async def download_worker():
 
             command = [
                 *YT_DLP_COMMAND,
-                *YT_DLP_RUNTIME_ARGS,
                 "--no-playlist",
-                "--no-warnings",
-                "--extract-audio",
+                "-x",
                 "--audio-format",
                 fmt,
                 "--audio-quality",
@@ -2833,14 +2594,6 @@ async def download_worker():
                 "--continue",
                 "--no-overwrites",
                 "--part",
-                "--retries",
-                "5",
-                "--fragment-retries",
-                "5",
-                "--file-access-retries",
-                "3",
-                "--extractor-retries",
-                "3",
                 "-o",
                 output_template,
             ]
@@ -2856,7 +2609,7 @@ async def download_worker():
                 True,
             ):
                 command.append(
-                    "--embed-metadata"
+                    "--add-metadata"
                 )
 
             command.append(
@@ -3052,10 +2805,9 @@ async def download_worker():
 
             resolved = await resolve_download_metadata(
                 task.get("title", "Unknown Track"),
-                task.get("artist", ""),
+                task.get("artist", "Unknown Artist"),
                 task.get("album", ""),
                 settings,
-                source_meta=source_meta,
             )
             task["title"] = resolved["title"]
             task["artist"] = resolved["artist"]
@@ -3063,30 +2815,6 @@ async def download_worker():
             task["metadata_confidence"] = round(float(resolved.get("confidence", 0.0)) * 100)
             task["metadata_source"] = resolved.get("source", "Fallback")
             task["metadata_reason"] = resolved.get("reason", "")
-            task["musicbrainz_recording_id"] = resolved.get("recording_id", "")
-            task["musicbrainz_release_id"] = resolved.get("release_id", "")
-            task["musicbrainz_release_group_id"] = resolved.get("release_group_id", "")
-            task["isrc"] = resolved.get("isrc", "")
-            task["release_date"] = resolved.get("release_date", "")
-            task["identity_key"] = f"{normalize_duplicate_key(task.get('title',''), task.get('artist',''))}|{hashlib.sha256(str(task.get('url','')).encode('utf-8')).hexdigest()}"
-
-            # A source uploader/channel can be different from the canonical artist.
-            # Re-check the library after MusicBrainz normalization so the same track
-            # cannot be downloaded twice under two different YouTube artist labels.
-            canonical_existing = await find_existing_track(task.get("title", ""), task.get("artist", ""))
-            if canonical_existing:
-                await asyncio.to_thread(cleanup_task_files, task_id)
-                task["status"] = "completed"
-                task["percent"] = 100
-                task["speed"] = ""
-                task["step"] = "Already in library"
-                task["final_name"] = canonical_existing
-                task["error"] = ""
-                task["last_updated"] = time.time() * 1000
-                METADATA_CACHE.pop(str(audio_file), None)
-                await notify_task_update(task, force_save=True)
-                continue
-
             clean_title = clean_filename(normalize_catalog_title(task["title"], settings.get("title_cleanup_rules", ""))) or "Unknown Track"
             task["status"] = "processing"
             task["percent"] = 93
@@ -3112,13 +2840,6 @@ async def download_worker():
                     "-metadata", f"title={clean_title}",
                     "-metadata", f"artist={task.get('artist', 'Unknown Artist')}",
                     "-metadata", f"album={task.get('album') or task.get('artist') or "Unknown Artist"}",
-                    "-metadata", f"album_artist={task.get('artist') or "Unknown Artist"}",
-                    "-metadata", f"date={task.get('release_date') or ""}",
-                    "-metadata", f"musicbrainz_recordingid={task.get('musicbrainz_recording_id') or ""}",
-                    "-metadata", f"musicbrainz_releaseid={task.get('musicbrainz_release_id') or ""}",
-                    "-metadata", f"musicbrainz_release_group_id={task.get('musicbrainz_release_group_id') or ""}",
-                    "-metadata", f"musicbrainz_albumid={task.get('musicbrainz_release_group_id') or ""}",
-                    "-metadata", f"isrc={task.get('isrc') or ""}",
                     str(clean_file),
                 ]
                 clean_process = await asyncio.create_subprocess_exec(
@@ -3426,12 +3147,6 @@ PREVIEW_LOOKUP_TIMEOUT_SECONDS = 30
 PREVIEW_STREAM_TIMEOUT_SECONDS = 180
 DOWNLOAD_OUTPUT_IDLE_TIMEOUT_SECONDS = 120
 METADATA_REWRITE_TIMEOUT_SECONDS = 60
-SOURCE_METADATA_TIMEOUT_SECONDS = 45
-MB_REQUEST_TIMEOUT_SECONDS = 15
-MB_MIN_REQUEST_INTERVAL_SECONDS = 1.10
-MB_MAX_RETRIES = 3
-METADATA_ACCEPT_SCORE = 0.84
-METADATA_REVIEW_SCORE = 0.78
 
 
 async def communicate_with_timeout(process, timeout, label="process"):
@@ -3455,12 +3170,6 @@ async def youtube_search(
     max_results,
     page=1,
 ):
-    query = str(query or "").strip()[:160]
-    if not query:
-        return []
-    max_results = max(1, min(25, safe_int(max_results, 20)))
-    page = max(1, safe_int(page, 1))
-
 
     start = (
         (page - 1)
@@ -3472,7 +3181,6 @@ async def youtube_search(
 
     command = [
         *YT_DLP_COMMAND,
-        *YT_DLP_RUNTIME_ARGS,
         "--flat-playlist",
         "--dump-single-json",
         "--skip-download",
@@ -3542,16 +3250,18 @@ async def youtube_search(
             0,
         )
 
-        source_title = item.get("track") or item.get("title") or "Unknown Track"
-        source_uploader = item.get("uploader") or item.get("channel") or ""
-        hints = parse_source_track_hints(source_title, source_uploader, item.get("artist") or "")
         results.append(
             {
                 "id": video_id,
-                "title": normalize_catalog_title(hints.get("title") or source_title),
-                "source_title": clean_metadata_text(source_title, "Unknown Track"),
-                "channel": clean_metadata_text(source_uploader, "Unknown Artist"),
-                "artist_hint": clean_metadata_text(hints.get("artist"), ""),
+                "title": item.get(
+                    "title",
+                    "Unknown Track",
+                ),
+                "channel": (
+                    item.get("channel")
+                    or item.get("uploader")
+                    or "Unknown Artist"
+                ),
                 "duration": duration,
                 "duration_text": format_duration(
                     duration
@@ -3645,7 +3355,7 @@ def _library_search_sync(query: str, page: int, limit: int = 20):
 
 @app.get("/api/search")
 async def api_search(
-    q: str = Query(..., min_length=1, max_length=160),
+    q: str = Query(..., min_length=1, max_length=256),
     page: int = Query(1, ge=1, le=1000),
     source: str = Query("youtube"),
 ):
@@ -3669,7 +3379,7 @@ async def api_search(
             if task.get("status") in {"queued", "downloading", "processing"}
         }
         for item in results:
-            key = normalize_duplicate_key(item.get("title", ""), item.get("artist_hint") or item.get("channel", "Unknown Artist"))
+            key = normalize_duplicate_key(item.get("title", ""), item.get("channel", "Unknown Artist"))
             item["already_downloaded"] = bool(key and key in library_keys)
             item["already_queued"] = bool(key and key in active_keys)
             item["source"] = "youtube"
@@ -3710,7 +3420,6 @@ async def api_preview(
     try:
         process = await asyncio.create_subprocess_exec(
             *YT_DLP_COMMAND,
-            *YT_DLP_RUNTIME_ARGS,
             "-g",
             "-f",
             "ba/bestaudio/b",
@@ -3854,8 +3563,8 @@ async def api_download(
         settings.get("title_cleanup_rules", ""),
     )
     task_artist = clean_metadata_text(
-        str(payload.get("artist", "") or ""),
-        "",
+        str(payload.get("artist", "Unknown Artist") or "Unknown Artist"),
+        "Unknown Artist",
     )
     raw_album = payload.get("album")
     task_album = str(raw_album).strip() if raw_album else ""
@@ -8339,7 +8048,7 @@ async def api_diagnostics():
         return checks
     checks = await asyncio.to_thread(check_sync)
     tools = {}
-    for name, command in (("python", [sys.executable, "--version"]), ("ffmpeg", [FFMPEG_COMMAND[0], "-version"]), ("yt_dlp", [*YT_DLP_COMMAND, "--version"]), ("deno", ["deno", "--version"])):
+    for name, command in (("python", [sys.executable, "--version"]), ("ffmpeg", [FFMPEG_COMMAND[0], "-version"]), ("yt_dlp", [*YT_DLP_COMMAND, "--version"])):
         try:
             proc = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
