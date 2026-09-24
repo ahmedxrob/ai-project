@@ -4824,7 +4824,7 @@ button, [role="button"], input[type="button"], input[type="submit"] { min-height
 .app-topbar {
     position: fixed !important;
     top: 0 !important;
-    left: var(--sidebar-width) !important;
+    left: 0 !important;
     right: 0 !important;
     height: var(--app-header-height) !important;
     z-index: 1600 !important;
@@ -5211,3 +5211,163 @@ button svg, [role="button"] svg { flex: 0 0 auto; }
   .gp-skip-btn, .gp-connect-btn, .icon-btn { touch-action:manipulation; }
   .queue-row, .catalog-card, .result-card { -webkit-tap-highlight-color:transparent; }
 }
+
+
+/* =====================================================================
+   XROB MUSIC 3.7.5 — TRUE FULL-VIEWPORT CHROME + PLATFORM HARDENING
+   The header and player are viewport-level UI; the page content is the
+   only scroll surface. This final layer intentionally overrides legacy
+   shell offsets and keeps the visual language identical on every device.
+   ===================================================================== */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --header-total-height: calc(var(--app-header-height) + var(--safe-top));
+  --player-total-bottom: var(--safe-bottom);
+  --mobile-nav-total-height: calc(var(--bottom-nav-height) + var(--safe-bottom));
+}
+html, body { width:100%; max-width:100%; min-width:0; }
+html { min-height:100%; scroll-padding-top:var(--header-total-height); }
+body.music-app {
+  min-height:100vh;
+  min-height:100dvh;
+  padding-left:0 !important;
+  padding-right:0 !important;
+  padding-top:0 !important;
+  overscroll-behavior-x:none;
+}
+.app-shell.music-shell {
+  width:100%;
+  max-width:none;
+  min-height:100vh;
+  min-height:100dvh;
+  position:relative;
+  overflow:visible;
+}
+.app-column {
+  width:100%;
+  max-width:none;
+  padding-top:var(--header-total-height) !important;
+}
+.app-topbar {
+  position:fixed !important;
+  inset:0 0 auto 0 !important;
+  left:0 !important;
+  right:0 !important;
+  width:auto !important;
+  max-width:none !important;
+  height:var(--header-total-height) !important;
+  padding-top:var(--safe-top) !important;
+  box-sizing:border-box !important;
+  z-index:1800 !important;
+  overflow:visible !important;
+}
+.app-topbar-inner {
+  width:100% !important;
+  max-width:none !important;
+  height:var(--app-header-height) !important;
+  min-height:0 !important;
+  box-sizing:border-box !important;
+  padding-left:max(var(--content-gutter), var(--safe-left)) !important;
+  padding-right:max(var(--content-gutter), var(--safe-right)) !important;
+}
+.main-content.workspace-main {
+  width:100%;
+  max-width:none;
+  min-height:calc(100vh - var(--header-total-height));
+  min-height:calc(100dvh - var(--header-total-height));
+  padding-top:0 !important;
+  padding-bottom:calc(var(--player-height) + 42px + var(--safe-bottom)) !important;
+  padding-left:max(var(--content-gutter), var(--safe-left)) !important;
+  padding-right:max(var(--content-gutter), var(--safe-right)) !important;
+}
+.content-topbar { top:var(--header-total-height) !important; }
+.global-player-bar.music-player {
+  position:fixed !important;
+  inset:auto 0 0 0 !important;
+  left:0 !important;
+  right:0 !important;
+  bottom:0 !important;
+  width:auto !important;
+  max-width:none !important;
+  height:var(--player-height) !important;
+  padding-left:max(clamp(14px,1.7vw,28px), var(--safe-left)) !important;
+  padding-right:max(clamp(14px,1.7vw,28px), var(--safe-right)) !important;
+  z-index:1900 !important;
+}
+.bottom-nav.mobile-dock {
+  z-index:1850 !important;
+  margin-left:var(--safe-left);
+  margin-right:var(--safe-right);
+}
+.overlay-drawers-stack { z-index:1950 !important; }
+.xrob-modal { z-index:2100 !important; }
+
+/* Device/platform fallbacks: keep the shell readable without modern glass APIs. */
+@supports not (height:100dvh) {
+  .app-shell.music-shell, body.music-app { min-height:100vh; }
+  .main-content.workspace-main { min-height:calc(100vh - var(--header-total-height)); }
+}
+@supports not (padding:max(1px, 2px)) {
+  .app-topbar-inner,
+  .global-player-bar.music-player,
+  .main-content.workspace-main { padding-left:var(--content-gutter) !important; padding-right:var(--content-gutter) !important; }
+}
+@supports not (backdrop-filter:blur(1px)) {
+  .app-topbar,
+  .global-player-bar.music-player { background:var(--bg-surface) !important; }
+}
+
+/* Keyboard/touch parity and predictable scrolling in old WebViews. */
+button, input, select, textarea { -webkit-tap-highlight-color:transparent; }
+button, [role="button"] { -webkit-user-select:none; user-select:none; }
+.main-content.workspace-main,
+.downloads-drawer-list,
+.queue-list,
+.primary-nav { -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+.primary-nav { touch-action:pan-x; }
+.global-player-bar.music-player,
+.topbar-icon,
+.gp-play-btn,
+.gp-skip-btn,
+.gp-connect-btn { touch-action:manipulation; }
+
+@media (max-width:768px) {
+  :root { --app-header-height:60px; --player-height:78px; }
+  .app-topbar { height:var(--header-total-height) !important; }
+  .app-topbar-inner { padding-left:max(8px,var(--safe-left)) !important; padding-right:max(8px,var(--safe-right)) !important; }
+  .app-column { padding-top:var(--header-total-height) !important; }
+  .main-content.workspace-main {
+    padding-left:max(10px,var(--safe-left)) !important;
+    padding-right:max(10px,var(--safe-right)) !important;
+    padding-bottom:calc(var(--player-height) + var(--mobile-nav-total-height) + 28px) !important;
+  }
+  .global-player-bar.music-player {
+    bottom:var(--mobile-nav-total-height) !important;
+    height:var(--player-height) !important;
+    padding-left:max(8px,var(--safe-left)) !important;
+    padding-right:max(8px,var(--safe-right)) !important;
+    padding-bottom:2px !important;
+  }
+  body.music-app { padding-bottom:var(--mobile-nav-total-height) !important; }
+  .bottom-nav.mobile-dock {
+    left:max(8px,var(--safe-left)) !important;
+    right:max(8px,var(--safe-right)) !important;
+    bottom:var(--safe-bottom) !important;
+    margin:0 !important;
+  }
+  .overlay-drawers-stack {
+    top:calc(var(--header-total-height) + 8px) !important;
+    bottom:calc(var(--mobile-nav-total-height) + var(--player-height) + 8px) !important;
+  }
+}
+@media (max-width:520px) {
+  :root { --app-header-height:58px; --player-height:76px; }
+  .app-topbar-inner { padding-left:max(6px,var(--safe-left)) !important; padding-right:max(6px,var(--safe-right)) !important; }
+  .main-content.workspace-main { padding-left:max(8px,var(--safe-left)) !important; padding-right:max(8px,var(--safe-right)) !important; }
+}
+
+/* Let the embedded player use the full browser surface without accidental clipping. */
+#global-audio-element { display:none !important; width:0; height:0; }
