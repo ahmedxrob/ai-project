@@ -4960,3 +4960,254 @@ button, [role="button"], input[type="button"], input[type="submit"] { min-height
     .app-topbar,
     .global-player-bar.music-player { background: var(--bg-surface) !important; }
 }
+
+
+/* ======================================================================
+   XROB MUSIC 3.7.4 — FINAL UI CONSISTENCY / PAGE NORMALIZATION
+   Central override layer for legacy style compatibility.
+   ====================================================================== */
+:root {
+  --ui-icon-xs: 14px;
+  --ui-icon-sm: 16px;
+  --ui-icon-md: 18px;
+  --ui-icon-lg: 20px;
+  --ui-control-h: 38px;
+  --ui-control-h-sm: 34px;
+  --ui-page-title: clamp(26px, 2.6vw, 36px);
+  --ui-section-title: clamp(18px, 2vw, 24px);
+  --ui-gutter: clamp(12px, 2vw, 28px);
+}
+html {
+  scroll-padding-top: var(--app-header-height);
+  scroll-padding-bottom: calc(var(--player-height) + var(--bottom-nav-height) + 20px);
+}
+body.music-app,
+#app-shell,
+.app-shell.music-shell,
+.app-column,
+.main-content.workspace-main {
+  min-width: 0;
+  max-width: 100%;
+}
+body.music-app { overflow-x: hidden; }
+
+/* Global controls: remove the inherited 44px minimum from compact app chrome. */
+button, [role="button"], input[type="button"], input[type="submit"] { min-height: 0; }
+button svg, [role="button"] svg { flex: 0 0 auto; }
+
+/* Shared icon scale */
+.page-heading h2 svg,
+.page-heading h2 > i,
+.library-actions svg,
+.settings-actions svg,
+.library-search-icon svg,
+.library-stats-bar svg,
+.home-stat-icon svg,
+.overview-icon svg,
+.editor-stat-icon svg,
+.settings-divider svg,
+.download-status svg,
+.download-error-line svg,
+.catalog-actions svg,
+.catalog-main-action svg,
+.catalog-detail-header svg {
+  width: var(--ui-icon-md) !important;
+  height: var(--ui-icon-md) !important;
+  flex: 0 0 var(--ui-icon-md);
+}
+
+/* Page headings */
+.page-heading {
+  min-height: 52px !important;
+  margin-bottom: 18px !important;
+}
+.page-heading h2,
+.downloads-page-title {
+  font-size: var(--ui-page-title) !important;
+  line-height: 1.08 !important;
+  letter-spacing: -0.7px !important;
+}
+.page-heading p,
+.downloads-page-subtitle { font-size: 10px !important; line-height: 1.45 !important; }
+.home-title { font-size: clamp(34px, 6vw, 56px) !important; line-height: 1.02 !important; }
+.home-hero { min-height: 320px !important; }
+
+/* Top bar — same visual rhythm as player, without giant hit areas. */
+.topbar-icon {
+  min-height: 38px !important;
+  width: 38px !important;
+  height: 38px !important;
+  flex: 0 0 38px !important;
+}
+.topbar-icon svg { width: 18px !important; height: 18px !important; }
+.primary-nav .nav-link {
+  min-height: 40px !important;
+  height: 40px !important;
+}
+.primary-nav .nav-link > svg,
+.primary-nav .nav-link > i { width: 18px !important; height: 18px !important; flex-basis: 18px !important; }
+
+/* Generic icon buttons */
+.icon-btn {
+  min-height: 34px !important;
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 34px !important;
+}
+.icon-btn svg { width: 16px !important; height: 16px !important; }
+.btn-refresh, .btn-preview, .btn-danger, .save-btn, .btn-secondary {
+  min-height: var(--ui-control-h) !important;
+  line-height: 1 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+}
+.btn-refresh svg, .btn-preview svg, .btn-danger svg, .save-btn svg, .btn-secondary svg {
+  width: 16px !important; height: 16px !important; flex-basis: 16px !important;
+}
+
+/* Home statistics: keep icon containers visually subordinate to data. */
+.home-stat-icon {
+  width: 42px !important;
+  height: 42px !important;
+  flex-basis: 42px !important;
+  min-width: 42px !important;
+}
+.home-stat-icon svg { width: 18px !important; height: 18px !important; }
+.library-stats-bar { gap: 12px !important; font-size: 9px !important; }
+.library-stats-bar span { min-height: 28px !important; }
+.library-stats-bar svg { width: 15px !important; height: 15px !important; flex-basis: 15px !important; }
+
+/* Search and library toolbars */
+.library-toolbar { min-width: 0 !important; }
+.library-actions { min-width: 0 !important; }
+.library-search { min-width: 0 !important; }
+.library-search-icon { width: 18px !important; height: 18px !important; display:grid !important; place-items:center !important; }
+.library-search-icon svg { width: 16px !important; height: 16px !important; }
+
+/* Catalog cards */
+.catalog-card { min-width: 0 !important; }
+.catalog-card img { max-width: 100%; }
+.catalog-actions { gap: 7px !important; }
+.catalog-detail-header { min-width: 0 !important; gap: 12px !important; }
+.catalog-detail-header h3 { font-size: clamp(18px, 2.3vw, 26px) !important; line-height: 1.12 !important; }
+.catalog-detail-header p { font-size: 10px !important; }
+
+/* Downloads */
+.downloads-page-header { margin-bottom: 18px !important; }
+.overview-icon { width: 38px !important; height: 38px !important; flex-basis: 38px !important; }
+.overview-icon svg { width: 18px !important; height: 18px !important; }
+.download-status { display:inline-flex !important; align-items:center !important; gap:6px !important; }
+.download-status svg { width:13px !important; height:13px !important; flex-basis:13px !important; }
+.download-error-line svg { width:14px !important; height:14px !important; flex-basis:14px !important; }
+
+/* Queue/player */
+.queue-row img { width: 46px !important; height: 46px !important; flex-basis:46px !important; }
+.queue-row .icon-btn { width:32px !important; height:32px !important; flex-basis:32px !important; }
+.gp-main-controls button { min-height: 0 !important; }
+.gp-play-btn { width:44px !important; height:44px !important; min-width:44px !important; min-height:44px !important; }
+.gp-skip-btn { width:34px !important; height:34px !important; min-width:34px !important; min-height:34px !important; }
+.gp-connect-btn { min-height:36px !important; height:36px !important; }
+.global-player-bar.music-player button svg { width:17px !important; height:17px !important; }
+.global-player-bar.music-player .gp-play-btn svg { width:20px !important; height:20px !important; }
+
+/* Settings */
+.settings-card { min-width: 0 !important; }
+.setting-row { min-width: 0 !important; }
+.settings-card input,
+.settings-card select,
+.settings-card textarea { max-width: 100% !important; }
+.settings-actions { flex-wrap: wrap !important; }
+.settings-divider { font-size: 10px !important; display:flex !important; align-items:center !important; gap:7px !important; }
+.settings-divider svg { width:16px !important; height:16px !important; flex-basis:16px !important; }
+
+/* Empty states / diagnostics */
+.empty-icon { width:48px !important; height:48px !important; display:grid !important; place-items:center !important; }
+.empty-icon svg { width:22px !important; height:22px !important; }
+.queue-empty svg { width:20px !important; height:20px !important; }
+
+/* Prevent dynamic SVG insertion from changing line boxes. */
+[data-lucide] { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; }
+
+/* Small screens: page-specific stacking instead of shrinking everything. */
+@media (max-width: 768px) {
+  .app-topbar-inner { gap: 6px !important; }
+  .topbar-icon { width:36px !important; height:36px !important; flex-basis:36px !important; min-height:36px !important; }
+  .topbar-icon svg { width:16px !important; height:16px !important; }
+  .primary-nav .nav-link { min-height:36px !important; height:36px !important; width:36px !important; min-width:36px !important; }
+  .main-content.workspace-main { padding-left:12px !important; padding-right:12px !important; }
+  .home-hero { min-height: 245px !important; padding: 20px !important; }
+  .home-title { font-size: clamp(30px, 10vw, 44px) !important; }
+  .downloads-page-header { align-items:flex-start !important; flex-direction:column !important; gap:12px !important; }
+  .downloads-header-actions { width:100%; flex-wrap:wrap; }
+  .setting-row,
+  .settings-card .setting-row { align-items:stretch !important; flex-direction:column !important; gap:8px !important; min-height:0 !important; padding:14px 0 !important; }
+  .setting-row > input,
+  .setting-row > select,
+  .setting-row > button,
+  .setting-row > .switch,
+  .setting-row > .inline-control { align-self:stretch !important; width:100% !important; max-width:100% !important; }
+  .inline-control { flex-wrap:wrap !important; }
+  .library-actions { width:100%; }
+  .library-actions .btn-refresh { flex:1 1 auto; }
+  .catalog-detail-header { align-items:flex-start !important; flex-wrap:wrap !important; }
+  .catalog-detail-header > div { flex:1 1 180px; min-width:0; }
+  .catalog-detail-header > button { flex:0 0 auto; }
+  .gp-extra { min-width:0 !important; }
+  .global-player-bar.music-player { padding-inline:8px !important; }
+  .bottom-nav .nav-link > svg { width:16px !important; height:16px !important; flex-basis:16px !important; }
+  .bottom-nav .nav-link { min-height:44px !important; }
+}
+@media (max-width: 520px) {
+  .app-topbar { height:58px !important; }
+  .app-column { padding-top:58px !important; }
+  .topbar-icon { width:34px !important; height:34px !important; flex-basis:34px !important; min-height:34px !important; border-radius:10px !important; }
+  .topbar-icon svg { width:15px !important; height:15px !important; }
+  .primary-nav .nav-link { width:34px !important; min-width:34px !important; height:34px !important; min-height:34px !important; }
+  .primary-nav .nav-link > svg, .primary-nav .nav-link > i { width:16px !important; height:16px !important; flex-basis:16px !important; }
+  .page-heading { margin-bottom:14px !important; }
+  .page-heading h2 { font-size:24px !important; }
+  .downloads-page-title { font-size:30px !important; }
+  .overview-card { min-height:76px !important; padding:12px !important; }
+  .overview-icon { width:34px !important; height:34px !important; flex-basis:34px !important; }
+  .overview-icon svg { width:16px !important; height:16px !important; }
+  .home-stat-icon { width:38px !important; height:38px !important; flex-basis:38px !important; }
+  .home-stat-icon svg { width:16px !important; height:16px !important; }
+  .settings-card { padding:14px !important; }
+  .global-player-bar.music-player { height:76px !important; }
+  .gp-play-btn { width:42px !important; height:42px !important; min-width:42px !important; min-height:42px !important; }
+}
+
+/* Reduced-motion users should not inherit page-enter transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; scroll-behavior:auto !important; }
+}
+
+
+/* 3.7.4 page-specific final sizing and cross-webview fallbacks */
+.home-connect-icon { width:40px !important; height:40px !important; flex-basis:40px !important; border-radius:11px !important; }
+.home-connect-icon svg { width:18px !important; height:18px !important; }
+.editor-stat-icon { width:40px !important; height:40px !important; flex-basis:40px !important; }
+.editor-stat-icon svg { width:17px !important; height:17px !important; }
+.library-intel-row > svg { width:16px !important; height:16px !important; flex:0 0 16px !important; }
+.library-dashboard-head h3 svg { width:18px !important; height:18px !important; }
+.device-empty > svg { width:22px !important; height:22px !important; }
+.downloads-empty .empty-icon { width:44px !important; height:44px !important; }
+.downloads-empty .empty-icon svg { width:20px !important; height:20px !important; }
+.side-brand svg { width:34px !important; height:34px !important; flex-basis:34px !important; }
+.main-content.workspace-main { padding-bottom:calc(var(--player-height) + 30px) !important; }
+@media (max-width:768px) {
+  .main-content.workspace-main { padding-bottom:calc(var(--player-height) + var(--bottom-nav-height) + env(safe-area-inset-bottom,0px) + 30px) !important; }
+}
+@supports not (color: color-mix(in srgb, white, black)) {
+  :root { --chrome-bg: rgba(23,26,31,.96); --chrome-border: rgba(255,255,255,.12); }
+  [data-theme="light"] { --chrome-bg: rgba(255,255,255,.96); --chrome-border: rgba(0,0,0,.10); }
+}
+@supports (height: 100dvh) {
+  .xrob-modal-card { max-height:min(88dvh, 760px); }
+}
+@media (pointer:coarse) {
+  .gp-skip-btn, .gp-connect-btn, .icon-btn { touch-action:manipulation; }
+  .queue-row, .catalog-card, .result-card { -webkit-tap-highlight-color:transparent; }
+}
