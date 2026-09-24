@@ -238,11 +238,15 @@ let playerProgressBroadcastTimer = null;
 let playerServerSyncTimer = null;
 let playerHeartbeatTimer = null;
 let playerHandoffInFlight = false;
+let linkedRecoveryInFlight = false;
 let playerHandoffStoppingRemote = false;
 let serverPlayerStateLoaded = false;
 let remoteDisplayTime = 0;
 const DAILY_MIX_STATE_KEY = "xrob_music_daily_mix_state_v2";
 let playerSyncChannel = null;
+let playerSyncMode = "off";
+let playerSyncDeviceIds = [];
+let playerSyncGroupId = "";
 let playerSyncHeartbeat = null;
 let playerOwnerId = null;
 let applyingRemotePlayerCommand = false;
@@ -260,6 +264,8 @@ let lastRemoteSequence = -1;
 const processedPlayerCommandIds = new Set();
 let dailyMixTracks = [];
 let dailyMixVariant = Number(storageGet("xrob_daily_mix_variant") || 0);
+let dailyMixGeneration = String(storageGet("xrob_daily_mix_generation") || "");
+let dailyMixLoadSequence = 0;
 
 
 
@@ -439,6 +445,9 @@ function buildPlayerSyncState(includeQueue = true) {
         muted: Boolean(audio.muted),
         repeatMode: ["off", "track", "queue"].includes(playerRepeatMode) ? playerRepeatMode : "off",
         shuffle: Boolean(playerShuffle),
+        syncMode: playerSyncMode,
+        syncDeviceIds: [...playerSyncDeviceIds],
+        syncGroupId: playerSyncGroupId,
         at: Date.now()
     };
     if (includeQueue) {
@@ -450,6 +459,7 @@ function buildPlayerSyncState(includeQueue = true) {
             subtitle: document.getElementById("dailyMixSubtitle")?.textContent || "Personalized from your listening",
             scrollLeft: Number(document.getElementById("dailyMixTracks")?.scrollLeft || 0),
             date: getLocalDateKey(),
+            generation: dailyMixGeneration,
         };
     }
     return state;
@@ -528,6 +538,10 @@ function applyAuthoritativeOwnedPlayerState(state, force = false) {
     const shouldReconcile = force || incomingSeq > playerSyncSequence;
     playerSyncSequence = Math.max(playerSyncSequence, incomingSeq);
     if (!shouldReconcile) return false;
+
+    playerSyncMode = state.syncMode === "linked" ? "linked" : "off";
+    playerSyncDeviceIds = Array.isArray(state.syncDeviceIds) ? state.syncDeviceIds.map(String) : [];
+    playerSyncGroupId = String(state.syncGroupId || "");
 
     const previousApplying = applyingRemotePlayerCommand;
     applyingRemotePlayerCommand = true;
@@ -710,6 +724,19 @@ function startRemoteProgressTicker() {
     if (remotePlayerTimer) return;
     const tick = () => {
         remotePlayerTimer = requestAnimationFrame(tick);
+        const linkedMember = remotePlayerState?.syncMode === "linked"
+            && Array.isArray(remotePlayerState?.syncDeviceIds)
+            && remotePlayerState.syncDeviceIds.includes(String(PLAYER_TAB_ID))
+            && remotePlayerState.ownerId !== PLAYER_TAB_ID;
+        if (linkedMember) {
+            const age = Date.now() - Number(remotePlayerReceivedAt || 0);
+            if (age > PLAYER_SERVER_STATE_STALE_MS && !linkedRecoveryInFlight) {
+                linkedRecoveryInFlight = true;
+                takeoverRemotePlayer(true).finally(() => { linkedRecoveryInFlight = false; });
+            }
+            updateRemoteProgress(true);
+            return;
+        }
         if (remotePlayerState && !isRemotePlayerOwner()) {
             stopRemoteProgressTicker();
             return;
@@ -746,13 +773,14 @@ function applyRemoteDailyMixState(state, persist = true) {
     if (!state || !Array.isArray(state.tracks) || !state.tracks.length) return false;
     dailyMixTracks = state.tracks.map(track => ({ ...track }));
     dailyMixVariant = Number.isFinite(Number(state.variant)) ? Number(state.variant) : dailyMixVariant;
+    dailyMixGeneration = String(state.generation || dailyMixGeneration || "");
     renderDailyMixCards(state.title || "Daily Mix", state.subtitle || "Personalized from your listening");
     const row = document.getElementById("dailyMixTracks");
     if (row && Number.isFinite(Number(state.scrollLeft))) {
         row.scrollLeft = Math.max(0, Math.min(Number(state.scrollLeft), Math.max(0, row.scrollWidth - row.clientWidth)));
     }
     if (persist) {
-        try { storageSet(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, tracks: dailyMixTracks, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
+        try { storageSet(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, tracks: dailyMixTracks, generation: dailyMixGeneration, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
     }
     return true;
 }
@@ -765,7 +793,9 @@ function loadPersistedDailyMixState() {
         const configured = Math.max(5, Math.min(50, Number(storageGet("xrob_music_daily_mix_count") || 30)));
         if (!Array.isArray(state?.tracks) || !state.tracks.length) return false;
         if (state.date && state.date !== getLocalDateKey()) return false;
-        if (Number(state.trackCount || state.tracks.length) !== configured) return false;
+        const trackCount = Number(state.trackCount || state.tracks.length);
+        if (trackCount < 1 || trackCount > configured) return false;
+        if (!state.generation && trackCount !== configured) return false;
         return applyRemoteDailyMixState(state, false);
     } catch (_) {
         return false;
@@ -799,6 +829,14 @@ function applyRemotePlayerState(state, fromServer = false) {
     const serverClockAnchor = serverUpdatedAtMs || Date.now();
     // Never carry a previous owner's queue/Daily Mix into a newly claimed player.
     const merged = { ...(ownerChanged ? {} : (previous || {})), ...state, currentTime: serverClockTime, _serverSynced: Boolean(fromServer || state._serverSynced) };
+    const nextSyncMode = merged.syncMode === "linked" ? "linked" : "off";
+    const nextSyncIds = Array.isArray(merged.syncDeviceIds) ? merged.syncDeviceIds.map(String) : [];
+    const wasSyncMember = playerSyncMode === "linked" && playerSyncDeviceIds.includes(String(PLAYER_TAB_ID));
+    const isSyncMember = nextSyncMode === "linked" && nextSyncIds.includes(String(PLAYER_TAB_ID));
+    playerSyncMode = nextSyncMode;
+    playerSyncDeviceIds = nextSyncIds;
+    playerSyncGroupId = String(merged.syncGroupId || "");
+    if (wasSyncMember && !isSyncMember) { try { audio?.pause(); } catch (_) {} remoteDisplayTime = serverClockTime; }
     if (ownerChanged) {
         lastRemoteSequence = -1;
         remoteDisplayTime = serverClockTime;
@@ -825,19 +863,47 @@ function applyRemotePlayerState(state, fromServer = false) {
         storageSet("xrob_music_shuffle", String(playerShuffle));
         updateShuffleButtons();
     }
-    if (Array.isArray(merged.queue) && merged.queue.length) {
+    if (Array.isArray(merged.queue)) {
         const syncedQueue = normalizeSyncQueue(merged.queue);
-        if (merged.source === "home") setSynchronizedHomeQueue(syncedQueue, merged.queueIndex);
-        else syncLibraryQueue(syncedQueue, merged.queueIndex);
+        const previousApplyingQueue = applyingRemotePlayerCommand;
+        applyingRemotePlayerCommand = true;
+        try {
+            if (merged.source === "home") setSynchronizedHomeQueue(syncedQueue, merged.queueIndex);
+            else syncLibraryQueue(syncedQueue, merged.queueIndex);
+        } finally {
+            applyingRemotePlayerCommand = previousApplyingQueue;
+        }
     }
     if (merged.dailyMix) applyRemoteDailyMixState(merged.dailyMix);
     updatePlayerInfo(merged.title, merged.artist, merged.art);
     if (player) player.style.display = "grid";
     if (volume && Number.isFinite(Number(merged.volume))) volume.value = Math.max(0, Math.min(1, Number(merged.volume)));
+    const shouldFollowLinkedPlayback = playerSyncMode === "linked" && playerSyncDeviceIds.includes(String(PLAYER_TAB_ID)) && Boolean(merged.src);
+    if (shouldFollowLinkedPlayback && !applyingRemotePlayerCommand) syncRemoteAudioState(merged);
     updateRemoteProgress(false);
     updatePlayingState(!merged.paused);
     startRemoteProgressTicker();
     updateDeviceOwnershipUI();
+}
+
+async function syncRemoteAudioState(state) {
+    if (!audio || !state?.src) return;
+    const expectedSource = new URL(syncResourceUrl(state.src), location.href).href;
+    const target = Math.max(0, Number(state._serverCurrentTime ?? state.currentTime ?? 0));
+    const shouldPlay = !Boolean(state.paused);
+    const generation = ++audioLoadGeneration;
+    const previousApplying = applyingRemotePlayerCommand;
+    applyingRemotePlayerCommand = true; suppressLocalOwnershipUntil = Date.now() + 5000;
+    try {
+        if (audio.src !== expectedSource) {
+            audio.src = expectedSource; audio.load();
+            await new Promise(resolve => { let done=false; const finish=()=>{ if(done) return; done=true; resolve(); }; audio.addEventListener("loadedmetadata",finish,{once:true}); audio.addEventListener("error",finish,{once:true}); window.setTimeout(finish,7000); });
+        }
+        if (generation !== audioLoadGeneration || audio.src !== expectedSource) return;
+        if (Number.isFinite(audio.duration) && audio.duration > 0) { const safe=Math.min(target,Math.max(0,audio.duration-0.25)); if (Math.abs(Number(audio.currentTime||0)-safe)>0.75) audio.currentTime=safe; }
+        else { try { audio.currentTime=target; } catch (_) {} }
+        if (shouldPlay) { initAudioContext(); await audio.play().catch(()=>{}); } else audio.pause();
+    } catch (_) {} finally { applyingRemotePlayerCommand=previousApplying; }
 }
 
 async function takeoverRemotePlayer(force = false) {
@@ -1008,13 +1074,20 @@ function applyRemoteCommand(message) {
     try {
         if (message.command === "play") audio.play().catch(() => {});
         else if (message.command === "pause") audio.pause();
+        else if (message.command === "stop") { audio.pause(); try { audio.currentTime = 0; } catch (_) {} }
         else if (message.command === "seek" && Number.isFinite(Number(p.time))) audio.currentTime = Math.max(0, Number(p.time));
         else if (message.command === "next") playNextTrack();
         else if (message.command === "previous") playPreviousTrack();
         else if (message.command === "shuffle") setShuffle(Boolean(p.enabled));
         else if (message.command === "repeat") { const mode = String(p.mode || "off"); if (["off", "track", "queue"].includes(mode)) { playerRepeatMode = mode; storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode); applyRepeatLabel(); } }
         else if (message.command === "volume" && Number.isFinite(Number(p.volume))) { audio.volume = Math.max(0, Math.min(1, Number(p.volume))); if (volume) volume.value = audio.volume; }
-        else if (message.command === "load-play") {
+        else if (message.command === "queue") {
+            if (Array.isArray(p.queue)) {
+                const nextQueue = normalizeSyncQueue(p.queue);
+                if (p.source === "home") setSynchronizedHomeQueue(nextQueue, Number(p.queueIndex ?? 0));
+                else syncLibraryQueue(nextQueue, Number(p.queueIndex ?? 0));
+            }
+        } else if (message.command === "load-play") {
             if (Array.isArray(p.queue) && p.queue.length) {
                 if (p.source === "home") setSynchronizedHomeQueue(p.queue, Number(p.queueIndex ?? 0));
                 else syncLibraryQueue(normalizeSyncQueue(p.queue), Number(p.queueIndex ?? 0));
@@ -1381,7 +1454,14 @@ function syncLibraryQueue(queue, index) {
     currentLibraryIndex = enhancedQueueIndex;
     if (normalized.length) saveEnhancedQueue();
     else storageRemove(ENHANCED_QUEUE_KEY);
-    if (!applyingRemotePlayerCommand && !isRemotePlayerOwner()) schedulePlayerStateBroadcast(true);
+    if (!applyingRemotePlayerCommand) {
+        if (playerSyncMode === "linked" && playerSyncDeviceIds.length > 1 && !isRemotePlayerOwner()) {
+            const sentToOwner = sendPlayerCommand("queue", { queue: normalized, queueIndex: enhancedQueueIndex, source: currentPlayerSource });
+            if (!sentToOwner) schedulePlayerStateBroadcast(true);
+        } else if (!isRemotePlayerOwner()) {
+            schedulePlayerStateBroadcast(true);
+        }
+    }
 }
 
 function reconcileEnhancedQueue() {
@@ -2570,6 +2650,7 @@ function bindAudioEvents() {
         "ended",
         () => {
 
+            if (isRemotePlayerOwner()) { persistCurrentPosition(true); return; }
             persistCurrentPosition(true);
             updatePlayingState(
                 false
@@ -6714,6 +6795,7 @@ function installDailyMixSwipe() {
             subtitle: document.getElementById("dailyMixSubtitle")?.textContent || "Personalized from your listening",
             scrollLeft: row.scrollLeft,
             date: getLocalDateKey(),
+            generation: dailyMixGeneration,
         };
         try { storageSet(DAILY_MIX_STATE_KEY, JSON.stringify({ ...state, trackCount: dailyMixTracks.length, savedAt: Date.now() })); } catch (_) {}
     }, { passive: true });
@@ -6756,29 +6838,40 @@ function renderDailyMixCards(title = "Daily Mix", subtitle = "Personalized from 
 
 async function loadDailyMix(forceVariation = false) {
     const row = document.getElementById('dailyMixTracks'); if (!row) return;
+    const requestId = ++dailyMixLoadSequence;
+    let refreshToken = "";
+    let excluded = [];
     try {
         if (forceVariation) {
-            dailyMixVariant = (dailyMixVariant + 1) % 20;
+            excluded = Array.from(new Set(dailyMixTracks.map(trackKey).filter(Boolean)));
+            dailyMixVariant += 1;
+            refreshToken = `${Date.now()}-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID().slice(0,8) : Math.random().toString(36).slice(2,10)}`;
+            dailyMixGeneration = refreshToken;
             storageSet('xrob_daily_mix_variant', String(dailyMixVariant));
+            storageSet('xrob_daily_mix_generation', dailyMixGeneration);
+            dailyMixTracks = []; renderDailyMixCards('Daily Mix', 'Refreshing with a completely new set…');
+            try { storageRemove(DAILY_MIX_STATE_KEY); } catch (_) {}
         }
-        const r = await apiFetch(`api/daily-mix?variant=${dailyMixVariant}`, {cache:'no-store'});
+        const params = new URLSearchParams({ variant: String(dailyMixVariant) });
+        if (refreshToken) { params.set('refresh_token', refreshToken); if (excluded.length) params.set('exclude', excluded.join('|')); }
+        const r = await apiFetch(`api/daily-mix?${params.toString()}`, {cache:'no-store'});
+        if (requestId !== dailyMixLoadSequence) return;
         if (!r.ok) throw new Error('Daily Mix unavailable');
         const d = await r.json();
-        dailyMixTracks = Array.isArray(d.tracks) ? d.tracks : [];
+        if (requestId !== dailyMixLoadSequence) return;
+        const nextTracks = Array.isArray(d.tracks) ? d.tracks : [];
+        const oldIds = new Set(excluded);
+        dailyMixTracks = forceVariation && oldIds.size ? nextTracks.filter(track => !oldIds.has(trackKey(track))) : nextTracks;
+        dailyMixGeneration = String(d.generation || refreshToken || dailyMixGeneration || "");
+        if (dailyMixGeneration) storageSet('xrob_daily_mix_generation', dailyMixGeneration);
         renderDailyMixCards(d.title || 'Daily Mix', d.subtitle || 'Personalized from your listening');
-        const state = {
-            tracks: dailyMixTracks,
-            variant: dailyMixVariant,
-            title: d.title || 'Daily Mix',
-            subtitle: d.subtitle || 'Personalized from your listening',
-            scrollLeft: row.scrollLeft,
-            date: d.date || new Date().toISOString().slice(0,10),
-            savedAt: Date.now(),
-        };
+        const state = {tracks:dailyMixTracks,variant:dailyMixVariant,generation:dailyMixGeneration,title:d.title || 'Daily Mix',subtitle:d.subtitle || 'Personalized from your listening',scrollLeft:row.scrollLeft,date:d.date || new Date().toISOString().slice(0,10),savedAt:Date.now()};
         try { storageSet(DAILY_MIX_STATE_KEY, JSON.stringify(state)); } catch (_) {}
         if (!isRemotePlayerOwner()) schedulePlayerStateBroadcast(true);
     } catch (e) {
-        if (!dailyMixTracks.length) row.innerHTML = '<div class="daily-mix-empty">Daily Mix could not be loaded.</div>';
+        if (requestId !== dailyMixLoadSequence) return;
+        dailyMixTracks = [];
+        renderDailyMixCards('Daily Mix', forceVariation ? 'Could not refresh Daily Mix.' : 'Daily Mix could not be loaded.');
     }
 }
 
@@ -6788,8 +6881,8 @@ function installEnhancedFeatures(){
     document.getElementById("dailyMixRefresh")?.addEventListener("click", () => loadDailyMix(true));
     document.getElementById("dailyMixPlay")?.addEventListener("click", () => { if (!dailyMixTracks.length) return; setEnhancedQueue(dailyMixTracks, 0); currentPlayerSource="library"; playLibraryTrack(0); });
     loadDetailedLibraryStats();
-    loadPersistedDailyMixState();
-    loadDailyMix();
+    const restoredDailyMix = loadPersistedDailyMixState();
+    if (!restoredDailyMix) loadDailyMix();
     installDailyMixSwipe();
     document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
     document.getElementById("topbarQueueBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
@@ -7001,6 +7094,7 @@ function v37DeviceIcon(type) {
 }
 function v37DeviceStateLabel(device) {
     if (!device?.online) return "Offline";
+    if (device.isSynced) return device.state === "paused" ? "Synced · Paused" : "Synced · Playing";
     if (device.isOwner) return device.state === "paused" ? "Paused · Playing here" : "Playing now";
     return device.state === "paused" ? "Paused" : device.state === "playing" ? "Playing" : "Available";
 }
@@ -7027,7 +7121,8 @@ function renderV37Devices() {
         } else if(device.online && device.tabId){
             makeBtn("Switch here","radio","save-btn compact",()=>v37SwitchToDevice(device));
             if(device.isOwner) makeBtn(device.state==="playing"?"Pause":"Play",device.state==="playing"?"pause":"play","btn-refresh compact",()=>v37RemoteCommand(device,device.state==="playing"?"pause":"play"));
-            makeBtn("Play on both","copy-plus","btn-secondary compact",()=>v37MirrorToDevice(device));
+            if (device.isSynced) makeBtn("Stop sync","unlink","btn-secondary compact",()=>v37StopSyncDevice(device));
+            else makeBtn("Play on both","copy-plus","btn-secondary compact",()=>v37MirrorToDevice(device));
             makeBtn("Remove","trash-2","btn-danger compact",()=>v37RemoveDevice(device));
         } else {
             makeBtn("Remove","trash-2","btn-danger compact",()=>v37RemoveDevice(device));
@@ -7045,6 +7140,16 @@ async function v37MirrorToDevice(device) {
     const payload={targetId:device.tabId,src,title:state?.title||playerTitle?.textContent||"Unknown Track",artist:state?.artist||playerArtist?.textContent||"Unknown Artist",art:state?.art||playerArt?.src||"",songId:state?.songId||audio?.dataset?.xrobSongId||"",source:state?.source||currentPlayerSource||"library",currentTime:state?Number(state.currentTime||0):Number(audio?.currentTime||0)};
     try{const r=await apiFetch("api/player/mirror",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Could not mirror playback");showToast(`▶ Playing on ${device.name||"device"} too`);}catch(err){showToast("❌ "+(err.message||"Mirror playback failed"));}
 }
+async function v37StopSyncDevice(device) {
+    if (!device?.tabId) return;
+    try {
+        const r = await apiFetch("api/player/sync-group", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"remove",targetId:device.tabId})});
+        const d = await r.json().catch(()=>({}));
+        if (!r.ok) throw new Error(typeof d.detail === "object" ? "Could not stop sync" : (d.detail || "Could not stop sync"));
+        showToast(`↔ ${device.name || "Device"} no longer follows playback`); await loadV37Devices();
+    } catch (err) { showToast("❌ " + (err.message || "Could not stop sync")); }
+}
+
 async function v37RemoveDevice(device){
     if(!device?.deviceId||device.deviceId===v37DeviceId()){showToast("This device cannot remove itself from Connect");return;}
     try{const r=await apiFetch(`api/devices/${encodeURIComponent(device.deviceId)}`,{method:"DELETE"});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Could not remove device");v37Devices=v37Devices.filter(x=>x.deviceId!==device.deviceId);renderV37Devices();showToast(`✓ ${device.name||"Device"} removed from Connect`);}catch(err){showToast("❌ "+(err.message||"Could not remove device"));}
