@@ -3900,7 +3900,7 @@ async function searchMusic() {
             await apiFetch(
                 `api/search?q=${
                     encodeURIComponent(query)
-                }&source=youtube&page=1`,
+                }&source=youtube&page=1&limit=20`,
                 {
                     cache: "no-store",
                     ...(requestController ? { signal: requestController.signal } : {})
@@ -3967,7 +3967,9 @@ async function searchMusic() {
             "Loading results..."
         );
 
-        hasMoreResults = data.length >= 20;
+        searchCursor = response.headers.get("X-Search-Next-Cursor") || "";
+        searchTotal = Number(response.headers.get("X-Search-Total") || data.length || 0);
+        hasMoreResults = response.headers.get("X-Search-Has-More") === "true";
         renderItems(data);
 
         /*
@@ -4223,7 +4225,9 @@ function renderItems(items) {
                             item.id,
                             item.artist || item.channel,
                             download,
-                            item.album || ""
+                            item.album || "",
+                            item.duration || 0,
+                            item.version || null
                         )
                 );
 
@@ -4253,7 +4257,8 @@ async function loadMoreResults() {
     if (
         isLoadingMore ||
         !hasMoreResults ||
-        !currentQuery
+        !currentQuery ||
+        !searchCursor
     ) {
         return;
     }
@@ -4290,7 +4295,7 @@ async function loadMoreResults() {
                     )
                 }&source=youtube&page=${
                     nextPage
-                }`,
+                }&limit=20&cursor=${encodeURIComponent(searchCursor)}`,
                 {
                     cache: "no-store",
                     ...(requestController ? { signal: requestController.signal } : {})
@@ -4321,11 +4326,14 @@ async function loadMoreResults() {
         ) {
 
             hasMoreResults = false;
+            searchCursor = "";
 
         } else {
 
             currentPage = nextPage;
-            if (data.length < 20) hasMoreResults = false;
+            searchCursor = response.headers.get("X-Search-Next-Cursor") || "";
+            searchTotal = Number(response.headers.get("X-Search-Total") || searchTotal || 0);
+            hasMoreResults = response.headers.get("X-Search-Has-More") === "true";
             renderItems(data);
         }
 
@@ -5106,7 +5114,9 @@ async function startDownload(
     elementId,
     artist,
     button,
-    album = ""
+    album = "",
+    duration = 0,
+    version = null
 ) {
 
     if (!url) {
@@ -5147,7 +5157,9 @@ async function startDownload(
                             title,
                             elementId,
                             artist,
-                            album
+                            album,
+                            duration: Number(duration || 0),
+                            version
                         })
                 }
             );
