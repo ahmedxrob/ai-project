@@ -2415,7 +2415,9 @@ _METADATA_LOOKUP_SEMAPHORE = asyncio.Semaphore(2)
 _YOUTUBE_SEARCH_SEMAPHORE = asyncio.Semaphore(2)
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}
 YOUTUBE_GENERIC_ARTISTS = {"youtube", "youtube music", "music", "unknown", "unknown artist", "various artists", "vevo", "topic", "official", "official artist", "official music"}
-SEARCH_POOL_SIZE = 120
+SEARCH_POOL_SIZE = 50
+SEARCH_SUBPROCESS_TIMEOUT_SECONDS = 25
+SEARCH_REQUEST_TIMEOUT_SECONDS = 28
 SEARCH_CURSOR_TTL_SECONDS = 10 * 60
 SEARCH_CURSOR_MAX_SESSIONS = 64
 SEARCH_CURSOR_SESSIONS = {}
@@ -3604,9 +3606,7 @@ METADATA_REWRITE_TIMEOUT_SECONDS = 60
 
 
 async def communicate_with_timeout(process, timeout, label="process"):
-    try:
-        return await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    async def _terminate_child():
         try:
             process.kill()
         except ProcessLookupError:
@@ -3617,7 +3617,15 @@ async def communicate_with_timeout(process, timeout, label="process"):
             await asyncio.wait_for(process.wait(), timeout=5)
         except Exception:
             pass
+
+    try:
+        return await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        await _terminate_child()
         raise RuntimeError(f"{label} timed out after {timeout} seconds")
+    except asyncio.CancelledError:
+        await _terminate_child()
+        raise
 
 def _rank_youtube_result(item, query):
     title = clean_metadata_text(item.get("title"), "")
@@ -3672,15 +3680,15 @@ async def youtube_search(query, max_results, page=1, pool_size=SEARCH_POOL_SIZE)
     max_results = max(1, min(50, safe_int(max_results, 20)))
     pool_size = max(max_results, min(SEARCH_POOL_SIZE, safe_int(pool_size, SEARCH_POOL_SIZE)))
     command = [
-        *YT_DLP_COMMAND, "--flat-playlist", "--dump-single-json", "--skip-download", "--no-warnings",
-        "--retries", "3", "--socket-timeout", "15", f"ytsearch{pool_size}:{query}",
+        *YT_DLP_COMMAND, "--ignore-config", "--flat-playlist", "--dump-single-json", "--skip-download", "--no-warnings",
+        "--retries", "1", "--socket-timeout", "8", f"ytsearch{pool_size}:{query}",
     ]
     async with _YOUTUBE_SEARCH_SEMAPHORE:
         try:
             process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         except FileNotFoundError as exc:
             raise RuntimeError("yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed.") from exc
-        stdout, stderr = await communicate_with_timeout(process, SUBPROCESS_TIMEOUT_SECONDS, "YouTube search")
+        stdout, stderr = await communicate_with_timeout(process, SEARCH_SUBPROCESS_TIMEOUT_SECONDS, "YouTube search")
     if process.returncode != 0:
         raise RuntimeError(stderr.decode("utf-8", errors="ignore")[-2000:] or "yt-dlp search failed.")
     try:
@@ -3800,7 +3808,12 @@ async def api_search(request: Request, q: str = Query(""), source: str = Query("
         offset=safe_int(session.get("offset"),0)
     else:
         try:
-            ranked=await youtube_search(query, limit, 1, SEARCH_POOL_SIZE)
+            ranked=await asyncio.wait_for(
+                youtube_search(query, limit, 1, SEARCH_POOL_SIZE),
+                timeout=SEARCH_REQUEST_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(status_code=504, detail="YouTube search timed out. Please try again.") from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc).strip() or "YouTube search is unavailable.") from exc
         except asyncio.CancelledError:
@@ -4546,6 +4559,24 @@ async def api_library_intelligence():
     missing_artwork = []
     replaygain_missing = []
     suspicious_names = []
+    unreadable = []
+
+    # This is a diagnostics endpoint rather than a hot path. Reuse the explicit
+    # decoder check used by /api/library/health so corrupted media is reported
+    # consistently instead of causing a NameError or being silently treated as
+    # normal metadata fallback.
+    try:
+        audio_files = await get_all_audio_files()
+        checks = await asyncio.gather(
+            *(asyncio.to_thread(_audio_file_readable_sync, path) for path in audio_files),
+            return_exceptions=True,
+        )
+        for path, result in zip(audio_files, checks):
+            if result is not True:
+                reason = result if isinstance(result, Exception) else "Audio decoder could not read the file"
+                unreadable.append({"path": str(path.relative_to(DOWNLOAD_DIR)), "reason": str(reason)[:240]})
+    except Exception as exc:
+        unreadable.append({"path": "", "reason": f"Unreadable scan failed: {exc}"})
 
     for song in songs:
         title = str(song.get("title") or "").strip()
