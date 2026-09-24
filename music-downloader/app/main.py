@@ -55,7 +55,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.6"
+SERVER_VERSION = "3.7.7"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -134,6 +134,11 @@ AUTH_SESSIONS = {}
 AUTH_LOGIN_ATTEMPTS = defaultdict(list)
 AUTH_LOGIN_WINDOW = 300
 AUTH_LOGIN_MAX_ATTEMPTS = 5
+# Lightweight per-client API throttling for expensive external-provider operations.
+RATE_LIMIT_STATE = defaultdict(list)
+RATE_LIMIT_LOCK = asyncio.Lock()
+SEARCH_RATE_LIMIT = (30, 60.0)   # requests / rolling window / client
+PREVIEW_RATE_LIMIT = (12, 60.0)  # requests / rolling window / client
 AUTH_BOOTSTRAP_FILE = DATA_DIR / "web_bootstrap.txt"
 PLAYER_STATE = None
 PLAYER_STATE_UPDATED_AT = 0.0
@@ -246,6 +251,32 @@ def _record_login_failure(request: Request):
 def _clear_login_failures(request: Request):
     AUTH_LOGIN_ATTEMPTS.pop(_auth_client_key(request), None)
 
+
+async def _enforce_rate_limit(request: Request, bucket: str, limit: int, window_seconds: float):
+    now = time.monotonic()
+    key = f"{bucket}:{_auth_client_key(request)}"
+    async with RATE_LIMIT_LOCK:
+        entries = [ts for ts in RATE_LIMIT_STATE.get(key, []) if now - ts < window_seconds]
+        allowed = len(entries) < limit
+        if allowed:
+            entries.append(now)
+        RATE_LIMIT_STATE[key] = entries
+    if not allowed:
+        retry_after = max(1, int(window_seconds - (now - entries[0]))) if entries else max(1, int(window_seconds))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many {bucket} requests. Please try again shortly.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+def _cleanup_rate_limit_state_sync():
+    now = time.monotonic()
+    stale = [key for key, entries in RATE_LIMIT_STATE.items() if not entries or now - entries[-1] >= 300]
+    for key in stale:
+        RATE_LIMIT_STATE.pop(key, None)
+
+
 def _is_authenticated(token):
     if not token:
         return False
@@ -330,6 +361,7 @@ AUDIO_QUALITY_VALUES = {"0", "5", "64K", "96K", "128K", "160K", "192K", "256K", 
 YT_DLP_JS_RUNTIME_ARGS = ["--js-runtimes", "deno"] if shutil.which("deno") else []
 YT_DLP_COMMAND = [sys.executable, "-m", "yt_dlp", *YT_DLP_JS_RUNTIME_ARGS]
 FFMPEG_COMMAND = [shutil.which("ffmpeg") or "ffmpeg"]
+FFPROBE_COMMAND = [shutil.which("ffprobe") or "ffprobe"]
 
 try:
     from mutagen import File as MutagenFile
@@ -776,6 +808,8 @@ def public_settings():
     settings["web_password_set"] = bool(settings.get("web_password_hash") or settings.get("web_password") or AUTH_PASSWORD)
     settings["web_username"] = str(settings.get("web_username") or "admin")
     settings.pop("web_password", None)
+    # Password verifiers are server credentials and must never be returned to the browser.
+    settings.pop("web_password_hash", None)
     settings["storage"] = storage_info_sync()
     return settings
 
@@ -2504,6 +2538,51 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
 # DOWNLOAD WORKER
 # ============================================================
 
+TERMINAL_TASK_STATES = {"completed", "error", "failed", "cancelled", "canceled"}
+ACTIVE_TASK_STATES = {"queued", "downloading", "processing"}
+
+
+def _task_cancelled(task):
+    return bool(task and task.get("cancel_requested")) or bool(task and str(task.get("status") or "").lower() in {"cancelled", "canceled"})
+
+
+def _set_task_cancelled(task):
+    task["cancel_requested"] = True
+    task["status"] = "cancelled"
+    task["step"] = "Cancelled"
+    task["percent"] = 0
+    task["speed"] = ""
+    task["last_updated"] = time.time() * 1000
+
+
+async def refresh_after_download(final_path: Path):
+    """Refresh the persisted library index/editor state after a successful move.
+
+    This is deliberately best-effort and isolated from the download task's terminal
+    state: an index/editor refresh failure must never turn a successfully downloaded
+    file into a failed download.
+    """
+    try:
+        final_path = Path(final_path)
+        library = await build_library(force=True)
+        await persist_library_index(library)
+        song = next((item for item in library.get("songs", []) if Path(item.get("path")) == final_path), None)
+        if song and song.get("id"):
+            await asyncio.to_thread(_ensure_song_review_pending_sync, str(song["id"]))
+        await manager.broadcast({"type": "library_updated", "songId": song.get("id") if song else "", "path": str(final_path)})
+    except Exception as exc:
+        await write_app_error("library_refresh", str(exc))
+
+
+def _ensure_song_review_pending_sync(song_id):
+    with db_connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
+            (str(song_id), "pending"),
+        )
+        conn.commit()
+
+
 async def download_worker():
 
     while True:
@@ -2836,6 +2915,11 @@ async def download_worker():
             task["title"] = resolved["title"]
             task["artist"] = resolved["artist"]
             task["album"] = resolved["album"] or task["artist"] or "Unknown Artist"
+            if _task_cancelled(task):
+                await asyncio.to_thread(cleanup_task_files, task_id)
+                _set_task_cancelled(task)
+                await notify_task_update(task, force_save=True)
+                continue
             task["metadata_confidence"] = round(float(resolved.get("confidence", 0.0)) * 100)
             task["metadata_source"] = resolved.get("source", "Fallback")
             task["metadata_reason"] = resolved.get("reason", "")
@@ -2913,6 +2997,14 @@ async def download_worker():
             await notify_task_update(task, force_save=True)
 
             async with DOWNLOAD_GUARD:
+                # Cancellation and the irreversible library move share the same guard.
+                # The move and terminal-state transition are one critical section, so
+                # cancel cannot change a task after it has been made completed.
+                if _task_cancelled(task):
+                    await asyncio.to_thread(cleanup_task_files, task_id)
+                    _set_task_cancelled(task)
+                    await notify_task_update(task, force_save=True)
+                    continue
                 if settings.get("organize_by_artist", False):
                     final_dir = DOWNLOAD_DIR / artist
                 else:
@@ -2941,20 +3033,22 @@ async def download_worker():
                     except Exception as art_exc:
                         await write_app_error("artwork", str(art_exc), task_id)
 
-            task["final_name"] = str(
-                final_path.relative_to(
-                    DOWNLOAD_DIR
-                )
-            )
-
-            task["status"] = "completed"
-            task["percent"] = 100
-            task["speed"] = ""
-            task["step"] = "Ready"
-            task["error"] = ""
-            task["last_updated"] = (
-                time.time() * 1000
-            )
+                # Complete the task while the same guard is still held. A concurrent
+                # cancel request will therefore observe this terminal state and cannot
+                # overwrite it after the file is in its final location.
+                task["final_name"] = str(final_path.relative_to(DOWNLOAD_DIR))
+                task["status"] = "completed"
+                task["percent"] = 100
+                task["speed"] = ""
+                task["step"] = "Ready"
+                task["error"] = ""
+                task["last_updated"] = time.time() * 1000
+                try:
+                    await notify_task_update(task, force_save=True)
+                except Exception as save_exc:
+                    # Never turn a physically successful download into an error solely
+                    # because a final notification/database write is temporarily faulty.
+                    await write_app_error("download_completion_persist", str(save_exc), task_id)
 
             METADATA_CACHE.pop(str(final_path), None)
             invalidate_library_cache()
@@ -2962,11 +3056,6 @@ async def download_worker():
             # is already safely in the library; queue a background refresh that also
             # persists the duplicate-detection index and adds the song to the editor.
             track_background_task(refresh_after_download(final_path))
-
-            await notify_task_update(
-                task,
-                force_save=True,
-            )
 
         except asyncio.CancelledError:
             raise
@@ -3248,6 +3337,43 @@ async def youtube_search(
     return results
 
 
+def _search_duplicate_state_sync(items, tasks):
+    library_index = _load_library_index_sync()
+    entries = library_index.get("entries", {}) if isinstance(library_index, dict) else {}
+    by_identity = {}
+    for rel, cached in entries.items() if isinstance(entries, dict) else []:
+        cached = cached if isinstance(cached, dict) else {}
+        title = cached.get("title") or Path(str(rel)).stem
+        artist = cached.get("artist") or "Unknown Artist"
+        key = normalize_duplicate_key(title, artist)
+        if key:
+            by_identity.setdefault(key, str(rel))
+
+    active_by_url = set()
+    active_by_identity = set()
+    for task in tasks.values() if isinstance(tasks, dict) else []:
+        if str(task.get("status") or "").lower() not in {"queued", "downloading", "processing"}:
+            continue
+        url = str(task.get("url") or "").strip()
+        if url:
+            active_by_url.add(url)
+        key = str(task.get("identity_key") or "")
+        if not key:
+            key = normalize_duplicate_key(task.get("title", ""), task.get("artist", ""))
+        if key:
+            active_by_identity.add(key)
+
+    decorated = []
+    for item in items or []:
+        row = dict(item)
+        row_url = str(row.get("url") or "")
+        identity = normalize_duplicate_key(row.get("title", ""), row.get("artist", ""))
+        row["already_downloaded"] = bool(identity and identity in by_identity)
+        row["already_queued"] = bool((row_url and row_url in active_by_url) or (identity and identity in active_by_identity))
+        decorated.append(row)
+    return decorated
+
+
 @app.get("/api/search")
 async def api_search(
     request: Request,
@@ -3267,6 +3393,8 @@ async def api_search(
 
     if not query:
         return []
+
+    await _enforce_rate_limit(request, "search", *SEARCH_RATE_LIMIT)
 
     if provider not in {"youtube", "yt", "yt-dlp"}:
         raise HTTPException(status_code=400, detail=f"Unsupported search source: {provider}")
@@ -3295,7 +3423,7 @@ async def api_search(
         seen.add(item_id)
         cleaned.append(item)
 
-    return cleaned
+    return await asyncio.to_thread(_search_duplicate_state_sync, cleaned, TASKS)
 
 
 # ============================================================
@@ -3303,20 +3431,31 @@ def _canonicalize_media_url(value):
     parsed = urllib.parse.urlsplit(value)
     host = (parsed.hostname or "").lower().rstrip(".")
     if host not in YOUTUBE_HOSTS:
-        return value
+        raise HTTPException(status_code=400, detail="Only YouTube media URLs are supported")
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="Credential-bearing media URLs are not allowed")
+    if parsed.port not in (None, 80, 443):
+        raise HTTPException(status_code=400, detail="Custom URL ports are not allowed")
+    if parsed.fragment:
+        raise HTTPException(status_code=400, detail="URL fragments are not supported")
+
     video_id = ""
+    path = parsed.path or ""
     if host in {"youtu.be", "www.youtu.be"}:
-        video_id = parsed.path.strip("/").split("/", 1)[0]
-    elif parsed.path.startswith("/shorts/") or parsed.path.startswith("/live/"):
-        parts = parsed.path.split("/")
-        if len(parts) >= 3:
-            video_id = parts[2]
-    else:
+        video_id = path.strip("/").split("/", 1)[0]
+    elif path.startswith("/shorts/") or path.startswith("/live/"):
+        parts = [part for part in path.split("/") if part]
+        if len(parts) >= 2:
+            video_id = parts[1]
+    elif path == "/watch" or path in {"/", ""}:
         video_id = urllib.parse.parse_qs(parsed.query).get("v", [""])[0]
-    video_id = re.sub(r"[^A-Za-z0-9_-].*$", "", video_id)
-    if video_id:
-        return f"https://www.youtube.com/watch?v={video_id}"
-    return value
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported YouTube URL format")
+
+    video_id = re.sub(r"[^A-Za-z0-9_-].*$", "", str(video_id or ""))[:64]
+    if not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{6,64}", video_id):
+        raise HTTPException(status_code=400, detail="A valid YouTube video URL is required")
+    return f"https://www.youtube.com/watch?v={video_id}"
 
 
 def validate_media_url(raw_url):
@@ -3325,14 +3464,14 @@ def validate_media_url(raw_url):
         raise HTTPException(status_code=400, detail="URL missing")
     if len(value) > PLAYER_STATE_MAX_URL:
         raise HTTPException(status_code=400, detail="URL is too long")
+    if any(ord(ch) < 32 for ch in value[:4096]):
+        raise HTTPException(status_code=400, detail="Invalid URL")
     try:
-        parsed = urllib.parse.urlparse(value)
+        parsed = urllib.parse.urlsplit(value)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid URL") from exc
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         raise HTTPException(status_code=400, detail="Only HTTP(S) media URLs are supported")
-    if any(ch in value[:4096] for ch in ("\x00", "\r", "\n")):
-        raise HTTPException(status_code=400, detail="Invalid URL")
     return _canonicalize_media_url(value)
 
 
@@ -3341,9 +3480,11 @@ def validate_media_url(raw_url):
 
 @app.get("/api/preview")
 async def api_preview(
+    request: Request,
     url: str = Query(...),
 ):
 
+    await _enforce_rate_limit(request, "preview", *PREVIEW_RATE_LIMIT)
     url = validate_media_url(url)
 
     try:
@@ -3618,43 +3759,28 @@ async def api_tasks():
 async def api_cancel_task(
     task_id: str,
 ):
+    async with DOWNLOAD_GUARD:
+        task = TASKS.get(task_id)
 
-    task = TASKS.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
 
-    if not task:
-        raise HTTPException(
-            status_code=404,
-            detail="Task not found",
-        )
+        status = str(task.get("status") or "").lower()
+        if status in TERMINAL_TASK_STATES and status != "cancelled":
+            return {"status": status, "task_id": task_id}
+        if status == "cancelled":
+            return {"status": "cancelled", "task_id": task_id}
 
-    task["cancel_requested"] = True
+        _set_task_cancelled(task)
+        process = ACTIVE_PROCESSES.get(task_id)
+        if process:
+            try:
+                process.terminate()
+            except Exception:
+                pass
 
-    process = ACTIVE_PROCESSES.get(
-        task_id
-    )
-
-    if process:
-
-        try:
-            process.terminate()
-        except Exception:
-            pass
-
-    task["status"] = "cancelled"
-    task["step"] = "Cancelled"
-    task["last_updated"] = (
-        time.time() * 1000
-    )
-
-    await notify_task_update(
-        task,
-        force_save=True,
-    )
-
-    return {
-        "status": "cancelled",
-        "task_id": task_id,
-    }
+        await notify_task_update(task, force_save=True)
+        return {"status": "cancelled", "task_id": task_id}
 
 
 @app.post("/api/tasks/{task_id}/retry")
@@ -4037,6 +4163,8 @@ async def api_library_intelligence():
 
     return {
         "track_count": len(songs),
+        "unreadable": unreadable[:200],
+        "unreadable_count": len(unreadable),
         "duplicate_groups": duplicate_groups_out[:100],
         "duplicate_tracks": sum(max(0, x["count"] - 1) for x in duplicate_groups_out),
         "missing_metadata": missing_metadata[:200],
@@ -4393,6 +4521,27 @@ async def api_library_stream(
     )
 
 
+def _cleanup_deleted_song_sync(song_id):
+    with db_connect() as conn:
+        conn.execute("DELETE FROM stars WHERE item_id=?", (song_id,))
+        conn.execute("DELETE FROM playback_positions WHERE song_id=?", (song_id,))
+        conn.execute("DELETE FROM song_review WHERE song_id=?", (song_id,))
+        conn.execute("DELETE FROM song_editor_history WHERE song_id=?", (song_id,))
+        conn.execute("DELETE FROM play_history WHERE song_id=?", (song_id,))
+        rows = conn.execute("SELECT id,song_ids FROM playlists").fetchall()
+        for row in rows:
+            try:
+                ids = json.loads(row[1] or "[]")
+                if not isinstance(ids, list):
+                    ids = []
+                filtered = [value for value in ids if str(value) != str(song_id)]
+                if filtered != ids:
+                    conn.execute("UPDATE playlists SET song_ids=?,updated_at=? WHERE id=?", (json.dumps(filtered, separators=(",", ":")), time.time(), row[0]))
+            except Exception:
+                continue
+        conn.commit()
+
+
 @app.delete(
     "/api/library/{filename:path}"
 )
@@ -4401,6 +4550,7 @@ async def api_delete_library(
 ):
 
     path = await resolve_file(filename)
+    deleted_song_id = make_song_id(path)
 
     try:
         def delete_file_sync(target):
@@ -4413,6 +4563,10 @@ async def api_delete_library(
                 pass
 
         await asyncio.to_thread(delete_file_sync, path)
+        # Clean database references to the deleted track. Playlist song_ids are JSON,
+        # so they are rewritten transactionally rather than relying on foreign keys.
+        if deleted_song_id:
+            await asyncio.to_thread(_cleanup_deleted_song_sync, deleted_song_id)
         METADATA_CACHE.pop(str(path), None)
         invalidate_library_cache()
 
@@ -7836,12 +7990,45 @@ async def api_playlist_get(playlist_id:str):
     raise HTTPException(404,"Playlist not found")
 
 
+def _audio_file_readable_sync(path):
+    if not path.exists() or not path.is_file() or path.stat().st_size <= 0:
+        return False
+    if MutagenFile is not None:
+        try:
+            audio = MutagenFile(path, easy=False)
+            if audio is not None:
+                info = getattr(audio, "info", None)
+                if info is not None:
+                    return True
+        except Exception:
+            pass
+    # Mutagen may not understand every format build; use ffprobe as the authoritative decoder check.
+    try:
+        completed = subprocess.run(
+            [*FFPROBE_COMMAND, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        if completed.returncode != 0:
+            return False
+        value = (completed.stdout or "").strip()
+        return bool(value) and math.isfinite(float(value)) and float(value) > 0
+    except Exception:
+        return False
+
+
 @app.get("/api/library/health")
 async def api_library_health():
-    # Reuse the normal library index. Health checks must not trigger ffmpeg for
-    # every track or block the event loop with repeated filesystem calls.
+    # Reuse the normal library index, then run an explicit decoder-readability check
+    # over the audio files. This endpoint is intentionally manual rather than a hot path.
     library = await build_library()
     songs = library.get("songs", [])
+    unreadable = []
+    for path in await get_all_audio_files():
+        try:
+            if not await asyncio.to_thread(_audio_file_readable_sync, path):
+                unreadable.append({"path": str(path.relative_to(DOWNLOAD_DIR)), "reason": "Audio decoder could not read the file"})
+        except Exception as exc:
+            unreadable.append({"path": str(path.relative_to(DOWNLOAD_DIR)), "reason": str(exc)[:240]})
     bad_tags, missing_art, groups = [], [], {}
     for song in songs:
         rel = str(song["path"].relative_to(DOWNLOAD_DIR))
@@ -7868,12 +8055,12 @@ async def api_library_health():
         for key, files in groups.items() if len(files) > 1
     ]
     return {
-        "unreadable": [],
+        "unreadable": unreadable[:200],
         "bad_tags": bad_tags,
         "missing_artwork": missing_art,
         "duplicates": duplicates,
         "counts": {
-            "unreadable": 0, "bad_tags": len(bad_tags),
+            "unreadable": len(unreadable), "bad_tags": len(bad_tags),
             "missing_artwork": len(missing_art), "duplicates": len(duplicates),
             "duplicate_files": sum(len(item["files"]) for item in duplicates),
         },
@@ -8001,29 +8188,92 @@ async def api_backup():
     settings = await asyncio.to_thread(load_settings)
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
     tmp = Path(tempfile.gettempdir()) / f"xrob-music-backup-{stamp}-{uuid.uuid4().hex[:6]}.zip"
+    db_snapshot = Path(tempfile.gettempdir()) / f"xrob-db-snapshot-{uuid.uuid4().hex}.db"
+
     def build_backup():
-        with db_connect() as conn:
-            conn.execute("PRAGMA wal_checkpoint(FULL)")
+        # SQLite's native backup API creates a consistent database snapshot even while
+        # the application is serving concurrent reads/writes.
+        source = sqlite3.connect(DB_FILE, timeout=30.0)
+        target = sqlite3.connect(db_snapshot, timeout=30.0)
+        try:
+            source.backup(target)
+            target.commit()
+        finally:
+            target.close()
+            source.close()
         with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.write(DB_FILE, "tasks.db")
-            if SETTINGS_FILE.exists():
-                archive.write(SETTINGS_FILE, "settings.json")
+            archive.write(db_snapshot, "tasks.db")
+            # Always include a complete logical settings/index snapshot, even when
+            # configuration is supplied only through environment variables.
+            archive.writestr("settings.json", json.dumps(settings, ensure_ascii=False, indent=2))
             if LIBRARY_INDEX_FILE.exists():
                 archive.write(LIBRARY_INDEX_FILE, "library_index.json")
-            archive.writestr("manifest.json", json.dumps({"server_version": SERVER_VERSION, "created_at": time.time(), "database_schema": DB_SCHEMA_VERSION, "settings_fields": sorted(settings.keys())}, indent=2))
+            else:
+                archive.writestr("library_index.json", json.dumps({"version": 1, "entries": {}}, indent=2))
+            archive.writestr("manifest.json", json.dumps({
+                "server_version": SERVER_VERSION,
+                "created_at": time.time(),
+                "database_schema": DB_SCHEMA_VERSION,
+                "settings_fields": sorted(settings.keys()),
+            }, indent=2))
         return tmp
+
     try:
         path = await asyncio.to_thread(build_backup)
         def cleanup():
-            try: path.unlink(missing_ok=True)
-            except Exception: pass
+            for candidate in (path, db_snapshot):
+                try: candidate.unlink(missing_ok=True)
+                except Exception: pass
         return FileResponse(path, media_type="application/zip", filename=f"xrob-music-backup-{stamp}.zip", background=BackgroundTask(cleanup))
     except Exception as exc:
+        try: db_snapshot.unlink(missing_ok=True)
+        except Exception: pass
         await write_app_error("backup", str(exc))
         raise HTTPException(500, f"Backup failed: {exc}")
 
+
+async def _stop_runtime_for_restore():
+    global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, DOWNLOAD_WORKER_TASKS
+    tasks = list(DOWNLOAD_WORKER_TASKS)
+    for candidate in (SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK):
+        if candidate is not None:
+            tasks.append(candidate)
+    for task in tasks:
+        if task and not task.done():
+            task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    DOWNLOAD_WORKER_TASKS.clear()
+    SCHEDULED_SCANNER_TASK = None
+    LIBRARY_WARMUP_TASK = None
+    # Remove queued jobs; the restored DB becomes the sole source of truth.
+    while True:
+        try:
+            TASK_QUEUE.get_nowait()
+            TASK_QUEUE.task_done()
+        except asyncio.QueueEmpty:
+            break
+
+
+async def _restart_runtime_after_restore():
+    global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, DOWNLOAD_WORKER_TASKS
+    settings = await load_settings_async()
+    workers = max(1, min(8, safe_int(settings.get("max_concurrent_downloads"), MAX_CONCURRENT_DOWNLOADS)))
+    for _ in range(workers):
+        DOWNLOAD_WORKER_TASKS.add(asyncio.create_task(download_worker()))
+    SCHEDULED_SCANNER_TASK = asyncio.create_task(scheduled_library_scanner())
+    LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
+    for task in TASKS.values():
+        if task.get("status") == "queued":
+            token = str(task.get("queue_token") or uuid.uuid4().hex)
+            task["queue_token"] = token
+            await db_save_task(task, force=True)
+            await TASK_QUEUE.put((task["id"], token))
+
+
 @app.post("/api/restore")
 async def api_restore(file: UploadFile = File(...)):
+    global TASKS, LIBRARY_CACHE, LIBRARY_CACHE_TIME, PLAYER_STATE, PLAYER_STATE_UPDATED_AT
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(400, "A .zip Xrob Music backup is required")
     raw = await file.read()
@@ -8031,11 +8281,13 @@ async def api_restore(file: UploadFile = File(...)):
         raise HTTPException(413, "Backup is too large")
     temp = Path(tempfile.gettempdir()) / f"xrob-restore-{uuid.uuid4().hex}.zip"
     db_tmp = None
+    safety = None
+    runtime_stopped = False
     try:
         await asyncio.to_thread(temp.write_bytes, raw)
         def validate_zip():
             with zipfile.ZipFile(temp, "r") as z:
-                names=set(z.namelist())
+                names = set(z.namelist())
                 if "tasks.db" not in names:
                     raise ValueError("Backup does not contain tasks.db")
                 if any(name.startswith("/") or ".." in Path(name).parts for name in names):
@@ -8046,55 +8298,96 @@ async def api_restore(file: UploadFile = File(...)):
                 test = sqlite3.connect(target, timeout=10.0)
                 try:
                     test.execute("PRAGMA foreign_keys = ON")
-                    ok=str(test.execute("PRAGMA integrity_check").fetchone()[0] or "")
-                    if ok.lower() != "ok": raise ValueError(f"Database integrity check failed: {ok}")
-                finally: test.close()
+                    ok = str(test.execute("PRAGMA integrity_check").fetchone()[0] or "")
+                    if ok.lower() != "ok":
+                        raise ValueError(f"Database integrity check failed: {ok}")
+                    test.execute("PRAGMA user_version")
+                finally:
+                    test.close()
                 settings_payload = z.read("settings.json") if "settings.json" in names else None
-                if settings_payload is not None:
-                    try:
-                        decoded = json.loads(settings_payload.decode("utf-8"))
-                        if not isinstance(decoded, dict):
-                            raise ValueError("settings.json must contain an object")
-                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                        raise ValueError(f"Invalid settings.json: {exc}") from exc
                 index_payload = z.read("library_index.json") if "library_index.json" in names else None
-                if index_payload is not None:
-                    try:
-                        decoded = json.loads(index_payload.decode("utf-8"))
-                        if not isinstance(decoded, (dict, list)):
-                            raise ValueError("library_index.json must contain an object or array")
-                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                        raise ValueError(f"Invalid library_index.json: {exc}") from exc
+                # New backups always contain these files. Older backups remain accepted,
+                # but missing files are treated as empty/default rather than mixing old and new state.
+                if settings_payload is None:
+                    settings_payload = json.dumps({}).encode("utf-8")
+                else:
+                    decoded = json.loads(settings_payload.decode("utf-8"))
+                    if not isinstance(decoded, dict):
+                        raise ValueError("settings.json must contain an object")
+                if index_payload is None:
+                    index_payload = json.dumps({"version": 1, "entries": {}}).encode("utf-8")
+                else:
+                    decoded = json.loads(index_payload.decode("utf-8"))
+                    if not isinstance(decoded, (dict, list)):
+                        raise ValueError("library_index.json must contain an object or array")
                 return target, settings_payload, index_payload
+
         db_tmp, settings_bytes, index_bytes = await asyncio.to_thread(validate_zip)
-        stamp=time.strftime("%Y%m%d-%H%M%S", time.localtime())
-        safety=DB_FILE.with_name(f"tasks.db.before-restore-{stamp}-{uuid.uuid4().hex[:6]}")
+
+        await _stop_runtime_for_restore()
+        runtime_stopped = True
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        safety = DB_FILE.with_name(f"tasks.db.before-restore-{stamp}-{uuid.uuid4().hex[:6]}")
         if DB_FILE.exists():
-            await asyncio.to_thread(shutil.copy2, DB_FILE, safety)
-        await asyncio.to_thread(shutil.copy2, db_tmp, DB_FILE)
-        # Run the current migration set against the restored database before exposing
-        # it to the application. This keeps older valid backups forward-compatible.
+            # Safety copy is also made with SQLite's native backup API.
+            await asyncio.to_thread(_sqlite_backup_file, DB_FILE, safety)
+        restore_db_tmp = DB_FILE.with_name(f".{DB_FILE.name}.restore-{uuid.uuid4().hex}.tmp")
+        await asyncio.to_thread(shutil.copy2, db_tmp, restore_db_tmp)
+        await asyncio.to_thread(os.replace, restore_db_tmp, DB_FILE)
+        # Migrate/validate the restored database before exposing it to the application.
         await asyncio.to_thread(init_db)
-        if settings_bytes is not None:
-            await asyncio.to_thread(SETTINGS_FILE.write_bytes, settings_bytes)
-        if index_bytes is not None:
-            await asyncio.to_thread(LIBRARY_INDEX_FILE.write_bytes, index_bytes)
-        global TASKS, LIBRARY_CACHE, LIBRARY_CACHE_TIME
+
+        # Replace optional state files atomically rather than preserving a newer file.
+        def write_restore_state():
+            SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            settings_tmp = SETTINGS_FILE.with_suffix(".restore.tmp")
+            settings_tmp.write_bytes(settings_bytes)
+            os.replace(settings_tmp, SETTINGS_FILE)
+            index_tmp = LIBRARY_INDEX_FILE.with_suffix(".restore.tmp")
+            index_tmp.write_bytes(index_bytes)
+            os.replace(index_tmp, LIBRARY_INDEX_FILE)
+        await asyncio.to_thread(write_restore_state)
+        await asyncio.to_thread(_ensure_secure_web_credentials_sync)
+
         TASKS = await asyncio.to_thread(db_load_tasks_sync)
-        LIBRARY_CACHE=None; LIBRARY_CACHE_TIME=0.0
-        return {"status":"restored", "tasks":len(TASKS), "safety_backup":str(safety) if safety.exists() else ""}
-    except (zipfile.BadZipFile, ValueError) as exc:
+        PLAYER_STATE = None
+        PLAYER_STATE_UPDATED_AT = 0.0
+        LIBRARY_CACHE = None
+        LIBRARY_CACHE_TIME = 0.0
+        await _restart_runtime_after_restore()
+        runtime_stopped = False
+        return {"status":"restored", "tasks":len(TASKS), "safety_backup":str(safety) if safety and safety.exists() else ""}
+    except (zipfile.BadZipFile, ValueError, json.JSONDecodeError) as exc:
         await write_app_error("restore", str(exc))
         raise HTTPException(400, f"Restore rejected: {exc}")
     except Exception as exc:
         await write_app_error("restore", str(exc))
         raise HTTPException(500, f"Restore failed: {exc}")
     finally:
+        if runtime_stopped:
+            try:
+                # Even after a failed replacement, keep runtime aligned with current files.
+                TASKS = await asyncio.to_thread(db_load_tasks_sync)
+                LIBRARY_CACHE = None; LIBRARY_CACHE_TIME = 0.0
+                await _restart_runtime_after_restore()
+            except Exception as restart_exc:
+                await write_app_error("restore_restart", str(restart_exc))
         try: temp.unlink(missing_ok=True)
         except Exception: pass
         if db_tmp is not None:
             try: db_tmp.unlink(missing_ok=True)
             except Exception: pass
+
+
+def _sqlite_backup_file(source_path, target_path):
+    source = sqlite3.connect(source_path, timeout=30.0)
+    target = sqlite3.connect(target_path, timeout=30.0)
+    try:
+        source.backup(target)
+        target.commit()
+    finally:
+        target.close(); source.close()
+
 
 @app.get("/api/errors")
 async def api_errors(limit:int=Query(200,ge=1,le=1000)):
