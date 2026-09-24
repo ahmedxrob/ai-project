@@ -14,7 +14,7 @@
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-  <link href="static/style.css?v=370" rel="stylesheet"/>
+  <link href="static/style.css?v=371" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
   <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -79,6 +79,10 @@
       <div class="topbar-actions">
        <button class="topbar-icon topbar-settings-icon" type="button" onclick="navigate('settings')" aria-label="Open settings" title="Settings">
         <i aria-hidden="true" data-lucide="sliders-horizontal"></i>
+       </button>
+       <button class="topbar-icon topbar-queue-icon" id="topbarQueueBtn" type="button" aria-label="Open queue" title="Queue">
+        <i aria-hidden="true" data-lucide="list-music"></i>
+        <span class="topbar-icon-badge topbar-queue-badge" id="topbarQueueCount">0</span>
        </button>
        <button class="topbar-icon topbar-download-icon" id="topbarDownloadsBtn" type="button" aria-label="Open downloads drawer" title="Downloads">
         <i aria-hidden="true" data-lucide="download"></i>
@@ -1262,19 +1266,19 @@ https://…" required></textarea></label><div class="batch-meta-grid"><label>Art
     <i aria-hidden="true" data-lucide="search"></i>
     <span class="nav-label"><span class="nav-text">Search</span></span>
    </button>
+   <button class="nav-link" id="mob-btn-queue" onclick="openQueueDrawer(); return false;" type="button">
+    <i aria-hidden="true" data-lucide="list-music"></i>
+    <span class="nav-label"><span class="nav-text">Queue</span><span class="nav-count" id="mobQueueTrackCount">0</span></span>
+   </button>
    <button class="nav-link" id="mob-btn-downloads" onclick="openDownloadsDrawer(); return false;" type="button">
     <i aria-hidden="true" data-lucide="download"></i>
     <span class="nav-label"><span class="nav-text">Downloads</span><span class="nav-count" id="mobQueueCount">0</span></span>
-   </button>
-   <button class="nav-link" id="mob-btn-settings" onclick="navigate('settings')" type="button">
-    <i aria-hidden="true" data-lucide="sliders-horizontal"></i>
-    <span class="nav-label"><span class="nav-text">Settings</span></span>
    </button>
   </nav>
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=370">
+  <script src="static/app.js?v=371">
   </script>
 
 
