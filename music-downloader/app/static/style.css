@@ -31,7 +31,7 @@ body.music-app {
     min-height: 100vh;
     margin: 0;
     color: var(--text-primary);
-    font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     overflow-x: hidden;
 }
 button,input,select { font: inherit; }
@@ -39,49 +39,7 @@ button { cursor: pointer; }
 input,select { color: var(--text-primary); }
 img { display:block; max-width:100%; }
 a { color:inherit; }
-/* 02 — application shell */
-.app-shell.music-shell {
-    grid-template-columns: var(--sidebar-width) minmax(0,1fr);
-}
-.side-nav {
-    position: fixed;
-    inset: 0 auto 0 0;
-    width: var(--sidebar-width);
-    z-index: 1000;
-    flex-direction: column;
-    gap: 16px;
-    padding: 20px 12px;
-    background: linear-gradient(180deg,var(--bg-sidebar),color-mix(in srgb,var(--bg-sidebar) 90%,#000));
-    border-right: 1px solid var(--border);
-    overflow-y: auto;
-}
-.side-brand {
-    display:flex;
-    align-items:center;
-    gap:11px;
-    padding:6px 12px 14px;
-}
-.side-brand svg { flex:0 0 38px; width:38px; height:38px; }
-.side-brand h1 { margin:0; font-size:20px; font-weight:800; letter-spacing:-.7px; }
-.nav-list { display:flex; flex-direction:column; gap:4px; list-style:none; margin:0; padding:0; }
-.nav-list::before { content:"YOUR LIBRARY"; padding:0 14px 8px; color:var(--text-muted); font-size:10px; font-weight:800; letter-spacing:1.6px; }
-.nav-link {
-    width:100%; min-height:44px; display:flex; align-items:center; gap:13px; padding:10px 14px;
-    border:0; border-radius:10px; background:transparent; color:var(--text-secondary);
-    font-size:12px; font-weight:700; text-align:left; transition:background var(--transition-fast),color var(--transition-fast),transform var(--transition-fast);
-}
-.nav-link:hover { background:var(--bg-hover); color:var(--text-primary); }
-.nav-link:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.nav-link.active { background:rgba(255,255,255,.075); color:var(--text-primary); }
-[data-theme="light"] .nav-link.active { background:rgba(0,0,0,.055); }
-.nav-link > i { width:20px; height:20px; flex:0 0 20px; }
-.nav-link.active > i { color:var(--accent); }
-.nav-label { min-width:0; display:flex; align-items:center; gap:7px; flex:1; }
-.nav-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.nav-count { margin-left:auto; min-width:20px; padding:2px 6px; border-radius:10px; background:rgba(255,255,255,.08); color:var(--text-secondary); font-size:9px; text-align:center; }
-.nav-link.active .nav-count { background:rgba(30,215,96,.12); color:var(--accent); }
-.app-column {    grid-column:2; }
-.mobile-header { display:none; }
+/* 02 — application shell: handled by the canonical full-width chrome layer at the end of this file. */
 /* 03 — workspace */
 .main-content.workspace-main {
     overflow:visible;
@@ -4824,7 +4782,7 @@ button, [role="button"], input[type="button"], input[type="submit"] { min-height
 .app-topbar {
     position: fixed !important;
     top: 0 !important;
-    left: var(--sidebar-width) !important;
+    left: 0 !important;
     right: 0 !important;
     height: var(--app-header-height) !important;
     z-index: 1600 !important;
@@ -5210,4 +5168,87 @@ button svg, [role="button"] svg { flex: 0 0 auto; }
 @media (pointer:coarse) {
   .gp-skip-btn, .gp-connect-btn, .icon-btn { touch-action:manipulation; }
   .queue-row, .catalog-card, .result-card { -webkit-tap-highlight-color:transparent; }
+}
+
+/* ======================================================================
+   XROB 3.7.5 — CANONICAL FULL-WIDTH APP CHROME
+   One shell model for desktop, tablet and mobile WebViews.
+   ====================================================================== */
+:root {
+  --app-header-height: 70px;
+  --player-height: 82px;
+}
+
+.app-shell.music-shell {
+  display: block !important;
+  width: 100% !important;
+  min-height: 100vh !important;
+  background: transparent !important;
+}
+.app-shell.music-shell > .app-column {
+  display: block !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding-top: var(--app-header-height) !important;
+}
+.app-shell.music-shell > .music-player { width: 100% !important; }
+
+.app-topbar {
+  position: fixed !important;
+  inset: 0 0 auto 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: var(--app-header-height) !important;
+  margin: 0 !important;
+  z-index: 1600 !important;
+}
+.app-topbar-inner {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  padding-inline: clamp(12px, 2vw, 30px) !important;
+  grid-template-columns: auto minmax(0,1fr) auto !important;
+}
+.app-topbar .primary-nav {
+  justify-self: center !important;
+  min-width: 0 !important;
+  max-width: min(620px, 48vw) !important;
+  overflow-x: auto !important;
+}
+.app-topbar .primary-nav .nav-link {
+  min-width: 92px !important;
+  min-height: 40px !important;
+  height: 40px !important;
+}
+.app-topbar .topbar-actions {
+  justify-self: end !important;
+  min-width: 0 !important;
+}
+.main-content.workspace-main {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  padding-left: clamp(14px, 2vw, 34px) !important;
+  padding-right: clamp(14px, 2vw, 34px) !important;
+}
+.content-topbar { margin-inline: 0 !important; }
+
+@media (max-width: 900px) {
+  .app-topbar-inner { grid-template-columns: auto minmax(0,1fr) auto !important; gap: 8px !important; }
+  .app-topbar .primary-nav { max-width: 42vw !important; }
+  .app-topbar .primary-nav .nav-link { min-width: 40px !important; width: 40px !important; padding-inline: 8px !important; }
+  .app-topbar .primary-nav .nav-text { display: none !important; }
+}
+@media (max-width: 640px) {
+  :root { --app-header-height: 58px; --player-height: 76px; }
+  .app-topbar-inner { padding-inline: 7px !important; gap: 6px !important; }
+  .brand-mark span { display: none !important; }
+  .brand-mark img { width: 32px !important; height: 32px !important; }
+  .app-topbar .primary-nav { max-width: 46vw !important; }
+  .app-topbar .primary-nav .nav-link { min-width: 34px !important; width: 34px !important; min-height: 34px !important; height: 34px !important; }
+  .app-topbar .topbar-icon { width: 34px !important; height: 34px !important; flex-basis: 34px !important; }
+  .app-topbar .topbar-icon svg { width: 15px !important; height: 15px !important; }
+  .main-content.workspace-main { padding-left: 10px !important; padding-right: 10px !important; }
+  .main-content.workspace-main { padding-bottom: calc(var(--player-height) + var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 30px) !important; }
 }
