@@ -3903,6 +3903,7 @@ async function searchMusic() {
                 }&source=youtube&page=1&limit=20`,
                 {
                     cache: "no-store",
+                    timeoutMs: 28000,
                     ...(requestController ? { signal: requestController.signal } : {})
                 }
             );
@@ -3999,21 +4000,19 @@ async function searchMusic() {
             "Search failed"
         );
 
-        setTimeout(
-            hideSearchLoading,
-            1000
-        );
-
+        hideSearchLoading();
+        hasMoreResults = false;
+        searchCursor = "";
         status.textContent =
             "❌ " +
-            error.message;
+            (error?.message || "Search failed.");
 
     } finally {
 
-        if (requestId === searchRequestId && button) {
-            button.disabled = false;
+        if (requestId === searchRequestId) {
+            if (button) button.disabled = false;
+            if (searchAbortController === requestController) searchAbortController = null;
         }
-        if (searchAbortController === requestController) searchAbortController = null;
     }
 }
 
@@ -7204,7 +7203,7 @@ function renderLibraryTracksV37(list, query){
 }
 function renderTracksV37(list,query){return renderLibraryTracksV37(list,query);}
 
-function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";input.addEventListener("input",()=>{if(v37SearchTimer)clearTimeout(v37SearchTimer);const q=input.value.trim();if(!q){searchMusic();return;}v37SearchTimer=setTimeout(()=>searchMusic(),420);});}
+function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";input.addEventListener("input",()=>{if(v37SearchTimer)clearTimeout(v37SearchTimer);const q=input.value.trim();if(!q){searchMusic();return;}if(q.length<2)return;v37SearchTimer=setTimeout(()=>{if(document.activeElement===input && input.value.trim()===q){searchMusic();}else if(input.value.trim()===q){searchMusic();}},650);});}
 
 function v37InstallKeyboard(){document.addEventListener("keydown",event=>{if(event.target?.matches?.("input,textarea,select,[contenteditable=true]"))return;if(event.key===" "){event.preventDefault();playBtn?.click();}else if(event.key==="ArrowRight"&&event.shiftKey){event.preventDefault();seekFromKeyboard(10);}else if(event.key==="ArrowLeft"&&event.shiftKey){event.preventDefault();seekFromKeyboard(-10);}else if(event.key.toLowerCase()==="m"){event.preventDefault();if(audio)audio.muted=!audio.muted;}});}
 function seekFromKeyboard(delta){const current=isRemotePlayerOwner()?Number(remotePlayerState?.currentTime||0):Number(audio?.currentTime||0),duration=isRemotePlayerOwner()?Number(remotePlayerState?.duration||0):Number(audio?.duration||0),next=Math.max(0,Math.min(duration||Infinity,current+delta));if(isRemotePlayerOwner())sendPlayerCommand("seek",{time:next});else if(audio){audio.currentTime=next;persistCurrentPosition(true);schedulePlayerStateBroadcast(true);}}
