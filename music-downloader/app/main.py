@@ -137,7 +137,12 @@ AUTH_USER = os.getenv("XROB_USERNAME", "admin")
 AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "")
 AUTH_COOKIE = "xrob_session"
 AUTH_MIN_PASSWORD_LENGTH = 12
+AUTH_SESSION_IDLE_SECONDS = 30 * 24 * 60 * 60
+AUTH_SESSION_MAX_SECONDS = 90 * 24 * 60 * 60
+AUTH_SESSIONS_FILE = DATA_DIR / "auth_sessions.json"
 AUTH_SESSIONS = {}
+AUTH_SESSIONS_LAST_PERSIST_AT = 0.0
+AUTH_CREDENTIAL_FINGERPRINT = ""
 AUTH_LOGIN_ATTEMPTS = defaultdict(list)
 AUTH_LOGIN_WINDOW = 300
 AUTH_LOGIN_MAX_ATTEMPTS = 5
@@ -165,6 +170,69 @@ PLAYER_STATE_LOCK = asyncio.Lock()
 
 def _auth_token():
     return secrets.token_urlsafe(32)
+
+def _auth_session_key(token):
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+def _auth_credential_fingerprint_sync():
+    settings = load_settings()
+    username = str(settings.get("web_username") or AUTH_USER or "admin")[:64]
+    credential = _stored_web_password(settings)
+    return hashlib.sha256(f"{username}\x00{credential}".encode("utf-8")).hexdigest()
+
+def _persist_auth_sessions_sync():
+    global AUTH_SESSIONS_LAST_PERSIST_AT
+    AUTH_SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = AUTH_SESSIONS_FILE.with_name(f".{AUTH_SESSIONS_FILE.name}.{os.getpid()}.tmp")
+    payload = {}
+    now = time.time()
+    for key, session in AUTH_SESSIONS.items():
+        if not isinstance(session, dict):
+            continue
+        created = safe_float(session.get("created"), 0)
+        last_seen = safe_float(session.get("last_seen"), created)
+        if session.get("credential_fingerprint") != AUTH_CREDENTIAL_FINGERPRINT:
+            continue
+        if not created or now - created > AUTH_SESSION_MAX_SECONDS or now - last_seen > AUTH_SESSION_IDLE_SECONDS:
+            continue
+        payload[key] = {
+            "created": created,
+            "last_seen": last_seen,
+            "username": str(session.get("username") or "")[:64],
+            "credential_fingerprint": AUTH_CREDENTIAL_FINGERPRINT,
+        }
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+            f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, AUTH_SESSIONS_FILE)
+        try: os.chmod(AUTH_SESSIONS_FILE, 0o600)
+        except OSError: pass
+        AUTH_SESSIONS_LAST_PERSIST_AT = now
+    finally:
+        try: tmp.unlink(missing_ok=True)
+        except OSError: pass
+
+def _load_auth_sessions_sync():
+    AUTH_SESSIONS.clear()
+    if not AUTH_SESSIONS_FILE.exists():
+        return
+    try:
+        raw = json.loads(AUTH_SESSIONS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict): return
+        now = time.time()
+        for key, session in raw.items():
+            if not isinstance(key, str) or not isinstance(session, dict): continue
+            created = safe_float(session.get("created"), 0)
+            last_seen = safe_float(session.get("last_seen"), created)
+            if session.get("credential_fingerprint") != AUTH_CREDENTIAL_FINGERPRINT:
+                continue
+            if not created or now - created > AUTH_SESSION_MAX_SECONDS or now - last_seen > AUTH_SESSION_IDLE_SECONDS:
+                continue
+            AUTH_SESSIONS[key] = {"created": created, "last_seen": last_seen, "username": str(session.get("username") or "")[:64], "credential_fingerprint": AUTH_CREDENTIAL_FINGERPRINT}
+    except Exception:
+        AUTH_SESSIONS.clear()
+    _persist_auth_sessions_sync()
 
 def _hash_web_password(password):
     if not password:
@@ -287,10 +355,20 @@ def _cleanup_rate_limit_state_sync():
 def _is_authenticated(token):
     if not token:
         return False
-    session = AUTH_SESSIONS.get(token)
+    key = _auth_session_key(token)
+    session = AUTH_SESSIONS.get(key)
     if not session:
         return False
-    session["last_seen"] = time.time()
+    now = time.time()
+    created = safe_float(session.get("created"), 0)
+    last_seen = safe_float(session.get("last_seen"), created)
+    if session.get("credential_fingerprint") != AUTH_CREDENTIAL_FINGERPRINT:
+        AUTH_SESSIONS.pop(key, None)
+        return False
+    if not created or now - created > AUTH_SESSION_MAX_SECONDS or now - last_seen > AUTH_SESSION_IDLE_SECONDS:
+        AUTH_SESSIONS.pop(key, None)
+        return False
+    session["last_seen"] = now
     return True
 
 
@@ -802,7 +880,12 @@ def save_settings(data: dict):
 
     _write_settings_sync(settings)
     if old_user != settings.get("web_username") or ("web_password" in data and str(data.get("web_password") or "")):
+        global AUTH_CREDENTIAL_FINGERPRINT
+        try: AUTH_CREDENTIAL_FINGERPRINT = _auth_credential_fingerprint_sync()
+        except Exception: pass
         AUTH_SESSIONS.clear()
+        try: _persist_auth_sessions_sync()
+        except Exception: pass
 
     return settings
 
@@ -3464,6 +3547,9 @@ async def startup_event():
     await asyncio.to_thread(configure_storage)
     await asyncio.to_thread(init_db)
     await asyncio.to_thread(_ensure_secure_web_credentials_sync)
+    global AUTH_CREDENTIAL_FINGERPRINT
+    AUTH_CREDENTIAL_FINGERPRINT = await asyncio.to_thread(_auth_credential_fingerprint_sync)
+    await asyncio.to_thread(_load_auth_sessions_sync)
 
     global TASKS
 
@@ -8585,10 +8671,11 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
         await asyncio.to_thread(_write_settings_sync, settings)
     token = _auth_token()
     now = time.time()
-    AUTH_SESSIONS[token] = {"created": now, "last_seen": now, "username": expected_user}
+    AUTH_SESSIONS[_auth_session_key(token)] = {"created": now, "last_seen": now, "username": expected_user, "credential_fingerprint": AUTH_CREDENTIAL_FINGERPRINT}
+    await asyncio.to_thread(_persist_auth_sessions_sync)
     response = JSONResponse({"status":"ok", "username":expected_user})
     response.set_cookie(
-        AUTH_COOKIE, token, httponly=True, samesite="lax",
+        AUTH_COOKIE, token, httponly=True, samesite="lax", max_age=AUTH_SESSION_IDLE_SECONDS,
         secure=request.url.scheme == "https", path="/"
     )
     return response
@@ -8602,7 +8689,8 @@ async def api_auth_status(request: Request):
 @app.post("/api/auth/logout")
 async def api_auth_logout(request: Request):
     token=request.cookies.get(AUTH_COOKIE)
-    if token: AUTH_SESSIONS.pop(token, None)
+    if token: AUTH_SESSIONS.pop(_auth_session_key(token), None)
+    await asyncio.to_thread(_persist_auth_sessions_sync)
     response=JSONResponse({"status":"ok"}); response.delete_cookie(AUTH_COOKIE, path="/"); return response
 
 @app.get("/api/diagnostics")
