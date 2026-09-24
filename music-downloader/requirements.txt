@@ -1,5 +1,5 @@
 fastapi
 uvicorn[standard]
-yt-dlp[default]==2026.08.19
+yt-dlp
 mutagen
 python-multipart
