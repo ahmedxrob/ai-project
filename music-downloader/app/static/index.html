@@ -1050,8 +1050,8 @@
           Open error log
          </button>
         </div>
-        <div class="setting-row"><div><div class="setting-label">Backup</div><div class="setting-desc">Download a validated backup of the database, settings and library index.</div></div><button class="btn-refresh" id="backupButton" type="button"><i data-lucide="download"></i> Create backup</button></div>
-        <div class="setting-row"><div><div class="setting-label">Restore</div><div class="setting-desc">Validate a Xrob Music backup before replacing the local database and configuration.</div></div><div class="settings-inline-actions"><input id="restoreFile" type="file" accept=".zip" hidden/><button class="btn-refresh" id="restoreButton" type="button">Restore backup</button></div></div>
+        <div class="setting-row"><div><div class="setting-label">Backup</div><div class="setting-desc">Standard backup excludes passwords and tokens. Encrypted backup can safely include protected settings.</div></div><div class="settings-inline-actions"><button class="btn-refresh" id="backupButton" type="button"><i data-lucide="download"></i> Create backup</button><button class="btn-refresh" id="encryptedBackupButton" type="button"><i data-lucide="lock-keyhole"></i> Encrypted backup</button></div></div>
+        <div class="setting-row"><div><div class="setting-label">Restore</div><div class="setting-desc">Restore a standard .zip or password-protected .xrbk backup. Standard restore never imports saved credentials.</div></div><div class="settings-inline-actions"><input id="restoreFile" type="file" accept=".zip,.xrbk" hidden/><button class="btn-refresh" id="restoreButton" type="button">Restore backup</button></div></div>
         <div class="setting-row"><div><div class="setting-label">Diagnostics</div><div class="setting-desc">Check SQLite integrity, storage, runtime tools and active connections.</div></div><button class="btn-refresh" id="diagnosticsButton" type="button">Run diagnostics</button></div>
         </div>
        </div>
