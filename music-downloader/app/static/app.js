@@ -40,8 +40,6 @@ let currentPage = 1;
 let currentQuery = "";
 let isLoadingMore = false;
 let hasMoreResults = true;
-let searchResultIds = new Set();
-const SEARCH_PAGE_SIZE = 20;
 let searchRequestId = 0;
 let searchAbortController = null;
 
@@ -3805,7 +3803,6 @@ async function deleteFile(filename) {
    ============================================================ */
 
 async function searchMusic() {
-    if (typeof v37SearchTimer !== "undefined" && v37SearchTimer) { clearTimeout(v37SearchTimer); v37SearchTimer = null; }
     const requestId = ++searchRequestId;
     if (searchAbortController) { try { searchAbortController.abort(); } catch (_) {} }
     const requestController = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -3837,7 +3834,6 @@ async function searchMusic() {
     if (!query) {
         currentQuery = "";
         currentPage = 1;
-        searchResultIds = new Set();
         hasMoreResults = false;
         isLoadingMore = false;
         results.innerHTML = "";
@@ -3852,7 +3848,6 @@ async function searchMusic() {
 
     currentQuery = query;
     currentPage = 1;
-    searchResultIds = new Set();
     hasMoreResults = true;
     isLoadingMore = false;
 
@@ -3905,7 +3900,7 @@ async function searchMusic() {
             await apiFetch(
                 `api/search?q=${
                     encodeURIComponent(query)
-                }&source=youtube&page=1&limit=${SEARCH_PAGE_SIZE}`,
+                }&source=youtube&page=1`,
                 {
                     cache: "no-store",
                     ...(requestController ? { signal: requestController.signal } : {})
@@ -3972,9 +3967,7 @@ async function searchMusic() {
             "Loading results..."
         );
 
-        const headerHasMore = response.headers.get("X-Search-Has-More");
-        hasMoreResults = headerHasMore !== null ? headerHasMore === "true" : data.length >= SEARCH_PAGE_SIZE;
-        if (data.length) status.textContent = `${data.length}${hasMoreResults ? "+" : ""} matches`;
+        hasMoreResults = data.length >= 20;
         renderItems(data);
 
         /*
@@ -4230,7 +4223,15 @@ function renderItems(items) {
                             item.id,
                             item.artist || item.channel,
                             download,
-                            item.album || ""
+                            item.album || "",
+                            {
+                                provider_id: item.id || "",
+                                version_kind: item.version_kind || "original",
+                                search_relevance: item.relevance_score || 0,
+                                musicbrainz_id: item.musicbrainz_id || "",
+                                metadata_confidence: item.metadata_confidence || 0,
+                                query_text: currentQuery || ""
+                            }
                         )
                 );
 
@@ -4297,7 +4298,7 @@ async function loadMoreResults() {
                     )
                 }&source=youtube&page=${
                     nextPage
-                }&limit=${SEARCH_PAGE_SIZE}`,
+                }`,
                 {
                     cache: "no-store",
                     ...(requestController ? { signal: requestController.signal } : {})
@@ -4332,8 +4333,7 @@ async function loadMoreResults() {
         } else {
 
             currentPage = nextPage;
-            const headerHasMore = response.headers.get("X-Search-Has-More");
-            hasMoreResults = headerHasMore !== null ? headerHasMore === "true" : data.length >= SEARCH_PAGE_SIZE;
+            if (data.length < 20) hasMoreResults = false;
             renderItems(data);
         }
 
@@ -5114,7 +5114,8 @@ async function startDownload(
     elementId,
     artist,
     button,
-    album = ""
+    album = "",
+    searchMeta = {}
 ) {
 
     if (!url) {
@@ -5155,7 +5156,13 @@ async function startDownload(
                             title,
                             elementId,
                             artist,
-                            album
+                            album,
+                            provider_id: searchMeta.provider_id || elementId || "",
+                            version_kind: searchMeta.version_kind || "original",
+                            search_relevance: searchMeta.search_relevance || 0,
+                            musicbrainz_id: searchMeta.musicbrainz_id || "",
+                            metadata_confidence: searchMeta.metadata_confidence || 0,
+                            query_text: searchMeta.query_text || ""
                         })
                 }
             );
@@ -7200,7 +7207,7 @@ function renderLibraryTracksV37(list, query){
 }
 function renderTracksV37(list,query){return renderLibraryTracksV37(list,query);}
 
-function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";input.addEventListener("input",()=>{if(v37SearchTimer)clearTimeout(v37SearchTimer);const q=input.value.trim();if(!q){currentQuery="";hasMoreResults=false;isLoadingMore=false;searchResultIds=new Set();const results=document.getElementById("results");if(results)results.innerHTML="";const status=document.getElementById("statusMsg");if(status)status.textContent="Enter a search term.";hideSearchLoading();v37SearchTimer=null;return;}v37SearchTimer=setTimeout(()=>{v37SearchTimer=null;searchMusic();},420);});}
+function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";input.addEventListener("input",()=>{if(v37SearchTimer)clearTimeout(v37SearchTimer);const q=input.value.trim();if(!q){searchMusic();return;}v37SearchTimer=setTimeout(()=>searchMusic(),420);});}
 
 function v37InstallKeyboard(){document.addEventListener("keydown",event=>{if(event.target?.matches?.("input,textarea,select,[contenteditable=true]"))return;if(event.key===" "){event.preventDefault();playBtn?.click();}else if(event.key==="ArrowRight"&&event.shiftKey){event.preventDefault();seekFromKeyboard(10);}else if(event.key==="ArrowLeft"&&event.shiftKey){event.preventDefault();seekFromKeyboard(-10);}else if(event.key.toLowerCase()==="m"){event.preventDefault();if(audio)audio.muted=!audio.muted;}});}
 function seekFromKeyboard(delta){const current=isRemotePlayerOwner()?Number(remotePlayerState?.currentTime||0):Number(audio?.currentTime||0),duration=isRemotePlayerOwner()?Number(remotePlayerState?.duration||0):Number(audio?.duration||0),next=Math.max(0,Math.min(duration||Infinity,current+delta));if(isRemotePlayerOwner())sendPlayerCommand("seek",{time:next});else if(audio){audio.currentTime=next;persistCurrentPosition(true);schedulePlayerStateBroadcast(true);}}
