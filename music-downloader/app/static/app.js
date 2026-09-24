@@ -1020,11 +1020,32 @@ function applyRemoteCommand(message) {
                 else syncLibraryQueue(normalizeSyncQueue(p.queue), Number(p.queueIndex ?? 0));
             }
             toggleAudioStream(document.createElement("button"), p.src, p.source || "library", p.title, p.artist, p.art, p.songId || null, true);
+        } else if (message.command === "mirror-play") {
+            const src = p.src ? syncResourceUrl(p.src) : "";
+            if (src) {
+                currentPlayerSource = p.source === "home" ? "home" : (p.source || currentPlayerSource || "library");
+                updatePlayerInfo(p.title, p.artist, syncResourceUrl(p.art || ""));
+                if (player) player.style.display = "grid";
+                const absolute = new URL(src, location.href).href;
+                const requestedTime = Math.max(0, Number(p.currentTime || 0));
+                const applyPosition = () => {
+                    if (audio.readyState >= 1 && Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Math.min(requestedTime, Math.max(0, audio.duration - 0.25));
+                    else { try { audio.currentTime = requestedTime; } catch (_) {} }
+                    initAudioContext();
+                    audio.play().catch(() => showToast("▶ Tap Play to continue mirror playback"));
+                    updatePlayingState(true);
+                };
+                if (audio.src !== absolute) {
+                    audio.src = absolute;
+                    audio.load();
+                    audio.addEventListener("loadedmetadata", applyPosition, {once:true});
+                } else applyPosition();
+            }
         }
     } finally {
         applyingRemotePlayerCommand = false;
     }
-    if (message.command !== "load-play") schedulePlayerStateBroadcast(true);
+    if (!["load-play","mirror-play"].includes(message.command)) schedulePlayerStateBroadcast(true);
 }
 
 async function sendPlayerHeartbeat() {
@@ -6100,6 +6121,16 @@ function renderLocalIcons() {
         'skip-back': [['path','M19 20 9 12l10-8v16'],['path','M5 19V5']],
         'skip-forward': [['path','m5 4 10 8-10 8V4'],['path','M19 5v14']],
         shuffle: [['path','M3 6h3c3 0 4 6 7 6h8'],['path','m18 9 3 3-3 3'],['path','M3 18h3c3 0 4-6 7-6h2'],['path','m18 3 3 3-3 3']],
+        'list-music': [['path','M21 15V6'],['path','M18 8h3'],['path','M18 12h3'],['path','M18 16h3'],['circle','6 18 3'],['path','M9 18V6l9-2']],
+        'monitor-smartphone': [['rect','3 4 12 11'],['path','M7 19h4'],['path','M9 15v4'],['rect','17 9 4 10']],
+        radio: [['circle','12 12 2'],['path','M16.2 7.8a6 6 0 0 1 0 8.4'],['path','M7.8 16.2a6 6 0 0 1 0-8.4']],
+        'copy-plus': [['rect','8 8 12 12'],['path','M4 16V4h12'],['path','M14 14h6'],['path','M17 11v6']],
+        'check-circle-2': [['path','m9 12 2 2 4-4'],['circle','12 12 9']],
+        'wifi-off': [['path','M3 3l18 18'],['path','M10.5 5.4A9.4 9.4 0 0 1 21 12.5'],['path','M3 9.8A9.2 9.2 0 0 1 6 7.1'],['path','M8.5 16.5a5 5 0 0 1 7 0'],['path','M12 20h.01']],
+        monitor: [['rect','3 4 18 12'],['path','M8 20h8'],['path','M12 16v4']],
+        smartphone: [['rect','7 2 10 20'],['path','M11 18h2']],
+        tablet: [['rect','5 2 14 20'],['path','M11 18h2']],
+        tv: [['rect','2 5 20 14'],['path','M8 21h8'],['path','M12 19v2']],
     };
     const ns = 'http://www.w3.org/2000/svg';
     document.querySelectorAll('[data-lucide]').forEach(el => {
@@ -6349,11 +6380,20 @@ function renderEnhancedQueue() {
         box.appendChild(row);
     });
     renderLocalIcons();
+    updateQueueIndicators();
 }
 
 function setEnhancedQueue(queue, index = 0) {
     syncLibraryQueue(queue, index);
     renderEnhancedQueue();
+    updateQueueIndicators();
+}
+
+function updateQueueIndicators(){
+    const total = Array.isArray(enhancedQueue) ? enhancedQueue.length : 0;
+    const nextCount = enhancedQueueIndex >= 0 ? Math.max(0, total - enhancedQueueIndex - 1) : total;
+    ["topbarQueueCount","mobQueueTrackCount"].forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent=String(nextCount); });
+    ["topbarQueueBtn","gp-queue-btn"].forEach(id=>{ const el=document.getElementById(id); if(el) el.setAttribute("aria-label", nextCount ? `Open queue · ${nextCount} up next` : "Open queue"); });
 }
 
 function openQueueDrawer(){
@@ -6361,6 +6401,7 @@ function openQueueDrawer(){
     if (!drawer) return;
     drawer.hidden = false;
     renderEnhancedQueue();
+    updateQueueIndicators();
     applyRepeatLabel();
 }
 
@@ -6751,6 +6792,7 @@ function installEnhancedFeatures(){
     loadDailyMix();
     installDailyMixSwipe();
     document.getElementById("gp-queue-btn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
+    document.getElementById("topbarQueueBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openQueueDrawer(); });
     document.getElementById("queueClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeQueueDrawer(); });
     document.getElementById("downloadsClose")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); closeDownloadsDrawer(); });
     document.getElementById("topbarDownloadsBtn")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDownloadsDrawer(); });
@@ -6970,29 +7012,44 @@ function renderV37Devices() {
     const list=document.getElementById("deviceList"); if(!list) return;
     const currentId=v37DeviceId();
     const rows=[...v37Devices];
-    if (!rows.some(d=>d.deviceId===currentId)) rows.unshift({...v37DevicePayload(),online:true,isOwner:!isRemotePlayerOwner(),state:isRemotePlayerOwner()?"available":"paused",ageSeconds:0,track:null});
+    if (!rows.some(d=>d.deviceId===currentId)) rows.unshift({...v37DevicePayload(),online:true,isOwner:!isRemotePlayerOwner(),state:isRemotePlayerOwner()?"available":"playing",ageSeconds:0,track:null});
+    rows.sort((a,b)=>{ const score=d=>d.deviceId===currentId?0:d.isOwner?1:d.online?2:3; return score(a)-score(b)||String(a.name||"").localeCompare(String(b.name||"")); });
     list.innerHTML="";
     if (!rows.length) { list.innerHTML='<div class="device-empty"><i data-lucide="wifi-off"></i><strong>No devices found</strong><span>Open Xrob Music on another device to connect it automatically.</span></div>'; renderLocalIcons(); return; }
     rows.forEach(device=>{
-        const card=document.createElement("article"); card.className=`device-card${device.deviceId===currentId?" is-current":""}${device.isOwner?" is-owner":""}`;
-        const dot=device.online?"online":"offline";
+        const card=document.createElement("article"); card.className=`device-card${device.deviceId===currentId?" is-current":""}${device.isOwner?" is-owner":""}${device.online?"":" is-offline"}`;
         const actions=document.createElement("div"); actions.className="device-card-actions";
-        if (device.deviceId===currentId) {
-            const current=document.createElement("span"); current.className="device-current-badge"; current.textContent="This device"; actions.appendChild(current);
-        } else if (device.online && device.tabId) {
-            const switchBtn=document.createElement("button"); switchBtn.type="button"; switchBtn.className="save-btn compact"; switchBtn.innerHTML='<i data-lucide="radio"></i> Switch'; switchBtn.addEventListener("click",()=>v37SwitchToDevice(device)); actions.appendChild(switchBtn);
-            if (device.isOwner) {
-                const action=document.createElement("button"); action.type="button"; action.className="btn-refresh compact"; action.innerHTML=device.state==="playing"?'<i data-lucide="pause"></i> Pause':'<i data-lucide="play"></i> Play'; action.addEventListener("click",()=>v37RemoteCommand(device,device.state==="playing"?"pause":"play")); actions.appendChild(action);
-            }
+        const makeBtn=(label,icon,cls,fn)=>{const b=document.createElement("button"); b.type="button"; b.className=cls; b.innerHTML=`<i data-lucide="${icon}"></i><span>${label}</span>`; b.addEventListener("click",e=>{e.preventDefault();e.stopPropagation();fn();}); actions.appendChild(b);};
+        const status = device.deviceId===currentId ? (isRemotePlayerOwner()?"Connected · Remote":"Connected · This device") : v37DeviceStateLabel(device);
+        if(device.deviceId===currentId){
+            const badge=document.createElement("span"); badge.className="device-current-badge"; badge.innerHTML='<i data-lucide="check-circle-2"></i><span>This device</span>'; actions.appendChild(badge);
+            if(isRemotePlayerOwner()) makeBtn("Resume here","play","btn-refresh compact",()=>takeoverRemotePlayer().then(ok=>ok&&showToast("▶ Playback moved here")));
+        } else if(device.online && device.tabId){
+            makeBtn("Switch here","radio","save-btn compact",()=>v37SwitchToDevice(device));
+            if(device.isOwner) makeBtn(device.state==="playing"?"Pause":"Play",device.state==="playing"?"pause":"play","btn-refresh compact",()=>v37RemoteCommand(device,device.state==="playing"?"pause":"play"));
+            makeBtn("Play on both","copy-plus","btn-secondary compact",()=>v37MirrorToDevice(device));
+            makeBtn("Remove","trash-2","btn-danger compact",()=>v37RemoveDevice(device));
+        } else {
+            makeBtn("Remove","trash-2","btn-danger compact",()=>v37RemoveDevice(device));
         }
-        const browserLabel = device.browser ? " · " + escapeHtml(device.browser) : "";
-        const heartbeatLabel = device.online ? `Heartbeat ${Math.max(0,Math.round(device.ageSeconds||0))}s ago` : "Last seen offline";
-        const trackLabel = escapeHtml(v37DeviceTrack(device));
-        card.innerHTML=`<div class="device-icon ${dot}"><i data-lucide="${v37DeviceIcon(device.deviceType)}"></i><span></span></div><div class="device-copy"><div class="device-title-row"><strong>${escapeHtml(device.name||"Device")}</strong><span class="device-status-pill ${dot}">${escapeHtml(v37DeviceStateLabel(device))}</span></div><span class="device-meta">${escapeHtml(device.platform||"")}${browserLabel}</span><span class="device-track">${trackLabel}</span><span class="device-heartbeat">${heartbeatLabel}</span></div>`;
-        card.appendChild(actions); list.appendChild(card);
+        const browserLabel=device.browser?" · "+escapeHtml(device.browser):"";
+        const heartbeatLabel=device.online?`Online · heartbeat ${Math.max(0,Math.round(device.ageSeconds||0))}s ago`:"Offline · last seen previously";
+        card.innerHTML=`<div class="device-icon ${device.online?"online":"offline"}"><i data-lucide="${v37DeviceIcon(device.deviceType)}"></i><span></span></div><div class="device-copy"><div class="device-title-row"><strong>${escapeHtml(device.name||"Device")}</strong><span class="device-status-pill ${device.online?"online":"offline"}">${escapeHtml(status)}</span></div><span class="device-meta">${escapeHtml(device.platform||"")}${browserLabel}</span><span class="device-track">${escapeHtml(v37DeviceTrack(device))}</span><span class="device-heartbeat">${escapeHtml(heartbeatLabel)}</span></div>`; card.appendChild(actions); list.appendChild(card);
     });
     renderLocalIcons();
 }
+async function v37MirrorToDevice(device) {
+    if(!device?.deviceId || !device.online || !device.tabId){showToast("⚠️ Device is offline");return;}
+    const state=isRemotePlayerOwner()?remotePlayerState:null; const src=state?.src||syncResourceUrl(audio?.src||"");
+    if(!src){showToast("▶ Start a track first");return;}
+    const payload={targetId:device.tabId,src,title:state?.title||playerTitle?.textContent||"Unknown Track",artist:state?.artist||playerArtist?.textContent||"Unknown Artist",art:state?.art||playerArt?.src||"",songId:state?.songId||audio?.dataset?.xrobSongId||"",source:state?.source||currentPlayerSource||"library",currentTime:state?Number(state.currentTime||0):Number(audio?.currentTime||0)};
+    try{const r=await apiFetch("api/player/mirror",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Could not mirror playback");showToast(`▶ Playing on ${device.name||"device"} too`);}catch(err){showToast("❌ "+(err.message||"Mirror playback failed"));}
+}
+async function v37RemoveDevice(device){
+    if(!device?.deviceId||device.deviceId===v37DeviceId()){showToast("This device cannot remove itself from Connect");return;}
+    try{const r=await apiFetch(`api/devices/${encodeURIComponent(device.deviceId)}`,{method:"DELETE"});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Could not remove device");v37Devices=v37Devices.filter(x=>x.deviceId!==device.deviceId);renderV37Devices();showToast(`✓ ${device.name||"Device"} removed from Connect`);}catch(err){showToast("❌ "+(err.message||"Could not remove device"));}
+}
+
 async function v37RemoteCommand(device, command, payload={}) {
     if (!device?.tabId || !device.online) { showToast("⚠️ Device is offline"); return; }
     try {
@@ -7178,7 +7235,7 @@ function v37Install(){
     artworkToggle?.addEventListener("change",()=>{if(artworkSelect)artworkSelect.value=artworkToggle.checked?"embed":"none";});
     if(typeof window._xrobOriginalRenderLibraryView==="function"){ /* keep enhanced library wrapper */ }
     // Function bindings used by existing listeners resolve these latest function declarations.
-    renderV37Devices();v37BindSearchDebounce();v37InstallKeyboard();v37InstallDrawerSwipe();v37NoOverflow();
+    updateQueueIndicators();renderV37Devices();v37BindSearchDebounce();v37InstallKeyboard();v37InstallDrawerSwipe();v37NoOverflow();
     registerV37Device();heartbeatV37Device();loadV37Devices();loadV37DownloadHistory();
     if(v37DeviceTimer)clearInterval(v37DeviceTimer);v37DeviceTimer=setInterval(heartbeatV37Device,8000);
     if(v37DeviceRefreshTimer)clearInterval(v37DeviceRefreshTimer);v37DeviceRefreshTimer=setInterval(()=>{if(!document.getElementById("connect-modal")?.hidden)loadV37Devices();},5000);
