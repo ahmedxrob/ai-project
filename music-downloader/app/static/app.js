@@ -1804,6 +1804,14 @@ function switchTab(tab) {
         loadHome();
     }
 
+    if (tab === "search") {
+        const button = document.getElementById("searchBtn");
+        if (!searchAbortController) {
+            if (button) button.disabled = false;
+            hideSearchLoading();
+        }
+    }
+
     if (tab === "downloads") {
         openDownloadsDrawer();
         return;
@@ -3919,7 +3927,7 @@ async function searchMusic() {
                 }&source=youtube&page=1&limit=20`,
                 {
                     cache: "no-store",
-                    timeoutMs: 28000,
+                    timeoutMs: 22000,
                     ...(requestController ? { signal: requestController.signal } : {})
                 }
             );
@@ -4376,32 +4384,48 @@ async function loadMoreResults() {
 }
 
 
-function bindSearch() {
-    document
-        .getElementById("searchBtn")
-        ?.addEventListener(
-            "click",
-            searchMusic
-        );
+function installSearchController() {
+    if (window.__xrobSearchControllerInstalled) return;
+    window.__xrobSearchControllerInstalled = true;
 
-    document
-        .getElementById("query")
-        ?.addEventListener(
-            "keydown",
-            event => {
+    // Capture the interaction before any legacy click/submit handlers.
+    // This prevents the search form from ever performing a native navigation.
+    document.addEventListener("click", event => {
+        const button = event.target?.closest?.("#searchBtn");
+        if (!button) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (button.disabled) return;
+        searchMusic();
+    }, true);
 
-                if (
-                    event.key === "Enter" &&
-                    !event.isComposing
-                ) {
+    document.addEventListener("keydown", event => {
+        const input = event.target?.closest?.("#query");
+        if (!input || event.isComposing || event.key !== "Enter") return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const button = document.getElementById("searchBtn");
+        if (button?.disabled) return;
+        searchMusic();
+    }, true);
 
-                    event.preventDefault();
-
-                    searchMusic();
-                }
-            }
-        );
+    document.addEventListener("submit", event => {
+        const form = event.target?.closest?.("#searchForm");
+        if (!form) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const button = document.getElementById("searchBtn");
+        if (button?.disabled) return;
+        searchMusic();
+    }, true);
 }
+
+function bindSearch() {
+    installSearchController();
+}
+
+// Install immediately after the Search function exists.
+installSearchController();
 
 
 /* ============================================================
@@ -6195,7 +6219,18 @@ function renderLocalIcons() {
     });
 }
 async function checkWebAuth() {
-    try { const r=await apiFetch("api/auth/status",{cache:"no-store"}); if(!r.ok) return false; const d=await r.json(); return !!d.authenticated; } catch (_) { return false; }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const r = await apiFetch("api/auth/status", {cache:"no-store", timeoutMs:5000});
+            if (r.ok) {
+                const d = await r.json();
+                return !!d.authenticated;
+            }
+            if (r.status >= 400 && r.status < 500) return false;
+        } catch (_) {}
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+    return false;
 }
 
 function showAuthenticatedApp() { document.getElementById("login-screen")?.classList.add("hidden"); const shell=document.getElementById("app-shell"); if(shell) shell.hidden=false; renderLocalIcons(); }
@@ -7220,37 +7255,19 @@ function renderLibraryTracksV37(list, query){
 function renderTracksV37(list,query){return renderLibraryTracksV37(list,query);}
 
 function v37BindSearchDebounce(){
+    installSearchController();
     const input=document.getElementById("query");
-    const button=document.getElementById("searchBtn");
     if(!input) return;
     if(input.dataset.v37SearchBound!=="1"){
         input.dataset.v37SearchBound="1";
         input.addEventListener("input",()=>{
             if(v37SearchTimer){clearTimeout(v37SearchTimer);v37SearchTimer=null;}
-            // Search is explicitly submitted by Enter or the Search button.
-            // Typing alone must never start a long external-provider request.
-            if(!input.value.trim()) hideSearchLoading();
-        });
-        input.addEventListener("keydown",event=>{
-            if(event.key==="Enter"&&!event.isComposing){
-                event.preventDefault();
-                if(!button?.disabled) searchMusic();
+            if(!input.value.trim()){
+                currentQuery = "";
+                searchCursor = "";
+                hasMoreResults = false;
+                hideSearchLoading();
             }
-        });
-    }
-    if(button && button.dataset.v37SearchBound!=="1"){
-        button.dataset.v37SearchBound="1";
-        button.addEventListener("click",event=>{
-            event.preventDefault();
-            if(!button.disabled) searchMusic();
-        });
-    }
-    const form=document.getElementById("searchForm");
-    if(form && form.dataset.v37SearchBound!=="1"){
-        form.dataset.v37SearchBound="1";
-        form.addEventListener("submit",event=>{
-            event.preventDefault();
-            if(!button?.disabled) searchMusic();
         });
     }
 }
@@ -7410,6 +7427,7 @@ window.openQueueDrawer = openQueueDrawer;
 window.closeQueueDrawer = closeQueueDrawer;
 
 window.searchMusic = searchMusic;
+window.__xrobSearchBuild = "377-searchfix3";
 window.loadMoreResults = loadMoreResults;
 
 window.loadLibrary = loadLibrary;
