@@ -5420,3 +5420,35 @@ button svg, [role="button"] svg { flex: 0 0 auto; }
   .result-card .btn-group { width: 100% !important; justify-content: flex-end !important; margin-top: 5px !important; }
 }
 
+
+/* ============================================================
+   3.7.8 SEARCH RESULT POLISH
+   ============================================================ */
+#tab-search .results-grid{gap:8px}
+#tab-search .result-card{min-height:82px;padding:10px 12px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card);align-items:center}
+#tab-search .result-card:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.12)}
+#tab-search .result-card .thumb-wrapper{position:relative;flex:0 0 64px;width:64px;height:64px;border-radius:10px;overflow:hidden}
+#tab-search .result-card .thumb-wrapper img{display:block}
+#tab-search .result-card .track-info{min-width:180px}
+#tab-search .result-card .track-title{font-size:13px;line-height:1.3}
+#tab-search .result-card .track-artist{font-size:11px;line-height:1.3}
+#tab-search .search-result-meta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px;min-width:0}
+#tab-search .search-badge,#tab-search .search-confidence{display:inline-flex;align-items:center;gap:4px;min-height:20px;padding:2px 7px;border:1px solid var(--border);border-radius:999px;font-size:9px;font-weight:700;white-space:nowrap}
+#tab-search .search-badge svg{width:11px;height:11px}
+#tab-search .search-badge.is-verified{border-color:rgba(80,190,120,.35)}
+#tab-search .search-result-secondary{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted);font-size:9px}
+#tab-search .search-confidence{border-color:rgba(80,190,120,.35);font-size:9px}
+#tab-search .result-card .btn-group{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap;min-width:210px}
+#tab-search .result-card .badge-library{white-space:nowrap}
+@media (max-width: 760px){
+  #tab-search .result-card{align-items:flex-start;flex-wrap:wrap}
+  #tab-search .result-card .track-info{flex:1 1 calc(100% - 80px);min-width:0}
+  #tab-search .result-card .btn-group{width:100%;min-width:0;justify-content:flex-end;padding-left:72px}
+}
+@media (max-width: 480px){
+  #tab-search .result-card .thumb-wrapper{flex-basis:58px;width:58px;height:58px}
+  #tab-search .result-card .track-title{font-size:12px}
+  #tab-search .result-card .track-artist{font-size:10px}
+  #tab-search .result-card .btn-group{padding-left:66px}
+  #tab-search .search-result-secondary{max-width:130px}
+}
