@@ -26,6 +26,18 @@ def persistent_song_id() -> str:
     return "song-" + uuid.uuid4().hex[:24]
 
 
+def strong_file_hash(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Full SHA-256 content hash for collision-proof duplicate confirmation."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def file_fingerprint(path: Path) -> str:
     """Fast content fingerprint used only to match renames/moves."""
     stat = path.stat()
@@ -68,12 +80,17 @@ class LibraryCatalog:
                 size INTEGER DEFAULT 0,
                 mtime_ns INTEGER DEFAULT 0,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
+                strong_hash TEXT DEFAULT '',
                 missing INTEGER NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL DEFAULT 0,
                 updated_at REAL NOT NULL DEFAULT 0
             )""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_path ON library_songs(relative_path)")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(library_songs)")}
+            if "strong_hash" not in columns:
+                conn.execute("ALTER TABLE library_songs ADD COLUMN strong_hash TEXT DEFAULT ''")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_fingerprint ON library_songs(fingerprint)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_strong_hash ON library_songs(strong_hash)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_missing ON library_songs(missing)")
             conn.execute("""CREATE TABLE IF NOT EXISTS library_song_aliases (
                 legacy_id TEXT PRIMARY KEY,
@@ -158,7 +175,7 @@ class LibraryCatalog:
             }
             sid = persistent_song_id()
             records.append((
-                sid, rel, fp,
+                sid, rel, fp, "",
                 int(st.st_size) if st else int(raw.get("size") or 0),
                 int(st.st_mtime_ns) if st else int(raw.get("mtime_ns") or 0),
                 json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
@@ -169,7 +186,7 @@ class LibraryCatalog:
             return 0
         with self._connect() as conn:
             conn.executemany(
-                "INSERT INTO library_songs(id,relative_path,fingerprint,size,mtime_ns,metadata_json,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO library_songs(id,relative_path,fingerprint,strong_hash,size,mtime_ns,metadata_json,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 records,
             )
             conn.executemany("INSERT OR IGNORE INTO library_song_aliases(legacy_id,song_id) VALUES(?,?)", aliases)
@@ -261,7 +278,7 @@ class LibraryCatalog:
                     claimed.add(str(row["id"]))
                 return {
                     "id": str(row["id"]), "relative_path": rel, "fingerprint": str(row.get("fingerprint") or ""),
-                    "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "metadata": self._metadata_from_row(row), "created_at": row.get("created_at") or time.time(),
+                    "strong_hash": str(row.get("strong_hash") or ""), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "metadata": self._metadata_from_row(row), "created_at": row.get("created_at") or time.time(),
                 }
             fp = file_fingerprint(path)
             sid = str(row["id"]) if row else None
@@ -281,7 +298,7 @@ class LibraryCatalog:
             metadata = metadata_loader(path)
             with claimed_lock:
                 claimed.add(sid)
-            return {"id": sid, "relative_path": rel, "fingerprint": fp, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "metadata": metadata, "created_at": created}
+            return {"id": sid, "relative_path": rel, "fingerprint": fp, "strong_hash": str(row.get("strong_hash") or "") if row else "", "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "metadata": metadata, "created_at": created}
 
         claimed = set()
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, int(metadata_workers))) as pool:
@@ -293,9 +310,9 @@ class LibraryCatalog:
         with self._connect() as conn:
             for record in records:
                 conn.execute(
-                    """INSERT INTO library_songs(id,relative_path,fingerprint,size,mtime_ns,metadata_json,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,0,?,?)
-                    ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
-                    (record["id"],record["relative_path"],record["fingerprint"],record["size"],record["mtime_ns"],json.dumps(record["metadata"],ensure_ascii=False,separators=(",", ":")),record["created_at"] or now,now),
+                    """INSERT INTO library_songs(id,relative_path,fingerprint,strong_hash,size,mtime_ns,metadata_json,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,0,?,?)
+                    ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,strong_hash=CASE WHEN excluded.strong_hash<>'' THEN excluded.strong_hash ELSE library_songs.strong_hash END,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
+                    (record["id"],record["relative_path"],record["fingerprint"],record.get("strong_hash") or "",record["size"],record["mtime_ns"],json.dumps(record["metadata"],ensure_ascii=False,separators=(",", ":")),record["created_at"] or now,now),
                 )
             if seen:
                 placeholders = ",".join("?" for _ in seen)
