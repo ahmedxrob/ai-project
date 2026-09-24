@@ -4205,7 +4205,7 @@ function renderItems(items) {
 
                     <div class="track-artist">
                         <i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(
-                            item.artist_hint || item.channel || "Unknown Artist"
+                            item.channel || "Unknown Artist"
                         )}
                     </div>
 
@@ -4331,7 +4331,7 @@ function renderItems(items) {
                             item.url,
                             item.title,
                             item.id,
-                            item.artist_hint || "",
+                            item.channel,
                             download
                         )
                 );
