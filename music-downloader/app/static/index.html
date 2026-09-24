@@ -11,7 +11,7 @@
   <title>
    Xrob Music
   </title>
-  <link href="static/style.css?v=377-searchfix1" rel="stylesheet"/>
+  <link href="static/style.css?v=377-searchfix2" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
   <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -227,14 +227,14 @@
          Find music, preview it, and save it to your library.
         </p>
        </div>
-       <div class="search-card page-section">
+       <form class="search-card page-section" id="searchForm" role="search">
         <input autocomplete="off" id="query" placeholder="Search YouTube music..." spellcheck="false" type="search"/>
-        <button id="searchBtn" type="button">
+        <button id="searchBtn" type="submit">
          <i aria-hidden="true" data-lucide="search">
          </i>
          Search
         </button>
-       </div>
+       </form>
        <!-- SEARCH LOADING -->
        <div aria-live="polite" class="xrob-loading" id="searchLoading" style="display:none;">
         <div aria-hidden="true" class="xrob-spinner">
@@ -1272,7 +1272,7 @@ https://…" required></textarea></label><div class="batch-meta-grid"><label>Art
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=377-searchfix1">
+  <script src="static/app.js?v=377-searchfix2">
   </script>
 
 
