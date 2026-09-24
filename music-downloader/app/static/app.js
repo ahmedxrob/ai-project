@@ -4128,7 +4128,7 @@ function renderItems(items) {
 
                     <div class="track-artist">
                         <i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(
-                            item.channel || "Unknown Artist"
+                            item.artist || item.channel || "Unknown Artist"
                         )}
                     </div>
 
