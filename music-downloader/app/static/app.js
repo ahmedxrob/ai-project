@@ -2341,14 +2341,6 @@ function updateMediaSession() {
         navigator.mediaSession.metadata = new MediaMetadata({ title, artist, album: "Xrob Music", artwork });
         const remotePlayback = isRemotePlayerOwner() && remotePlayerState;
         navigator.mediaSession.playbackState = (remotePlayback ? Boolean(remotePlayerState.paused) : Boolean(audio?.paused)) ? "paused" : "playing";
-        if (typeof navigator.mediaSession.setPositionState === "function") {
-            const duration = remotePlayback ? Number(remotePlayerState?.duration || 0) : Number(audio?.duration || 0);
-            const position = remotePlayback ? Number(remotePlayerState?.currentTime || 0) : Number(audio?.currentTime || 0);
-            const rate = 1;
-            if (Number.isFinite(duration) && duration > 0 && Number.isFinite(position) && position >= 0 && position <= duration && duration <= 86400) {
-                try { navigator.mediaSession.setPositionState({ duration, playbackRate: rate, position: Math.min(position, Math.max(0, duration - 0.01)) }); } catch (_) {}
-            }
-        }
     } catch (_) {}
 }
 
@@ -6307,125 +6299,9 @@ async function initializeApp() {
     await startAppAfterAuth();
 }
 
-async 
-/* ============================================================
-   XROB 3.7.5 — CROSS-PLATFORM COMPATIBILITY BRIDGE
-   Keeps shared behavior consistent across desktop browsers,
-   touch browsers, iOS/Android WebViews and constrained devices.
-   ============================================================ */
-function xrobPlatformInfo() {
-    const ua = String(navigator.userAgent || "");
-    const uaData = navigator.userAgentData || null;
-    const mobile = Boolean(uaData?.mobile) || /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
-    const ios = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    const android = /Android/i.test(ua);
-    const standalone = Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches) || Boolean(navigator.standalone);
-    return {
-        mobile, ios, android, standalone,
-        touch: Number(navigator.maxTouchPoints || 0) > 0,
-        pointer: typeof window.PointerEvent === "function",
-        websocket: typeof window.WebSocket === "function",
-        broadcastChannel: typeof window.BroadcastChannel === "function",
-        visualViewport: Boolean(window.visualViewport),
-        mediaSession: "mediaSession" in navigator,
-        mediaMetadata: "MediaMetadata" in window,
-        wakeLock: "wakeLock" in navigator,
-        webAudio: Boolean(window.AudioContext || window.webkitAudioContext),
-        abortController: typeof window.AbortController === "function",
-        sendBeacon: typeof navigator.sendBeacon === "function",
-        share: typeof navigator.share === "function",
-        clipboard: Boolean(navigator.clipboard),
-    };
-}
-
-function xrobSyncViewportVars() {
-    const root = document.documentElement;
-    if (!root) return;
-    const vv = window.visualViewport;
-    const width = Math.max(1, Math.round(vv?.width || window.innerWidth || 1));
-    const height = Math.max(1, Math.round(vv?.height || window.innerHeight || 1));
-    const offsetTop = Math.max(0, Number(vv?.offsetTop || 0));
-    root.style.setProperty("--xrob-viewport-width", `${width}px`);
-    root.style.setProperty("--xrob-viewport-height", `${height}px`);
-    root.style.setProperty("--xrob-viewport-offset-top", `${offsetTop}px`);
-}
-
-function installXrobViewportBridge() {
-    if (window.__xrob375ViewportBridge) return;
-    window.__xrob375ViewportBridge = true;
-    xrobSyncViewportVars();
-    window.addEventListener("resize", xrobSyncViewportVars, { passive: true });
-    window.addEventListener("orientationchange", () => window.setTimeout(xrobSyncViewportVars, 60), { passive: true });
-    window.addEventListener("pageshow", xrobSyncViewportVars, { passive: true });
-    window.visualViewport?.addEventListener("resize", xrobSyncViewportVars, { passive: true });
-    window.visualViewport?.addEventListener("scroll", xrobSyncViewportVars, { passive: true });
-}
-
-let xrobWakeLockSentinel = null;
-async function xrobReleaseWakeLock() {
-    if (!xrobWakeLockSentinel) return;
-    try { await xrobWakeLockSentinel.release(); } catch (_) {}
-    xrobWakeLockSentinel = null;
-}
-async function xrobAcquireWakeLock() {
-    if (!navigator.wakeLock?.request || document.visibilityState !== "visible" || audio?.paused) return;
-    if (xrobWakeLockSentinel) return;
-    try {
-        xrobWakeLockSentinel = await navigator.wakeLock.request("screen");
-        xrobWakeLockSentinel?.addEventListener?.("release", () => { xrobWakeLockSentinel = null; }, { once: true });
-    } catch (_) {}
-}
-
-function installXrobAudioCompatibility() {
-    if (!audio || audio.dataset.xrob375Compat) return;
-    audio.dataset.xrob375Compat = "1";
-    audio.preload = "metadata";
-    audio.setAttribute("playsinline", "");
-    audio.setAttribute("webkit-playsinline", "true");
-    audio.setAttribute("x-webkit-airplay", "allow");
-    audio.crossOrigin = "anonymous";
-    audio.addEventListener("play", () => { updateMediaSession(); xrobAcquireWakeLock(); }, { passive: true });
-    audio.addEventListener("playing", () => { updateMediaSession(); xrobAcquireWakeLock(); }, { passive: true });
-    audio.addEventListener("pause", () => { updateMediaSession(); xrobReleaseWakeLock(); }, { passive: true });
-    audio.addEventListener("ended", () => { updateMediaSession(); xrobReleaseWakeLock(); }, { passive: true });
-    audio.addEventListener("error", () => { updateMediaSession(); }, { passive: true });
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible" && !audio.paused) xrobAcquireWakeLock();
-        else xrobReleaseWakeLock();
-    }, { passive: true });
-    xrobSyncViewportVars();
-}
-
-function installXrobConnectivityBridge() {
-    if (window.__xrob375ConnectivityBridge) return;
-    window.__xrob375ConnectivityBridge = true;
-    const recover = () => {
-        try { heartbeatV37Device?.(); } catch (_) {}
-        try { loadServerPlayerState?.(); } catch (_) {}
-        try { loadV37Devices?.(); } catch (_) {}
-    };
-    window.addEventListener("online", recover, { passive: true });
-    window.addEventListener("pageshow", recover, { passive: true });
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") recover();
-    }, { passive: true });
-}
-
-function installXrobPlatformBridge() {
-    if (window.__xrob375PlatformBridge) return;
-    window.__xrob375PlatformBridge = true;
-    installXrobViewportBridge();
-    installXrobConnectivityBridge();
-    installXrobAudioCompatibility();
-    window.XrobPlatform = Object.freeze(xrobPlatformInfo());
-    document.documentElement.dataset.xrobPlatform = window.XrobPlatform.mobile ? "mobile" : "desktop";
-    if (window.XrobPlatform.ios) document.documentElement.dataset.xrobIos = "1";
-}
-
 async function startAppAfterAuth() {
 
     cacheDom();
-    installXrobPlatformBridge();
 
     toggleTheme(
         storageGet(
@@ -7222,20 +7098,7 @@ function v37DeviceName() {
     return storageGet("xrob_music_device_name") || (v37DeviceType() === "phone" ? "Phone" : v37DeviceType() === "tablet" ? "Tablet" : v37DeviceType() === "tv" ? "Living Room" : "This PC");
 }
 function v37Capabilities() {
-    const p = window.XrobPlatform || xrobPlatformInfo();
-    return {
-        audio: Boolean(audio),
-        mediaSession: Boolean(p.mediaSession && p.mediaMetadata),
-        websocket: Boolean(p.websocket),
-        broadcastChannel: Boolean(p.broadcastChannel),
-        touch: Boolean(p.touch),
-        pointer: Boolean(p.pointer),
-        visualViewport: Boolean(p.visualViewport),
-        wakeLock: Boolean(p.wakeLock),
-        webAudio: Boolean(p.webAudio),
-        remoteControl: true,
-        safeArea: true
-    };
+    return { audio: true, mediaSession: Boolean("mediaSession" in navigator), websocket: Boolean(window.WebSocket), touch: navigator.maxTouchPoints > 0, remoteControl: true };
 }
 function v37DevicePayload() {
     return { deviceId:v37DeviceId(), clientId:PLAYER_CLIENT_ID, tabId:PLAYER_TAB_ID, name:v37DeviceName(), deviceType:v37DeviceType(), platform:String(navigator.userAgentData?.platform || navigator.platform || ""), browser:localDeviceLabel().split(" · ").pop() || "Browser", capabilities:v37Capabilities() };
