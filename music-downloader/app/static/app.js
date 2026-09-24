@@ -6175,8 +6175,8 @@ function renderLocalIcons() {
         const defs = paths[name];
         if (!defs) return;
         const svg = document.createElementNS(ns, 'svg');
-        svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor');
-        svg.setAttribute('stroke-width','2'); svg.setAttribute('stroke-linecap','round'); svg.setAttribute('stroke-linejoin','round'); svg.setAttribute('aria-hidden','true');
+        svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('width','18'); svg.setAttribute('height','18'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor');
+        svg.setAttribute('stroke-width','2'); svg.setAttribute('stroke-linecap','round'); svg.setAttribute('stroke-linejoin','round'); svg.setAttribute('aria-hidden','true'); svg.classList.add('xrob-icon');
         defs.forEach(([kind, value]) => {
             const node = document.createElementNS(ns, kind);
             const parts = String(value).trim().split(/\s+/);
