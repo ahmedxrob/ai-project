@@ -560,7 +560,7 @@ function applyAuthoritativeOwnedPlayerState(state, force = false) {
             else syncLibraryQueue(queue, state.queueIndex);
         }
         updatePlayerInfo(state.title, state.artist, state.art);
-        if (player) player.style.display = "grid";
+        if (player) { player.hidden = false; player.style.display = "grid"; }
         if (volume && Number.isFinite(Number(state.volume))) {
             volume.value = Math.max(0, Math.min(1, Number(state.volume)));
             audio.volume = Math.max(0, Math.min(1, Number(state.volume)));
@@ -1149,6 +1149,26 @@ async function sendPlayerHeartbeat() {
 async function initPlayerSync() {
     if (playerSyncChannel || typeof window === "undefined") return;
     try { playerSyncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(PLAYER_SYNC_CHANNEL) : null; } catch (_) { playerSyncChannel = null; }
+
+    // BroadcastChannel is unavailable in some embedded/webview environments.
+    // The storage event gives same-origin desktop/mobile tabs a reliable fallback.
+    if (!window.__xrobPlayerStorageFallbackInstalled) {
+        window.__xrobPlayerStorageFallbackInstalled = true;
+        window.addEventListener("storage", event => {
+            if (event.storageArea !== localStorage || !event.newValue) return;
+            if (event.key === PLAYER_SYNC_STATE_KEY) {
+                try {
+                    const state = JSON.parse(event.newValue);
+                    if (state?.ownerId && state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state);
+                } catch (_) {}
+            } else if (event.key === PLAYER_SYNC_COMMAND_KEY) {
+                try { applyRemoteCommand(JSON.parse(event.newValue)); } catch (_) {}
+            } else if (event.key === PLAYER_OWNER_KEY) {
+                heartbeatPlayerOwner();
+                loadServerPlayerState();
+            }
+        }, { passive: true });
+    }
     playerSyncChannel?.addEventListener("message", (event) => {
         const msg = event.data || {};
         if (msg.type === "request-state") {
@@ -7319,7 +7339,41 @@ applySettingsToForm = applySettingsToFormV37;
 saveSettings = saveSettingsV37;
 resetSettings = resetSettingsV37;
 
+
+function v373InstallCrossPlatformLifecycle(){
+    if (window.__xrob373LifecycleInstalled) return;
+    window.__xrob373LifecycleInstalled = true;
+    const recover = async (reason) => {
+        try {
+            if (navigator.onLine === false) return;
+            heartbeatV37Device();
+            await loadV37Devices();
+            const stateLoaded = await loadServerPlayerState();
+            // Reconcile only when another device owns the player or the local
+            // browser has been suspended and resumed. This avoids unnecessary
+            // source reloads during ordinary tab visibility changes.
+            if (stateLoaded && (reason !== "online" || isRemotePlayerOwner())) {
+                updateDeviceOwnershipUI();
+                updateDeviceOwnershipUIV37();
+            }
+        } catch (_) {}
+    };
+    window.addEventListener("online", () => recover("online"), { passive: true });
+    window.addEventListener("pageshow", () => recover("pageshow"), { passive: true });
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") recover("visible");
+    }, { passive: true });
+    window.addEventListener("pagehide", () => {
+        try { heartbeatV37Device(); } catch (_) {}
+        try { schedulePlayerStateBroadcast(false); } catch (_) {}
+    }, { passive: true });
+    window.addEventListener("beforeunload", () => {
+        try { broadcastPlayerState(true, true); } catch (_) {}
+    }, { passive: true });
+}
+
 function v37Install(){
+    try{v373InstallCrossPlatformLifecycle();}catch(_){}
     try{v37WrapFetchers();}catch(_){}
     // Replace handlers/functions after the original startup has installed its base listeners.
     document.getElementById("gp-connect-btn")?.addEventListener("click",e=>{e.preventDefault();e.stopPropagation();openV37Connect();});
