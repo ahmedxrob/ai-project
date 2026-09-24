@@ -1154,15 +1154,13 @@ async function initPlayerSync() {
     if (!window.__xrobPlayerStorageFallbackInstalled) {
         window.__xrobPlayerStorageFallbackInstalled = true;
         window.addEventListener("storage", event => {
-            if (event.storageArea !== localStorage || !event.newValue) return;
-            if (event.key === PLAYER_SYNC_STATE_KEY) {
-                try {
-                    const state = JSON.parse(event.newValue);
-                    if (state?.ownerId && state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state);
-                } catch (_) {}
-            } else if (event.key === PLAYER_SYNC_COMMAND_KEY) {
-                try { applyRemoteCommand(JSON.parse(event.newValue)); } catch (_) {}
-            } else if (event.key === PLAYER_OWNER_KEY) {
+            if (event.storageArea !== localStorage) return;
+            if (event.key === PLAYER_SYNC_STATE_KEY && event.newValue) {
+                try { const state = JSON.parse(event.newValue); if (state?.ownerId && state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state); } catch (_) {}
+            } else if (event.key === PLAYER_SYNC_COMMAND_KEY && event.newValue) {
+                try { const message = JSON.parse(event.newValue); if (!message.targetId || message.targetId === PLAYER_TAB_ID) applyRemoteCommand(message); } catch (_) {}
+            } else if (event.key === PLAYER_OWNER_KEY && event.newValue) {
+                try { const owner = JSON.parse(event.newValue); if (owner?.id) playerOwnerId = owner.id; } catch (_) {}
                 heartbeatPlayerOwner();
                 loadServerPlayerState();
             }
@@ -1202,35 +1200,10 @@ async function initPlayerSync() {
             if (!remotePlayerState) claimLocalPlayerWhenOwnerIsGone();
         }, PLAYER_OWNER_CLAIM_DELAY_MS);
     }
-    window.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") loadServerPlayerState();
-    });
-    window.addEventListener("storage", (event) => {
-        if (event.key === PLAYER_SYNC_STATE_KEY && event.newValue) {
-            try { const state = JSON.parse(event.newValue); if (state.ownerId !== PLAYER_TAB_ID) applyRemotePlayerState(state); } catch (_) {}
-        } else if (event.key === PLAYER_SYNC_COMMAND_KEY && event.newValue) {
-            try { const message = JSON.parse(event.newValue); if (message.targetId === PLAYER_TAB_ID) applyRemoteCommand(message); } catch (_) {}
-        } else if (event.key === PLAYER_OWNER_KEY && event.newValue) {
-            try { const owner = JSON.parse(event.newValue); if (owner?.id) playerOwnerId = owner.id; } catch (_) {}
-        }
-    });
     playerSyncHeartbeat = window.setInterval(() => {
         heartbeatPlayerOwner();
         sendPlayerHeartbeat();
     }, PLAYER_HEARTBEAT_MS);
-    window.addEventListener("beforeunload", () => {
-        try { persistCurrentPosition(true, true); } catch (_) {}
-        try { broadcastPlayerState(true, true); } catch (_) {}
-        try { playerSyncChannel?.postMessage({ type: "owner-closing", ownerId: PLAYER_TAB_ID }); } catch (_) {}
-        clearPlayerOwner();
-        if (playerSyncHeartbeat) window.clearInterval(playerSyncHeartbeat);
-        playerSyncHeartbeat = null;
-        stopRemoteProgressTicker();
-        if (playerOwnerClaimTimer) window.clearTimeout(playerOwnerClaimTimer);
-        if (playerProgressBroadcastTimer) window.clearTimeout(playerProgressBroadcastTimer);
-        if (playerServerSyncTimer) window.clearTimeout(playerServerSyncTimer);
-        try { playerSyncChannel?.close(); } catch (_) {}
-    }, { once: true });
 }
 
 
@@ -6314,37 +6287,10 @@ async function startAppAfterAuth() {
 
 
     initWebSocket();
-    window.addEventListener("online", () => {
-        socketReconnectAttempt = 0;
-        if (socketReconnectTimer) { clearTimeout(socketReconnectTimer); socketReconnectTimer = null; }
-        initWebSocket();
-    }, { passive: true });
-    window.addEventListener("offline", () => {
-        if (socketReconnectTimer) { clearTimeout(socketReconnectTimer); socketReconnectTimer = null; }
-    }, { passive: true });
 
 
     installEnhancedFeatures();
     installMediaSession();
-    const persistOnLeave = () => {
-        persistCurrentPosition(true, true);
-        if (!isRemotePlayerOwner()) {
-            const state = buildPlayerSyncState(true);
-            if (state) {
-                state.seq = ++playerSyncSequence;
-                state.force = true;
-                publishPlayerStateToServer(state, true, true);
-            }
-        }
-    };
-    window.addEventListener("pagehide", persistOnLeave, { passive: true });
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") persistOnLeave();
-        else {
-            loadServerPlayerState();
-            if (!audio?.paused) startPlayerProgressFrame();
-        }
-    }, { passive: true });
     document.getElementById("errorsButton")?.addEventListener("click",async()=>{const r=await apiFetch("api/errors");const d=await r.json();document.getElementById("errorsContent").innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';document.getElementById("errors-modal").hidden=false;});
     document.getElementById("errorsClose")?.addEventListener("click",()=>document.getElementById("errors-modal").hidden=true);
     restorePlayerState();
@@ -7287,36 +7233,72 @@ resetSettings = resetSettingsV37;
 
 
 function v373InstallCrossPlatformLifecycle(){
-    if (window.__xrob373LifecycleInstalled) return;
-    window.__xrob373LifecycleInstalled = true;
+    if (window.__xrobUnifiedLifecycleInstalled) return;
+    window.__xrobUnifiedLifecycleInstalled = true;
+    let leavePersisted = false;
+    let recoveryPromise = null;
+
     const recover = async (reason) => {
+        if (recoveryPromise) return recoveryPromise;
+        recoveryPromise = (async () => {
         try {
             if (navigator.onLine === false) return;
-            heartbeatV37Device();
+            socketReconnectAttempt = 0;
+            if (socketReconnectTimer) { clearTimeout(socketReconnectTimer); socketReconnectTimer = null; }
+            initWebSocket();
+            registerV37Device();
             await loadV37Devices();
             const stateLoaded = await loadServerPlayerState();
-            // Reconcile only when another device owns the player or the local
-            // browser has been suspended and resumed. This avoids unnecessary
-            // source reloads during ordinary tab visibility changes.
-            if (stateLoaded && (reason !== "online" || isRemotePlayerOwner())) {
-                updateDeviceOwnershipUI();
-                updateDeviceOwnershipUIV37();
+            if (stateLoaded) {
+                updateDeviceOwnershipUI?.();
+                updateDeviceOwnershipUIV37?.();
+            }
+            if (!audio?.paused) startPlayerProgressFrame();
+        } catch (_) {}
+        })().finally(() => { recoveryPromise = null; });
+        return recoveryPromise;
+    };
+
+    const persistOnLeave = () => {
+        if (leavePersisted) return;
+        leavePersisted = true;
+        try { persistCurrentPosition(true, true); } catch (_) {}
+        try {
+            if (!isRemotePlayerOwner()) {
+                const state = buildPlayerSyncState(true);
+                if (state) {
+                    state.seq = ++playerSyncSequence;
+                    state.force = true;
+                    publishPlayerStateToServer(state, true, true);
+                }
             }
         } catch (_) {}
-    };
-    window.addEventListener("online", () => recover("online"), { passive: true });
-    window.addEventListener("pageshow", () => recover("pageshow"), { passive: true });
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") recover("visible");
-    }, { passive: true });
-    window.addEventListener("pagehide", () => {
         try { heartbeatV37Device(); } catch (_) {}
-        try { schedulePlayerStateBroadcast(false); } catch (_) {}
+        try { playerSyncChannel?.postMessage({ type: "owner-closing", ownerId: PLAYER_TAB_ID }); } catch (_) {}
+    };
+
+    const onVisible = () => {
+        leavePersisted = false;
+        recover("visible");
+    };
+    const onHidden = () => persistOnLeave();
+    const onOnline = () => { leavePersisted = false; recover("online"); };
+    const onOffline = () => {
+        if (socketReconnectTimer) { clearTimeout(socketReconnectTimer); socketReconnectTimer = null; }
+    };
+
+    window.addEventListener("online", onOnline, { passive: true });
+    window.addEventListener("offline", onOffline, { passive: true });
+    window.addEventListener("pageshow", onVisible, { passive: true });
+    window.addEventListener("pagehide", onHidden, { passive: true });
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") onVisible();
+        else onHidden();
     }, { passive: true });
-    window.addEventListener("beforeunload", () => {
-        try { broadcastPlayerState(true, true); } catch (_) {}
-    }, { passive: true });
+    window.addEventListener("beforeunload", persistOnLeave, { passive: true });
+
 }
+
 
 function v37Install(){
     try{v373InstallCrossPlatformLifecycle();}catch(_){}
@@ -7344,8 +7326,6 @@ function v37Install(){
     registerV37Device();heartbeatV37Device();loadV37Devices();loadV37DownloadHistory();
     if(v37DeviceTimer)clearInterval(v37DeviceTimer);v37DeviceTimer=setInterval(heartbeatV37Device,8000);
     if(v37DeviceRefreshTimer)clearInterval(v37DeviceRefreshTimer);v37DeviceRefreshTimer=setInterval(()=>{if(!document.getElementById("connect-modal")?.hidden)loadV37Devices();},5000);
-    window.addEventListener("online",()=>{registerV37Device();loadV37Devices();loadServerPlayerState?.();},{passive:true});
-    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){heartbeatV37Device();loadV37Devices();}});
 }
 
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",v37Install,{once:true});else setTimeout(v37Install,0);
