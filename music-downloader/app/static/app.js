@@ -18,7 +18,6 @@ let libraryView = "tracks";
 let selectedArtistId = null;
 let selectedAlbumId = null;
 let libraryPlaybackQueue = null;
-let libraryFilesSet = new Set();
 let playerShuffle = storageGet("xrob_music_shuffle") === "true";
 let shuffleRestoreQueue = null;
 let shuffleRestoreCurrentId = null;
@@ -1798,9 +1797,10 @@ function switchTab(tab) {
     document
         .querySelectorAll(".nav-link")
         .forEach(button => {
-
-            button.classList.remove("active");
-
+            const isActive = button.id === `btn-${tab}` || button.id === `mob-btn-${tab}`;
+            button.classList.toggle("active", isActive);
+            if (isActive) button.setAttribute("aria-current", "page");
+            else button.removeAttribute("aria-current");
         });
 
 
@@ -3226,41 +3226,6 @@ function loadLibraryCache() {
         libraryLoadedFromCache =
             true;
 
-        libraryFilesSet.clear();
-
-        rawLibraryFiles.forEach(
-            file => {
-
-                const name =
-                    String(
-                        file.name || ""
-                    );
-
-                const slash =
-                    name.lastIndexOf(
-                        "/"
-                    );
-
-                const dot =
-                    name.lastIndexOf(
-                        "."
-                    );
-
-                const base =
-                    name.substring(
-                        slash + 1,
-                        dot > slash
-                            ? dot
-                            : name.length
-                    );
-
-                libraryFilesSet.add(
-                    normalizeKey(
-                        base
-                    )
-                );
-            }
-        );
 
         return true;
 
@@ -3383,40 +3348,6 @@ async function refreshLibraryCache() {
         libraryLoadedFromCache =
             false;
 
-        libraryFilesSet.clear();
-
-
-        rawLibraryFiles.forEach(
-            file => {
-
-                const name =
-                    String(
-                        file.name || ""
-                    );
-
-
-                const slash =
-                    name.lastIndexOf("/");
-
-
-                const dot =
-                    name.lastIndexOf(".");
-
-
-                const base =
-                    name.substring(
-                        slash + 1,
-                        dot > slash
-                            ? dot
-                            : name.length
-                    );
-
-
-                libraryFilesSet.add(
-                    normalizeKey(base)
-                );
-            }
-        );
 
 
         const side =
@@ -4237,13 +4168,7 @@ function renderItems(items) {
             }
 
 
-            const titleKey =
-                normalizeKey(
-                    item.title || ""
-                );
-
-
-            if (item.already_downloaded || libraryFilesSet.has(titleKey)) {
+            if (item.already_downloaded) {
 
                 group.innerHTML = `
                     <div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library</div>
@@ -4289,7 +4214,7 @@ function renderItems(items) {
                             ),
                             "search",
                             item.title,
-                            item.channel,
+                            item.artist || item.channel,
                             item.thumbnail
                         )
                 );
@@ -4323,8 +4248,9 @@ function renderItems(items) {
                             item.url,
                             item.title,
                             item.id,
-                            item.channel,
-                            download
+                            item.artist || item.channel,
+                            download,
+                            item.album || ""
                         )
                 );
 
@@ -5206,7 +5132,8 @@ async function startDownload(
     title,
     elementId,
     artist,
-    button
+    button,
+    album = ""
 ) {
 
     if (!url) {
@@ -5246,7 +5173,8 @@ async function startDownload(
                             url,
                             title,
                             elementId,
-                            artist
+                            artist,
+                            album
                         })
                 }
             );
