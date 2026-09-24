@@ -84,6 +84,13 @@ app = FastAPI(
 )
 
 @app.middleware("http")
+async def static_release_cache_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+@app.middleware("http")
 async def web_auth_middleware(request: Request, call_next):
     path = request.url.path
     # OpenSubsonic and static assets keep their existing authentication behavior.
