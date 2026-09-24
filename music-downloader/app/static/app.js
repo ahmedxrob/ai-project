@@ -1745,6 +1745,9 @@ function navigate(
 
 function switchTab(tab) {
 
+    const previousTab = document.querySelector(".tab-content.active")?.id?.replace(/^tab-/, "") || "";
+    if(previousTab === "search" && tab !== "search" && typeof cancelSearchRequest === "function") cancelSearchRequest();
+
     const tabs = [
         "home",
         "search",
@@ -3802,9 +3805,22 @@ async function deleteFile(filename) {
    SEARCH
    ============================================================ */
 
+function cancelSearchRequest(){
+    if(v37SearchTimer){clearTimeout(v37SearchTimer);v37SearchTimer=null;}
+    searchRequestId += 1;
+    try{searchAbortController?.abort();}catch(_){}
+    searchAbortController=null;
+    isLoadingMore=false;
+    hasMoreResults=false;
+    searchCursor="";
+    hideSearchLoading();
+}
+
 async function searchMusic() {
+    if(v37SearchTimer){clearTimeout(v37SearchTimer);v37SearchTimer=null;}
     const requestId = ++searchRequestId;
     if (searchAbortController) { try { searchAbortController.abort(); } catch (_) {} }
+    isLoadingMore = false;
     const requestController = typeof AbortController !== "undefined" ? new AbortController() : null;
     searchAbortController = requestController;
 
@@ -7203,7 +7219,41 @@ function renderLibraryTracksV37(list, query){
 }
 function renderTracksV37(list,query){return renderLibraryTracksV37(list,query);}
 
-function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";input.addEventListener("input",()=>{if(v37SearchTimer)clearTimeout(v37SearchTimer);const q=input.value.trim();if(!q){searchMusic();return;}if(q.length<2)return;v37SearchTimer=setTimeout(()=>{if(document.activeElement===input && input.value.trim()===q){searchMusic();}else if(input.value.trim()===q){searchMusic();}},650);});}
+function v37BindSearchDebounce(){
+    const input=document.getElementById("query");
+    const button=document.getElementById("searchBtn");
+    if(!input) return;
+    if(input.dataset.v37SearchBound!=="1"){
+        input.dataset.v37SearchBound="1";
+        input.addEventListener("input",()=>{
+            if(v37SearchTimer){clearTimeout(v37SearchTimer);v37SearchTimer=null;}
+            // Search is explicitly submitted by Enter or the Search button.
+            // Typing alone must never start a long external-provider request.
+            if(!input.value.trim()) hideSearchLoading();
+        });
+        input.addEventListener("keydown",event=>{
+            if(event.key==="Enter"&&!event.isComposing){
+                event.preventDefault();
+                if(!button?.disabled) searchMusic();
+            }
+        });
+    }
+    if(button && button.dataset.v37SearchBound!=="1"){
+        button.dataset.v37SearchBound="1";
+        button.addEventListener("click",event=>{
+            event.preventDefault();
+            if(!button.disabled) searchMusic();
+        });
+    }
+    const form=document.getElementById("searchForm");
+    if(form && form.dataset.v37SearchBound!=="1"){
+        form.dataset.v37SearchBound="1";
+        form.addEventListener("submit",event=>{
+            event.preventDefault();
+            if(!button?.disabled) searchMusic();
+        });
+    }
+}
 
 function v37InstallKeyboard(){document.addEventListener("keydown",event=>{if(event.target?.matches?.("input,textarea,select,[contenteditable=true]"))return;if(event.key===" "){event.preventDefault();playBtn?.click();}else if(event.key==="ArrowRight"&&event.shiftKey){event.preventDefault();seekFromKeyboard(10);}else if(event.key==="ArrowLeft"&&event.shiftKey){event.preventDefault();seekFromKeyboard(-10);}else if(event.key.toLowerCase()==="m"){event.preventDefault();if(audio)audio.muted=!audio.muted;}});}
 function seekFromKeyboard(delta){const current=isRemotePlayerOwner()?Number(remotePlayerState?.currentTime||0):Number(audio?.currentTime||0),duration=isRemotePlayerOwner()?Number(remotePlayerState?.duration||0):Number(audio?.duration||0),next=Math.max(0,Math.min(duration||Infinity,current+delta));if(isRemotePlayerOwner())sendPlayerCommand("seek",{time:next});else if(audio){audio.currentTime=next;persistCurrentPosition(true);schedulePlayerStateBroadcast(true);}}
