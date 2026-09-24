@@ -4804,3 +4804,159 @@ button, [role="button"], input[type="button"], input[type="submit"] { min-height
 .gp-seek-wrap { position:relative; z-index:3; min-height:18px; }
 #gp-seek { position:relative; z-index:4; min-width:0; }
 @media(max-width:640px){ .gp-controls{width:100%;min-width:0;} .gp-main-controls{width:100%;justify-content:center;} .gp-progress-container{width:100%;} .global-player-bar.music-player{padding-top:4px;padding-bottom:4px;} }
+
+
+/* ============================================================
+   XROB 3.7.3 — UNIFIED APP CHROME / CROSS-PLATFORM SHELL
+   Header and player intentionally share the same visual language.
+   The player is a viewport-level surface, independent from the scroll shell.
+   ============================================================ */
+:root {
+    --app-header-height: 72px;
+    --player-height: 82px;
+    --chrome-bg: color-mix(in srgb, var(--bg-surface) 93%, transparent);
+    --chrome-border: color-mix(in srgb, var(--border-strong) 86%, transparent);
+    --chrome-shadow: 0 14px 38px rgba(0,0,0,.16);
+}
+
+.app-column { padding-top: var(--app-header-height); }
+
+.app-topbar {
+    position: fixed !important;
+    top: 0 !important;
+    left: var(--sidebar-width) !important;
+    right: 0 !important;
+    height: var(--app-header-height) !important;
+    z-index: 1600 !important;
+    background: var(--chrome-bg) !important;
+    border-bottom: 1px solid var(--chrome-border) !important;
+    box-shadow: var(--chrome-shadow), inset 0 1px 0 rgba(255,255,255,.035) !important;
+    backdrop-filter: blur(24px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
+}
+.app-topbar::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 18%, transparent), transparent);
+    pointer-events: none;
+}
+.app-topbar-inner {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    padding-inline: clamp(14px, 1.7vw, 28px) !important;
+    gap: 18px !important;
+}
+.brand-mark { height: 46px !important; gap: 10px !important; }
+.brand-mark img { width: 38px !important; height: 38px !important; border-radius: 11px !important; box-shadow: 0 8px 22px rgba(0,0,0,.18) !important; }
+.brand-mark span { font-size: 17px !important; font-weight: 850 !important; }
+.primary-nav {
+    min-width: 0 !important;
+    padding: 4px !important;
+    border-radius: 15px !important;
+    background: color-mix(in srgb, var(--bg-elevated) 72%, transparent) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.03) !important;
+}
+.primary-nav .nav-link {
+    min-height: 42px !important;
+    min-width: 96px !important;
+    padding-inline: 14px !important;
+    border-radius: 11px !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+}
+.primary-nav .nav-link > svg,
+.primary-nav .nav-link > i { width: 19px !important; height: 19px !important; flex-basis: 19px !important; }
+.topbar-actions { gap: 8px !important; }
+.topbar-icon {
+    width: 42px !important;
+    height: 42px !important;
+    flex-basis: 42px !important;
+    border-radius: 13px !important;
+    background: color-mix(in srgb, var(--bg-elevated) 82%, transparent) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 6px 16px rgba(0,0,0,.08) !important;
+}
+.topbar-icon svg { width: 19px !important; height: 19px !important; }
+
+.global-player-bar.music-player {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: var(--player-height) !important;
+    z-index: 1700 !important;
+    background: var(--chrome-bg) !important;
+    border-top: 1px solid var(--chrome-border) !important;
+    box-shadow: 0 -16px 42px rgba(0,0,0,.20), inset 0 1px 0 rgba(255,255,255,.025) !important;
+    backdrop-filter: blur(26px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(26px) saturate(150%) !important;
+    padding-inline: clamp(14px, 1.7vw, 28px) !important;
+    isolation: isolate !important;
+    transform: none !important;
+}
+.global-player-bar.music-player[hidden] { display: none !important; }
+.global-player-bar.music-player::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 4%, transparent), transparent 24%, transparent 76%, color-mix(in srgb, var(--accent) 3%, transparent));
+}
+.gp-track-details,
+.gp-controls,
+.gp-extra { position: relative; z-index: 1; }
+.gp-track-details img { border-radius: 10px !important; }
+.gp-play-btn,
+.gp-skip-btn,
+.gp-connect-btn,
+.gp-device-takeover { touch-action: manipulation !important; -webkit-tap-highlight-color: transparent; }
+
+/* The bottom player sits above the mobile navigation instead of competing with it. */
+@media (max-width: 768px) {
+    :root { --app-header-height: 60px; --player-height: 78px; }
+    .app-column { padding-top: var(--app-header-height); }
+    .app-topbar {
+        left: 0 !important;
+        height: var(--app-header-height) !important;
+    }
+    .app-topbar-inner { padding-inline: 9px !important; gap: 7px !important; }
+    .brand-mark { height: 42px !important; }
+    .brand-mark img { width: 34px !important; height: 34px !important; }
+    .primary-nav { flex: 1 1 auto !important; }
+    .primary-nav .nav-link { min-height: 38px !important; width: 38px !important; min-width: 38px !important; padding: 7px !important; }
+    .primary-nav .nav-link .nav-text { display: none !important; }
+    .primary-nav .nav-link > svg,
+    .primary-nav .nav-link > i { width: 18px !important; height: 18px !important; flex-basis: 18px !important; }
+    .topbar-actions { gap: 5px !important; }
+    .topbar-icon { width: 36px !important; height: 36px !important; flex-basis: 36px !important; border-radius: 11px !important; }
+    .topbar-icon svg { width: 17px !important; height: 17px !important; }
+    .global-player-bar.music-player {
+        bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px)) !important;
+        height: var(--player-height) !important;
+        padding-inline: 10px !important;
+    }
+    .main-content.workspace-main {
+        padding-top: 0 !important;
+        padding-bottom: calc(var(--player-height) + var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 22px) !important;
+    }
+    body.music-app { padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px)) !important; }
+}
+@media (max-width: 520px) {
+    :root { --app-header-height: 58px; --player-height: 76px; }
+    .app-topbar-inner { padding-inline: 7px !important; }
+    .brand-mark img { width: 32px !important; height: 32px !important; }
+    .primary-nav .nav-link { width: 36px !important; min-width: 36px !important; }
+    .topbar-icon { width: 34px !important; height: 34px !important; flex-basis: 34px !important; }
+    .topbar-icon svg { width: 16px !important; height: 16px !important; }
+    .global-player-bar.music-player { padding-inline: 8px !important; }
+}
+
+/* Cross-platform fallback when advanced glass effects are unavailable. */
+@supports not ((backdrop-filter: blur(1px))) {
+    .app-topbar,
+    .global-player-bar.music-player { background: var(--bg-surface) !important; }
+}
