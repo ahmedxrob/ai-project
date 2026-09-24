@@ -54,7 +54,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.0"
+SERVER_VERSION = "3.7.1"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -7382,6 +7382,43 @@ def _sanitize_player_command_payload(command, payload):
         allowed = {"src", "source", "title", "artist", "art", "songId", "queueIndex", "queue", "dailyMix", "repeatMode", "shuffle"}
         return {key: state[key] for key in allowed if key in state}
     return {}
+
+
+@app.post("/api/player/mirror")
+async def api_player_mirror(payload: dict = Body(...)):
+    target_id = str(payload.get("targetId") or "").strip()[:200]
+    if not target_id:
+        raise HTTPException(400, "targetId is required")
+    src = str(payload.get("src") or "").strip()[:2000]
+    if not src:
+        raise HTTPException(400, "src is required")
+    rows = await asyncio.to_thread(db_get_devices_sync)
+    target = next((row for row in rows if str(row.get("tab_id") or "") == target_id), None)
+    if not target:
+        raise HTTPException(404, "Device not found")
+    last_seen = float(target.get("last_seen_at") or 0)
+    if last_seen and time.time() - last_seen > MAX_DEVICE_STALE_SECONDS:
+        raise HTTPException(409, "Device is offline")
+    current_data = await get_player_state_async()
+    current = dict(current_data.get("state") or {}) if isinstance(current_data, dict) else {}
+    now = time.time()
+    live_position = _effective_player_position(current, now) if current else 0.0
+    raw_time = payload.get("currentTime")
+    try:
+        current_time = max(0.0, float(raw_time if raw_time is not None else live_position))
+    except (TypeError, ValueError):
+        current_time = live_position
+    message_payload = {
+        "src": src,
+        "title": str(payload.get("title") or current.get("title") or "Unknown Track")[:300],
+        "artist": str(payload.get("artist") or current.get("artist") or "Unknown Artist")[:300],
+        "art": str(payload.get("art") or current.get("art") or "")[:2000],
+        "songId": str(payload.get("songId") or current.get("songId") or "")[:512],
+        "source": str(payload.get("source") or current.get("source") or "library")[:32],
+        "currentTime": current_time,
+    }
+    await manager.broadcast({"type":"command","targetId":target_id,"command":"mirror-play","payload":message_payload,"id":str(payload.get("id") or uuid.uuid4().hex)[:300]})
+    return {"status":"ok","targetId":target_id,"deviceId":target.get("device_id")}
 
 
 @app.post("/api/player/command")
