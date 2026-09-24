@@ -54,7 +54,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.5"
+SERVER_VERSION = "3.7.4"
 
 @asynccontextmanager
 async def app_lifespan(_app):
