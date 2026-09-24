@@ -4024,116 +4024,233 @@ async function searchMusic() {
 
 
 function renderItems(items) {
-    const results = document.getElementById("results");
-    if (!results || !Array.isArray(items)) return;
 
-    items.forEach(item => {
-        if (!item) return;
-        const isLibrary = item.source === "library";
-        const resultId = String(item.id || item.url || item.name || "").trim();
-        if (!resultId) return;
-        if (!isLibrary && searchResultIds.has(resultId)) return;
-        if (!isLibrary) searchResultIds.add(resultId);
+    const results =
+        document.getElementById(
+            "results"
+        );
 
-        const card = document.createElement("article");
-        card.className = "result-card";
 
-        if (isLibrary) {
-            const title = item.title || item.name || "Unknown Track";
-            const artist = item.artist || "Unknown Artist";
-            const album = item.album || "Unknown Album";
-            const thumb = String(item.cover || "");
-            card.dataset.libraryName = item.name || "";
+    if (!results || !Array.isArray(items)) {
+        return;
+    }
+
+
+    items.forEach(
+        item => {
+
+            if (!item) {
+                return;
+            }
+
+
+            const card =
+                document.createElement(
+                    "article"
+                );
+
+
+            card.className =
+                "result-card";
+
+            if (item.source === "library") {
+                const title = item.title || item.name || "Unknown Track";
+                const artist = item.artist || "Unknown Artist";
+                const album = item.album || "Unknown Album";
+                const thumb = String(item.cover || "");
+                card.dataset.libraryName = item.name || "";
+                card.innerHTML = `
+                    <div class="thumb-wrapper"><img src="${escapeHtml(thumb)}" alt="" loading="lazy">${item.duration_text ? `<span class="badge-duration">${escapeHtml(item.duration_text)}</span>` : ""}</div>
+                    <div class="track-info"><div class="track-title">${escapeHtml(title)}</div><div class="track-artist"><i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(artist)} · ${escapeHtml(album)}</div></div>
+                    <div class="btn-group"><button type="button" class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button type="button" class="btn-download queue-local-btn"><i data-lucide="plus" aria-hidden="true"></i> Queue</button></div>`;
+                const play = card.querySelector(".btn-preview");
+                play?.addEventListener("click", e => { e.stopPropagation(); toggleAudioStream(play, item.stream || "", "library", title, artist, thumb, item.id || null); });
+                card.querySelector(".queue-local-btn")?.addEventListener("click", e => { e.stopPropagation(); addTrackToQueue({...item, name:item.name}, false); });
+                card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), {once:true});
+                results.appendChild(card);
+                renderLocalIcons();
+                return;
+            }
+
+
+            const thumbnail =
+                String(
+                    item.thumbnail || ""
+                );
+
+
             card.innerHTML = `
+
                 <div class="thumb-wrapper">
-                    <img src="${escapeHtml(thumb)}" alt="" loading="lazy">
-                    ${item.duration_text ? `<span class="badge-duration">${escapeHtml(item.duration_text)}</span>` : ""}
+
+                    <img
+                        src="${escapeHtml(thumbnail)}"
+                        alt=""
+                        loading="lazy"
+                    >
+
+                    <span class="badge-duration">
+                        ${escapeHtml(
+                            item.duration_text || ""
+                        )}
+                    </span>
+
                 </div>
+
+
                 <div class="track-info">
-                    <div class="track-title">${escapeHtml(title)}</div>
-                    <div class="track-artist"><i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(artist)} · ${escapeHtml(album)}</div>
+
+                    <div class="track-title">
+                        ${escapeHtml(
+                            item.title || "Unknown Track"
+                        )}
+                    </div>
+
+                    <div class="track-artist">
+                        <i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(
+                            item.artist || item.channel || "Unknown Artist"
+                        )}
+                    </div>
+
                 </div>
-                <div class="btn-group">
-                    <button type="button" class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button>
-                    <button type="button" class="btn-download queue-local-btn"><i data-lucide="plus" aria-hidden="true"></i> Queue</button>
-                </div>`;
-            const play = card.querySelector(".btn-preview");
-            play?.addEventListener("click", event => {
-                event.stopPropagation();
-                toggleAudioStream(play, item.stream || "", "library", title, artist, thumb, item.id || null);
-            });
-            card.querySelector(".queue-local-btn")?.addEventListener("click", event => {
-                event.stopPropagation();
-                addTrackToQueue({...item, name: item.name}, false);
-            });
-            card.querySelector("img")?.addEventListener("error", event => event.currentTarget.removeAttribute("src"), {once:true});
-            results.appendChild(card);
-            return;
+
+
+                <div class="btn-group"></div>
+            `;
+
+
+            const image =
+                card.querySelector("img");
+
+
+            image?.addEventListener(
+                "error",
+                () => {
+
+                    image.src =
+                        apiUrl("static/logo.png");
+
+                },
+                {
+                    once: true
+                }
+            );
+
+
+            const group =
+                card.querySelector(
+                    ".btn-group"
+                );
+
+
+            if (!group) {
+                return;
+            }
+
+
+            if (item.already_downloaded) {
+
+                group.innerHTML = `
+                    <div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library</div>
+                `;
+
+            } else if (item.already_queued) {
+
+                group.innerHTML = `
+                    <div class="badge-library"><i data-lucide="clock-3" aria-hidden="true"></i> In Download Queue</div>
+                `;
+
+            } else {
+
+                const preview =
+                    document.createElement(
+                        "button"
+                    );
+
+
+                preview.type =
+                    "button";
+
+
+                preview.className =
+                    "btn-preview";
+
+
+                preview.dataset.type =
+                    "search";
+
+
+                preview.innerHTML = `<i data-lucide="play" aria-hidden="true"></i> Preview`;
+
+
+                preview.addEventListener(
+                    "click",
+                    () =>
+                        toggleAudioStream(
+                            preview,
+                            "api/preview?url=" +
+                            encodeURIComponent(
+                                item.url || ""
+                            ),
+                            "search",
+                            item.title,
+                            item.artist || item.channel,
+                            item.thumbnail
+                        )
+                );
+
+
+                const download =
+                    document.createElement(
+                        "button"
+                    );
+
+
+                download.type =
+                    "button";
+
+
+                download.className =
+                    "btn-download";
+
+
+                download.dataset.id =
+                    item.id || "";
+
+
+                download.innerHTML = `<i data-lucide="download" aria-hidden="true"></i> Save`;
+
+
+                download.addEventListener(
+                    "click",
+                    () =>
+                        startDownload(
+                            item.url,
+                            item.title,
+                            item.id,
+                            item.artist || item.channel,
+                            download,
+                            item.album || ""
+                        )
+                );
+
+
+                group.appendChild(
+                    preview
+                );
+
+
+                group.appendChild(
+                    download
+                );
+            }
+
+
+            results.appendChild(
+                card
+            );
         }
-
-        const title = item.title || "Unknown Track";
-        const artist = item.artist || "Unknown Artist";
-        const thumbnail = String(item.thumbnail || "");
-        const confidence = Number(item.metadata_confidence ?? item.catalog_confidence ?? 0);
-        const verified = Boolean(item.catalog_verified);
-        const metadataSource = item.metadata_source || (verified ? "Catalog verified" : "YouTube");
-        const contentType = item.content_type && item.content_type !== "track" ? String(item.content_type).replace("_", " ") : "";
-
-        card.innerHTML = `
-            <div class="thumb-wrapper">
-                <img src="${escapeHtml(thumbnail)}" alt="" loading="lazy">
-                <span class="badge-duration">${escapeHtml(item.duration_text || "")}</span>
-            </div>
-            <div class="track-info">
-                <div class="track-title">${escapeHtml(title)}</div>
-                <div class="track-artist"><i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(artist)}</div>
-                <div class="search-result-meta">
-                    ${item.album ? `<span class="search-result-secondary">${escapeHtml(item.album)}</span>` : ""}
-                    <span class="search-badge ${verified ? "is-verified" : ""}"><i data-lucide="${verified ? "badge-check" : "circle-help"}" aria-hidden="true"></i> ${escapeHtml(metadataSource)}</span>
-                    ${contentType ? `<span class="search-badge">${escapeHtml(contentType)}</span>` : ""}
-                    ${item.channel ? `<span class="search-result-secondary">${escapeHtml(item.channel)}</span>` : ""}
-                </div>
-            </div>
-            <div class="btn-group"></div>`;
-
-        const image = card.querySelector("img");
-        image?.addEventListener("error", () => { image.src = apiUrl("static/logo.png"); }, {once:true});
-
-        const group = card.querySelector(".btn-group");
-        if (!group) return;
-        const confidenceBadge = Number.isFinite(confidence) && confidence >= 0.78
-            ? `<span class="search-confidence">${Math.round(confidence * 100)}% match</span>` : "";
-
-        if (item.already_downloaded) {
-            group.innerHTML = `<div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library</div>`;
-        } else if (item.already_queued) {
-            group.innerHTML = `<div class="badge-library"><i data-lucide="clock-3" aria-hidden="true"></i> In Download Queue</div>`;
-        } else {
-            const preview = document.createElement("button");
-            preview.type = "button";
-            preview.className = "btn-preview";
-            preview.dataset.type = "search";
-            preview.innerHTML = `<i data-lucide="play" aria-hidden="true"></i> Preview`;
-            preview.addEventListener("click", event => {
-                event.stopPropagation();
-                toggleAudioStream(preview, "api/preview?url=" + encodeURIComponent(item.url || ""), "search", title, artist, thumbnail);
-            });
-
-            const download = document.createElement("button");
-            download.type = "button";
-            download.className = "btn-download";
-            download.dataset.id = item.id || "";
-            download.innerHTML = `<i data-lucide="download" aria-hidden="true"></i> Save`;
-            download.addEventListener("click", event => {
-                event.stopPropagation();
-                startDownload(item.url, title, item.id, artist, download, item.album || "");
-            });
-            if (confidenceBadge) group.insertAdjacentHTML("beforeend", confidenceBadge);
-            group.appendChild(preview);
-            group.appendChild(download);
-        }
-        results.appendChild(card);
-    });
+    );
     renderLocalIcons();
 }
 
