@@ -54,7 +54,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.1"
+SERVER_VERSION = "3.7.2"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -141,6 +141,7 @@ PLAYER_STATE_ACTIVE_HEARTBEAT_SECONDS = 6.0
 PLAYER_STATE_HEARTBEAT_PERSIST_SECONDS = 5.0
 PLAYER_STATE_MAX_QUEUE_ITEMS = 500
 PLAYER_STATE_MAX_DAILY_MIX_ITEMS = 100
+PLAYER_STATE_MAX_SYNC_DEVICES = 12
 PLAYER_STATE_MAX_TEXT = 512
 PLAYER_STATE_MAX_URL = 4096
 PLAYER_STATE_PERSIST_INTERVAL_SECONDS = 5.0
@@ -1217,6 +1218,21 @@ def _sanitize_player_state(state):
         else:
             cleaned.pop("queue", None)
 
+    if "syncMode" in cleaned:
+        cleaned["syncMode"] = "linked" if str(cleaned.get("syncMode") or "").strip().lower() == "linked" else "off"
+    if "syncDeviceIds" in cleaned:
+        raw_ids = cleaned.get("syncDeviceIds") if isinstance(cleaned.get("syncDeviceIds"), list) else []
+        seen_ids = set(); sync_ids = []
+        for raw_id in raw_ids[:PLAYER_STATE_MAX_SYNC_DEVICES * 2]:
+            value = _bounded_text(raw_id, 200).strip()
+            if not value or value in seen_ids: continue
+            seen_ids.add(value); sync_ids.append(value)
+            if len(sync_ids) >= PLAYER_STATE_MAX_SYNC_DEVICES: break
+        cleaned["syncDeviceIds"] = sync_ids
+        if len(sync_ids) < 2 and cleaned.get("syncMode") == "linked": cleaned["syncMode"] = "off"
+    if "syncGroupId" in cleaned:
+        cleaned["syncGroupId"] = _bounded_text(cleaned.get("syncGroupId"), 160).strip()
+
     if "dailyMix" in cleaned:
         daily = cleaned.get("dailyMix")
         if isinstance(daily, dict):
@@ -1258,7 +1274,8 @@ def _compact_player_state(state):
     keys = (
         "ownerId", "clientId", "src", "currentTime", "duration",
         "volume", "title", "artist", "art", "songId", "source", "deviceName",
-        "queueIndex", "paused", "muted", "repeatMode", "shuffle", "at", "seq", "force",
+        "queueIndex", "paused", "muted", "repeatMode", "shuffle",
+        "syncMode", "syncDeviceIds", "syncGroupId", "at", "seq", "force",
     )
     return {key: state[key] for key in keys if key in state}
 
@@ -4099,7 +4116,7 @@ async def api_library_intelligence():
 
 
 @app.get("/api/daily-mix")
-async def api_daily_mix(limit: int | None = None, variant: int = 0):
+async def api_daily_mix(limit: int | None = None, variant: int = 0, refresh_token: str | None = None, exclude: str | None = None):
     """Local Spotify-style Daily Mix.
 
     It uses listening history, recency, repeat frequency, completion, stars, and
@@ -4121,7 +4138,9 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0):
         variant_value = int(variant or 0)
     except (TypeError, ValueError):
         variant_value = 0
-    variant = max(0, min(variant_value, 19))
+    variant = max(0, min(variant_value, 999999999))
+    refresh_token = str(refresh_token or "").strip()[:160]
+    excluded_ids = {item.strip() for item in str(exclude or "").split("|") if item.strip()}
     library = await build_library()
     songs = list(library.get("songs", []))
     if not songs:
@@ -4129,7 +4148,7 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0):
 
     now = time.time()
     day_key = time.strftime("%Y-%m-%d", time.localtime(now))
-    seed_input = f"xrob-daily-mix:{day_key}:{variant}"
+    seed_input = f"xrob-daily-mix:{day_key}:{variant}:{refresh_token or 'stable'}"
     rng = random.Random(int(hashlib.sha256(seed_input.encode()).hexdigest()[:16], 16))
 
     rows, recent_rows, star_rows = await asyncio.to_thread(_daily_mix_db_sync, now - 24 * 3600, now)
@@ -4162,9 +4181,12 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0):
             genre_affinity[genre] = genre_affinity.get(genre, 0.0) + weight
 
     any_history = bool(history)
+    allow_excluded = len(songs) <= len(excluded_ids)
     candidates = []
     for song in songs:
         sid = song["id"]
+        if sid in excluded_ids and not allow_excluded:
+            continue
         h = history.get(sid, {"plays": 0, "last": 0, "heard": 0})
         plays = int(h.get("plays", 0))
         last = float(h.get("last", 0) or 0)
@@ -4232,7 +4254,10 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0):
         }
 
     listened = sum(1 for song in songs if song["id"] in history)
-    if listened == 0:
+    if refresh_token:
+        subtitle = f"Fresh Daily Mix · {len(selected)} new tracks"
+        reason = "refreshed"
+    elif listened == 0:
         subtitle = f"A starter mix from your library · {len(selected)} tracks"
         reason = "starter"
     else:
@@ -4240,7 +4265,12 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0):
         if recent_ids:
             subtitle += " · refreshed for today"
         reason = "personalized"
-    return {"date": day_key, "title": "Daily Mix", "subtitle": subtitle, "tracks": [pack(s) for s in selected], "reason": reason, "variant": variant}
+    response = {"date": day_key, "title": "Daily Mix", "subtitle": subtitle, "tracks": [pack(s) for s in selected], "reason": reason, "variant": variant}
+    if refresh_token:
+        response["generation"] = refresh_token
+        response["cacheControl"] = "no-store"
+        return JSONResponse(response, headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"})
+    return response
 
 
 @app.get("/api/stats")
@@ -7225,6 +7255,8 @@ def _public_devices(rows, player_data=None):
     player_state=(player_data or {}).get("state") if isinstance(player_data,dict) else None
     owner_id=str(player_state.get("ownerId") or "") if isinstance(player_state,dict) else ""
     owner_client_id=str(player_state.get("clientId") or "") if isinstance(player_state,dict) else ""
+    sync_ids=set(str(x) for x in ((player_state or {}).get("syncDeviceIds") if isinstance(player_state,dict) else []) if str(x))
+    sync_enabled=str((player_state or {}).get("syncMode") or "off") == "linked" and len(sync_ids) >= 2
     now=time.time()
     output=[]
     seen=set()
@@ -7235,22 +7267,23 @@ def _public_devices(rows, player_data=None):
         age=max(0,now-float(row.get("last_seen_at") or 0))
         online=age<=MAX_DEVICE_STALE_SECONDS
         is_owner=bool(owner_id and row.get("tab_id") == owner_id) or bool(owner_client_id and row.get("client_id") == owner_client_id)
+        is_synced=sync_enabled and str(row.get("tab_id") or "") in sync_ids
         state="offline"
-        if online and is_owner:
+        if online and (is_owner or is_synced):
             state="paused" if bool(player_state and player_state.get("paused")) else "playing"
         elif online:
             state="available"
         track=None
-        if is_owner and isinstance(player_state,dict) and player_state.get("src"):
+        if (is_owner or is_synced) and isinstance(player_state,dict) and player_state.get("src"):
             track={"title":player_state.get("title") or "Unknown Track","artist":player_state.get("artist") or "Unknown Artist","album":player_state.get("album") or "","art":player_state.get("art") or "","currentTime":float(player_state.get("currentTime") or 0),"duration":float(player_state.get("duration") or 0),"paused":bool(player_state.get("paused"))}
         try:
             capabilities=json.loads(row.get("capabilities_json") or "{}") if row.get("capabilities_json") else {}
             if not isinstance(capabilities, dict): capabilities={}
         except Exception:
             capabilities={}
-        output.append({"deviceId":device_id,"clientId":row.get("client_id") or "","tabId":row.get("tab_id") or "","name":row.get("name") or "This device","deviceType":row.get("device_type") or "browser","platform":row.get("platform") or "","browser":row.get("browser") or "","lastSeenAt":row.get("last_seen_at") or 0,"ageSeconds":age,"online":online,"state":state,"isOwner":is_owner,"track":track,"capabilities":capabilities})
+        output.append({"deviceId":device_id,"clientId":row.get("client_id") or "","tabId":row.get("tab_id") or "","name":row.get("name") or "This device","deviceType":row.get("device_type") or "browser","platform":row.get("platform") or "","browser":row.get("browser") or "","lastSeenAt":row.get("last_seen_at") or 0,"ageSeconds":age,"online":online,"state":state,"isOwner":is_owner,"isSynced":is_synced,"track":track,"capabilities":capabilities})
     if isinstance(player_state,dict) and owner_client_id and owner_client_id not in {str(x.get("clientId")) for x in output if x.get("clientId")}:
-        output.append({"deviceId":owner_client_id,"clientId":owner_client_id,"tabId":owner_id,"name":player_state.get("deviceName") or "Current device","deviceType":"browser","platform":"","browser":"","lastSeenAt":player_data.get("last_seen_at") if isinstance(player_data,dict) else now,"ageSeconds":0,"online":True,"state":"paused" if player_state.get("paused") else "playing","isOwner":True,"track":{"title":player_state.get("title") or "Unknown Track","artist":player_state.get("artist") or "Unknown Artist","art":player_state.get("art") or "","currentTime":float(player_state.get("currentTime") or 0),"duration":float(player_state.get("duration") or 0),"paused":bool(player_state.get("paused"))},"capabilities":{}})
+        output.append({"deviceId":owner_client_id,"clientId":owner_client_id,"tabId":owner_id,"name":player_state.get("deviceName") or "Current device","deviceType":"browser","platform":"","browser":"","lastSeenAt":player_data.get("last_seen_at") if isinstance(player_data,dict) else now,"ageSeconds":0,"online":True,"state":"paused" if player_state.get("paused") else "playing","isOwner":True,"isSynced":sync_enabled and owner_id in sync_ids,"track":{"title":player_state.get("title") or "Unknown Track","artist":player_state.get("artist") or "Unknown Artist","art":player_state.get("art") or "","currentTime":float(player_state.get("currentTime") or 0),"duration":float(player_state.get("duration") or 0),"paused":bool(player_state.get("paused"))},"capabilities":{}})
     return output
 
 @app.post("/api/devices/register")
@@ -7293,6 +7326,23 @@ async def api_device_rename(payload: dict = Body(...)):
 
 @app.delete("/api/devices/{device_id}")
 async def api_device_remove(device_id:str):
+    device_id = str(device_id or "").strip()[:200]
+    row = await asyncio.to_thread(lambda: next((r for r in db_get_devices_sync() if str(r.get("device_id") or "") == device_id), None))
+    tab_id = str((row or {}).get("tab_id") or "").strip()
+    if tab_id:
+        async with PLAYER_STATE_LOCK:
+            current_data = await get_player_state_async()
+            current = dict(current_data.get("state") or {}) if isinstance(current_data, dict) else {}
+            sync_ids = [str(x) for x in (current.get("syncDeviceIds") or []) if str(x)]
+            if tab_id in sync_ids:
+                sync_ids = [x for x in sync_ids if x != tab_id]
+                if len(sync_ids) < 2:
+                    current.pop("syncDeviceIds", None); current.pop("syncGroupId", None); current["syncMode"] = "off"
+                else:
+                    current["syncDeviceIds"] = sync_ids
+                    current["syncGroupId"] = hashlib.sha256("|".join(sorted(sync_ids)).encode("utf-8")).hexdigest()[:24]
+                current["seq"] = safe_int(current.get("seq"), 0) + 1
+                await publish_player_state(current, full=True)
     def remove():
         with db_connect() as conn:
             conn.execute("DELETE FROM devices WHERE device_id=?",(device_id,)); conn.commit()
@@ -7377,6 +7427,10 @@ def _sanitize_player_command_payload(command, payload):
     if command == "repeat":
         mode = str(data.get("mode") or "off")
         return {"mode": mode if mode in {"off", "track", "queue"} else "off"}
+    if command == "queue":
+        state = _sanitize_player_state(data)
+        allowed = {"queue", "queueIndex", "source"}
+        return {key: state[key] for key in allowed if key in state}
     if command == "load-play":
         state = _sanitize_player_state(data)
         allowed = {"src", "source", "title", "artist", "art", "songId", "queueIndex", "queue", "dailyMix", "repeatMode", "shuffle"}
@@ -7389,9 +7443,6 @@ async def api_player_mirror(payload: dict = Body(...)):
     target_id = str(payload.get("targetId") or "").strip()[:200]
     if not target_id:
         raise HTTPException(400, "targetId is required")
-    src = str(payload.get("src") or "").strip()[:2000]
-    if not src:
-        raise HTTPException(400, "src is required")
     rows = await asyncio.to_thread(db_get_devices_sync)
     target = next((row for row in rows if str(row.get("tab_id") or "") == target_id), None)
     if not target:
@@ -7399,26 +7450,77 @@ async def api_player_mirror(payload: dict = Body(...)):
     last_seen = float(target.get("last_seen_at") or 0)
     if last_seen and time.time() - last_seen > MAX_DEVICE_STALE_SECONDS:
         raise HTTPException(409, "Device is offline")
-    current_data = await get_player_state_async()
-    current = dict(current_data.get("state") or {}) if isinstance(current_data, dict) else {}
-    now = time.time()
-    live_position = _effective_player_position(current, now) if current else 0.0
-    raw_time = payload.get("currentTime")
-    try:
-        current_time = max(0.0, float(raw_time if raw_time is not None else live_position))
-    except (TypeError, ValueError):
-        current_time = live_position
-    message_payload = {
-        "src": src,
-        "title": str(payload.get("title") or current.get("title") or "Unknown Track")[:300],
-        "artist": str(payload.get("artist") or current.get("artist") or "Unknown Artist")[:300],
-        "art": str(payload.get("art") or current.get("art") or "")[:2000],
-        "songId": str(payload.get("songId") or current.get("songId") or "")[:512],
-        "source": str(payload.get("source") or current.get("source") or "library")[:32],
-        "currentTime": current_time,
-    }
+    async with PLAYER_STATE_LOCK:
+        current_data = await get_player_state_async()
+        current = dict(current_data.get("state") or {}) if isinstance(current_data, dict) else {}
+        owner_id = str(current.get("ownerId") or "").strip()
+        if not owner_id:
+            raise HTTPException(409, "No active player session")
+        if target_id == owner_id:
+            raise HTTPException(409, "This device already controls playback")
+        now = time.time(); live_position = _effective_player_position(current, now)
+        src = str(current.get("src") or payload.get("src") or "").strip()[:2000]
+        if not src:
+            raise HTTPException(409, "No active track to mirror")
+        sync_ids = []
+        for raw_id in [*(current.get("syncDeviceIds") or []), owner_id, target_id]:
+            value = str(raw_id or "").strip()[:200]
+            if value and value not in sync_ids: sync_ids.append(value)
+        sync_ids = sync_ids[:PLAYER_STATE_MAX_SYNC_DEVICES]
+        group_key = "|".join(sorted(sync_ids))
+        next_state = dict(current)
+        next_state["syncMode"] = "linked"
+        next_state["syncDeviceIds"] = sync_ids
+        next_state["syncGroupId"] = hashlib.sha256(group_key.encode("utf-8")).hexdigest()[:24]
+        next_state["currentTime"] = live_position; next_state["positionUpdatedAt"] = now; next_state["lastSeenAt"] = now; next_state["at"] = now
+        next_state["seq"] = safe_int(current.get("seq"), 0) + 1
+        next_state = _sanitize_player_state(next_state)
+        await publish_player_state(next_state, full=True)
+        message_payload = {
+            "src": src, "title": str(current.get("title") or payload.get("title") or "Unknown Track")[:300],
+            "artist": str(current.get("artist") or payload.get("artist") or "Unknown Artist")[:300],
+            "art": str(current.get("art") or payload.get("art") or "")[:2000],
+            "songId": str(current.get("songId") or payload.get("songId") or "")[:512],
+            "source": str(current.get("source") or payload.get("source") or "library")[:32], "currentTime": live_position,
+        }
     await manager.broadcast({"type":"command","targetId":target_id,"command":"mirror-play","payload":message_payload,"id":str(payload.get("id") or uuid.uuid4().hex)[:300]})
-    return {"status":"ok","targetId":target_id,"deviceId":target.get("device_id")}
+    return {"status":"ok","targetId":target_id,"deviceId":target.get("device_id"),"syncMode":"linked","syncDeviceIds":sync_ids}
+
+
+@app.post("/api/player/sync-group")
+async def api_player_sync_group(payload: dict = Body(...)):
+    action = str(payload.get("action") or "").strip().lower()
+    target_id = str(payload.get("targetId") or "").strip()[:200]
+    if action not in {"add", "remove", "clear"}: raise HTTPException(400, "Unsupported sync-group action")
+    async with PLAYER_STATE_LOCK:
+        current_data = await get_player_state_async(); current = dict(current_data.get("state") or {}) if isinstance(current_data, dict) else {}
+        owner_id = str(current.get("ownerId") or "").strip()
+        if not owner_id: raise HTTPException(409, "No active player session")
+        sync_ids=[]
+        for raw_id in current.get("syncDeviceIds") or []:
+            value=str(raw_id or "").strip()[:200]
+            if value and value not in sync_ids: sync_ids.append(value)
+        if action == "clear": sync_ids=[]
+        elif action == "add":
+            if not target_id: raise HTTPException(400, "targetId is required")
+            if target_id == owner_id: raise HTTPException(409, "This device already controls playback")
+            devices = await asyncio.to_thread(db_get_devices_sync)
+            target = next((row for row in devices if str(row.get("tab_id") or "") == target_id), None)
+            if not target: raise HTTPException(404, "Device not found")
+            if float(target.get("last_seen_at") or 0) and time.time() - float(target.get("last_seen_at") or 0) > MAX_DEVICE_STALE_SECONDS:
+                raise HTTPException(409, "Device is offline")
+            if target_id not in sync_ids: sync_ids.append(target_id)
+            if owner_id not in sync_ids: sync_ids.insert(0, owner_id)
+        else:
+            if target_id: sync_ids=[x for x in sync_ids if x != target_id]
+        sync_ids=sync_ids[:PLAYER_STATE_MAX_SYNC_DEVICES]
+        if len(sync_ids)<2:
+            current["syncMode"]="off"; current.pop("syncDeviceIds",None); current.pop("syncGroupId",None)
+        else:
+            current["syncMode"]="linked"; current["syncDeviceIds"]=sync_ids; current["syncGroupId"]=hashlib.sha256("|".join(sorted(sync_ids)).encode("utf-8")).hexdigest()[:24]
+        current["seq"]=safe_int(current.get("seq"),0)+1
+        await publish_player_state(current, full=True)
+        return {"status":"ok","syncMode":current.get("syncMode"),"syncDeviceIds":current.get("syncDeviceIds",[]),"syncGroupId":current.get("syncGroupId","")}
 
 
 @app.post("/api/player/command")
@@ -7427,7 +7529,7 @@ async def api_player_command(payload: dict = Body(...)):
     command = str(payload.get("command") or "").strip()
     if not target_id or not command:
         raise HTTPException(400, "targetId and command are required")
-    allowed_commands = {"play", "pause", "seek", "next", "previous", "volume", "shuffle", "repeat", "load-play"}
+    allowed_commands = {"play", "pause", "stop", "seek", "next", "previous", "volume", "shuffle", "repeat", "queue", "load-play"}
     if command not in allowed_commands:
         raise HTTPException(400, "Unsupported player command")
 
@@ -7461,8 +7563,9 @@ async def api_player_command(payload: dict = Body(...)):
         command_payload = message["payload"]
         if command == "play":
             next_state["paused"] = False
-        elif command == "pause":
+        elif command in {"pause", "stop"}:
             next_state["paused"] = True
+            if command == "stop": next_state["currentTime"] = 0.0
         elif command == "seek":
             next_state["currentTime"] = max(0.0, float(command_payload.get("time", 0)))
             duration = float(next_state.get("duration") or 0)
@@ -7474,6 +7577,13 @@ async def api_player_command(payload: dict = Body(...)):
             next_state["shuffle"] = bool(command_payload.get("enabled"))
         elif command == "repeat":
             next_state["repeatMode"] = command_payload.get("mode", "off") if command_payload.get("mode") in {"off", "track", "queue"} else "off"
+        elif command == "queue":
+            if "queue" in command_payload:
+                next_state["queue"] = command_payload["queue"] if isinstance(command_payload["queue"], list) else []
+            if "queueIndex" in command_payload:
+                next_state["queueIndex"] = max(-1, safe_int(command_payload.get("queueIndex"), -1))
+            if command_payload.get("source"):
+                next_state["source"] = str(command_payload.get("source"))[:32]
         elif command == "load-play":
             for key in ("src", "source", "title", "artist", "art", "songId", "queueIndex", "queue", "dailyMix", "repeatMode", "shuffle"):
                 if key in command_payload:
@@ -7579,6 +7689,25 @@ async def api_player_handoff(payload: dict = Body(...)):
             next_state.pop("playStartedAt", None)
         else:
             next_state["playStartedAt"] = now
+        # A handoff from a linked session must keep the remaining sync group
+        # coherent: the new owner stays linked, while the previous owner is
+        # removed so an offline/stale device cannot reclaim playback later.
+        sync_ids = []
+        for raw_id in current_state.get("syncDeviceIds") or []:
+            value = str(raw_id or "").strip()[:200]
+            if value and value not in sync_ids and value != previous_owner:
+                sync_ids.append(value)
+        if new_owner_id not in sync_ids:
+            sync_ids.insert(0, new_owner_id)
+        sync_ids = sync_ids[:PLAYER_STATE_MAX_SYNC_DEVICES]
+        if len(sync_ids) >= 2:
+            next_state["syncMode"] = "linked"
+            next_state["syncDeviceIds"] = sync_ids
+            next_state["syncGroupId"] = hashlib.sha256("|".join(sorted(sync_ids)).encode("utf-8")).hexdigest()[:24]
+        else:
+            next_state["syncMode"] = "off"
+            next_state.pop("syncDeviceIds", None)
+            next_state.pop("syncGroupId", None)
         next_state["seq"] = safe_int(current_state.get("seq"), 0) + 1
         next_state["handoffId"] = str(uuid.uuid4())
         await publish_player_state(next_state, full=True, broadcast=False)
