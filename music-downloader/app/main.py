@@ -55,7 +55,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.8"
+SERVER_VERSION = "3.7.9"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -3322,8 +3322,6 @@ _SEARCH_INFLIGHT = {}
 SEARCH_CACHE_TTL = 45.0
 SEARCH_CACHE_MAX = 256
 SEARCH_POOL_SIZE = 100
-SEARCH_CATALOG_LIMIT = 25
-SEARCH_CATALOG_TIMEOUT = 7
 
 
 def _normalize_search_query(value):
@@ -3333,65 +3331,69 @@ def _normalize_search_query(value):
 
 
 def _parse_music_query(query):
-    """Parse only high-confidence artist/title query shapes.
+    """Parse only strong artist/title forms for metadata hints.
 
-    Plain multi-word queries remain unparsed so we do not invent an artist.
-    Supported strong forms are `Artist - Title`, `Artist | Title`, and
-    `Title by Artist`.
+    Search ranking intentionally does NOT use these hints to reorder YouTube
+    results. They are only used for better metadata extraction when obvious.
     """
     text = _normalize_search_query(query)
     if not text:
         return {"artist": "", "title": "", "parsed": False}
-    match = re.match(r"^(.+?)\s*(?:[-–—|])\s*(.+)$", text)
-    if match:
-        left = _usable_artist_hint(match.group(1))
-        right = clean_metadata_text(match.group(2), "")
-        if left and right and len(left) <= 100 and len(right) <= 120:
+    m = re.match(r"^(.+?)\s*(?:[-–—|])\s*(.+)$", text)
+    if m:
+        left = _usable_artist_hint(m.group(1))
+        right = clean_metadata_text(m.group(2), "")
+        if left and right:
             return {"artist": left, "title": normalize_catalog_title(right), "parsed": True}
-    match = re.match(r"^(.+?)\s+by\s+(.+)$", text, flags=re.I)
-    if match:
-        title = clean_metadata_text(match.group(1), "")
-        artist = _usable_artist_hint(match.group(2))
+    m = re.match(r"^(.+?)\s+by\s+(.+)$", text, flags=re.I)
+    if m:
+        title = clean_metadata_text(m.group(1), "")
+        artist = _usable_artist_hint(m.group(2))
         if title and artist:
             return {"artist": artist, "title": normalize_catalog_title(title), "parsed": True}
     return {"artist": "", "title": "", "parsed": False}
 
 
-def _extract_artist_list(value):
-    if isinstance(value, (list, tuple)):
-        parts = []
-        for item in value:
-            if isinstance(item, dict):
-                item = item.get("name") or item.get("artist") or item.get("title")
-            cleaned = _usable_artist_hint(item)
-            if cleaned:
-                parts.append(cleaned)
-        return ", ".join(parts)
-    return _usable_artist_hint(value)
+def _extract_search_artist(raw_title, item, hints):
+    """Prefer explicit track metadata; fall back to strong title/query hints,
+    then to the uploader/channel only when nothing else exists.
 
-
-def _extract_title_artist(raw_title, explicit_artist="", query_hints=None):
-    raw = clean_metadata_text(raw_title, "Unknown Track")
-    title = normalize_catalog_title(raw)
-    artist = _extract_artist_list(explicit_artist)
+    This preserves the old search experience while keeping the source field
+    visible so an uploader is not silently treated as authoritative metadata.
+    """
+    explicit = (
+        item.get("artist")
+        or item.get("track_artist")
+        or item.get("album_artist")
+        or item.get("artists")
+    )
+    artist = _usable_artist_hint(explicit)
     if artist:
-        return artist, title, "explicit"
+        return artist, "explicit"
 
-    # Only infer artist from the title when the separator is strong and the
-    # left-hand side looks like an artist rather than generic upload text.
+    raw = clean_metadata_text(raw_title, "")
     parts = re.split(r"\s+[-–—|]\s+", raw, maxsplit=1)
     if len(parts) == 2:
-        hinted_artist = _usable_artist_hint(parts[0])
-        hinted_title = normalize_catalog_title(parts[1])
-        if hinted_artist and hinted_title and _compact_identity(hinted_artist) not in {"official", "lyrics", "audio", "music video"}:
-            return hinted_artist, hinted_title, "title_parse"
+        hinted = _usable_artist_hint(parts[0])
+        if hinted and not _is_generic_artist_hint(hinted):
+            return hinted, "title"
 
-    hints = query_hints or {}
-    hinted_artist = _usable_artist_hint(hints.get("artist"))
-    hinted_title = normalize_catalog_title(hints.get("title"), "") if hints.get("title") else ""
-    if hinted_artist and hinted_title and _similarity(title, hinted_title) >= 0.86:
-        return hinted_artist, title, "query_hint"
-    return "", title, "none"
+    hinted = _usable_artist_hint(hints.get("artist"))
+    if hinted:
+        return hinted, "query"
+
+    fallback = _usable_artist_hint(item.get("creator") or item.get("uploader") or item.get("channel"))
+    if fallback:
+        return fallback, "source"
+    return "", "none"
+
+
+def _is_generic_artist_hint(value):
+    compact = _compact_identity(value)
+    return compact in {
+        "official", "official audio", "official video", "lyrics", "lyric video",
+        "audio", "music video", "vevo", "topic", "unknown artist"
+    }
 
 
 def _classify_youtube_candidate(raw_title, channel):
@@ -3408,7 +3410,7 @@ def _classify_youtube_candidate(raw_title, channel):
 
     content_type = "track"
     version = ""
-    keyword_groups = [
+    patterns = [
         ("live", r"\blive\b|\bconcert\b|\blive performance\b"),
         ("remix", r"\bremix\b|\bremixed\b"),
         ("acoustic", r"\bacoustic\b|\bstripped\b"),
@@ -3423,14 +3425,14 @@ def _classify_youtube_candidate(raw_title, channel):
         ("full album", r"\bfull\s+album\b|\balbum\s+full\b"),
         ("podcast", r"\bpodcast\b|\binterview\b|\bshow\b"),
     ]
-    for label, pattern in keyword_groups:
+    for label, pattern in patterns:
         if re.search(pattern, title, flags=re.I):
             version = label
             if label == "full album":
                 content_type = "album"
             elif label == "podcast":
                 content_type = "non_music"
-            elif label in {"mix"}:
+            elif label == "mix":
                 content_type = "mix"
             else:
                 content_type = "variant"
@@ -3443,51 +3445,6 @@ def _classify_youtube_candidate(raw_title, channel):
         elif re.search(r"\bofficial\s+(?:audio|track)\b|\baudio\b", title, flags=re.I):
             content_type = "audio"
     return content_type, version, channel_type
-
-
-def _youtube_candidate_score(candidate, query, query_hints):
-    title = candidate.get("title") or ""
-    artist = candidate.get("artist") or ""
-    channel = candidate.get("channel") or ""
-    title_score = _similarity(title, query_hints.get("title") or query)
-    artist_score = _similarity(artist, query_hints.get("artist")) if query_hints.get("artist") and artist else 0.0
-    whole_score = _similarity(f"{artist} {title}".strip(), query)
-    score = max(title_score * 0.62 + artist_score * 0.38, whole_score * 0.72)
-
-    if query_hints.get("artist"):
-        if artist:
-            score += min(0.10, artist_score * 0.10)
-        else:
-            score -= 0.03
-    if query_hints.get("title") and title_score >= 0.95:
-        score += 0.12
-    elif title_score >= 0.90:
-        score += 0.06
-
-    if candidate.get("channel_type") in {"topic", "vevo", "official"}:
-        score += 0.07
-    elif candidate.get("channel_type") == "channel":
-        score -= 0.01
-
-    content_type = candidate.get("content_type")
-    penalties = {
-        "non_music": 0.45,
-        "mix": 0.26,
-        "album": 0.22,
-        "lyrics": 0.04,
-        "music_video": 0.015,
-        "variant": 0.03,
-    }
-    score -= penalties.get(content_type, 0.0)
-
-    duration = safe_int(candidate.get("duration"), 0)
-    if duration and duration < 25:
-        score -= 0.08
-    elif duration > 60 * 15:
-        score -= 0.20
-    elif 60 <= duration <= 8 * 60:
-        score += 0.03
-    return max(0.0, min(1.5, score))
 
 
 async def _youtube_search_once(query, pool_size):
@@ -3519,43 +3476,44 @@ async def _youtube_search_once(query, pool_size):
 
 
 async def _youtube_search_pool(query, pool_size=SEARCH_POOL_SIZE):
+    """Build one stable candidate pool from the literal user query.
+
+    Important UX rule: preserve YouTube's native relevance ordering. Search
+    intelligence enriches metadata and classifies candidates but never mixes
+    in a synthetic second query or lets catalog scores reorder the user's
+    requested results.
+    """
     query = _normalize_search_query(query)
     if not query:
         return []
+
+    raw_items = await _youtube_search_once(query, pool_size)
     hints = _parse_music_query(query)
-    queries = [query]
-    if hints.get("parsed"):
-        structured = f'"{hints["artist"]}" "{hints["title"]}"'
-        if structured.casefold() != query.casefold():
-            queries.append(structured[:160])
-
     results = []
-    fetched = await asyncio.gather(
-        *[_youtube_search_once(q, max(40, min(100, math.ceil(pool_size / len(queries))))) for q in queries],
-        return_exceptions=True,
-    )
-    runtime_errors = []
-    for item in fetched:
-        if isinstance(item, Exception):
-            runtime_errors.append(item)
-            continue
-        results.extend(item)
-    if not results and runtime_errors:
-        raise runtime_errors[0]
+    seen_ids = set()
 
-    unique = {}
-    for item in results:
+    for provider_rank, item in enumerate(raw_items, start=1):
         if not isinstance(item, dict):
             continue
         video_id = str(item.get("id") or item.get("webpage_url_basename") or "").strip()
-        if not video_id:
+        if not video_id or video_id in seen_ids:
             continue
+        seen_ids.add(video_id)
+
         raw_title = clean_metadata_text(item.get("title"), "Unknown Track")
         channel = clean_metadata_text(item.get("channel") or item.get("uploader"), "")
-        explicit_artist = item.get("artist") or item.get("track_artist") or item.get("album_artist") or item.get("creator") or item.get("artists")
-        artist, title, artist_source = _extract_title_artist(raw_title, explicit_artist, hints)
+        artist, artist_source = _extract_search_artist(raw_title, item, hints)
+        title = normalize_catalog_title(raw_title)
         content_type, version, channel_type = _classify_youtube_candidate(raw_title, channel)
-        candidate = {
+        duration = safe_int(item.get("duration"), 0)
+
+        # Small, informational relevance indicators only. These DO NOT alter
+        # ordering; provider_rank remains authoritative for search UX.
+        normalized_query = _compact_identity(query)
+        compact_title = _compact_identity(title)
+        exact_query_in_title = bool(normalized_query and normalized_query in compact_title)
+
+        results.append({
             "id": video_id,
             "title": title or "Unknown Track",
             "raw_title": raw_title,
@@ -3566,188 +3524,26 @@ async def _youtube_search_pool(query, pool_size=SEARCH_POOL_SIZE):
             "artist_source": artist_source,
             "content_type": content_type,
             "version": version,
-            "duration": safe_int(item.get("duration"), 0),
-            "duration_text": format_duration(safe_int(item.get("duration"), 0)),
+            "duration": duration,
+            "duration_text": format_duration(duration),
             "thumbnail": item.get("thumbnail") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "source": "youtube",
-        }
-        candidate["search_score"] = _youtube_candidate_score(candidate, query, hints)
-        old = unique.get(video_id)
-        if old is None or candidate["search_score"] > old["search_score"]:
-            unique[video_id] = candidate
-
-    return sorted(unique.values(), key=lambda row: (row.get("search_score", 0), row.get("duration", 0) > 0), reverse=True)[:pool_size]
-
-
-def _musicbrainz_payload_candidates(data):
-    out = []
-    for rec in data.get("recordings") or []:
-        if not isinstance(rec, dict):
-            continue
-        title = clean_metadata_text(rec.get("title"), "")
-        credits = rec.get("artist-credit") or []
-        artist = "".join(
-            str(part.get("name") or part.get("artist", {}).get("name") or "").strip()
-            + str(part.get("joinphrase") or "")
-            for part in credits if isinstance(part, dict)
-        ).strip()
-        releases = [r for r in rec.get("releases") or [] if isinstance(r, dict) and clean_metadata_text(r.get("title"), "")]
-        release = releases[0] if releases else {}
-        out.append({
-            "title": title,
-            "artist": artist,
-            "album": clean_metadata_text(release.get("title"), ""),
-            "source": "MusicBrainz",
-            "id": rec.get("id"),
+            "provider_rank": provider_rank,
+            "query_exact_title": exact_query_in_title,
+            "search_score": 1.0 - ((provider_rank - 1) / max(1, pool_size)) * 0.05,
+            "metadata_source": "YouTube",
+            "catalog_verified": False,
         })
-    return out
 
-
-def _escape_musicbrainz_term(value):
-    text = str(value or "")
-    return text.replace("\\", "\\\\").replace("\"", "\\\"")
-
-
-async def _musicbrainz_search_catalog(query, hints):
-    title = clean_metadata_text(hints.get("title"), "")
-    artist = _usable_artist_hint(hints.get("artist"))
-    if title and artist:
-        mb_query = f'artist:"{_escape_musicbrainz_term(artist)}" AND recording:"{_escape_musicbrainz_term(title)}"'
-    elif title:
-        mb_query = f'recording:"{_escape_musicbrainz_term(title)}"'
-    else:
-        mb_query = f'recording:"{_escape_musicbrainz_term(query)}"'
-    async with _METADATA_RATE_LOCK:
-        global _METADATA_LAST_MB_CALL
-        wait = 1.05 - (time.monotonic() - _METADATA_LAST_MB_CALL)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _METADATA_LAST_MB_CALL = time.monotonic()
-        url = "https://musicbrainz.org/ws/2/recording?" + urllib.parse.urlencode({
-            "query": mb_query, "fmt": "json", "limit": SEARCH_CATALOG_LIMIT, "inc": "releases+artist-credits+release-groups",
-        })
-    try:
-        data = await _metadata_http_json(url, {
-            "User-Agent": f"Xrob-Music/{SERVER_VERSION} (search metadata)",
-            "Accept": "application/json",
-        }, timeout=SEARCH_CATALOG_TIMEOUT, attempts=2)
-    except Exception as exc:
-        await write_app_error("musicbrainz_search", str(exc))
-        return []
-    return _musicbrainz_payload_candidates(data)
-
-
-async def _itunes_search_catalog(query, hints):
-    term = f'{hints.get("artist", "")} {hints.get("title", "")}'.strip() or query
-    url = "https://itunes.apple.com/search?" + urllib.parse.urlencode({
-        "term": term, "media": "music", "entity": "song", "limit": SEARCH_CATALOG_LIMIT,
-    })
-    try:
-        data = await _metadata_http_json(url, {"User-Agent": f"Xrob Music/{SERVER_VERSION}"}, timeout=SEARCH_CATALOG_TIMEOUT, attempts=2)
-    except Exception as exc:
-        await write_app_error("itunes_search", str(exc))
-        return []
-    out = []
-    for item in data.get("results") or []:
-        if not isinstance(item, dict):
-            continue
-        title = clean_metadata_text(item.get("trackName"), "")
-        artist = _usable_artist_hint(item.get("artistName"))
-        if not title:
-            continue
-        out.append({
-            "title": title,
-            "artist": artist,
-            "album": clean_metadata_text(item.get("collectionName"), ""),
-            "source": "Apple Music catalog",
-            "id": item.get("trackId"),
-        })
-    return out
-
-
-def _catalog_match(candidate, catalog_item):
-    cand_title = candidate.get("title") or ""
-    cand_artist = candidate.get("artist") or ""
-    cat_title = catalog_item.get("title") or ""
-    cat_artist = catalog_item.get("artist") or ""
-    title_score = _similarity(cand_title, cat_title)
-    artist_score = _similarity(cand_artist, cat_artist) if cand_artist and cand_artist != "Unknown Artist" and cat_artist else 0.0
-    if cand_artist and cand_artist != "Unknown Artist" and cat_artist:
-        combined = title_score * 0.60 + artist_score * 0.40
-    else:
-        combined = title_score
-    return combined, title_score, artist_score
-
-
-async def _enrich_search_candidates(candidates, query):
-    hints = _parse_music_query(query)
-    top_for_catalog = candidates[:18]
-    mb_task = asyncio.create_task(_musicbrainz_search_catalog(query, hints))
-    apple_task = asyncio.create_task(_itunes_search_catalog(query, hints))
-    catalogs = await asyncio.gather(mb_task, apple_task, return_exceptions=True)
-    catalog_items = []
-    for group in catalogs:
-        if isinstance(group, list):
-            catalog_items.extend(group)
-
-    for candidate in top_for_catalog:
-        best = None
-        best_score = 0.0
-        for catalog in catalog_items:
-            score, title_score, artist_score = _catalog_match(candidate, catalog)
-            if score > best_score:
-                best_score = score
-                best = (catalog, title_score, artist_score)
-        candidate["catalog_confidence"] = round(best_score, 4)
-        candidate["catalog_verified"] = False
-        candidate["metadata_source"] = "YouTube"
-        candidate["metadata_confidence"] = round(min(1.0, max(0.0, candidate.get("search_score", 0))), 4)
-        if best:
-            catalog, title_score, artist_score = best
-            artist_known = candidate.get("artist") not in {"", "Unknown Artist", None}
-            verified = (artist_known and title_score >= 0.82 and artist_score >= 0.62 and best_score >= 0.80) or (not artist_known and title_score >= 0.92 and best_score >= 0.92)
-            if verified:
-                candidate["title"] = normalize_catalog_title(catalog.get("title") or candidate.get("title"))
-                candidate["artist"] = _usable_artist_hint(catalog.get("artist")) or candidate.get("artist") or "Unknown Artist"
-                candidate["album"] = clean_metadata_text(catalog.get("album"), "")
-                candidate["catalog_verified"] = True
-                candidate["metadata_source"] = catalog.get("source") or "Catalog"
-                candidate["metadata_confidence"] = round(best_score, 4)
-                candidate["search_score"] = min(1.5, candidate.get("search_score", 0) * 0.55 + best_score * 0.55)
-            else:
-                candidate["search_score"] = min(1.5, candidate.get("search_score", 0) * 0.86 + best_score * 0.14)
-
-    # Group duplicate YouTube uploads only when we have a trustworthy artist.
-    grouped = {}
-    final = []
-    for candidate in candidates:
-        identity = normalize_duplicate_key(candidate.get("title", ""), candidate.get("artist", ""))
-        key = identity if identity else f"youtube:{candidate.get('id')}"
-        current = grouped.get(key)
-        if current is None:
-            grouped[key] = candidate
-            final.append(candidate)
-            continue
-        if candidate.get("search_score", 0) > current.get("search_score", 0):
-            idx = final.index(current)
-            final[idx] = candidate
-            grouped[key] = candidate
-
-    final.sort(key=lambda row: (
-        float(row.get("search_score", 0.0)),
-        bool(row.get("catalog_verified")),
-        row.get("channel_type") in {"topic", "vevo", "official"},
-        row.get("duration", 0) > 0,
-    ), reverse=True)
-    return final[:SEARCH_POOL_SIZE]
+    # Keep the exact provider order. No catalog re-ranking and no artist/title
+    # identity grouping here: users should see the results YouTube actually
+    # considered most relevant, including useful alternate versions.
+    return results[:pool_size]
 
 
 async def _build_search_results(query):
-    candidates = await _youtube_search_pool(query, SEARCH_POOL_SIZE)
-    if not candidates:
-        return []
-    return await _enrich_search_candidates(candidates, query)
+    return await _youtube_search_pool(query, SEARCH_POOL_SIZE)
 
 
 async def _clear_search_inflight(key, task):
@@ -3763,16 +3559,28 @@ async def _search_results_for_query(query):
         cached = SEARCH_CACHE.get(key)
         if isinstance(cached, tuple) and now - cached[0] <= SEARCH_CACHE_TTL:
             return cached[1]
+
         task = _SEARCH_INFLIGHT.get(key)
         if task is None:
             task = asyncio.create_task(_build_search_results(query))
             _SEARCH_INFLIGHT[key] = task
             task.add_done_callback(lambda done: asyncio.create_task(_clear_search_inflight(key, done)))
-    return await asyncio.shield(task)
+
+    try:
+        results = await asyncio.shield(task)
+    except asyncio.CancelledError:
+        raise
+
+    async with _SEARCH_CACHE_LOCK:
+        SEARCH_CACHE[key] = (time.monotonic(), results)
+        if len(SEARCH_CACHE) > SEARCH_CACHE_MAX:
+            oldest_key = min(SEARCH_CACHE.items(), key=lambda kv: kv[1][0])[0]
+            SEARCH_CACHE.pop(oldest_key, None)
+    return results
 
 
 async def youtube_search(query, max_results, page=1):
-    """Return a stable page from one cached/ranked YouTube candidate pool."""
+    """Return a stable page from one literal YouTube search result pool."""
     query = _normalize_search_query(query)
     if not query:
         return []
@@ -3781,7 +3589,6 @@ async def youtube_search(query, max_results, page=1):
     results = await _search_results_for_query(query)
     start = (page - 1) * max_results
     return results[start:start + max_results]
-
 
 def _search_duplicate_state_sync(items, tasks):
     library_index = _load_library_index_sync()
