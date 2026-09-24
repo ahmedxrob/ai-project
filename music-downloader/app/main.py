@@ -55,7 +55,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.5"
+SERVER_VERSION = "3.7.6"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -3246,6 +3246,56 @@ async def youtube_search(
             "url": f"https://www.youtube.com/watch?v={video_id}", "source": "youtube",
         })
     return results
+
+
+@app.get("/api/search")
+async def api_search(
+    request: Request,
+    q: str = Query(""),
+    source: str = Query("youtube"),
+    page: int = Query(1, ge=1, le=500),
+    limit: int = Query(20, ge=1, le=50),
+):
+    """Search external music sources used by the web UI.
+
+    The browser expects a plain JSON array for infinite scrolling. Keep that
+    contract stable and translate provider/runtime failures into actionable HTTP
+    errors instead of leaking a generic 500/404 response.
+    """
+    query = re.sub(r"\s+", " ", str(q or "")).strip()[:160]
+    provider = str(source or "youtube").strip().lower()
+
+    if not query:
+        return []
+
+    if provider not in {"youtube", "yt", "yt-dlp"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported search source: {provider}")
+
+    try:
+        results = await youtube_search(query, limit, page)
+    except RuntimeError as exc:
+        message = str(exc).strip() or "YouTube search is unavailable."
+        raise HTTPException(status_code=503, detail=message) from exc
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        await write_app_error("youtube_search", str(exc))
+        raise HTTPException(status_code=502, detail="YouTube search failed. Please try again.") from exc
+
+    # Preserve stable ordering while preventing a duplicated video from ever
+    # appearing twice when yt-dlp/provider pagination changes between requests.
+    seen = set()
+    cleaned = []
+    for item in results or []:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "").strip()
+        if not item_id or item_id in seen:
+            continue
+        seen.add(item_id)
+        cleaned.append(item)
+
+    return cleaned
 
 
 # ============================================================
