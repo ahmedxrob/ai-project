@@ -2035,11 +2035,10 @@ function updateProgress(animationFrame = false) {
 function updatePlayingState(playing) {
 
     if (playBtn) {
-
-        playBtn.textContent =
-            playing
-                ? "❚❚"
-                : "▶";
+        playBtn.innerHTML = `<i aria-hidden="true" data-lucide="${playing ? "pause" : "play"}"></i>`;
+        playBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+        playBtn.setAttribute("title", playing ? "Pause" : "Play");
+        renderLocalIcons();
     }
 
     if (activePreviewBtn) {
@@ -2067,10 +2066,8 @@ function resetPreviewButton(button) {
         button.classList.contains("btn-preview")
     ) {
 
-        button.textContent =
-            type === "library"
-                ? "▶ Play"
-                : "▶ Preview";
+        button.innerHTML = `<i aria-hidden="true" data-lucide="play"></i> ${type === "library" ? "Play" : "Preview"}`;
+        renderLocalIcons();
     }
 }
 
@@ -2499,9 +2496,8 @@ function toggleAudioStream(
     if (
         button.classList.contains("btn-preview")
     ) {
-
-        button.textContent =
-            "⏳ Loading...";
+        button.innerHTML = `<i data-lucide="clock-3" aria-hidden="true"></i> Loading...`;
+        renderLocalIcons();
     }
 
 
@@ -2549,8 +2545,8 @@ function toggleAudioStream(
                 )
             ) {
 
-                button.textContent =
-                    "❚❚ Pause";
+                button.innerHTML = `<i data-lucide="pause" aria-hidden="true"></i> Pause`;
+                renderLocalIcons();
             }
 
         })
@@ -2567,8 +2563,8 @@ function toggleAudioStream(
                 )
             ) {
 
-                button.textContent =
-                    "❌ Error";
+                button.innerHTML = `<i data-lucide="circle-alert" aria-hidden="true"></i> Error`;
+                renderLocalIcons();
 
                 setTimeout(
                     () =>
@@ -3611,7 +3607,8 @@ async function loadLibrary() {
             renderLibraryView();
             showToast("Showing cached library");
         } else {
-            list.innerHTML = `<div class="downloads-empty"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load library</div><div class="empty-text">${escapeHtml(error.message || "Unknown error")}</div></div>`;
+            list.innerHTML = `<div class="downloads-empty"><div class="empty-icon"><i data-lucide="circle-alert" aria-hidden="true"></i></div><div class="empty-title">Could not load library</div><div class="empty-text">${escapeHtml(error.message || "Unknown error")}</div></div>`;
+            renderLocalIcons();
         }
     }
 }
@@ -3683,6 +3680,7 @@ function renderTracks(list, query) {
         return;
     }
     files.forEach(file => list.appendChild(createTrackCard(file, files)));
+    renderLocalIcons();
 }
 
 function createTrackCard(file, queue = rawLibraryFiles) {
@@ -3742,12 +3740,13 @@ function renderArtists(list, query) {
     artists.forEach(artist => {
         const card = document.createElement("article");
         card.className = "catalog-card artist-card";
-        card.innerHTML = `<button type="button" class="catalog-main-action"><img class="artist-cover" src="${escapeHtml(artist.cover||"")}" alt="" loading="lazy" onerror="this.style.display='none'"/><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count || 0} album${artist.album_count === 1 ? "" : "s"} · ${artist.song_count || 0} track${artist.song_count === 1 ? "" : "s"}</span></div></button><div class="catalog-actions"><button type="button" class="btn-refresh artist-art-btn">Cover</button><button type="button" class="btn-preview catalog-play">▶ Play</button></div>`;
+        card.innerHTML = `<button type="button" class="catalog-main-action"><img class="artist-cover" src="${escapeHtml(artist.cover||"")}" alt="" loading="lazy" onerror="this.style.display='none'"/><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count || 0} album${artist.album_count === 1 ? "" : "s"} · ${artist.song_count || 0} track${artist.song_count === 1 ? "" : "s"}</span></div></button><div class="catalog-actions"><button type="button" class="btn-refresh artist-art-btn">Cover</button><button type="button" class="btn-preview catalog-play"><i data-lucide="play" aria-hidden="true"></i> Play</button></div>`;
         card.querySelector(".catalog-main-action")?.addEventListener("click", () => openArtist(artist.id));
         card.querySelector(".catalog-play")?.addEventListener("click", e => { e.stopPropagation(); const tracks = rawLibraryFiles.filter(f => (artist.song_ids || []).includes(f.id)); playQueue(tracks, 0, false); });
         card.querySelector(".artist-art-btn")?.addEventListener("click", e => { e.stopPropagation(); const input=document.createElement("input"); input.type="file"; input.accept="image/jpeg,image/png,image/webp"; input.onchange=async()=>{const file=input.files?.[0]; if(!file)return; const fd=new FormData(); fd.append("upload",file); const rr=await apiFetch(`api/library/artist-artwork/${encodeURIComponent(artist.id)}`,{method:"POST",body:fd}); if(rr.ok){showToast("✅ Artist cover saved"); renderArtists(list,query);} else showToast("❌ Could not save artist cover");}; input.click(); });
         list.appendChild(card);
     });
+    renderLocalIcons();
 }
 
 function renderAlbums(list, query) {
@@ -3755,13 +3754,14 @@ function renderAlbums(list, query) {
     list.innerHTML = "";
     if (!albums.length) return renderEmpty(list, "disc-3", "No albums found", query ? "Try another search." : "Scan your library to build the album catalog.");
     albums.forEach(album => list.appendChild(createAlbumCard(album)));
+    renderLocalIcons();
 }
 
 function createAlbumCard(album) {
     const card = document.createElement("article");
     card.className = "catalog-card album-card";
     const cover = album.cover || "";
-    card.innerHTML = `<img src="${escapeHtml(cover)}" alt="" loading="lazy"><div><strong>${escapeHtml(album.name)}</strong><span>${escapeHtml(album.artist || "Unknown Artist")} · ${album.song_count || 0} track${album.song_count === 1 ? "" : "s"}${album.year ? ` · ${escapeHtml(album.year)}` : ""}</span><button type="button" class="btn-preview">▶ Play album</button></div>`;
+    card.innerHTML = `<img src="${escapeHtml(cover)}" alt="" loading="lazy"><div><strong>${escapeHtml(album.name)}</strong><span>${escapeHtml(album.artist || "Unknown Artist")} · ${album.song_count || 0} track${album.song_count === 1 ? "" : "s"}${album.year ? ` · ${escapeHtml(album.year)}` : ""}</span><button type="button" class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play album</button></div>`;
     card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), { once: true });
     card.querySelector(".btn-preview")?.addEventListener("click", e => { e.stopPropagation(); playAlbum(album.id); });
     card.querySelector("strong")?.addEventListener("click", () => openAlbum(album.id));
@@ -3775,7 +3775,7 @@ function renderArtistDetail(list, query) {
     const ids = new Set(artist.song_ids || []);
     const tracks = rawLibraryFiles.filter(f => ids.has(f.id));
     const albums = libraryAlbums.filter(a => (a.song_ids || []).some(id => ids.has(id)));
-    list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button">← Artists</button><div><h3>${escapeHtml(artist.name)}</h3><p>${albums.length} album${albums.length === 1 ? "" : "s"} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview artist-detail-play">▶ Play artist</button></div>`;
+    list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button"><i data-lucide="arrow-left" aria-hidden="true"></i> Artists</button><div><h3>${escapeHtml(artist.name)}</h3><p>${albums.length} album${albums.length === 1 ? "" : "s"} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview artist-detail-play"><i data-lucide="play" aria-hidden="true"></i> Play artist</button></div>`;
     list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedArtistId = null; libraryView = "artists"; renderLibraryView(); });
     list.querySelector(".artist-detail-play")?.addEventListener("click", () => playQueue(tracks, 0, false));
     if (albums.length) {
@@ -3786,7 +3786,8 @@ function renderArtistDetail(list, query) {
     if (filtered.length) {
         const heading = document.createElement("h3"); heading.className = "catalog-section-heading"; heading.textContent = "Tracks"; list.appendChild(heading);
         filtered.forEach(file => list.appendChild(createTrackCard(file, tracks)));
-    } else if (!albums.length) renderEmpty(list, "🎵", "No matching tracks", "Try another search.");
+    } else if (!albums.length) renderEmpty(list, "music-2", "No matching tracks", "Try another search.");
+    renderLocalIcons();
 }
 
 function renderAlbumDetail(list, query) {
@@ -3794,11 +3795,12 @@ function renderAlbumDetail(list, query) {
     if (!album) { libraryView = "albums"; return renderAlbums(list, query); }
     const ids = new Set(album.song_ids || []);
     const tracks = rawLibraryFiles.filter(f => ids.has(f.id));
-    list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button">← Albums</button><div><h3>${escapeHtml(album.name)}</h3><p>${escapeHtml(album.artist || "Unknown Artist")} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview album-detail-play">▶ Play album</button></div>`;
+    list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button"><i data-lucide="arrow-left" aria-hidden="true"></i> Albums</button><div><h3>${escapeHtml(album.name)}</h3><p>${escapeHtml(album.artist || "Unknown Artist")} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview album-detail-play"><i data-lucide="play" aria-hidden="true"></i> Play album</button></div>`;
     list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedAlbumId = null; libraryView = "albums"; renderLibraryView(); });
     list.querySelector(".album-detail-play")?.addEventListener("click", () => playAlbum(album.id));
     const filtered = tracks.filter(file => { const hay = `${file.title || ""} ${file.artist || ""}`.toLowerCase(); return !query || hay.includes(query); });
-    if (filtered.length) filtered.forEach(file => list.appendChild(createTrackCard(file, tracks))); else renderEmpty(list, "💿", "No matching tracks", "Try another search.");
+    if (filtered.length) filtered.forEach(file => list.appendChild(createTrackCard(file, tracks))); else renderEmpty(list, "disc-3", "No matching tracks", "Try another search.");
+    renderLocalIcons();
 }
 
 function filterLibrary() { renderLibraryView(); }
@@ -4148,13 +4150,14 @@ function renderItems(items) {
                 card.dataset.libraryName = item.name || "";
                 card.innerHTML = `
                     <div class="thumb-wrapper"><img src="${escapeHtml(thumb)}" alt="" loading="lazy">${item.duration_text ? `<span class="badge-duration">${escapeHtml(item.duration_text)}</span>` : ""}</div>
-                    <div class="track-info"><div class="track-title">${escapeHtml(title)}</div><div class="track-artist">👤 ${escapeHtml(artist)} · ${escapeHtml(album)}</div></div>
-                    <div class="btn-group"><button type="button" class="btn-preview">▶ Play</button><button type="button" class="btn-download queue-local-btn">＋ Queue</button></div>`;
+                    <div class="track-info"><div class="track-title">${escapeHtml(title)}</div><div class="track-artist"><i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(artist)} · ${escapeHtml(album)}</div></div>
+                    <div class="btn-group"><button type="button" class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button type="button" class="btn-download queue-local-btn"><i data-lucide="plus" aria-hidden="true"></i> Queue</button></div>`;
                 const play = card.querySelector(".btn-preview");
                 play?.addEventListener("click", e => { e.stopPropagation(); toggleAudioStream(play, item.stream || "", "library", title, artist, thumb, item.id || null); });
                 card.querySelector(".queue-local-btn")?.addEventListener("click", e => { e.stopPropagation(); addTrackToQueue({...item, name:item.name}, false); });
                 card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), {once:true});
                 results.appendChild(card);
+                renderLocalIcons();
                 return;
             }
 
@@ -4193,7 +4196,7 @@ function renderItems(items) {
                     </div>
 
                     <div class="track-artist">
-                        👤 ${escapeHtml(
+                        <i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(
                             item.channel || "Unknown Artist"
                         )}
                     </div>
@@ -4243,17 +4246,13 @@ function renderItems(items) {
             if (item.already_downloaded || libraryFilesSet.has(titleKey)) {
 
                 group.innerHTML = `
-                    <div class="badge-library">
-                        ✅ In Library
-                    </div>
+                    <div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library</div>
                 `;
 
             } else if (item.already_queued) {
 
                 group.innerHTML = `
-                    <div class="badge-library">
-                        ⏳ In Download Queue
-                    </div>
+                    <div class="badge-library"><i data-lucide="clock-3" aria-hidden="true"></i> In Download Queue</div>
                 `;
 
             } else {
@@ -4276,8 +4275,7 @@ function renderItems(items) {
                     "search";
 
 
-                preview.textContent =
-                    "▶ Preview";
+                preview.innerHTML = `<i data-lucide="play" aria-hidden="true"></i> Preview`;
 
 
                 preview.addEventListener(
@@ -4315,8 +4313,7 @@ function renderItems(items) {
                     item.id || "";
 
 
-                download.textContent =
-                    "⬇️ Save";
+                download.innerHTML = `<i data-lucide="download" aria-hidden="true"></i> Save`;
 
 
                 download.addEventListener(
@@ -4348,6 +4345,7 @@ function renderItems(items) {
             );
         }
     );
+    renderLocalIcons();
 }
 
 
@@ -4530,49 +4528,49 @@ function getTaskStatus(status) {
 
         queued: [
             "Queued",
-            "⏳",
+            "clock-3",
             "status-queued"
         ],
 
         downloading: [
             "Downloading",
-            "⬇️",
+            "download",
             "status-downloading"
         ],
 
         processing: [
             "Processing",
-            "⚙️",
+            "settings",
             "status-processing"
         ],
 
         completed: [
             "Completed",
-            "✓",
+            "circle-check",
             "status-completed"
         ],
 
         error: [
             "Failed",
-            "⚠️",
+            "circle-alert",
             "status-error"
         ],
 
         failed: [
             "Failed",
-            "⚠️",
+            "circle-alert",
             "status-error"
         ],
 
         cancelled: [
             "Cancelled",
-            "✕",
+            "x",
             "status-cancelled"
         ],
 
         canceled: [
             "Cancelled",
-            "✕",
+            "x",
             "status-cancelled"
         ]
     };
@@ -4669,7 +4667,7 @@ function createDownloadCard(
         <div class="download-art">
 
             <div class="download-art-icon">
-                🎵
+                <i data-lucide="music-2" aria-hidden="true"></i>
             </div>
 
             <div class="download-art-overlay">
@@ -4719,8 +4717,8 @@ function createDownloadCard(
                     >
 
                         <span class="status-dot"></span>
-
-                        ${label}
+                        <i data-lucide="${escapeHtml(icon)}" aria-hidden="true"></i>
+                        <span>${label}</span>
 
                     </span>
 
@@ -4800,8 +4798,7 @@ function createDownloadCard(
             "btn-danger";
 
 
-        actionButton.textContent =
-            "✕ Cancel";
+        actionButton.innerHTML = '<i data-lucide="x" aria-hidden="true"></i> Cancel';
 
 
         actionButton.addEventListener(
@@ -4814,7 +4811,7 @@ function createDownloadCard(
 
     } else if (["error", "failed", "cancelled", "canceled"].includes(String(task.status || "").toLowerCase())) {
         actionButton.className = "save-btn";
-        actionButton.textContent = "↻ Retry";
+        actionButton.innerHTML = '<i data-lucide="refresh-cw" aria-hidden="true"></i> Retry';
         actionButton.addEventListener("click", () => retryTask(task.id));
     } else {
         actionButton.className = "download-remove-btn";
@@ -4826,7 +4823,6 @@ function createDownloadCard(
     actions.appendChild(
         actionButton
     );
-
 
     return card;
 }
@@ -4953,7 +4949,7 @@ function renderDownloads(tasks) {
         empty.innerHTML = `
 
             <div class="empty-icon">
-                🎧
+                <i data-lucide="download" aria-hidden="true"></i>
             </div>
 
             <div class="empty-title">
@@ -4968,7 +4964,7 @@ function renderDownloads(tasks) {
                 type="button"
                 class="save-btn"
             >
-                🔍 Search Music
+                <i data-lucide="search" aria-hidden="true"></i> Search Music
             </button>
         `;
 
@@ -5227,8 +5223,8 @@ async function startDownload(
 
         button.disabled = true;
 
-        button.textContent =
-            "⏳ Queuing...";
+        button.innerHTML = '<i data-lucide="clock-3" aria-hidden="true"></i> Queuing...';
+        renderLocalIcons();
     }
 
 
@@ -5283,8 +5279,9 @@ async function startDownload(
 
         if (data.status === "already_downloaded" && button) {
             button.disabled = true;
-            button.textContent = "✅ In Library";
+            button.innerHTML = '<i data-lucide="circle-check" aria-hidden="true"></i> In Library';
             button.className = "btn-refresh";
+            renderLocalIcons();
         }
 
         showToast(
@@ -5313,8 +5310,8 @@ async function startDownload(
 
             button.disabled = false;
 
-            button.textContent =
-                "⬇️ Save";
+            button.innerHTML = '<i data-lucide="download" aria-hidden="true"></i> Save';
+            renderLocalIcons();
         }
     }
 }
@@ -5892,9 +5889,7 @@ async function loadHome() {
             container.innerHTML = `
                 <div class="home-empty">
 
-                    <div class="empty-icon">
-                        ⚠️
-                    </div>
+                    <div class="empty-icon"><i data-lucide="circle-alert" aria-hidden="true"></i></div>
 
                     <div class="empty-title">
                         Could not load Recently Added
@@ -5912,11 +5907,12 @@ async function loadHome() {
                         class="save-btn"
                         onclick="loadHome()"
                     >
-                        🔄 Try Again
+                        <i data-lucide="refresh-cw" aria-hidden="true"></i> Try Again
                     </button>
 
                 </div>
             `;
+            renderLocalIcons();
         }
 
     } finally {
@@ -6219,6 +6215,7 @@ function renderLocalIcons() {
         broom: [['path','m3 21 9-9'],['path','m14 3 7 7'],['path','m16 3 5 5']],
         'volume-2': [['path','M11 5 6 9H3v6h3l5 4z'],['path','M15.5 8.5a5 5 0 0 1 0 7'],['path','M18.5 5.5a9 9 0 0 1 0 13']],
         play: [['path','m8 5 11 7-11 7z']],
+        pause: [['path','M8 5v14'],['path','M16 5v14']],
         'skip-back': [['path','M19 20 9 12l10-8v16'],['path','M5 19V5']],
         'skip-forward': [['path','m5 4 10 8-10 8V4'],['path','M19 5v14']],
         shuffle: [['path','M3 6h3c3 0 4 6 7 6h8'],['path','m18 9 3 3-3 3'],['path','M3 18h3c3 0 4-6 7-6h2'],['path','m18 3 3 3-3 3']],
@@ -6233,6 +6230,17 @@ function renderLocalIcons() {
         tablet: [['rect','5 2 14 20'],['path','M11 18h2']],
         tv: [['rect','2 5 20 14'],['path','M8 21h8'],['path','M12 19v2']],
     };
+    paths["bar-chart-3"] = [['path','M4 20V10'],['path','M10 20V4'],['path','M16 20v-7'],['path','M22 20H2']];
+    paths["database"] = [['path','M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3'],['path','M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6'],['path','M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6']];
+    paths["folder-open"] = [['path','M3 7.5A1.5 1.5 0 0 1 4.5 6h5l2 2h8A1.5 1.5 0 0 1 21 9.5l-1.2 8A1.5 1.5 0 0 1 18.3 19H5.2a1.5 1.5 0 0 1-1.5-1.3z'],['path','M3.5 10h17']];
+    paths["layers-2"] = [['path','m12 2 9 5-9 5-9-5z'],['path','m3 12 9 5 9-5'],['path','m3 17 9 5 9-5']];
+    paths["ellipsis"] = [['circle','5 12 1'],['circle','12 12 1'],['circle','19 12 1']];
+    paths["list-plus"] = [['path','M8 6h13'],['path','M8 12h13'],['path','M8 18h5'],['path','M3 6h.01'],['path','M3 12h.01'],['path','M18 18h3'],['path','M18.5 15.5v5']];
+    paths["sparkles"] = [['path','m12 3-1.1 3.2L7.5 7.3l3.4 1.1L12 12l1.1-3.6 3.4-1.1-3.4-1.1z'],['path','m19 12-.7 2.3-2.3.7 2.3.7.7 2.3.7-2.3 2.3-.7-2.3-.7z'],['path','m5 14-.6 1.9-1.9.6 1.9.6.6 1.9.6-1.9 1.9-.6-1.9-.6z']];
+    paths["settings-2"] = paths.settings;
+    paths["chevron-up"] = [['path','m18 15-6-6-6 6']];
+    paths["circle-alert"] = [['circle','12 12 9'],['path','M12 8v5'],['path','M12 16h.01']];
+    paths["download-cloud"] = [['path','M12 3v11'],['path','m7 10 5 5 5-5'],['path','M5 21h14'],['path','M4 16a4 4 0 0 1 1-7.9A6 6 0 0 1 17 7a5 5 0 0 1 1 9']];
     const ns = 'http://www.w3.org/2000/svg';
     document.querySelectorAll('[data-lucide]').forEach(el => {
         const name = el.getAttribute('data-lucide') || '';
@@ -6243,8 +6251,16 @@ function renderLocalIcons() {
         svg.setAttribute('stroke-width','2'); svg.setAttribute('stroke-linecap','round'); svg.setAttribute('stroke-linejoin','round'); svg.setAttribute('aria-hidden','true');
         defs.forEach(([kind, value]) => {
             const node = document.createElementNS(ns, kind);
-            if (kind === 'circle') { const [cx,cy,r]=value.split(' '); node.setAttribute('cx',cx); node.setAttribute('cy',cy); node.setAttribute('r',r); }
-            else node.setAttribute('d', value);
+            const parts = String(value).trim().split(/\s+/);
+            if (kind === 'circle') {
+                const [cx,cy,r] = parts; node.setAttribute('cx',cx); node.setAttribute('cy',cy); node.setAttribute('r',r);
+            } else if (kind === 'rect') {
+                const [x,y,width,height,rx] = parts; node.setAttribute('x',x); node.setAttribute('y',y); node.setAttribute('width',width); node.setAttribute('height',height); if (rx) node.setAttribute('rx',rx);
+            } else if (kind === 'ellipse') {
+                const [cx,cy,rx,ry] = parts; node.setAttribute('cx',cx); node.setAttribute('cy',cy); node.setAttribute('rx',rx); node.setAttribute('ry',ry);
+            } else {
+                node.setAttribute('d', value);
+            }
             svg.appendChild(node);
         });
         el.replaceWith(svg);
@@ -6438,7 +6454,8 @@ function renderEnhancedQueue() {
     if (!box) return;
     box.innerHTML = "";
     if (!enhancedQueue.length) {
-        box.innerHTML = '<div class="queue-empty">Queue is empty</div>';
+        box.innerHTML = '<div class="queue-empty"><i data-lucide="list-music" aria-hidden="true"></i><span>Queue is empty</span></div>';
+        renderLocalIcons();
         return;
     }
     enhancedQueue.forEach((t, i) => {
@@ -6446,7 +6463,7 @@ function renderEnhancedQueue() {
         row.className = `queue-row ${i === enhancedQueueIndex ? "current" : ""}`;
         row.draggable = true;
         row.dataset.index = String(i);
-        row.innerHTML = `<span class="queue-drag" aria-hidden="true"><i data-lucide="grip-vertical"></i></span><img src="${escapeHtml(t.cover || "")}" alt=""><div class="queue-row-info"><strong>${escapeHtml(t.title || t.name || "Unknown")}</strong><span>${escapeHtml(t.artist || "Unknown Artist")}</span></div><button class="queue-next btn-refresh" title="Play next">Next</button><button class="queue-remove icon-btn" title="Remove" aria-label="Remove track">×</button>`;
+        row.innerHTML = `<span class="queue-drag" aria-hidden="true"><i data-lucide="grip-vertical"></i></span><img src="${escapeHtml(t.cover || "")}" alt=""><div class="queue-row-info"><strong>${escapeHtml(t.title || t.name || "Unknown")}</strong><span>${escapeHtml(t.artist || "Unknown Artist")}</span></div><button class="queue-next btn-refresh" title="Play next">Next</button><button class="queue-remove icon-btn" title="Remove" aria-label="Remove track"><i data-lucide="x" aria-hidden="true"></i></button>`;
         const nextButton = row.querySelector(".queue-next");
         const removeButton = row.querySelector(".queue-remove");
         if (i === enhancedQueueIndex) { removeButton.disabled = true; nextButton.disabled = true; }
@@ -6534,6 +6551,7 @@ async function renderLibraryCollections(mode){
     const r=await apiFetch("api/library/recent-most",{cache:"no-store"}); const d=await r.json(); const rows=d[endpoint]||[]; list.innerHTML="";
     if(!rows.length){renderEmpty(list,"clock-3",mode==="recent"?"Nothing recently played":"No play history yet","Play some tracks to build this list.");return;}
     rows.forEach((t, rank)=>{ const f={...t,name:t.title,stream:t.stream,cover:t.cover,play_count:Number(t.plays||0)}; const card=createTrackCard(f,rows); card.classList.add("collection-track"); card.dataset.rank=String(rank+1); list.appendChild(card); });
+    renderLocalIcons();
 }
 
 async function loadPlaylistsView(){
@@ -7295,8 +7313,8 @@ function renderLibraryTracksV37(list, query){
     list.innerHTML=""; if(!files.length){renderEmpty(list,"music-2",rawLibraryFiles.length?"No matching tracks":"Your library is empty",rawLibraryFiles.length?"Try another search.":"Downloaded tracks will appear here.");return;}
     const token={files, index:0, query};v37LibraryRenderStates.set(list,token);
     const sentinel=document.createElement("div"); sentinel.className="library-window-sentinel";
-    const observer=new IntersectionObserver(entries=>{if(!entries.some(e=>e.isIntersecting))return;const state=v37LibraryRenderStates.get(list);if(!state||state!==token)return;const fragment=document.createDocumentFragment();const end=Math.min(state.index+60,state.files.length);for(;state.index<end;state.index++)fragment.appendChild(createTrackCard(state.files[state.index],state.files));list.insertBefore(fragment,sentinel);if(state.index>=state.files.length)observer.disconnect();},{rootMargin:"900px"});
-    list.appendChild(sentinel);observer.observe(sentinel);const initial=token.files.slice(0,60);const fragment=document.createDocumentFragment();initial.forEach(f=>fragment.appendChild(createTrackCard(f,files)));list.insertBefore(fragment,sentinel);token.index=initial.length;if(token.index>=token.files.length)observer.disconnect();
+    const observer=new IntersectionObserver(entries=>{if(!entries.some(e=>e.isIntersecting))return;const state=v37LibraryRenderStates.get(list);if(!state||state!==token)return;const fragment=document.createDocumentFragment();const end=Math.min(state.index+60,state.files.length);for(;state.index<end;state.index++)fragment.appendChild(createTrackCard(state.files[state.index],state.files));list.insertBefore(fragment,sentinel);renderLocalIcons();if(state.index>=state.files.length)observer.disconnect();},{rootMargin:"900px"});
+    list.appendChild(sentinel);observer.observe(sentinel);const initial=token.files.slice(0,60);const fragment=document.createDocumentFragment();initial.forEach(f=>fragment.appendChild(createTrackCard(f,files)));list.insertBefore(fragment,sentinel);renderLocalIcons();token.index=initial.length;if(token.index>=token.files.length)observer.disconnect();
 }
 function renderTracksV37(list,query){return renderLibraryTracksV37(list,query);}
 
