@@ -40,6 +40,8 @@ let currentPage = 1;
 let currentQuery = "";
 let isLoadingMore = false;
 let hasMoreResults = true;
+let searchResultIds = new Set();
+const SEARCH_PAGE_SIZE = 20;
 let searchRequestId = 0;
 let searchAbortController = null;
 
@@ -1745,9 +1747,6 @@ function navigate(
 
 function switchTab(tab) {
 
-    const previousTab = document.querySelector(".tab-content.active")?.id?.replace(/^tab-/, "") || "";
-    if(previousTab === "search" && tab !== "search" && typeof cancelSearchRequest === "function") cancelSearchRequest();
-
     const tabs = [
         "home",
         "search",
@@ -1802,14 +1801,6 @@ function switchTab(tab) {
 
     if (tab === "home") {
         loadHome();
-    }
-
-    if (tab === "search") {
-        const button = document.getElementById("searchBtn");
-        if (!searchAbortController) {
-            if (button) button.disabled = false;
-            hideSearchLoading();
-        }
     }
 
     if (tab === "downloads") {
@@ -3813,22 +3804,10 @@ async function deleteFile(filename) {
    SEARCH
    ============================================================ */
 
-function cancelSearchRequest(){
-    if(v37SearchTimer){clearTimeout(v37SearchTimer);v37SearchTimer=null;}
-    searchRequestId += 1;
-    try{searchAbortController?.abort();}catch(_){}
-    searchAbortController=null;
-    isLoadingMore=false;
-    hasMoreResults=false;
-    searchCursor="";
-    hideSearchLoading();
-}
-
 async function searchMusic() {
-    if(v37SearchTimer){clearTimeout(v37SearchTimer);v37SearchTimer=null;}
+    if (typeof v37SearchTimer !== "undefined" && v37SearchTimer) { clearTimeout(v37SearchTimer); v37SearchTimer = null; }
     const requestId = ++searchRequestId;
     if (searchAbortController) { try { searchAbortController.abort(); } catch (_) {} }
-    isLoadingMore = false;
     const requestController = typeof AbortController !== "undefined" ? new AbortController() : null;
     searchAbortController = requestController;
 
@@ -3858,6 +3837,7 @@ async function searchMusic() {
     if (!query) {
         currentQuery = "";
         currentPage = 1;
+        searchResultIds = new Set();
         hasMoreResults = false;
         isLoadingMore = false;
         results.innerHTML = "";
@@ -3872,6 +3852,7 @@ async function searchMusic() {
 
     currentQuery = query;
     currentPage = 1;
+    searchResultIds = new Set();
     hasMoreResults = true;
     isLoadingMore = false;
 
@@ -3924,10 +3905,9 @@ async function searchMusic() {
             await apiFetch(
                 `api/search?q=${
                     encodeURIComponent(query)
-                }&source=youtube&page=1&limit=20`,
+                }&source=youtube&page=1&limit=${SEARCH_PAGE_SIZE}`,
                 {
                     cache: "no-store",
-                    timeoutMs: 22000,
                     ...(requestController ? { signal: requestController.signal } : {})
                 }
             );
@@ -3992,9 +3972,9 @@ async function searchMusic() {
             "Loading results..."
         );
 
-        searchCursor = response.headers.get("X-Search-Next-Cursor") || "";
-        searchTotal = Number(response.headers.get("X-Search-Total") || data.length || 0);
-        hasMoreResults = response.headers.get("X-Search-Has-More") === "true";
+        const headerHasMore = response.headers.get("X-Search-Has-More");
+        hasMoreResults = headerHasMore !== null ? headerHasMore === "true" : data.length >= SEARCH_PAGE_SIZE;
+        if (data.length) status.textContent = `${data.length}${hasMoreResults ? "+" : ""} matches`;
         renderItems(data);
 
         /*
@@ -4024,253 +4004,136 @@ async function searchMusic() {
             "Search failed"
         );
 
-        hideSearchLoading();
-        hasMoreResults = false;
-        searchCursor = "";
+        setTimeout(
+            hideSearchLoading,
+            1000
+        );
+
         status.textContent =
             "❌ " +
-            (error?.message || "Search failed.");
+            error.message;
 
     } finally {
 
-        if (requestId === searchRequestId) {
-            if (button) button.disabled = false;
-            if (searchAbortController === requestController) searchAbortController = null;
+        if (requestId === searchRequestId && button) {
+            button.disabled = false;
         }
+        if (searchAbortController === requestController) searchAbortController = null;
     }
 }
 
 
 function renderItems(items) {
+    const results = document.getElementById("results");
+    if (!results || !Array.isArray(items)) return;
 
-    const results =
-        document.getElementById(
-            "results"
-        );
+    items.forEach(item => {
+        if (!item) return;
+        const isLibrary = item.source === "library";
+        const resultId = String(item.id || item.url || item.name || "").trim();
+        if (!resultId) return;
+        if (!isLibrary && searchResultIds.has(resultId)) return;
+        if (!isLibrary) searchResultIds.add(resultId);
 
+        const card = document.createElement("article");
+        card.className = "result-card";
 
-    if (!results || !Array.isArray(items)) {
-        return;
-    }
-
-
-    items.forEach(
-        item => {
-
-            if (!item) {
-                return;
-            }
-
-
-            const card =
-                document.createElement(
-                    "article"
-                );
-
-
-            card.className =
-                "result-card";
-
-            if (item.source === "library") {
-                const title = item.title || item.name || "Unknown Track";
-                const artist = item.artist || "Unknown Artist";
-                const album = item.album || "Unknown Album";
-                const thumb = String(item.cover || "");
-                card.dataset.libraryName = item.name || "";
-                card.innerHTML = `
-                    <div class="thumb-wrapper"><img src="${escapeHtml(thumb)}" alt="" loading="lazy">${item.duration_text ? `<span class="badge-duration">${escapeHtml(item.duration_text)}</span>` : ""}</div>
-                    <div class="track-info"><div class="track-title">${escapeHtml(title)}</div><div class="track-artist"><i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(artist)} · ${escapeHtml(album)}</div></div>
-                    <div class="btn-group"><button type="button" class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button type="button" class="btn-download queue-local-btn"><i data-lucide="plus" aria-hidden="true"></i> Queue</button></div>`;
-                const play = card.querySelector(".btn-preview");
-                play?.addEventListener("click", e => { e.stopPropagation(); toggleAudioStream(play, item.stream || "", "library", title, artist, thumb, item.id || null); });
-                card.querySelector(".queue-local-btn")?.addEventListener("click", e => { e.stopPropagation(); addTrackToQueue({...item, name:item.name}, false); });
-                card.querySelector("img")?.addEventListener("error", e => e.currentTarget.removeAttribute("src"), {once:true});
-                results.appendChild(card);
-                renderLocalIcons();
-                return;
-            }
-
-
-            const thumbnail =
-                String(
-                    item.thumbnail || ""
-                );
-
-
+        if (isLibrary) {
+            const title = item.title || item.name || "Unknown Track";
+            const artist = item.artist || "Unknown Artist";
+            const album = item.album || "Unknown Album";
+            const thumb = String(item.cover || "");
+            card.dataset.libraryName = item.name || "";
             card.innerHTML = `
-
                 <div class="thumb-wrapper">
-
-                    <img
-                        src="${escapeHtml(thumbnail)}"
-                        alt=""
-                        loading="lazy"
-                    >
-
-                    <span class="badge-duration">
-                        ${escapeHtml(
-                            item.duration_text || ""
-                        )}
-                    </span>
-
+                    <img src="${escapeHtml(thumb)}" alt="" loading="lazy">
+                    ${item.duration_text ? `<span class="badge-duration">${escapeHtml(item.duration_text)}</span>` : ""}
                 </div>
-
-
                 <div class="track-info">
-
-                    <div class="track-title">
-                        ${escapeHtml(
-                            item.title || "Unknown Track"
-                        )}
-                    </div>
-
-                    <div class="track-artist">
-                        <i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(
-                            item.artist || item.channel || "Unknown Artist"
-                        )}
-                    </div>
-
+                    <div class="track-title">${escapeHtml(title)}</div>
+                    <div class="track-artist"><i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(artist)} · ${escapeHtml(album)}</div>
                 </div>
-
-
-                <div class="btn-group"></div>
-            `;
-
-
-            const image =
-                card.querySelector("img");
-
-
-            image?.addEventListener(
-                "error",
-                () => {
-
-                    image.src =
-                        apiUrl("static/logo.png");
-
-                },
-                {
-                    once: true
-                }
-            );
-
-
-            const group =
-                card.querySelector(
-                    ".btn-group"
-                );
-
-
-            if (!group) {
-                return;
-            }
-
-
-            if (item.already_downloaded) {
-
-                group.innerHTML = `
-                    <div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library</div>
-                `;
-
-            } else if (item.already_queued) {
-
-                group.innerHTML = `
-                    <div class="badge-library"><i data-lucide="clock-3" aria-hidden="true"></i> In Download Queue</div>
-                `;
-
-            } else {
-
-                const preview =
-                    document.createElement(
-                        "button"
-                    );
-
-
-                preview.type =
-                    "button";
-
-
-                preview.className =
-                    "btn-preview";
-
-
-                preview.dataset.type =
-                    "search";
-
-
-                preview.innerHTML = `<i data-lucide="play" aria-hidden="true"></i> Preview`;
-
-
-                preview.addEventListener(
-                    "click",
-                    () =>
-                        toggleAudioStream(
-                            preview,
-                            "api/preview?url=" +
-                            encodeURIComponent(
-                                item.url || ""
-                            ),
-                            "search",
-                            item.title,
-                            item.artist || item.channel,
-                            item.thumbnail
-                        )
-                );
-
-
-                const download =
-                    document.createElement(
-                        "button"
-                    );
-
-
-                download.type =
-                    "button";
-
-
-                download.className =
-                    "btn-download";
-
-
-                download.dataset.id =
-                    item.id || "";
-
-
-                download.innerHTML = `<i data-lucide="download" aria-hidden="true"></i> Save`;
-
-
-                download.addEventListener(
-                    "click",
-                    () =>
-                        startDownload(
-                            item.url,
-                            item.title,
-                            item.id,
-                            item.artist || item.channel,
-                            download,
-                            item.album || "",
-                            item.duration || 0,
-                            item.version || null
-                        )
-                );
-
-
-                group.appendChild(
-                    preview
-                );
-
-
-                group.appendChild(
-                    download
-                );
-            }
-
-
-            results.appendChild(
-                card
-            );
+                <div class="btn-group">
+                    <button type="button" class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button>
+                    <button type="button" class="btn-download queue-local-btn"><i data-lucide="plus" aria-hidden="true"></i> Queue</button>
+                </div>`;
+            const play = card.querySelector(".btn-preview");
+            play?.addEventListener("click", event => {
+                event.stopPropagation();
+                toggleAudioStream(play, item.stream || "", "library", title, artist, thumb, item.id || null);
+            });
+            card.querySelector(".queue-local-btn")?.addEventListener("click", event => {
+                event.stopPropagation();
+                addTrackToQueue({...item, name: item.name}, false);
+            });
+            card.querySelector("img")?.addEventListener("error", event => event.currentTarget.removeAttribute("src"), {once:true});
+            results.appendChild(card);
+            return;
         }
-    );
+
+        const title = item.title || "Unknown Track";
+        const artist = item.artist || "Unknown Artist";
+        const thumbnail = String(item.thumbnail || "");
+        const confidence = Number(item.metadata_confidence ?? item.catalog_confidence ?? 0);
+        const verified = Boolean(item.catalog_verified);
+        const metadataSource = item.metadata_source || (verified ? "Catalog verified" : "YouTube");
+        const contentType = item.content_type && item.content_type !== "track" ? String(item.content_type).replace("_", " ") : "";
+
+        card.innerHTML = `
+            <div class="thumb-wrapper">
+                <img src="${escapeHtml(thumbnail)}" alt="" loading="lazy">
+                <span class="badge-duration">${escapeHtml(item.duration_text || "")}</span>
+            </div>
+            <div class="track-info">
+                <div class="track-title">${escapeHtml(title)}</div>
+                <div class="track-artist"><i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(artist)}</div>
+                <div class="search-result-meta">
+                    ${item.album ? `<span class="search-result-secondary">${escapeHtml(item.album)}</span>` : ""}
+                    <span class="search-badge ${verified ? "is-verified" : ""}"><i data-lucide="${verified ? "badge-check" : "circle-help"}" aria-hidden="true"></i> ${escapeHtml(metadataSource)}</span>
+                    ${contentType ? `<span class="search-badge">${escapeHtml(contentType)}</span>` : ""}
+                    ${item.channel ? `<span class="search-result-secondary">${escapeHtml(item.channel)}</span>` : ""}
+                </div>
+            </div>
+            <div class="btn-group"></div>`;
+
+        const image = card.querySelector("img");
+        image?.addEventListener("error", () => { image.src = apiUrl("static/logo.png"); }, {once:true});
+
+        const group = card.querySelector(".btn-group");
+        if (!group) return;
+        const confidenceBadge = Number.isFinite(confidence) && confidence >= 0.78
+            ? `<span class="search-confidence">${Math.round(confidence * 100)}% match</span>` : "";
+
+        if (item.already_downloaded) {
+            group.innerHTML = `<div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library</div>`;
+        } else if (item.already_queued) {
+            group.innerHTML = `<div class="badge-library"><i data-lucide="clock-3" aria-hidden="true"></i> In Download Queue</div>`;
+        } else {
+            const preview = document.createElement("button");
+            preview.type = "button";
+            preview.className = "btn-preview";
+            preview.dataset.type = "search";
+            preview.innerHTML = `<i data-lucide="play" aria-hidden="true"></i> Preview`;
+            preview.addEventListener("click", event => {
+                event.stopPropagation();
+                toggleAudioStream(preview, "api/preview?url=" + encodeURIComponent(item.url || ""), "search", title, artist, thumbnail);
+            });
+
+            const download = document.createElement("button");
+            download.type = "button";
+            download.className = "btn-download";
+            download.dataset.id = item.id || "";
+            download.innerHTML = `<i data-lucide="download" aria-hidden="true"></i> Save`;
+            download.addEventListener("click", event => {
+                event.stopPropagation();
+                startDownload(item.url, title, item.id, artist, download, item.album || "");
+            });
+            if (confidenceBadge) group.insertAdjacentHTML("beforeend", confidenceBadge);
+            group.appendChild(preview);
+            group.appendChild(download);
+        }
+        results.appendChild(card);
+    });
     renderLocalIcons();
 }
 
@@ -4280,8 +4143,7 @@ async function loadMoreResults() {
     if (
         isLoadingMore ||
         !hasMoreResults ||
-        !currentQuery ||
-        !searchCursor
+        !currentQuery
     ) {
         return;
     }
@@ -4318,7 +4180,7 @@ async function loadMoreResults() {
                     )
                 }&source=youtube&page=${
                     nextPage
-                }&limit=20&cursor=${encodeURIComponent(searchCursor)}`,
+                }&limit=${SEARCH_PAGE_SIZE}`,
                 {
                     cache: "no-store",
                     ...(requestController ? { signal: requestController.signal } : {})
@@ -4349,14 +4211,12 @@ async function loadMoreResults() {
         ) {
 
             hasMoreResults = false;
-            searchCursor = "";
 
         } else {
 
             currentPage = nextPage;
-            searchCursor = response.headers.get("X-Search-Next-Cursor") || "";
-            searchTotal = Number(response.headers.get("X-Search-Total") || searchTotal || 0);
-            hasMoreResults = response.headers.get("X-Search-Has-More") === "true";
+            const headerHasMore = response.headers.get("X-Search-Has-More");
+            hasMoreResults = headerHasMore !== null ? headerHasMore === "true" : data.length >= SEARCH_PAGE_SIZE;
             renderItems(data);
         }
 
@@ -4384,48 +4244,32 @@ async function loadMoreResults() {
 }
 
 
-function installSearchController() {
-    if (window.__xrobSearchControllerInstalled) return;
-    window.__xrobSearchControllerInstalled = true;
-
-    // Capture the interaction before any legacy click/submit handlers.
-    // This prevents the search form from ever performing a native navigation.
-    document.addEventListener("click", event => {
-        const button = event.target?.closest?.("#searchBtn");
-        if (!button) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        if (button.disabled) return;
-        searchMusic();
-    }, true);
-
-    document.addEventListener("keydown", event => {
-        const input = event.target?.closest?.("#query");
-        if (!input || event.isComposing || event.key !== "Enter") return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const button = document.getElementById("searchBtn");
-        if (button?.disabled) return;
-        searchMusic();
-    }, true);
-
-    document.addEventListener("submit", event => {
-        const form = event.target?.closest?.("#searchForm");
-        if (!form) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const button = document.getElementById("searchBtn");
-        if (button?.disabled) return;
-        searchMusic();
-    }, true);
-}
-
 function bindSearch() {
-    installSearchController();
-}
+    document
+        .getElementById("searchBtn")
+        ?.addEventListener(
+            "click",
+            searchMusic
+        );
 
-// Install immediately after the Search function exists.
-installSearchController();
+    document
+        .getElementById("query")
+        ?.addEventListener(
+            "keydown",
+            event => {
+
+                if (
+                    event.key === "Enter" &&
+                    !event.isComposing
+                ) {
+
+                    event.preventDefault();
+
+                    searchMusic();
+                }
+            }
+        );
+}
 
 
 /* ============================================================
@@ -5153,9 +4997,7 @@ async function startDownload(
     elementId,
     artist,
     button,
-    album = "",
-    duration = 0,
-    version = null
+    album = ""
 ) {
 
     if (!url) {
@@ -5196,9 +5038,7 @@ async function startDownload(
                             title,
                             elementId,
                             artist,
-                            album,
-                            duration: Number(duration || 0),
-                            version
+                            album
                         })
                 }
             );
@@ -6219,18 +6059,7 @@ function renderLocalIcons() {
     });
 }
 async function checkWebAuth() {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-            const r = await apiFetch("api/auth/status", {cache:"no-store", timeoutMs:5000});
-            if (r.ok) {
-                const d = await r.json();
-                return !!d.authenticated;
-            }
-            if (r.status >= 400 && r.status < 500) return false;
-        } catch (_) {}
-        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
-    }
-    return false;
+    try { const r=await apiFetch("api/auth/status",{cache:"no-store"}); if(!r.ok) return false; const d=await r.json(); return !!d.authenticated; } catch (_) { return false; }
 }
 
 function showAuthenticatedApp() { document.getElementById("login-screen")?.classList.add("hidden"); const shell=document.getElementById("app-shell"); if(shell) shell.hidden=false; renderLocalIcons(); }
@@ -7254,23 +7083,7 @@ function renderLibraryTracksV37(list, query){
 }
 function renderTracksV37(list,query){return renderLibraryTracksV37(list,query);}
 
-function v37BindSearchDebounce(){
-    installSearchController();
-    const input=document.getElementById("query");
-    if(!input) return;
-    if(input.dataset.v37SearchBound!=="1"){
-        input.dataset.v37SearchBound="1";
-        input.addEventListener("input",()=>{
-            if(v37SearchTimer){clearTimeout(v37SearchTimer);v37SearchTimer=null;}
-            if(!input.value.trim()){
-                currentQuery = "";
-                searchCursor = "";
-                hasMoreResults = false;
-                hideSearchLoading();
-            }
-        });
-    }
-}
+function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";input.addEventListener("input",()=>{if(v37SearchTimer)clearTimeout(v37SearchTimer);const q=input.value.trim();if(!q){currentQuery="";hasMoreResults=false;isLoadingMore=false;searchResultIds=new Set();const results=document.getElementById("results");if(results)results.innerHTML="";const status=document.getElementById("statusMsg");if(status)status.textContent="Enter a search term.";hideSearchLoading();v37SearchTimer=null;return;}v37SearchTimer=setTimeout(()=>{v37SearchTimer=null;searchMusic();},420);});}
 
 function v37InstallKeyboard(){document.addEventListener("keydown",event=>{if(event.target?.matches?.("input,textarea,select,[contenteditable=true]"))return;if(event.key===" "){event.preventDefault();playBtn?.click();}else if(event.key==="ArrowRight"&&event.shiftKey){event.preventDefault();seekFromKeyboard(10);}else if(event.key==="ArrowLeft"&&event.shiftKey){event.preventDefault();seekFromKeyboard(-10);}else if(event.key.toLowerCase()==="m"){event.preventDefault();if(audio)audio.muted=!audio.muted;}});}
 function seekFromKeyboard(delta){const current=isRemotePlayerOwner()?Number(remotePlayerState?.currentTime||0):Number(audio?.currentTime||0),duration=isRemotePlayerOwner()?Number(remotePlayerState?.duration||0):Number(audio?.duration||0),next=Math.max(0,Math.min(duration||Infinity,current+delta));if(isRemotePlayerOwner())sendPlayerCommand("seek",{time:next});else if(audio){audio.currentTime=next;persistCurrentPosition(true);schedulePlayerStateBroadcast(true);}}
@@ -7427,7 +7240,6 @@ window.openQueueDrawer = openQueueDrawer;
 window.closeQueueDrawer = closeQueueDrawer;
 
 window.searchMusic = searchMusic;
-window.__xrobSearchBuild = "377-searchfix3";
 window.loadMoreResults = loadMoreResults;
 
 window.loadLibrary = loadLibrary;
