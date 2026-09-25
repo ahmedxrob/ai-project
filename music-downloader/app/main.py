@@ -58,7 +58,7 @@ from .catalog import LibraryCatalog, StorageUnavailable, strong_file_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.3.1"
+SERVER_VERSION = "4.3.3"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -267,14 +267,18 @@ def _resolve_approved_download_root(raw_location, allow_empty=True):
     if candidate.exists() and not candidate.is_dir():
         raise ValueError("Download location must be a directory.")
     if not candidate.exists():
-        raise ValueError("Download location does not exist. Mount or create it first.")
+        # The canonical base may be temporarily absent while the NAS is offline or
+        # while Home Assistant is preparing the mount. Keep the configured base as
+        # a valid setting; custom roots still fail closed until they exist.
+        if resolved != base:
+            raise ValueError("Download location does not exist. Mount or create it first.")
     return resolved
 
 def _validate_download_location(raw_location):
     return str(_resolve_approved_download_root(raw_location, allow_empty=False))
 
 def _download_root_for_settings(settings):
-    return _resolve_approved_download_root(str((settings or {}).get("download_location") or ""), allow_empty=False)
+    return _resolve_approved_download_root(str((settings or {}).get("download_location") or ""), allow_empty=True)
 
 def task_download_root(task):
     """Resolve a persisted task root through the same canonical policy as settings."""
@@ -492,12 +496,13 @@ def _ensure_secure_web_credentials_sync():
         settings["web_password_hash"] = _hash_web_password(stored)
         settings.pop("web_password", None)
         _write_settings_sync(settings)
-    if AUTH_BOOTSTRAP_FILE.exists() and str(settings.get("web_password_hash") or ""):
-        try:
-            AUTH_BOOTSTRAP_FILE.unlink(missing_ok=True)
-        except OSError:
-            pass
     return settings
+
+def _consume_bootstrap_after_successful_login_sync():
+    try:
+        AUTH_BOOTSTRAP_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 def _current_web_credentials():
     settings = load_settings()
@@ -825,6 +830,8 @@ LIBRARY_REFRESH_GENERATION = 0
 LIBRARY_REFRESH_DIRTY = False
 LIBRARY_REFRESH_MODE = "quick"
 LIBRARY_REFRESH_REASONS = set()
+LIBRARY_REVISION = 0
+
 LIBRARY_REFRESH_WAITERS = []
 SCHEDULED_SCANNER_WAKE = None
 LIBRARY_HEALTH_WAKE = None
@@ -1036,11 +1043,35 @@ def storage_info_sync():
     }
 
 
-def invalidate_library_cache():
-    global LIBRARY_CACHE, LIBRARY_CACHE_TIME
+def _load_library_revision_sync():
+    try:
+        with db_connect() as conn:
+            row = conn.execute("SELECT revision FROM library_meta WHERE id=1").fetchone()
+            return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+
+def _bump_library_revision_sync():
+    now = time.time()
+    with db_connect() as conn:
+        conn.execute("INSERT INTO library_meta(id,revision,updated_at) VALUES(1,1,?) ON CONFLICT(id) DO UPDATE SET revision=library_meta.revision+1, updated_at=excluded.updated_at", (now,))
+        row = conn.execute("SELECT revision FROM library_meta WHERE id=1").fetchone()
+        return int(row[0] or 0) if row else 0
+
+def invalidate_library_cache(reason="library_changed"):
+    global LIBRARY_CACHE, LIBRARY_CACHE_TIME, LIBRARY_REVISION
     LIBRARY_CACHE = None
     LIBRARY_CACHE_TIME = 0.0
     SIMILARITY_RESULTS_CACHE.clear()
+    try:
+        if DB_FILE.exists():
+            LIBRARY_REVISION = _bump_library_revision_sync()
+    except Exception as exc:
+        try:
+            write_app_error_sync("library_revision", exc)
+        except Exception:
+            pass
+    return LIBRARY_REVISION
 
 
 def load_settings():
@@ -1128,6 +1159,8 @@ def load_settings():
     settings["gapless_playback"] = bool(settings.get("gapless_playback", True))
     settings["keep_playing"] = bool(settings.get("keep_playing", True))
     settings["download_location"] = str(settings.get("download_location") or "").strip()[:4096]
+    if not settings["download_location"]:
+        settings["download_location"] = str(DOWNLOAD_DIR.resolve())
     try:
         settings["max_concurrent_downloads"] = max(1, min(8, int(settings.get("max_concurrent_downloads", 3) or 3)))
     except (TypeError, ValueError):
@@ -1242,7 +1275,7 @@ def save_settings(data: dict):
     settings["gapless_playback"] = bool(settings.get("gapless_playback", True))
     settings["keep_playing"] = bool(settings.get("keep_playing", True))
     requested_location = str(settings.get("download_location") or "").strip()[:4096]
-    settings["download_location"] = _validate_download_location(requested_location)
+    settings["download_location"] = str(_resolve_approved_download_root(requested_location, allow_empty=True))
     try:
         settings["max_concurrent_downloads"] = max(1, min(8, int(settings.get("max_concurrent_downloads", 3) or 3)))
     except (TypeError, ValueError):
@@ -1287,11 +1320,6 @@ def save_settings(data: dict):
     settings["web_password_hash"] = str(settings.get("web_password_hash") or "")
 
     _write_settings_sync(settings)
-    if AUTH_BOOTSTRAP_FILE.exists() and ("web_password" in data or settings.get("web_password_hash")):
-        try:
-            AUTH_BOOTSTRAP_FILE.unlink()
-        except OSError:
-            pass
     if old_user != settings.get("web_username") or ("web_password" in data and str(data.get("web_password") or "")):
         AUTH_SESSIONS.clear()
 
@@ -2700,7 +2728,7 @@ async def fast_library_snapshot():
         library_state="empty"
     else:
         library_state="ready"
-    return {"files":files,"total_size":format_size(total),"total_bytes":total,"artists_count":len(artists),"albums_count":len(albums),"ready":library_state in {"ready","empty"},"library_state":library_state,"storage":storage,"storage_state":storage.get("state",STORAGE_STATE),"scan_state":scan_state}
+    return {"files":files,"total_size":format_size(total),"total_bytes":total,"artists_count":len(artists),"albums_count":len(albums),"ready":library_state in {"ready","empty"},"library_state":library_state,"storage":storage,"storage_state":storage.get("state",STORAGE_STATE),"scan_state":scan_state,"revision":LIBRARY_REVISION}
 
 
 async def build_library(force=False):
@@ -2776,7 +2804,7 @@ async def build_library(force=False):
             artist["albumIds"]=sorted(artist["albumIds"],key=lambda aid:albums[aid]["name"].lower()); artist["songIds"]=sorted(artist["songIds"],key=lambda sid:song_sort_key(song_by_id[sid]))
         for album in albums.values():
             album["songIds"]=sorted(album["songIds"],key=lambda sid:song_sort_key(song_by_id[sid]))
-        LIBRARY_CACHE={"songs":songs,"artists":artists,"albums":albums,"genres":genres,"_songs_by_id":song_by_id,"_artists_by_id":dict(artists),"_albums_by_id":dict(albums)}
+        LIBRARY_CACHE={"songs":songs,"artists":artists,"albums":albums,"genres":genres,"_songs_by_id":song_by_id,"_artists_by_id":dict(artists),"_albums_by_id":dict(albums),"_revision":LIBRARY_REVISION}
         LIBRARY_CACHE_TIME=time.monotonic()
         return LIBRARY_CACHE
 
@@ -2833,7 +2861,7 @@ async def _perform_library_refresh(mode="quick", reason="manual"):
                             except Exception: return None
                     await asyncio.gather(*(cover_one(c) for c in cover_tasks),return_exceptions=True)
             await asyncio.to_thread(_scan_state_sync,"ok",mode,f"{len(library['songs'])} tracks scanned")
-            await manager.broadcast({"type":"library_updated","reason":reason,"count":len(library["songs"])})
+            await manager.broadcast({"type":"library_updated","reason":reason,"count":len(library["songs"]),"revision":LIBRARY_REVISION})
             await broadcast_stats_invalidated("library_updated")
             return library
         except StorageUnavailable as exc:
@@ -3309,7 +3337,7 @@ async def _commit_download_to_catalog_locked(final_path: Path):
     except Exception as exc:
         await write_app_error("song_review", exc)
     try:
-        await manager.broadcast({"type": "library_updated", "songId": song_id, "path": str(final_path)})
+        await manager.broadcast({"type": "library_updated", "songId": song_id, "path": str(final_path), "revision": LIBRARY_REVISION})
     except Exception as exc:
         await write_app_error("library_broadcast", exc)
     return song_id
@@ -4058,8 +4086,9 @@ async def startup_event():
 
     await asyncio.to_thread(configure_storage)
     await asyncio.to_thread(init_db)
-    global STORAGE_STATE_DB_READY, LIBRARY_CATALOG, SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, QUEUED_TASK_IDS
+    global STORAGE_STATE_DB_READY, LIBRARY_CATALOG, SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, QUEUED_TASK_IDS, LIBRARY_REVISION
     STORAGE_STATE_DB_READY = True
+    LIBRARY_REVISION = await asyncio.to_thread(_load_library_revision_sync)
     if LIBRARY_CATALOG is not None:
         try:
             await asyncio.to_thread(LIBRARY_CATALOG.migrate_legacy_index)
@@ -4067,11 +4096,6 @@ async def startup_event():
             await write_app_error("library_migration", str(exc))
     await asyncio.to_thread(storage_info_sync)
     await asyncio.to_thread(_ensure_secure_web_credentials_sync)
-    try:
-        if AUTH_BOOTSTRAP_FILE.exists() and str(load_settings().get("web_password_hash") or ""):
-            AUTH_BOOTSTRAP_FILE.unlink(missing_ok=True)
-    except OSError:
-        pass
     await _maybe_prune_tasks(force=True)
 
     global TASKS
@@ -4123,6 +4147,8 @@ async def startup_event():
                 task,
                 force=True,
             )
+
+    startup_seen_content_identities = set()
 
     # Rebuild v2 identities for active pre-download tasks and collapse same-track races.
     # Durable catalog-pending tasks already own finalized files and identities; never
@@ -5538,17 +5564,18 @@ async def api_stats():
     if LIBRARY_CACHE is None:
         snap = await fast_library_snapshot()
         all_play_count, _ = await asyncio.to_thread(_play_totals_sync)
-        return {"tracks": len(snap["files"]), "artists": snap.get("artists_count", 0), "albums": snap.get("albums_count", 0), "total_bytes": snap["total_bytes"], "folder_size": snap["total_size"], "all_play_count": all_play_count, "played_tracks": 0, "ready": False}
+        return {"tracks": len(snap["files"]), "artists": snap.get("artists_count", 0), "albums": snap.get("albums_count", 0), "total_bytes": snap["total_bytes"], "folder_size": snap["total_size"], "all_play_count": all_play_count, "played_tracks": 0, "ready": bool(snap.get("ready", False)), "library_state": snap.get("library_state", "unknown"), "revision": snap.get("revision", LIBRARY_REVISION)}
 
     library = await build_library()
 
     songs = library["songs"]
-
     artists = library["artists"]
     albums = library["albums"]
-
     total = sum(song["size"] for song in songs)
     all_play_count, distinct_played = await asyncio.to_thread(_play_totals_sync)
+    storage = await asyncio.to_thread(storage_info_sync)
+    storage_state = str(storage.get("state") or STORAGE_STATE)
+    library_state = "offline" if storage_state == "offline" else ("ready" if songs else "empty")
     return {
         "tracks": len(songs),
         "artists": len(artists),
@@ -5557,6 +5584,10 @@ async def api_stats():
         "folder_size": format_size(total),
         "all_play_count": all_play_count,
         "played_tracks": distinct_played,
+        "ready": library_state in {"ready", "empty"},
+        "library_state": library_state,
+        "storage_state": storage_state,
+        "revision": LIBRARY_REVISION,
     }
 
 
@@ -5621,7 +5652,7 @@ async def api_library_cover(
         return FileResponse(
             cover,
             media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=86400", "ETag": hashlib.sha1(str(cover).encode("utf-8")).hexdigest()},
+            headers={"Cache-Control": "public, max-age=86400", "ETag": hashlib.sha1(f"{cover}|{cover.stat().st_mtime_ns}|{cover.stat().st_size}".encode("utf-8")).hexdigest()},
         )
 
     return Response(
@@ -5692,23 +5723,23 @@ async def api_delete_library(
     deleted_song_id = str(catalog_row.get("id") or "") if isinstance(catalog_row, dict) else str(catalog_row or "")
 
     try:
-        def delete_file_sync(target):
-            cover = cover_cache_path(target)
-            target.unlink()
-            try:
-                if cover.exists():
-                    cover.unlink()
-            except OSError:
-                pass
+        async with LIBRARY_SCAN_LOCK:
+            async with LIBRARY_CATALOG_LOCK:
+                def delete_file_sync(target):
+                    cover = cover_cache_path(target)
+                    target.unlink()
+                    try:
+                        if cover.exists():
+                            cover.unlink()
+                    except OSError:
+                        pass
 
-        await asyncio.to_thread(delete_file_sync, path)
-        # Clean database references to the deleted track. Playlist song_ids are JSON,
-        # so they are rewritten transactionally rather than relying on foreign keys.
-        if deleted_song_id and LIBRARY_CATALOG is not None:
-            await asyncio.to_thread(LIBRARY_CATALOG.retire_path, path)
-            await asyncio.to_thread(_cleanup_deleted_song_sync, deleted_song_id)
-        METADATA_CACHE.pop(str(path), None)
-        invalidate_library_cache()
+                await asyncio.to_thread(delete_file_sync, path)
+                if deleted_song_id and LIBRARY_CATALOG is not None:
+                    await asyncio.to_thread(LIBRARY_CATALOG.retire_path, path)
+                    await asyncio.to_thread(_cleanup_deleted_song_sync, deleted_song_id)
+                METADATA_CACHE.pop(str(path), None)
+                invalidate_library_cache("delete")
 
         return {
             "status": "deleted",
@@ -8419,6 +8450,26 @@ def _playlist_rows_sync():
         return conn.execute("SELECT * FROM playlists ORDER BY name COLLATE NOCASE").fetchall()
 
 
+def _canonicalize_playlist_song_ids_sync(raw_ids):
+    values = raw_ids if isinstance(raw_ids, list) else []
+    canonical=[]; seen=set(); missing=[]
+    with db_connect() as conn:
+        for value in values[:MAX_PLAYLIST_SONGS]:
+            sid = str(value or "").strip()[:512]
+            if not sid: continue
+            try:
+                alias = conn.execute("SELECT song_id FROM library_song_aliases WHERE legacy_id=?", (sid,)).fetchone()
+                resolved = str(alias[0]) if alias else sid
+                row = conn.execute("SELECT id FROM library_songs WHERE id=? AND missing=0", (resolved,)).fetchone()
+            except sqlite3.Error:
+                row = None
+                resolved = sid
+            if row and resolved not in seen:
+                canonical.append(resolved); seen.add(resolved)
+            elif not row:
+                missing.append(sid)
+    return canonical, missing
+
 def _playlist_create_sync(values):
     with db_connect() as conn:
         conn.execute("INSERT INTO playlists(id,name,comment,owner,public,song_ids,created_at,updated_at,kind,rules) VALUES(?,?,?,?,?,?,?,?,?,?)", values)
@@ -8438,8 +8489,9 @@ def _playlist_update_sync(values):
 
 def _playlist_delete_sync(playlist_id):
     with db_connect() as conn:
-        conn.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
+        cursor = conn.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
         conn.commit()
+        return int(cursor.rowcount or 0)
 
 
 def _daily_mix_db_sync(cutoff_24h, now=None):
@@ -8479,7 +8531,7 @@ def write_app_error_sync(source, message, task_id=None):
     try:
         safe_message = _sanitize_external_error(message, "Operation failed.", 900)
         with db_connect() as conn:
-            conn.execute("INSERT INTO app_errors(created_at,source,message,task_id) VALUES(?,?,?,?)", (time.time(), str(source), safe_message, task_id))
+            conn.execute("INSERT INTO app_errors(created_at,source,message,task_id) VALUES(?,?,?,?)", (time.time(), str(source)[:120], safe_message, task_id))
             conn.execute("DELETE FROM app_errors WHERE id IN (SELECT id FROM app_errors ORDER BY id DESC LIMIT -1 OFFSET ?)", (APP_ERRORS_MAX_ROWS,))
             conn.commit()
     except Exception:
@@ -9104,7 +9156,7 @@ async def api_playlist_create(payload: dict = Body(...)):
     raw_ids = payload.get("song_ids") or []
     if not isinstance(raw_ids, list):
         raise HTTPException(400, "song_ids must be an array")
-    ids = [str(x)[:512] for x in raw_ids[:MAX_PLAYLIST_SONGS] if x is not None]
+    ids, missing_ids = await asyncio.to_thread(_canonicalize_playlist_song_ids_sync, raw_ids)
     kind = "smart" if payload.get("kind") == "smart" else "manual"
     rules = payload.get("rules") or {}
     if not isinstance(rules, dict):
@@ -9133,7 +9185,7 @@ async def api_playlist_update(playlist_id:str,payload:dict=Body(...)):
     raw_ids = payload.get("song_ids", safe_song_ids(current.get("song_ids","[]")))
     if not isinstance(raw_ids, list):
         raise HTTPException(400, "song_ids must be an array")
-    ids = [str(x)[:512] for x in raw_ids[:MAX_PLAYLIST_SONGS] if x is not None]
+    ids, missing_ids = await asyncio.to_thread(_canonicalize_playlist_song_ids_sync, raw_ids)
     kind = payload.get("kind", current.get("kind", "manual"))
     if "rules" in payload:
         rules = payload.get("rules") or {}
@@ -9162,7 +9214,9 @@ async def api_playlist_update(playlist_id:str,payload:dict=Body(...)):
 
 @app.delete("/api/playlists/{playlist_id}")
 async def api_playlist_delete(playlist_id:str):
-    await asyncio.to_thread(_playlist_delete_sync, playlist_id)
+    removed = await asyncio.to_thread(_playlist_delete_sync, playlist_id)
+    if not removed:
+        raise HTTPException(404,"Playlist not found")
     return {"status":"ok"}
 
 
@@ -9362,6 +9416,7 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
         _record_login_failure(request)
         raise HTTPException(401, "Invalid username or password")
     _clear_login_failures(request)
+    await asyncio.to_thread(_consume_bootstrap_after_successful_login_sync)
     if was_legacy_plaintext and not os.getenv("XROB_PASSWORD"):
         settings = await load_settings_async()
         settings["web_password_hash"] = _hash_web_password(password)
