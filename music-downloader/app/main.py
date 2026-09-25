@@ -58,7 +58,7 @@ from .catalog import LibraryCatalog, StorageUnavailable, AUDIO_EXTENSIONS as CAT
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.2.0"
+SERVER_VERSION = "4.2.1"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -97,6 +97,15 @@ async def storage_unavailable_handler(_request: Request, exc: StorageUnavailable
         status_code=503,
         content={"detail": _sanitize_external_error(exc, "Music storage is unavailable."), "storage_state": "offline"},
     )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    safe = _sanitize_external_error(exc, "Internal server error.")
+    try:
+        await write_app_error("unhandled_exception", safe)
+    except Exception:
+        pass
+    return JSONResponse(status_code=500, content={"detail": safe})
 
 @app.middleware("http")
 async def web_auth_middleware(request: Request, call_next):
@@ -846,7 +855,7 @@ def _probe_storage_sync():
             next(iterator, None)
         return True, ""
     except (OSError, PermissionError, RuntimeError) as exc:
-        return False, str(exc) or "Storage is unavailable"
+        return False, _sanitize_external_error(exc, "Storage is unavailable.", 400)
 
 
 def storage_info_sync():
@@ -2140,7 +2149,7 @@ def get_audio_files_sync():
                 continue
             files.append(resolved)
     except (OSError, RuntimeError) as exc:
-        _persist_storage_state_sync("offline", str(exc))
+        _persist_storage_state_sync("offline", _sanitize_external_error(exc, "Storage is unavailable.", 400))
         raise StorageUnavailable(f"Music storage became unavailable during scan: {exc}") from exc
     return files
 
@@ -2598,12 +2607,14 @@ async def _perform_library_refresh(mode="quick", reason="manual"):
             await manager.broadcast({"type":"library_updated","reason":reason,"count":len(library["songs"])})
             return library
         except StorageUnavailable as exc:
-            await asyncio.to_thread(_scan_state_sync,"error",mode,str(exc),started)
-            await manager.broadcast({"type":"storage_state","state":"offline","error":str(exc)})
+            safe = _sanitize_external_error(exc, "Music storage is offline.")
+            await asyncio.to_thread(_scan_state_sync,"error",mode,safe,started)
+            await manager.broadcast({"type":"storage_state","state":"offline","error":safe})
             raise
         except Exception as exc:
-            await write_app_error("library_scan",str(exc))
-            await asyncio.to_thread(_scan_state_sync,"error",mode,str(exc),started)
+            safe = _sanitize_external_error(exc, "Library refresh failed.")
+            await write_app_error("library_scan",safe)
+            await asyncio.to_thread(_scan_state_sync,"error",mode,safe,started)
             raise
 
 
@@ -2652,20 +2663,6 @@ async def request_library_refresh(reason="manual",mode="quick",wait=False):
         LIBRARY_REFRESH_TASK=asyncio.create_task(_library_refresh_worker())
     return await waiter if waiter is not None else None
 
-
-async def refresh_after_download(final_path: Path):
-    try:
-        library = await request_library_refresh(reason="download", mode="quick", wait=True)
-        relative = str(Path(final_path).resolve().relative_to(DOWNLOAD_DIR.resolve()))
-        song = next(
-            (item for item in (library or {}).get("songs", [])
-             if str(Path(item.get("path")).resolve().relative_to(DOWNLOAD_DIR.resolve())) == relative),
-            None,
-        )
-        if song and song.get("id"):
-            await asyncio.to_thread(_ensure_song_review_pending_sync, str(song["id"]))
-    except Exception as exc:
-        await write_app_error("library_refresh",str(exc))
 
 # ============================================================
 # COVER ART
@@ -3016,7 +3013,8 @@ async def refresh_after_download(final_path: Path):
         await manager.broadcast({"type": "library_updated", "songId": song_id, "path": str(final_path)})
         return song_id
     except Exception as exc:
-        await write_app_error("library_refresh", str(exc))
+        safe = _sanitize_external_error(exc, "Library refresh failed.")
+        await write_app_error("library_refresh", safe)
         return ""
 
 
@@ -3493,12 +3491,21 @@ async def download_worker(stop_event=None):
                         clean_stderr.decode("utf-8", errors="ignore")[-1000:],
                     )
 
-            artist = clean_filename(
-                task.get(
-                    "artist",
-                    "Unknown Artist",
-                )
-            )
+            # Re-read the actual finalized tags after metadata normalization so the
+            # final duplicate check uses the same identity the catalog will receive.
+            try:
+                final_meta = await asyncio.to_thread(read_metadata_sync, audio_file)
+                if isinstance(final_meta, dict):
+                    task["title"] = normalize_catalog_title(final_meta.get("title") or task.get("title") or "Unknown Track", settings.get("title_cleanup_rules", ""))
+                    task["artist"] = clean_metadata_text(final_meta.get("artist") or task.get("artist") or "Unknown Artist", "Unknown Artist")
+                    task["album"] = clean_metadata_text(final_meta.get("album") or task.get("album") or "", "")
+                    actual_duration = safe_float(final_meta.get("duration"), 0)
+                    if actual_duration:
+                        task["duration"] = actual_duration
+            except Exception as meta_exc:
+                await write_app_error("download_final_metadata", _sanitize_external_error(meta_exc, "Final metadata read failed."), task_id)
+
+            artist = clean_filename(task.get("artist", "Unknown Artist"))
 
             task["status"] = "processing"
             task["percent"] = 99
@@ -3507,6 +3514,25 @@ async def download_worker(stop_event=None):
             await notify_task_update(task, force_save=True)
 
             async with DOWNLOAD_GUARD:
+                # Final authoritative duplicate check after metadata normalization.
+                # This runs in the same critical section as the irreversible move.
+                final_duplicate = await find_existing_track(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0))
+                if final_duplicate:
+                    await asyncio.to_thread(cleanup_task_files, task_id)
+                    task["status"] = "completed"
+                    task["percent"] = 100
+                    task["speed"] = ""
+                    task["step"] = "Already in library — duplicate removed"
+                    task["error"] = ""
+                    task["duplicate_of"] = {"id":final_duplicate.get("id", ""),"path":final_duplicate.get("path", ""),"title":final_duplicate.get("title", ""),"artist":final_duplicate.get("artist", "")}
+                    task["final_name"] = ""
+                    task["last_updated"] = time.time() * 1000
+                    await notify_task_update(task, force_save=True)
+                    if reserved_identity and content_identity:
+                        async with DOWNLOAD_IDENTITY_LOCK:
+                            ACTIVE_CONTENT_DOWNLOADS.discard(content_identity)
+                        reserved_identity = False
+                    continue
                 # Cancellation and the irreversible library move share the same guard.
                 # The move and terminal-state transition are one critical section, so
                 # cancel cannot change a task after it has been made completed.
@@ -3996,12 +4022,12 @@ async def api_search(
     try:
         results = await youtube_search(query, limit, page)
     except RuntimeError as exc:
-        message = str(exc).strip() or "YouTube search is unavailable."
+        message = _sanitize_external_error(exc, "YouTube search is unavailable.", 900)
         raise HTTPException(status_code=503, detail=message) from exc
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        await write_app_error("youtube_search", str(exc))
+        await write_app_error("youtube_search", message)
         raise HTTPException(status_code=502, detail="YouTube search failed. Please try again.") from exc
 
     # Preserve stable ordering while preventing a duplicated video from ever
@@ -4715,109 +4741,30 @@ async def api_library():
     if LIBRARY_CACHE is None:
         if LIBRARY_WARMUP_TASK is None or LIBRARY_WARMUP_TASK.done():
             LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
-        return await fast_library_snapshot()
+        snapshot=await fast_library_snapshot()
+        snapshot["storage_state"]=snapshot.get("storage",{}).get("state",STORAGE_STATE)
+        return snapshot
 
-    files = await get_all_audio_files()
-
-    def file_rows_sync(paths):
-        rows = []
-        for path in paths:
-            try:
-                rows.append((path, path.stat().st_size))
-            except Exception:
-                continue
-        return rows
-
-    result = []
-    total = 0
-
-    for path, size in await asyncio.to_thread(file_rows_sync, files):
-
-        total += size
-
-        result.append(
-            {
-                "name": str(
-                    path.relative_to(
-                        DOWNLOAD_DIR
-                    )
-                ),
-                "size": format_size(size),
-                "bytes": size,
-            }
-        )
-
-    result.sort(
-        key=lambda item:
-            item["name"].lower()
-    )
-
-    library = await build_library()
-    play_counts = await asyncio.to_thread(_play_count_map_sync)
-    song_by_path = {str(song["path"]): song for song in library["songs"]}
-    for item in result:
-        path = str(DOWNLOAD_DIR / item["name"])
-        song = song_by_path.get(path)
-        if song:
-            item["id"] = song["id"]
-            item["title"] = song["title"]
-            item["artist"] = song["artist"]
-            item["album"] = song["album"]
-            item["album_artist"] = song.get("albumArtist", song.get("artist", "Unknown Artist"))
-            item["genre"] = song.get("genre", "")
-            item["year"] = song.get("year", "")
-            item["track"] = song.get("track", 0)
-            item["duration"] = song.get("duration", 0)
-            item["replaygain_track_gain"] = song.get("replaygain_track_gain")
-            item["replaygain_album_gain"] = song.get("replaygain_album_gain")
-            item["replaygain_track_peak"] = song.get("replaygain_track_peak")
-            item["replaygain_album_peak"] = song.get("replaygain_album_peak")
-            item["has_artwork"] = bool(song.get("has_artwork"))
-            item["play_count"] = play_counts.get(song["id"], 0)
-            item["cover"] = "/api/library/cover/" + urllib.parse.quote(item["name"], safe="/")
-            item["stream"] = "/api/library/stream/" + urllib.parse.quote(item["name"], safe="/")
-    artists = []
+    library=LIBRARY_CACHE
+    play_counts=await asyncio.to_thread(_play_count_map_sync)
+    result=[]; total=0
+    for song in library.get("songs",[]):
+        rel=str(Path(song["path"]).resolve().relative_to(DOWNLOAD_DIR.resolve())); size=int(song.get("size") or 0); total += size
+        result.append({"id":song["id"],"name":rel,"size":format_size(size),"bytes":size,"title":song.get("title",Path(rel).stem),"artist":song.get("artist","Unknown Artist"),"album":song.get("album","Unknown Album"),"album_artist":song.get("albumArtist",song.get("artist","Unknown Artist")),"genre":song.get("genre",""),"year":song.get("year",""),"track":song.get("track",0),"duration":song.get("duration",0),"replaygain_track_gain":song.get("replaygain_track_gain"),"replaygain_album_gain":song.get("replaygain_album_gain"),"replaygain_track_peak":song.get("replaygain_track_peak"),"replaygain_album_peak":song.get("replaygain_album_peak"),"has_artwork":bool(song.get("has_artwork")),"play_count":play_counts.get(song["id"],0),"cover":"/api/library/cover/"+urllib.parse.quote(rel,safe="/"),"stream":"/api/library/stream/"+urllib.parse.quote(rel,safe="/")})
+    result.sort(key=lambda item:item["name"].lower())
+    artists=[]
     for artist in library["artists"].values():
-        song_ids = set(artist.get("songIds", []))
-        album_ids = list(artist.get("albumIds", []))
-        artists.append({
-            "id": artist["id"],
-            "name": artist["name"],
-            "song_count": len(song_ids),
-            "album_count": len(album_ids),
-            "song_ids": sorted(song_ids),
-            "album_ids": album_ids,
-            "cover": f"/api/library/artist-artwork/{artist['id']}",
-        })
-    artists.sort(key=lambda item: item["name"].lower())
-
-    albums = []
-    song_map = {song["id"]: song for song in library["songs"]}
+        song_ids=set(artist.get("songIds",[])); album_ids=list(artist.get("albumIds",[]))
+        artists.append({"id":artist["id"],"name":artist["name"],"song_count":len(song_ids),"album_count":len(album_ids),"song_ids":sorted(song_ids),"album_ids":album_ids,"cover":f"/api/library/artist-artwork/{artist['id']}"})
+    artists.sort(key=lambda item:item["name"].lower())
+    albums=[]; song_map={song["id"]:song for song in library["songs"]}
     for album in library["albums"].values():
-        songs = [song_map[sid] for sid in album["songIds"] if sid in song_map]
-        cover = "/api/library/cover/" + urllib.parse.quote(str(album["path"].relative_to(DOWNLOAD_DIR)), safe="/") if songs else ""
-        albums.append({
-            "id": album["id"],
-            "name": album["name"],
-            "artist": album["artist"],
-            "artist_id": album["artistId"],
-            "year": album.get("year", ""),
-            "genre": album.get("genre", ""),
-            "song_count": len(songs),
-            "cover": cover,
-            "song_ids": [song["id"] for song in songs],
-        })
-    albums.sort(key=lambda item: (item["artist"].lower(), item["name"].lower()))
-
-    return {
-        "files": result,
-        "total_size": format_size(total),
-        "total_bytes": total,
-        "storage": await asyncio.to_thread(storage_info_sync),
-        "artists": artists,
-        "albums": albums,
-        "ready": True,
-    }
+        songs=[song_map[sid] for sid in album["songIds"] if sid in song_map]
+        cover=("/api/library/cover/"+urllib.parse.quote(str(album["path"].relative_to(DOWNLOAD_DIR)),safe="/")) if songs else ""
+        albums.append({"id":album["id"],"name":album["name"],"artist":album["artist"],"artist_id":album["artistId"],"year":album.get("year",""),"genre":album.get("genre",""),"song_count":len(songs),"cover":cover,"song_ids":[song["id"] for song in songs]})
+    albums.sort(key=lambda item:(item["artist"].lower(),item["name"].lower()))
+    storage=await asyncio.to_thread(storage_info_sync)
+    return {"files":result,"total_size":format_size(total),"total_bytes":total,"storage":storage,"storage_state":storage.get("state",STORAGE_STATE),"artists":artists,"albums":albums,"ready":True}
 
 
 @app.post("/api/library/scan")
@@ -5289,7 +5236,8 @@ async def api_delete_library(
 ):
 
     path = await resolve_file(filename)
-    deleted_song_id = make_song_id(path)
+    catalog_row = await asyncio.to_thread(_catalog_song_for_path_sync, path)
+    deleted_song_id = str(catalog_row.get("id") or "") if isinstance(catalog_row, dict) else str(catalog_row or "")
 
     try:
         def delete_file_sync(target):
@@ -5304,7 +5252,8 @@ async def api_delete_library(
         await asyncio.to_thread(delete_file_sync, path)
         # Clean database references to the deleted track. Playlist song_ids are JSON,
         # so they are rewritten transactionally rather than relying on foreign keys.
-        if deleted_song_id:
+        if deleted_song_id and LIBRARY_CATALOG is not None:
+            await asyncio.to_thread(LIBRARY_CATALOG.retire_path, path)
             await asyncio.to_thread(_cleanup_deleted_song_sync, deleted_song_id)
         METADATA_CACHE.pop(str(path), None)
         invalidate_library_cache()
@@ -8822,9 +8771,11 @@ def _run_library_health_sync():
     ok, error = _probe_storage_sync()
     if not ok:
         raise StorageUnavailable(error)
-    rows = [r for r in (LIBRARY_CATALOG.rows() if LIBRARY_CATALOG is not None else []) if not int(r.get("missing") or 0)]
-    unreadable=[]; bad_tags=[]; missing_art=[]
-    for row in rows[:LIBRARY_HEALTH_MAX_FILES_PER_RUN]:
+    all_rows = [r for r in (LIBRARY_CATALOG.rows() if LIBRARY_CATALOG is not None else []) if not int(r.get("missing") or 0)]
+    rows = LIBRARY_CATALOG.health_batch(LIBRARY_HEALTH_MAX_FILES_PER_RUN) if LIBRARY_CATALOG is not None else []
+    unreadable=[]; bad_tags=[]; missing_art=[]; checked_ids=[]
+    for row in rows:
+        checked_ids.append(str(row.get("id") or ""))
         rel=str(row.get("relative_path") or "")
         path=DOWNLOAD_DIR / rel
         if not path.is_file():
@@ -8838,8 +8789,10 @@ def _run_library_health_sync():
             bad_tags.append({"path":rel,"title":title,"artist":artist,"album":album})
         if not md.get("has_artwork"):
             missing_art.append(rel)
+    if LIBRARY_CATALOG is not None and checked_ids:
+        LIBRARY_CATALOG.mark_health_checked(checked_ids, time.time())
     exact_duplicates = strong_duplicate_report_sync(100)
-    report={"checked":min(len(rows),LIBRARY_HEALTH_MAX_FILES_PER_RUN),"total":len(rows),"unreadable":unreadable[:200],"bad_tags":bad_tags[:500],"missing_artwork":missing_art[:500],"duplicate_groups":exact_duplicates,"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":len(exact_duplicates),"duplicate_files":sum(x["count"] for x in exact_duplicates)}}
+    report={"checked":len(checked_ids),"total":len(all_rows),"unreadable":unreadable[:200],"bad_tags":bad_tags[:500],"missing_artwork":missing_art[:500],"duplicate_groups":exact_duplicates,"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":len(exact_duplicates),"duplicate_files":sum(x["count"] for x in exact_duplicates)}}
     return report
 
 
@@ -8902,7 +8855,7 @@ async def api_library_scan_mode(mode: str):
         library = await request_library_refresh(reason="manual", mode=mode, wait=True)
         return {"status": "ok", "mode": mode, "tracks": len(library.get("songs", [])) if library else 0}
     except StorageUnavailable as exc:
-        raise HTTPException(503, f"Music storage is offline: {exc}") from exc
+        raise HTTPException(503, _sanitize_external_error(exc, "Music storage is offline.")) from exc
     except Exception as exc:
         safe = _sanitize_external_error(exc, "Library refresh failed.")
         await write_app_error("library_refresh", safe)
@@ -9282,7 +9235,10 @@ async def api_library_metadata(payload: dict = Body(...)):
             audio.tags=tags
         audio.save()
     try: await asyncio.to_thread(write_tags)
-    except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
+    except Exception as exc:
+        safe = _sanitize_external_error(exc, "Metadata update failed.")
+        await write_app_error("metadata", safe)
+        raise HTTPException(500, safe)
     edited_at = time.time()
     await asyncio.to_thread(_mark_song_review_sync, song_id, "edited", edited_at, True)
     invalidate_library_cache(); return {"status":"ok"}
