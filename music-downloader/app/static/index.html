@@ -11,7 +11,7 @@
   <title>
    Xrob Music
   </title>
-  <link href="static/style.css?v=439" rel="stylesheet"/>
+  <link href="static/style.css?v=377" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
   <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -103,11 +103,11 @@
         Your music space
        </strong>
       </div>
-      <div class="content-topbar-status" id="contentStorageStatus" data-state="unknown" aria-live="polite">
+      <div class="content-topbar-status">
        <span aria-hidden="true" class="status-dot">
        </span>
-       <span id="contentStorageStatusText">
-        Checking storage…
+       <span>
+        Personal library
        </span>
       </div>
      </header>
@@ -759,12 +759,8 @@
          <input id="set_crossfade" max="12" min="0" step="0.5" style="max-width:120px" type="number" value="0"/>
         </div>
         <div class="setting-row">
-         <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload and switch to the next local track just before the current one ends when crossfade is off.</div></div>
+         <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload the next local track to reduce transition gaps when crossfade is off.</div></div>
          <label class="switch"><input id="set_gapless" type="checkbox"/><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">Keep playing</div><div class="setting-desc">When the queue ends, continue with a fresh personalized mix from your library.</div></div>
-         <label class="switch"><input id="set_keep_playing" type="checkbox"/><span class="slider"></span></label>
         </div>
        </div>
        <div class="settings-card page-section">
@@ -867,20 +863,12 @@
           </div>
          </div>
          <input id="set_scan_interval" min="5" step="5" style="max-width:120px" type="number" value="60"/>
-       <div class="settings-card page-section">
-        <div class="settings-divider">Library health</div>
-        <div class="setting-row">
-         <div><div class="setting-label">Health scan interval</div><div class="setting-desc">How often Xrob Music checks a rotating batch of library files in the background.</div></div>
-         <input id="set_health_scan_interval" min="30" max="10080" step="30" style="max-width:140px" type="number" value="360"/>
-        </div>
-       </div>
         </div>
        </div>
        <div class="settings-card page-section">
         <div class="settings-divider"><i aria-hidden="true" data-lucide="download-cloud"></i> Downloader</div>
-        <div class="setting-row"><div><div class="setting-label">Download location</div><div class="setting-desc">Absolute folder for new downloads. Applies to new downloads.</div></div><input id="set_download_location" type="text" placeholder="/music" spellcheck="false" style="max-width:360px"/></div>
-        <div class="setting-row"><div><div class="setting-label">Concurrent downloads</div><div class="setting-desc">Maximum jobs running at the same time. Changes apply immediately.</div></div><input id="set_max_concurrent" min="1" max="8" step="1" value="3" type="number" style="max-width:120px"/></div>
-        <div class="setting-row"><div><div class="setting-label">Queue capacity</div><div class="setting-desc">Maximum downloads allowed in queued, downloading, or processing states.</div></div><input id="set_max_pending" min="50" max="5000" step="1" value="500" type="number" style="max-width:120px"/></div>
+        <div class="setting-row"><div><div class="setting-label">Download location</div><div class="setting-desc">Absolute folder for new downloads. Change takes effect after restarting Xrob Music.</div></div><input id="set_download_location" type="text" placeholder="/music" spellcheck="false" style="max-width:360px"/></div>
+        <div class="setting-row"><div><div class="setting-label">Concurrent downloads</div><div class="setting-desc">Maximum jobs running at the same time.</div></div><input id="set_max_concurrent" min="1" max="8" step="1" value="3" type="number" style="max-width:120px"/></div>
         <div class="setting-row"><div><div class="setting-label">Automatic retry</div><div class="setting-desc">Retry failed jobs with backoff and resume when partial data exists.</div></div><label class="switch"><input id="set_auto_retry" type="checkbox"/><span class="slider"></span></label></div>
         <div class="setting-row"><div><div class="setting-label">Retry limit</div><div class="setting-desc">Automatic retries per job.</div></div><input id="set_retry_limit" min="0" max="5" step="1" value="2" type="number" style="max-width:120px"/></div>
         <div class="setting-row"><div><div class="setting-label">Retry backoff</div><div class="setting-desc">Base delay between automatic retries.</div></div><input id="set_retry_backoff" min="1" max="60" step="1" value="3" type="number" style="max-width:120px"/></div>
@@ -1061,8 +1049,8 @@
           Open error log
          </button>
         </div>
-        <div class="setting-row"><div><div class="setting-label">Backup</div><div class="setting-desc">Standard backup excludes passwords and tokens. Encrypted backup can safely include protected settings.</div></div><div class="settings-inline-actions"><button class="btn-refresh" id="backupButton" type="button"><i data-lucide="download"></i> Create backup</button><button class="btn-refresh" id="encryptedBackupButton" type="button"><i data-lucide="lock-keyhole"></i> Encrypted backup</button></div></div>
-        <div class="setting-row"><div><div class="setting-label">Restore</div><div class="setting-desc">Restore a standard .zip or password-protected .xrbk backup. Standard restore never imports saved credentials.</div></div><div class="settings-inline-actions"><input id="restoreFile" type="file" accept=".zip,.xrbk" hidden/><button class="btn-refresh" id="restoreButton" type="button">Restore backup</button></div></div>
+        <div class="setting-row"><div><div class="setting-label">Backup</div><div class="setting-desc">Download a validated backup of the database, settings and library index.</div></div><button class="btn-refresh" id="backupButton" type="button"><i data-lucide="download"></i> Create backup</button></div>
+        <div class="setting-row"><div><div class="setting-label">Restore</div><div class="setting-desc">Validate a Xrob Music backup before replacing the local database and configuration.</div></div><div class="settings-inline-actions"><input id="restoreFile" type="file" accept=".zip" hidden/><button class="btn-refresh" id="restoreButton" type="button">Restore backup</button></div></div>
         <div class="setting-row"><div><div class="setting-label">Diagnostics</div><div class="setting-desc">Check SQLite integrity, storage, runtime tools and active connections.</div></div><button class="btn-refresh" id="diagnosticsButton" type="button">Run diagnostics</button></div>
         </div>
        </div>
@@ -1112,9 +1100,6 @@
       <button aria-label="Next track" class="gp-skip-btn" id="gp-next-btn" title="Next track" type="button">
        <i aria-hidden="true" data-lucide="skip-forward"></i>
       </button>
-      <button aria-label="Open lyrics" class="gp-skip-btn" id="gp-lyrics-btn" title="Lyrics" type="button">
-       <i aria-hidden="true" data-lucide="mic-2"></i>
-      </button>
      </div>
      <!-- PROGRESS -->
      <div class="gp-progress-container">
@@ -1140,7 +1125,6 @@
       <i data-lucide="volume-2">
       </i>
      </span>
-     <button class="btn-secondary gp-sleep-btn" id="gp-sleep-btn" type="button" title="Sleep timer">Sleep: Off</button>
      <input aria-label="Volume" id="gp-volume" max="1" min="0" step=".01" type="range" value=".8"/>
     </div>
    </div>
@@ -1180,11 +1164,9 @@
     <button class="btn-refresh" type="button" id="queueRepeat">
      Repeat: Off
     </button>
-    <button class="btn-refresh" type="button" id="queueSleep">Sleep: Off</button>
    </div>
   </aside>
   </div>
-  <div class="xrob-modal overlay-region" hidden id="lyrics-modal"><div class="xrob-modal-card lyrics-modal-card"><div class="xrob-modal-head"><div><strong id="lyricsTitle">Lyrics</strong><div class="modal-subtitle">Synced lyrics when available, otherwise plain text.</div></div><button class="icon-btn" id="lyricsClose" type="button" aria-label="Close lyrics"><i data-lucide="x"></i></button></div><div id="lyricsContent" class="lyrics-content"></div></div></div>
   <div class="xrob-modal overlay-region" hidden id="connect-modal"><div class="xrob-modal-card connect-card"><div class="xrob-modal-head"><div><strong>Connect</strong><div class="modal-subtitle">Switch playback between Xrob Music devices.</div></div><button class="icon-btn" id="connectClose" type="button" aria-label="Close"><i data-lucide="x"></i></button></div><div class="device-list" id="deviceList"></div></div></div>
   <div class="xrob-modal overlay-region" hidden id="batch-download-modal"><div class="xrob-modal-card"><div class="xrob-modal-head"><div><strong>Batch downloads</strong><div class="modal-subtitle">One URL per line. Metadata can be supplied when known.</div></div><button class="icon-btn" id="batchDownloadClose" type="button"><i data-lucide="x"></i></button></div><form id="batchDownloadForm"><label>URLs<textarea id="batchDownloadUrls" rows="8" placeholder="https://…
 https://…" required></textarea></label><div class="batch-meta-grid"><label>Artist<input id="batchDownloadArtist" placeholder="Optional"/></label><label>Album<input id="batchDownloadAlbum" placeholder="Optional"/></label></div><div class="settings-actions"><button class="save-btn" type="submit"><i data-lucide="download"></i> Add downloads</button></div></form></div></div>
@@ -1290,7 +1272,7 @@ https://…" required></textarea></label><div class="batch-meta-grid"><label>Art
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=439">
+  <script src="static/app.js?v=377">
   </script>
 
 
