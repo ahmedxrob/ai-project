@@ -25,6 +25,9 @@ const RECENT_CACHE_KEY =
 
 let activePreviewBtn = null;
 let searchAbortController = null;
+let homeRefreshInFlight = null;
+let homeRefreshQueued = false;
+let homeRefreshRequestId = 0;
 
 
 let audio = null;
@@ -4656,11 +4659,16 @@ async function pollTasks(force = false) {
 
         if (taskChanged && appState.downloads.tasks.some(task => task.status === "completed")) {
             loadStats().catch(error => reportAppError(error, {scope:"stats", action:"refresh-after-download"}));
-            loadHome().catch(error => reportAppError(error, {scope:"home", action:"refresh-after-download"}));
+            queueHomeRefreshAfterDownload();
+            // A completed download is already committed to the catalog. Refresh the
+            // in-memory Library once the filesystem/catalog settle, without forcing
+            // the user through a manual scan or replacing the visible list with a
+            // transient empty/error state.
+            refreshLibraryCache().then(() => {
+                renderLibraryView();
+            }).catch(error => reportAppError(error, {scope:"library", action:"refresh-after-download"}));
         }
 
-        appState.downloads.lastSignature =
-            signature;
         appState.downloads.lastSignature = signature;
         appState.downloads.lastUpdatedAt = Date.now();
         emitAppEvent("downloads:updated", {count: appState.downloads.tasks.length, signature});
@@ -5237,455 +5245,119 @@ function renderRecentlyAdded(
 }
 
 
-async function loadHome() {
+async function loadHome(options = {}) {
+    const container = document.getElementById("recentTracks");
+    if (!container) return;
 
-    const container =
-        document.getElementById(
-            "recentTracks"
-        );
+    const silentFallback = Boolean(options.silentFallback);
+    const requestId = ++homeRefreshRequestId;
+    const cachedRecent = loadRecentlyAddedCache();
 
-    if (!container) {
-        return;
+    // Only the first request owns the loading UI. Background refreshes must never
+    // clear a healthy Recently Added view while a download is being finalized.
+    if (cachedRecent.length) {
+        appState.library.recentTracksCache = cachedRecent;
+        renderRecentlyAdded(cachedRecent);
+        hideLoadingCircle("recent");
+    } else if (!silentFallback) {
+        updateLoadingCircle("recent", 5, "Loading Recently Added...");
+        container.innerHTML = "";
     }
 
-
-    const cachedRecent =
-        loadRecentlyAddedCache();
-
-
-    if (
-        cachedRecent.length
-    ) {
-
-        appState.library.recentTracksCache =
-            cachedRecent;
-
-        renderRecentlyAdded(
-            cachedRecent
-        );
-
-        hideLoadingCircle(
-            "recent"
-        );
-
-    } else {
-
-        updateLoadingCircle(
-            "recent",
-            5,
-            "Loading Recently Added..."
-        );
-
-        container.innerHTML =
-            "";
-    }
-
-
-    const controller =
-        new AbortController();
-
-    const timeout =
-        setTimeout(
-            () =>
-                controller.abort(),
-            15000
-        );
-
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
     try {
-
-        if (
-            !cachedRecent.length
-        ) {
-
-            updateLoadingCircle(
-                "recent",
-                15,
-                "Connecting to Xrob Music..."
-            );
+        if (!cachedRecent.length && !silentFallback) {
+            updateLoadingCircle("recent", 15, "Connecting to Xrob Music...");
         }
 
-
-        const response =
-            await apiFetch(
-                "api/home",
-                {
-                    cache:
-                        "no-store",
-
-                    signal:
-                        controller.signal
-                }
-            );
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                `Home API returned HTTP ${response.status}`
-            );
+        let response = null;
+        let lastError = null;
+        // Download completion can briefly overlap the catalog commit/filesystem
+        // reconciliation. Retry the read instead of falling back immediately.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+                response = await apiFetch("api/home", {
+                    cache: "no-store",
+                    signal: controller.signal,
+                    timeoutMs: 10000,
+                });
+                if (response.ok) break;
+                lastError = new Error(`Home API returned HTTP ${response.status}`);
+                if (![408, 429, 500, 502, 503, 504].includes(response.status) || attempt === 2) break;
+            } catch (error) {
+                lastError = error;
+                if (error?.name === "AbortError" || attempt === 2 || controller.signal.aborted) throw error;
+            }
+            await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
         }
+        if (!response?.ok) throw lastError || new Error("Could not load Recently Added");
 
-
-        const data =
-            await response.json();
-
-
-        const stats =
-            data.stats || {};
-
-
+        const data = await response.json();
+        const stats = data.stats || {};
         applyLiveStats({ ...stats, ready: true });
+        const recent = Array.isArray(data.recently_added) ? data.recently_added : [];
 
+        // Ignore an older response that lost a race with a newer home refresh.
+        if (requestId !== homeRefreshRequestId) return;
 
-        const recent =
-            Array.isArray(
-                data.recently_added
-            )
-                ? data.recently_added
-                : [];
-
-
-        appState.library.recentTracksCache =
-            recent;
-
-        saveRecentlyAddedCache(
-            recent
-        );
-
-
-        renderRecentlyAdded(
-            recent
-        );
-
-
-        updateLoadingCircle(
-            "recent",
-            100,
-            "Recently Added ready"
-        );
-
-
-        setTimeout(
-            () =>
-                hideLoadingCircle(
-                    "recent"
-                ),
-            250
-        );
-
-
+        appState.library.recentTracksCache = recent;
+        saveRecentlyAddedCache(recent);
+        renderRecentlyAdded(recent);
+        updateLoadingCircle("recent", 100, "Recently Added ready");
+        setTimeout(() => hideLoadingCircle("recent"), 250);
     } catch (error) {
+        if (requestId !== homeRefreshRequestId) return;
+        console.error("Home loading failed:", error);
 
-        console.error(
-            "Home loading failed:",
-            error
-        );
-
-
-        if (
-            cachedRecent.length
-        ) {
-
-            renderRecentlyAdded(
-                cachedRecent
-            );
-
-            hideLoadingCircle(
-                "recent"
-            );
-
-            showToast(
-                "⚠️ Showing cached Recently Added"
-            );
-
+        if (cachedRecent.length) {
+            // Cached content is intentionally retained silently during background
+            // download/catalog transitions. A toast here looked like a download
+            // failure even though the cached UI was still valid.
+            renderRecentlyAdded(cachedRecent);
+            hideLoadingCircle("recent");
+            if (!silentFallback && error?.name !== "AbortError") {
+                // Do not surface transient API failures as a scary warning. The
+                // next lifecycle/task refresh will retry automatically.
+                reportAppError(error, {scope:"home", action:"refresh-with-cache"});
+            }
         } else {
-
-            hideLoadingCircle(
-                "recent"
-            );
-
+            hideLoadingCircle("recent");
             container.innerHTML = `
                 <div class="home-empty">
-
                     <div class="empty-icon"><i data-lucide="circle-alert" aria-hidden="true"></i></div>
-
-                    <div class="empty-title">
-                        Could not load Recently Added
-                    </div>
-
-                    <div class="empty-text">
-                        ${escapeHtml(
-                            error.message ||
-                            "Unknown error"
-                        )}
-                    </div>
-
-                    <button
-                        type="button"
-                        class="save-btn"
-                        onclick="loadHome()"
-                    >
-                        <i data-lucide="refresh-cw" aria-hidden="true"></i> Try Again
-                    </button>
-
-                </div>
-            `;
+                    <div class="empty-title">Could not load Recently Added</div>
+                    <div class="empty-text">${escapeHtml(error.message || "Unknown error")}</div>
+                </div>`;
             renderLocalIcons();
         }
-
     } finally {
-
-        clearTimeout(
-            timeout
-        );
+        clearTimeout(timeout);
     }
 }
 
-
-/* ============================================================
-   WEBSOCKET
-   ============================================================ */
-
-function initWebSocket() {
-
-    if (
-        socket &&
-        (
-            socket.readyState === WebSocket.OPEN ||
-            socket.readyState === WebSocket.CONNECTING
-        )
-    ) {
-        return;
+function queueHomeRefreshAfterDownload() {
+    if (homeRefreshInFlight) {
+        homeRefreshQueued = true;
+        return homeRefreshInFlight;
     }
-
-
-    try {
-        socket = new WebSocket(websocketUrl());
-
-    } catch (error) {
-
-        console.warn(
-            "WebSocket:",
-            error
-        );
-
-        scheduleWebSocketReconnect();
-
-        return;
-    }
-
-
-    socket.onopen =
-        () => {
-            socketReconnectAttempt = 0;
-            emitAppEvent("socket:open", {});
-            if (socketPingTimer) window.clearInterval(socketPingTimer);
-            socketPingTimer = window.setInterval(() => {
-                if (socket?.readyState === WebSocket.OPEN) {
-                    try { socket.send("ping"); } catch (_) {}
-                }
-            }, 20000);
-        };
-
-
-    socket.onmessage =
-        event => {
-
-            try {
-
-                const data =
-                    JSON.parse(
-                        event.data
-                    );
-
-
-                if (
-                    data.type === "task_update"
-                ) {
-
-                    pollTasks();
-
-                } else if (data.type === "library_updated") {
-                    appState.library.status = "ready";
-                    appState.library.lastEventAt = Date.now();
-                    appState.library.revision = Number.isFinite(Number(data.revision)) ? Number(data.revision) : (Number(appState.library.revision || 0) + 1);
-                    emitAppEvent("library:server-updated", data);
-                    scheduleLibraryRefresh();
-                } else if (data.type === "storage_state") {
-                    appState.library.status = String(data.state || "unknown");
-                    appState.library.storageError = String(data.error || "");
-                    emitAppEvent("storage:state", {state: appState.library.status, error: appState.library.storageError});
-                    renderStorage({state: appState.library.status, error: appState.library.storageError, exists: appState.library.status !== "offline", writable: appState.library.status === "online"});
-                    if (appState.library.status === "online") scheduleLibraryRefresh();
-                } else if (data.type === "stats_invalidated") {
-                    emitAppEvent("stats:invalidated", data);
-                    scheduleStatsRefresh(120);
-                } else if (data.type === "player_state") {
-                    if (data.state?.ownerId === PLAYER_TAB_ID) {
-                        applyAuthoritativeOwnedPlayerState(data.state, false);
-                    } else {
-                        applyRemotePlayerState(data.state, true);
-                    }
-                } else if (data.type === "command") {
-                    applyRemoteCommand(data);
-                } else if (data.type === "player_handoff") {
-                    applyRemoteHandoff(data);
-                }
-
-            } catch (error) {
-                reportAppError(error, {scope:"websocket", action:"message-parse"});
-            }
-        };
-
-
-    socket.onerror =
-        error => {
-            emitAppEvent("socket:error", { error });
-            reportAppError(new Error("WebSocket connection error"), {scope:"websocket", action:"error"});
-        };
-
-
-    socket.onclose =
-        event => {
-            socket = null;
-            emitAppEvent("socket:close", { code: event?.code ?? 0, reason: event?.reason || "" });
-            if (socketPingTimer) { window.clearInterval(socketPingTimer); socketPingTimer = null; }
-            // 1008 is an authentication rejection; do not hammer the server until login succeeds.
-            if (event?.code !== 1008 && navigator.onLine !== false) scheduleWebSocketReconnect();
-        };
-}
-
-
-function scheduleWebSocketReconnect() {
-
-    if (socketReconnectTimer) {
-        return;
-    }
-
-
-    if (navigator.onLine === false) return;
-    const delay = Math.min(30000, 1000 * (2 ** Math.min(socketReconnectAttempt, 5)));
-    socketReconnectAttempt += 1;
-    socketReconnectTimer = setTimeout(() => {
-        socketReconnectTimer = null;
-        initWebSocket();
-    }, delay);
-}
-
-
-/* ============================================================
-   INFINITE SCROLL
-   ============================================================ */
-
-function bindInfiniteScroll() {
-
-    window.addEventListener(
-        "scroll",
-        () => {
-
-            const searchTab =
-                document.getElementById(
-                    "tab-search"
-                );
-
-
-            if (
-                !searchTab ||
-                !searchTab.classList.contains(
-                    "active"
-                )
-            ) {
-                return;
-            }
-
-
-            const nearBottom =
-                window.innerHeight +
-                window.scrollY >=
-                document.documentElement.scrollHeight -
-                500;
-
-
-            if (nearBottom) {
-                loadMoreResults();
-            }
-        },
-        {
-            passive: true
+    homeRefreshInFlight = (async () => {
+        // Let the catalog commit and filesystem metadata settle before reading Home.
+        await new Promise(resolve => setTimeout(resolve, 650));
+        await loadHome({ silentFallback: true });
+    })().catch(error => {
+        reportAppError(error, {scope:"home", action:"refresh-after-download"});
+    }).finally(() => {
+        homeRefreshInFlight = null;
+        if (homeRefreshQueued) {
+            homeRefreshQueued = false;
+            queueHomeRefreshAfterDownload();
         }
-    );
+    });
+    return homeRefreshInFlight;
 }
 
-
-function playHomeTrack(index) {
-
-    appState.player.source = "home";
-
-    const queue =
-        appState.player.homeQueue || [];
-
-    if (
-        index < 0 ||
-        index >= queue.length
-    ) {
-        return;
-    }
-
-    const track =
-        queue[index];
-
-    // Keep Recently Added and Up Next synchronized with one persisted queue.
-    setEnhancedQueue(queue, index);
-    renderEnhancedQueue();
-
-    const streamUrl =
-        track.stream ||
-        "";
-
-    if (!streamUrl) {
-
-        showToast(
-            "❌ Track stream URL unavailable"
-        );
-
-        return;
-    }
-
-    appState.player.homeQueueIndex =
-        index;
-
-    const card =
-        track._card || null;
-
-    if (activePreviewBtn) {
-
-        resetPreviewButton(
-            activePreviewBtn
-        );
-    }
-
-    activePreviewBtn =
-        card;
-
-    if (card) {
-
-        card.classList.add(
-            "playing"
-        );
-    }
-
-    toggleAudioStream(
-        card ||
-            document.createElement("button"),
-        streamUrl,
-        "home",
-        track.title,
-        track.artist,
-        track.cover,
-        track.id || null
-    );
-}
 
 async function refreshLibrary() {
     const button = document.getElementById("libraryRefreshButton");
