@@ -11,7 +11,7 @@
   <title>
    Xrob Music
   </title>
-  <link href="static/style.css?v=377" rel="stylesheet"/>
+  <link href="static/style.css?v=431" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
   <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -103,11 +103,11 @@
         Your music space
        </strong>
       </div>
-      <div class="content-topbar-status">
+      <div class="content-topbar-status" id="contentStorageStatus" data-state="unknown" aria-live="polite">
        <span aria-hidden="true" class="status-dot">
        </span>
-       <span>
-        Personal library
+       <span id="contentStorageStatusText">
+        Checking storage…
        </span>
       </div>
      </header>
@@ -867,6 +867,13 @@
           </div>
          </div>
          <input id="set_scan_interval" min="5" step="5" style="max-width:120px" type="number" value="60"/>
+       <div class="settings-card page-section">
+        <div class="settings-divider">Library health</div>
+        <div class="setting-row">
+         <div><div class="setting-label">Health scan interval</div><div class="setting-desc">How often Xrob Music checks a rotating batch of library files in the background.</div></div>
+         <input id="set_health_scan_interval" min="30" max="10080" step="30" style="max-width:140px" type="number" value="360"/>
+        </div>
+       </div>
         </div>
        </div>
        <div class="settings-card page-section">
@@ -1283,7 +1290,7 @@ https://…" required></textarea></label><div class="batch-meta-grid"><label>Art
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=377">
+  <script src="static/app.js?v=431">
   </script>
 
 
