@@ -11,9 +11,6 @@ let socketPingTimer = null;
 
 let completedSet = new Set();
 
-let rawLibraryFiles = [];
-let libraryArtists = [];
-let libraryAlbums = [];
 let libraryView = "tracks";
 let selectedArtistId = null;
 let selectedAlbumId = null;
@@ -36,15 +33,8 @@ let currentPlayerSource = null;
 // "home" or "library"
 let currentLibraryIndex = -1;
 
-let currentPage = 1;
-let currentQuery = "";
-let isLoadingMore = false;
-let hasMoreResults = true;
-let searchRequestId = 0;
 let searchAbortController = null;
 
-let latestTasks = [];
-let lastTaskSignature = "";
 
 let audio = null;
 let player = null;
@@ -260,8 +250,8 @@ const appState = {
     auth: { authenticated: false, user: null },
     network: { online: navigator.onLine !== false, visibility: document.visibilityState || "visible", lastTransitionAt: Date.now(), lastReason: "startup" },
     lifecycle: { installed: false, featuresInstalled: false, lastLeaveAt: 0, lastRecoveryAt: 0 },
-    search: { query: "", requestId: 0, pending: false, lastCompletedAt: 0, lastError: null },
-    library: { ready: false, revision: 0, lastRefreshAt: 0, status: "unknown" },
+    search: { query: "", page: 1, loadingMore: false, hasMore: true, requestId: 0, pending: false, lastCompletedAt: 0, lastError: null },
+    library: { ready: false, revision: 0, lastRefreshAt: 0, status: "unknown", files: [], artists: [], albums: [] },
     downloads: { filter: "active", history: [], tasks: [], lastSignature: "", lastUpdatedAt: 0 },
     devices: { items: [], lastUpdatedAt: 0 },
     player: { ownerId: null, source: null, playing: false, songId: null, currentTime: 0, duration: 0, lastEventAt: 0 },
@@ -542,7 +532,7 @@ function publishPlayerStateToServer(state, force = false, unload = false) {
                         loadServerPlayerState();
                     }
                 }
-            }).catch(() => {});
+            }).catch(error => reportAppError(error, {scope:"player", action:"publish-state"}));
         } catch (_) {}
     };
     if (force || unload) {
@@ -1482,7 +1472,7 @@ function normalizeQueue(queue) {
 function getLibraryQueue() {
     return Array.isArray(enhancedQueue) && enhancedQueue.length
         ? enhancedQueue
-        : (Array.isArray(libraryPlaybackQueue) && libraryPlaybackQueue.length ? libraryPlaybackQueue : (Array.isArray(rawLibraryFiles) ? rawLibraryFiles : []));
+        : (Array.isArray(libraryPlaybackQueue) && libraryPlaybackQueue.length ? libraryPlaybackQueue : (Array.isArray(appState.library.files) ? appState.library.files : []));
 }
 
 function syncLibraryQueue(queue, index) {
@@ -1508,7 +1498,7 @@ function syncLibraryQueue(queue, index) {
 function reconcileEnhancedQueue() {
     if (!enhancedQueue.length) return;
     const currentId = trackKey(enhancedQueue[enhancedQueueIndex]);
-    const valid = new Set(rawLibraryFiles.map(trackKey));
+    const valid = new Set(appState.library.files.map(trackKey));
     const filtered = enhancedQueue.filter(track => valid.has(trackKey(track)));
     if (!filtered.length) {
         syncLibraryQueue([], -1);
@@ -1631,7 +1621,7 @@ function setShuffle(enabled) {
 
 function shuffleLibrary() {
     if (isRemotePlayerOwner()) { setShuffle(true); return; }
-    if (!rawLibraryFiles.length) { showToast("No tracks to shuffle"); return; }
+    if (!appState.library.files.length) { showToast("No tracks to shuffle"); return; }
     libraryView = "tracks";
     selectedArtistId = null;
     selectedAlbumId = null;
@@ -1655,8 +1645,8 @@ function shuffleLibrary() {
         renderEnhancedQueue();
         return;
     }
-    const randomStartIndex = Math.floor(Math.random() * rawLibraryFiles.length);
-    playQueue(rawLibraryFiles, randomStartIndex, true);
+    const randomStartIndex = Math.floor(Math.random() * appState.library.files.length);
+    playQueue(appState.library.files, randomStartIndex, true);
 }
 
 /* ============================================================
@@ -2330,6 +2320,7 @@ async function openLyricsPanel() {
         renderLyricsPanel(data);
     } catch (error) {
         if (requestId !== lyricsRequestId) return;
+        reportAppError(error, {scope:"lyrics", action:"load"});
         body.innerHTML = `<div class="lyrics-empty"><i data-lucide="file-question" aria-hidden="true"></i><strong>No lyrics available</strong><span>${escapeHtml(error.message || "Lyrics could not be loaded")}</span></div>`;
         renderLocalIcons();
     }
@@ -2338,7 +2329,7 @@ function renderLyricsPanel(data) {
     const body=document.getElementById("lyricsContent"); if(!body) return;
     if (lyricsAnimationFrame) cancelAnimationFrame(lyricsAnimationFrame);
     lyricsAnimationFrame = null;
-    const synced = Array.isArray(data.structuredLyrics?.[0]?.line) ? data.structuredLyrics[0].line : [];
+    const synced = Array.isArray(data.structuredLyrics?.[0]?.line) ? data.structuredLyrics[0].line.slice().sort((a,b)=>Number(a?.start||0)-Number(b?.start||0)) : [];
     const plain = String(data.plainLyrics || "");
     if (!synced.length && !plain) {
         body.innerHTML = '<div class="lyrics-empty"><i data-lucide="file-question" aria-hidden="true"></i><strong>No lyrics found</strong><span>Embedded lyrics and LRCLIB did not return a result.</span></div>'; renderLocalIcons(); return;
@@ -2346,19 +2337,27 @@ function renderLyricsPanel(data) {
     if (synced.length) {
         body.innerHTML = `<div class="lyrics-source">${escapeHtml(data.source || "Lyrics")}</div><div class="lyrics-lines"></div>`;
         const list=body.querySelector(".lyrics-lines");
-        synced.forEach(line => { const row=document.createElement("div"); row.className="lyrics-line"; row.dataset.start=String(line.start||0); row.textContent=String(line.value||""); list.appendChild(row); });
+        const rows=[];
+        synced.forEach(line => { const row=document.createElement("div"); row.className="lyrics-line"; row.dataset.start=String(Number(line?.start||0)); row.textContent=String(line?.value||""); list.appendChild(row); rows.push(row); });
+        let activeIndex=-1;
+        const findActiveIndex=(pos)=>{ let lo=0,hi=rows.length-1,best=-1; while(lo<=hi){const mid=(lo+hi)>>1;const startMs=Number(rows[mid].dataset.start||0);if(startMs<=pos){best=mid;lo=mid+1;}else hi=mid-1;} return best; };
         const tick = () => {
-            if (body.closest(".xrob-modal")?.hidden) return;
-            const pos=Number(audio?.currentTime||0)*1000; let active=null;
-            body.querySelectorAll(".lyrics-line").forEach(el=>{const start=Number(el.dataset.start||0); if(start<=pos) active=el;});
-            body.querySelectorAll(".lyrics-line.active").forEach(el=>el.classList.remove("active"));
-            if(active){active.classList.add("active");active.scrollIntoView({block:"center",behavior:"smooth"});}
+            if (body.closest(".xrob-modal")?.hidden) { lyricsAnimationFrame=null; return; }
+            const media = audio;
+            if (!media || media.paused || media.ended) { lyricsAnimationFrame=requestAnimationFrame(tick); return; }
+            const nextIndex=findActiveIndex(Number(media.currentTime||0)*1000);
+            if(nextIndex!==activeIndex){
+                if(activeIndex>=0) rows[activeIndex].classList.remove("active");
+                activeIndex=nextIndex;
+                if(activeIndex>=0){ rows[activeIndex].classList.add("active"); rows[activeIndex].scrollIntoView({block:"center",behavior:"smooth"}); }
+            }
             lyricsAnimationFrame = requestAnimationFrame(tick);
         };
         lyricsAnimationFrame = requestAnimationFrame(tick);
     } else {
         body.innerHTML = `<div class="lyrics-source">${escapeHtml(data.source || "Lyrics")}</div><pre class="lyrics-plain">${escapeHtml(plain)}</pre>`;
     }
+    renderLocalIcons();
 }
 
 function drawVisualizer() {
@@ -2909,7 +2908,7 @@ function bindPlayerControls() {
 
     document.getElementById("gp-shuffle-btn")?.addEventListener("click", () => setShuffle(!playerShuffle));
     document.getElementById("libraryShuffleButton")?.addEventListener("click", shuffleLibrary);
-    document.getElementById("libraryPlayAllButton")?.addEventListener("click", () => playQueue(rawLibraryFiles, 0, false));
+    document.getElementById("libraryPlayAllButton")?.addEventListener("click", () => playQueue(appState.library.files, 0, false));
     setShuffle(playerShuffle);
 
 
@@ -3102,9 +3101,9 @@ function saveLibraryCache() {
         storageSet(
             LIBRARY_CACHE_KEY,
             JSON.stringify({
-                files: rawLibraryFiles,
-                artists: libraryArtists,
-                albums: libraryAlbums,
+                files: appState.library.files,
+                artists: appState.library.artists,
+                albums: appState.library.albums,
                 savedAt: Date.now()
             })
         );
@@ -3144,9 +3143,9 @@ function loadLibraryCache() {
             return false;
         }
 
-        rawLibraryFiles = cache.files;
-        libraryArtists = Array.isArray(cache.artists) ? cache.artists : [];
-        libraryAlbums = Array.isArray(cache.albums) ? cache.albums : [];
+        appState.library.files = cache.files;
+        appState.library.artists = Array.isArray(cache.artists) ? cache.artists : [];
+        appState.library.albums = Array.isArray(cache.albums) ? cache.albums : [];
 
         libraryLoadedFromCache =
             true;
@@ -3276,16 +3275,16 @@ async function refreshLibraryCache() {
             await response.json();
 
 
-        rawLibraryFiles = data.files || [];
-        libraryPlaybackQueue = enhancedQueue.length ? [...enhancedQueue] : rawLibraryFiles;
-        libraryArtists = data.artists || [];
-        libraryAlbums = data.albums || [];
+        appState.library.files = data.files || [];
+        libraryPlaybackQueue = enhancedQueue.length ? [...enhancedQueue] : appState.library.files;
+        appState.library.artists = data.artists || [];
+        appState.library.albums = data.albums || [];
         appState.library.ready = data.ready !== false;
         appState.library.status = String(data.storage_state || data.storage?.state || (appState.library.ready ? "ready" : "loading"));
         appState.library.storageError = String(data.storage?.error || "");
         appState.library.revision += 1;
         appState.library.lastRefreshAt = Date.now();
-        emitAppEvent("library:updated", {revision: appState.library.revision, count: rawLibraryFiles.length, status: appState.library.status});
+        emitAppEvent("library:updated", {revision: appState.library.revision, count: appState.library.files.length, status: appState.library.status});
         await resolveEnhancedQueueIds();
         reconcileEnhancedQueue();
 
@@ -3304,7 +3303,7 @@ async function refreshLibraryCache() {
 
         if (side) {
             side.textContent =
-                rawLibraryFiles.length;
+                appState.library.files.length;
         }
 
 
@@ -3316,7 +3315,7 @@ async function refreshLibraryCache() {
 
         if (statTracks) {
             statTracks.textContent =
-                rawLibraryFiles.length;
+                appState.library.files.length;
         }
 
 
@@ -3328,7 +3327,7 @@ async function refreshLibraryCache() {
 
         if (mobile) {
             mobile.textContent =
-                rawLibraryFiles.length;
+                appState.library.files.length;
         }
 
 
@@ -3474,16 +3473,16 @@ async function loadLibrary() {
 
     try {
         await refreshLibraryCache();
-        document.getElementById("statTracks")?.replaceChildren(String(rawLibraryFiles.length));
-        document.getElementById("statArtists")?.replaceChildren(String(libraryArtists.length));
-        document.getElementById("statAlbums")?.replaceChildren(String(libraryAlbums.length));
+        document.getElementById("statTracks")?.replaceChildren(String(appState.library.files.length));
+        document.getElementById("statArtists")?.replaceChildren(String(appState.library.artists.length));
+        document.getElementById("statAlbums")?.replaceChildren(String(appState.library.albums.length));
         renderLibraryView();
         loadDetailedLibraryStats();
         updateLoadingCircle("library", 100, "Library ready");
         setTimeout(() => hideLoadingCircle("library"), 250);
     } catch (error) {
         hideLoadingCircle("library");
-        if (rawLibraryFiles.length) {
+        if (appState.library.files.length) {
             renderLibraryView();
             showToast("Showing cached library");
         } else {
@@ -3555,7 +3554,7 @@ function playQueue(queue, index = 0, shuffle = false) {
     return true;
 }
 
-function createTrackCard(file, queue = rawLibraryFiles) {
+function createTrackCard(file, queue = appState.library.files) {
     const encoded = encodeURIComponent(file.name || "");
     const cover = file.cover || `api/library/cover/${encoded}`;
     const stream = file.stream || `api/library/stream/${encoded}`;
@@ -3606,7 +3605,7 @@ function createTrackCard(file, queue = rawLibraryFiles) {
 }
 
 function renderArtists(list, query) {
-    const artists = libraryArtists.filter(a => !query || String(a.name || "").toLowerCase().includes(query));
+    const artists = appState.library.artists.filter(a => !query || String(a.name || "").toLowerCase().includes(query));
     list.innerHTML = "";
     if (!artists.length) return renderEmpty(list, "user-round", "No artists found", query ? "Try another search." : "Scan your library to build the artist catalog.");
     artists.forEach(artist => {
@@ -3614,7 +3613,7 @@ function renderArtists(list, query) {
         card.className = "catalog-card artist-card";
         card.innerHTML = `<button type="button" class="catalog-main-action"><img class="artist-cover" src="${escapeHtml(artist.cover||"")}" alt="" loading="lazy" onerror="this.style.display='none'"/><div><strong>${escapeHtml(artist.name)}</strong><span>${artist.album_count || 0} album${artist.album_count === 1 ? "" : "s"} · ${artist.song_count || 0} track${artist.song_count === 1 ? "" : "s"}</span></div></button><div class="catalog-actions"><button type="button" class="btn-refresh artist-art-btn">Cover</button><button type="button" class="btn-preview catalog-play"><i data-lucide="play" aria-hidden="true"></i> Play</button></div>`;
         card.querySelector(".catalog-main-action")?.addEventListener("click", () => openArtist(artist.id));
-        card.querySelector(".catalog-play")?.addEventListener("click", e => { e.stopPropagation(); const tracks = rawLibraryFiles.filter(f => (artist.song_ids || []).includes(f.id)); playQueue(tracks, 0, false); });
+        card.querySelector(".catalog-play")?.addEventListener("click", e => { e.stopPropagation(); const tracks = appState.library.files.filter(f => (artist.song_ids || []).includes(f.id)); playQueue(tracks, 0, false); });
         card.querySelector(".artist-art-btn")?.addEventListener("click", e => { e.stopPropagation(); const input=document.createElement("input"); input.type="file"; input.accept="image/jpeg,image/png,image/webp"; input.onchange=async()=>{const file=input.files?.[0]; if(!file)return; const fd=new FormData(); fd.append("upload",file); const rr=await apiFetch(`api/library/artist-artwork/${encodeURIComponent(artist.id)}`,{method:"POST",body:fd}); if(rr.ok){showToast("✅ Artist cover saved"); renderArtists(list,query);} else showToast("❌ Could not save artist cover");}; input.click(); });
         list.appendChild(card);
     });
@@ -3622,7 +3621,7 @@ function renderArtists(list, query) {
 }
 
 function renderAlbums(list, query) {
-    const albums = libraryAlbums.filter(a => !query || `${a.name || ""} ${a.artist || ""}`.toLowerCase().includes(query));
+    const albums = appState.library.albums.filter(a => !query || `${a.name || ""} ${a.artist || ""}`.toLowerCase().includes(query));
     list.innerHTML = "";
     if (!albums.length) return renderEmpty(list, "disc-3", "No albums found", query ? "Try another search." : "Scan your library to build the album catalog.");
     albums.forEach(album => list.appendChild(createAlbumCard(album)));
@@ -3642,11 +3641,11 @@ function createAlbumCard(album) {
 }
 
 function renderArtistDetail(list, query) {
-    const artist = libraryArtists.find(a => a.id === selectedArtistId);
+    const artist = appState.library.artists.find(a => a.id === selectedArtistId);
     if (!artist) { libraryView = "artists"; return renderArtists(list, query); }
     const ids = new Set(artist.song_ids || []);
-    const tracks = rawLibraryFiles.filter(f => ids.has(f.id));
-    const albums = libraryAlbums.filter(a => (a.song_ids || []).some(id => ids.has(id)));
+    const tracks = appState.library.files.filter(f => ids.has(f.id));
+    const albums = appState.library.albums.filter(a => (a.song_ids || []).some(id => ids.has(id)));
     list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button"><i data-lucide="arrow-left" aria-hidden="true"></i> Artists</button><div><h3>${escapeHtml(artist.name)}</h3><p>${albums.length} album${albums.length === 1 ? "" : "s"} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview artist-detail-play"><i data-lucide="play" aria-hidden="true"></i> Play artist</button></div>`;
     list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedArtistId = null; libraryView = "artists"; renderLibraryView(); });
     list.querySelector(".artist-detail-play")?.addEventListener("click", () => playQueue(tracks, 0, false));
@@ -3663,10 +3662,10 @@ function renderArtistDetail(list, query) {
 }
 
 function renderAlbumDetail(list, query) {
-    const album = libraryAlbums.find(a => a.id === selectedAlbumId);
+    const album = appState.library.albums.find(a => a.id === selectedAlbumId);
     if (!album) { libraryView = "albums"; return renderAlbums(list, query); }
     const ids = new Set(album.song_ids || []);
-    const tracks = rawLibraryFiles.filter(f => ids.has(f.id));
+    const tracks = appState.library.files.filter(f => ids.has(f.id));
     list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button"><i data-lucide="arrow-left" aria-hidden="true"></i> Albums</button><div><h3>${escapeHtml(album.name)}</h3><p>${escapeHtml(album.artist || "Unknown Artist")} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview album-detail-play"><i data-lucide="play" aria-hidden="true"></i> Play album</button></div>`;
     list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedAlbumId = null; libraryView = "albums"; renderLibraryView(); });
     list.querySelector(".album-detail-play")?.addEventListener("click", () => playAlbum(album.id));
@@ -3676,9 +3675,9 @@ function renderAlbumDetail(list, query) {
 }
 
 function filterLibrary() { renderLibraryView(); }
-function openArtist(id) { if (!libraryArtists.some(a => a.id === id)) return; selectedArtistId = id; selectedAlbumId = null; libraryView = "artist-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
-function openAlbum(id) { if (!libraryAlbums.some(a => a.id === id)) return; selectedAlbumId = id; selectedArtistId = null; libraryView = "album-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
-function playAlbum(id) { const album = libraryAlbums.find(a => a.id === id); if (!album) return showToast("Album not found"); const ids = new Set(album.song_ids || []); const tracks = rawLibraryFiles.filter(f => ids.has(f.id)); playQueue(tracks, 0, false); }
+function openArtist(id) { if (!appState.library.artists.some(a => a.id === id)) return; selectedArtistId = id; selectedAlbumId = null; libraryView = "artist-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
+function openAlbum(id) { if (!appState.library.albums.some(a => a.id === id)) return; selectedAlbumId = id; selectedArtistId = null; libraryView = "album-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
+function playAlbum(id) { const album = appState.library.albums.find(a => a.id === id); if (!album) return showToast("Album not found"); const ids = new Set(album.song_ids || []); const tracks = appState.library.files.filter(f => ids.has(f.id)); playQueue(tracks, 0, false); }
 function playLibraryTrack(index) {
     const queue = getLibraryQueue();
     if (!queue.length || index < 0 || index >= queue.length) return;
@@ -3771,7 +3770,7 @@ async function deleteFile(filename) {
    ============================================================ */
 
 async function searchMusic() {
-    const requestId = ++searchRequestId;
+    const requestId = ++appState.search.requestId;
     if (searchAbortController) { try { searchAbortController.abort(); } catch (_) {} }
     const requestController = typeof AbortController !== "undefined" ? new AbortController() : null;
     searchAbortController = requestController;
@@ -3803,10 +3802,10 @@ async function searchMusic() {
     appState.search.pending = Boolean(query);
 
     if (!query) {
-        currentQuery = "";
-        currentPage = 1;
-        hasMoreResults = false;
-        isLoadingMore = false;
+        appState.search.query = "";
+        appState.search.page = 1;
+        appState.search.hasMore = false;
+        appState.search.loadingMore = false;
         appState.search.pending = false;
         results.innerHTML = "";
         if (searchAbortController === requestController) searchAbortController = null;
@@ -3818,10 +3817,10 @@ async function searchMusic() {
         return;
     }
 
-    currentQuery = query;
-    currentPage = 1;
-    hasMoreResults = true;
-    isLoadingMore = false;
+    appState.search.query = query;
+    appState.search.page = 1;
+    appState.search.hasMore = true;
+    appState.search.loadingMore = false;
 
     /*
      * Hide the normal text status.
@@ -3895,7 +3894,7 @@ async function searchMusic() {
                     () => []
                 );
 
-        if (requestId !== searchRequestId) return;
+        if (requestId !== appState.search.requestId) return;
 
         if (!response.ok) {
 
@@ -3924,7 +3923,7 @@ async function searchMusic() {
                 500
             );
 
-            hasMoreResults = false;
+            appState.search.hasMore = false;
 
             return;
         }
@@ -3939,7 +3938,7 @@ async function searchMusic() {
             "Loading results..."
         );
 
-        hasMoreResults = data.length >= 20;
+        appState.search.hasMore = response.headers.get("X-Search-Has-More") === "1";
         renderItems(data);
 
         /*
@@ -3958,11 +3957,8 @@ async function searchMusic() {
 
     } catch (error) {
 
-        if (requestId !== searchRequestId || error?.name === "AbortError") return;
-        console.error(
-            "Search failed:",
-            error
-        );
+        if (requestId !== appState.search.requestId || error?.name === "AbortError") return;
+        reportAppError(error, {scope:"search"});
 
         updateSearchLoading(
             100,
@@ -3980,7 +3976,7 @@ async function searchMusic() {
 
     } finally {
 
-        if (requestId === searchRequestId && button) {
+        if (requestId === appState.search.requestId && button) {
             button.disabled = false;
         }
         if (searchAbortController === requestController) searchAbortController = null;
@@ -4121,6 +4117,21 @@ function renderItems(items) {
                     <div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library${matchText}</div>
                 `;
 
+            } else if (item.possible_match) {
+
+                const match = item.library_match || {};
+                const confidence = Math.round((Number(item.match_confidence || 0)) * 100);
+                group.innerHTML = `
+                    <div class="badge-library badge-possible"><i data-lucide="triangle-alert" aria-hidden="true"></i> Possible Match${confidence ? ` · ${confidence}%` : ""}</div>
+                    <button type="button" class="btn-download btn-download-anyway" data-id="${escapeHtml(item.id || "")}"><i data-lucide="download" aria-hidden="true"></i> Download Anyway</button>
+                `;
+                group.querySelector(".btn-download-anyway")?.addEventListener("click", () =>
+                    startDownload(item.url, item.title, item.id, item.artist || item.channel, group.querySelector(".btn-download-anyway"), item.album || "", item.duration || 0)
+                );
+                if (match.path) {
+                    const note=document.createElement("div"); note.className="search-match-path"; note.textContent=`Existing: ${match.path}`; group.appendChild(note);
+                }
+
             } else if (item.already_queued) {
 
                 group.innerHTML = `
@@ -4226,22 +4237,22 @@ function renderItems(items) {
 async function loadMoreResults() {
 
     if (
-        isLoadingMore ||
-        !hasMoreResults ||
-        !currentQuery
+        appState.search.loadingMore ||
+        !appState.search.hasMore ||
+        !appState.search.query
     ) {
         return;
     }
 
 
-    isLoadingMore = true;
-    const requestId = searchRequestId;
-    const queryAtStart = currentQuery;
+    appState.search.loadingMore = true;
+    const requestId = appState.search.requestId;
+    const queryAtStart = appState.search.query;
     const requestController = typeof AbortController !== "undefined" ? new AbortController() : null;
     searchAbortController = requestController;
 
     const nextPage =
-        currentPage + 1;
+        appState.search.page + 1;
 
 
     const loader =
@@ -4261,7 +4272,7 @@ async function loadMoreResults() {
             await apiFetch(
                 `api/search?q=${
                     encodeURIComponent(
-                        currentQuery
+                        appState.search.query
                     )
                 }&source=youtube&page=${
                     nextPage
@@ -4279,7 +4290,7 @@ async function loadMoreResults() {
                     () => []
                 );
 
-        if (requestId !== searchRequestId || queryAtStart !== currentQuery) return;
+        if (requestId !== appState.search.requestId || queryAtStart !== appState.search.query) return;
 
         if (!response.ok) {
 
@@ -4295,35 +4306,31 @@ async function loadMoreResults() {
             !data.length
         ) {
 
-            hasMoreResults = false;
+            appState.search.hasMore = false;
 
         } else {
 
-            currentPage = nextPage;
-            if (data.length < 20) hasMoreResults = false;
+            appState.search.page = nextPage;
+            appState.search.hasMore = response.headers.get("X-Search-Has-More") === "1";
             renderItems(data);
         }
 
     } catch (error) {
 
-        if (requestId !== searchRequestId || error?.name === "AbortError") return;
-        console.warn(
-            "Load more:",
-            error
-        );
-
+        if (requestId !== appState.search.requestId || error?.name === "AbortError") return;
+        reportAppError(error, {scope:"search", action:"load-more"});
         showToast(
             "⚠️ Could not load more results"
         );
 
     } finally {
 
-        if (requestId === searchRequestId && loader) {
+        if (requestId === appState.search.requestId && loader) {
             loader.style.display = "none";
         }
         if (searchAbortController === requestController) searchAbortController = null;
 
-        isLoadingMore = false;
+        appState.search.loadingMore = false;
     }
 }
 
@@ -4533,15 +4540,15 @@ async function pollTasks(force = false) {
             await response.json();
 
 
-        latestTasks =
+        appState.downloads.tasks =
             Array.isArray(tasks)
                 ? tasks
                 : [];
-        appState.downloads.tasks = latestTasks;
+        
         appState.downloads.lastUpdatedAt = Date.now();
 
 
-        latestTasks.forEach(
+        appState.downloads.tasks.forEach(
             task => {
 
                 if (
@@ -4566,44 +4573,40 @@ async function pollTasks(force = false) {
 
 
         updateQueueCounters(
-            latestTasks
+            appState.downloads.tasks
         );
 
 
         const signature =
             taskSignature(
-                latestTasks
+                appState.downloads.tasks
             );
 
 
-        const taskChanged = signature !== lastTaskSignature;
+        const taskChanged = signature !== appState.downloads.lastSignature;
         if (
             force ||
             taskChanged
         ) {
 
             renderDownloads(
-                latestTasks
+                appState.downloads.tasks
             );
         }
 
-        if (taskChanged && latestTasks.some(task => task.status === "completed")) {
-            loadStats().catch(() => {});
-            loadHome().catch(() => {});
+        if (taskChanged && appState.downloads.tasks.some(task => task.status === "completed")) {
+            loadStats().catch(error => reportAppError(error, {scope:"stats", action:"refresh-after-download"}));
+            loadHome().catch(error => reportAppError(error, {scope:"home", action:"refresh-after-download"}));
         }
 
-        lastTaskSignature =
+        appState.downloads.lastSignature =
             signature;
         appState.downloads.lastSignature = signature;
         appState.downloads.lastUpdatedAt = Date.now();
-        emitAppEvent("downloads:updated", {count: latestTasks.length, signature});
+        emitAppEvent("downloads:updated", {count: appState.downloads.tasks.length, signature});
 
     } catch (error) {
-
-        console.warn(
-            "Tasks:",
-            error
-        );
+        reportAppError(error, {scope:"downloads", action:"poll-tasks"});
     }
 }
 
@@ -4707,12 +4710,12 @@ async function startDownload(
 
 
         if (data.task) {
-            const existingIndex = latestTasks.findIndex(t => String(t.id) === String(data.task.id));
-            if (existingIndex >= 0) latestTasks[existingIndex] = data.task;
-            else latestTasks.unshift(data.task);
-            lastTaskSignature = taskSignature(latestTasks);
-            updateQueueCounters(latestTasks);
-            renderDownloads(latestTasks);
+            const existingIndex = appState.downloads.tasks.findIndex(t => String(t.id) === String(data.task.id));
+            if (existingIndex >= 0) appState.downloads.tasks[existingIndex] = data.task;
+            else appState.downloads.tasks.unshift(data.task);
+            appState.downloads.lastSignature = taskSignature(appState.downloads.tasks);
+            updateQueueCounters(appState.downloads.tasks);
+            renderDownloads(appState.downloads.tasks);
         }
 
         if (data.status === "already_downloaded" && button) {
@@ -4734,7 +4737,7 @@ async function startDownload(
         openDownloadsDrawer();
         // The API has already enqueued the task. Refresh the drawer in the
         // background so the Save button never waits on a second round-trip.
-        pollTasks(true).catch(() => {});
+        pollTasks(true).catch(error => reportAppError(error, {scope:"downloads", action:"poll-fallback"}));
 
     } catch (error) {
 
@@ -4903,23 +4906,23 @@ async function clearDoneTasks() {
         completedSet.clear();
 
 
-        latestTasks =
-            latestTasks.filter(
+        appState.downloads.tasks =
+            appState.downloads.tasks.filter(
                 task =>
                     !isFinishedTask(task)
             );
 
 
-        lastTaskSignature = "";
+        appState.downloads.lastSignature = "";
 
 
         renderDownloads(
-            latestTasks
+            appState.downloads.tasks
         );
 
 
         updateQueueCounters(
-            latestTasks
+            appState.downloads.tasks
         );
 
 
@@ -5446,6 +5449,7 @@ function initWebSocket() {
                 } else if (data.type === "library_updated") {
                     appState.library.status = "ready";
                     appState.library.lastEventAt = Date.now();
+                    appState.library.revision = Number(appState.library.revision || 0) + 1;
                     emitAppEvent("library:server-updated", data);
                     scheduleLibraryRefresh();
                 } else if (data.type === "storage_state") {
@@ -5632,7 +5636,7 @@ async function refreshLibrary() {
         renderLibraryView();
         loadDetailedLibraryStats();
         updateLoadingCircle("library", 100, "Library ready");
-        showToast(`✅ Quick scan complete • ${data.tracks || rawLibraryFiles.length} tracks`);
+        showToast(`✅ Quick scan complete • ${data.tracks || appState.library.files.length} tracks`);
     } catch (error) {
         showToast("❌ " + (error.message || "Quick scan failed."));
     } finally {
@@ -5835,7 +5839,7 @@ async function startAppAfterAuth() {
     // Poll briefly for the background metadata warmup to finish, then refresh once.
     const startupJobs = [refreshLibraryCache(), loadSettings(), loadSongEditor(), pollTasks(true), loadStats(), loadHome()];
     await Promise.allSettled(startupJobs);
-    if (rawLibraryFiles.length) renderLibraryView();
+    if (appState.library.files.length) renderLibraryView();
     let libraryWarmupChecks = 0;
     const warmupTimer = setInterval(async () => {
         libraryWarmupChecks += 1;
@@ -5846,16 +5850,16 @@ async function startAppAfterAuth() {
             const d = await r.json();
             if (d.ready) {
                 clearInterval(warmupTimer);
-                rawLibraryFiles = d.files || [];
-                libraryPlaybackQueue = rawLibraryFiles;
-                libraryArtists = d.artists || libraryArtists;
-                libraryAlbums = d.albums || libraryAlbums;
+                appState.library.files = d.files || [];
+                libraryPlaybackQueue = appState.library.files;
+                appState.library.artists = d.artists || appState.library.artists;
+                appState.library.albums = d.albums || appState.library.albums;
                 saveLibraryCache();
                 renderLibraryView();
                 loadStats();
                 loadSongEditor();
             }
-        } catch (_) {}
+        } catch (error) { reportAppError(error, {scope:"library", action:"warmup"}); }
     }, 1000);
     handleHash();
 
@@ -5874,12 +5878,12 @@ async function startAppAfterAuth() {
 
     if (taskPollTimer) window.clearInterval(taskPollTimer);
     taskPollTimer = window.setInterval(() => {
-        if (!socket || socket.readyState !== WebSocket.OPEN) pollTasks(true).catch(() => {});
+        if (!socket || socket.readyState !== WebSocket.OPEN) pollTasks(true).catch(error => reportAppError(error, {scope:"downloads", action:"poll-fallback"}));
     }, 5000);
 
     if (statsPollTimer) window.clearInterval(statsPollTimer);
     statsPollTimer = window.setInterval(() => {
-        if (!document.hidden) loadStats().catch(() => {});
+        if (!document.hidden) loadStats().catch(error => reportAppError(error, {scope:"stats", action:"refresh-after-download"}));
     }, 15000);
 }
 
@@ -6143,7 +6147,7 @@ async function loadDetailedLibraryStats() {
         renderDashboardRows('detailSampleRates', d.sample_rates);
         renderLocalIcons();
         loadLibraryIntelligence();
-    } catch (_) {}
+    } catch (error) { reportAppError(error, {scope:"library-stats"}); }
 }
 
 async function loadLibraryIntelligence() {
@@ -6165,7 +6169,7 @@ async function loadLibraryIntelligence() {
         (d.replaygain_missing || []).slice(0, 4).forEach(item => items.push({icon:'volume-x', title:`ReplayGain: ${item.title}`, detail:item.artist || 'Unknown Artist'}));
         list.innerHTML = items.length ? items.map(item => `<div class="library-intel-row"><i data-lucide="${escapeHtml(item.icon)}" aria-hidden="true"></i><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div></div>`).join('') : '<div class="queue-empty">Library looks clean.</div>';
         renderLocalIcons();
-    } catch (_) {}
+    } catch (error) { reportAppError(error, {scope:"library-intelligence"}); }
 }
 
 function installDailyMixSwipe() {
@@ -6531,8 +6535,6 @@ if (
 let deviceHeartbeatTimer = null;
 let deviceRefreshTimer = null;
 let devices = [];
-let downloadFilter = "active";
-let downloadHistory = [];
 const etaSamples = new Map();
 const libraryRenderStates = new WeakMap();
 let searchDebounceTimer = null;
@@ -6739,18 +6741,18 @@ async function showDownloadDetails(task) {
     document.getElementById("downloadDetailContent").textContent=lines.join("\n"); modal.hidden=false;
 }
 async function loadDownloadHistory(){
-    try{const r=await apiFetch("api/downloads/history",{cache:"no-store",timeoutMs:10000});if(!r.ok)throw new Error("History unavailable");const d=await r.json();downloadHistory=(Array.isArray(d.history)?d.history:[]).map(x=>({...x,id:x.task_id,history:true}));appState.downloads.history=downloadHistory;updateDownloadSummary();if(downloadFilter==="history")renderDownloads(latestTasks);}catch(err){console.warn("Download history:",err);}
+    try{const r=await apiFetch("api/downloads/history",{cache:"no-store",timeoutMs:10000});if(!r.ok)throw new Error("History unavailable");const d=await r.json();appState.downloads.history=(Array.isArray(d.history)?d.history:[]).map(x=>({...x,id:x.task_id,history:true}));updateDownloadSummary();if(appState.downloads.filter==="history")renderDownloads(appState.downloads.tasks);}catch(err){reportAppError(err,{scope:"downloads",action:"history"});}
 }
 function updateDownloadSummary(){
-    const active=latestTasks.filter(isActiveTask).length, queued=latestTasks.filter(t=>String(t.status||"")==="queued").length, failed=latestTasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())).length;
-    [["downloadsActiveCount",active],["downloadsQueuedCount",queued],["downloadsFailedCount",failed],["downloadsHistoryCount",downloadHistory.length]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.textContent=n;});
-    const head=document.getElementById("downloadsHeadStatus");if(head)head.textContent=active?`${active} active · ${queued} queued`:`${downloadHistory.length} in history`;
+    const active=appState.downloads.tasks.filter(isActiveTask).length, queued=appState.downloads.tasks.filter(t=>String(t.status||"")==="queued").length, failed=appState.downloads.tasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())).length;
+    [["downloadsActiveCount",active],["downloadsQueuedCount",queued],["downloadsFailedCount",failed],["downloadsHistoryCount",appState.downloads.history.length]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.textContent=n;});
+    const head=document.getElementById("downloadsHeadStatus");if(head)head.textContent=active?`${active} active · ${queued} queued`:`${appState.downloads.history.length} in history`;
 }
 function renderDownloads(tasks){
     const list=document.getElementById("downloadsList"); if(!list)return;
     updateDownloadSummary();
-    const filter=downloadFilter;
-    const rows=filter==="history"?downloadHistory.slice():filter==="queued"?tasks.filter(t=>String(t.status||"")==="queued"):filter==="failed"?tasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())):tasks.filter(t=>isActiveTask(t)&&String(t.status||"")!=="queued");
+    const filter=appState.downloads.filter;
+    const rows=filter==="history"?appState.downloads.history.slice():filter==="queued"?tasks.filter(t=>String(t.status||"")==="queued"):filter==="failed"?tasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())):tasks.filter(t=>isActiveTask(t)&&String(t.status||"")!=="queued");
     const hint=document.getElementById("downloadsFilterHint"); if(hint)hint.textContent=filter==="active"?"Currently running jobs":filter==="queued"?"Waiting to start":filter==="failed"?"Retryable failures and cancellations":"Persistent download history";
     const clear=document.getElementById("downloadsClearHistory");if(clear)clear.hidden=filter!=="history";
     list.innerHTML="";
@@ -6758,17 +6760,17 @@ function renderDownloads(tasks){
     const stack=document.createElement("div");stack.className="download-stack";rows.forEach((task,i)=>stack.appendChild(createDownloadCard(task,i+1)));list.appendChild(stack);renderLocalIcons();
 }
 async function openBatchDownloads(){const modal=document.getElementById("batch-download-modal");if(modal)modal.hidden=false;}
-async function submitBatchDownload(event){event.preventDefault();const urls=(document.getElementById("batchDownloadUrls")?.value||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!urls.length){showToast("❌ Add at least one URL");return;}if(urls.length>200){showToast("❌ Maximum 200 URLs per batch");return;}const body={urls,artist:document.getElementById("batchDownloadArtist")?.value||"",album:document.getElementById("batchDownloadAlbum")?.value||""};const btn=document.querySelector("#batchDownloadForm button[type=submit]");if(btn)btn.disabled=true;try{const r=await apiFetch("api/download/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),timeoutMs:20000});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Batch download failed");const queued=(d.results||[]).filter(x=>["ok","already_queued"].includes(x.status)).length;document.getElementById("batch-download-modal").hidden=true;document.getElementById("batchDownloadUrls").value="";showToast(`✅ ${queued} download${queued===1?"":"s"} added`);await pollTasks(true);}catch(err){showToast("❌ "+(err.message||"Batch download failed"));}finally{if(btn)btn.disabled=false;}}
-async function clearDownloadHistory(){try{const r=await apiFetch("api/downloads/history",{method:"DELETE"});if(!r.ok)throw new Error("Could not clear history");downloadHistory=[];appState.downloads.history=[];renderDownloads(latestTasks);showToast("🧹 Download history cleared");}catch(err){showToast("❌ "+(err.message||"Clear history failed"));}}
+async function submitBatchDownload(event){event.preventDefault();const urls=(document.getElementById("batchDownloadUrls")?.value||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!urls.length){showToast("❌ Add at least one URL");return;}if(urls.length>200){showToast("❌ Maximum 200 URLs per batch");return;}const body={urls,artist:document.getElementById("batchDownloadArtist")?.value||"",album:document.getElementById("batchDownloadAlbum")?.value||""};const btn=document.querySelector("#batchDownloadForm button[type=submit]");if(btn)btn.disabled=true;try{const r=await apiFetch("api/download/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),timeoutMs:20000});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Batch download failed");const queued=(d.results||[]).filter(x=>["ok","already_queued"].includes(x.status)).length;document.getElementById("batch-download-modal").hidden=true;document.getElementById("batchDownloadUrls").value="";showToast(`✅ ${queued} download${queued===1?"":"s"} added`);await pollTasks(true);}catch(err){reportAppError(err,{scope:"downloads",action:"batch"});showToast("❌ "+(err.message||"Batch download failed"));}finally{if(btn)btn.disabled=false;}}
+async function clearDownloadHistory(){try{const r=await apiFetch("api/downloads/history",{method:"DELETE"});if(!r.ok)throw new Error("Could not clear history");appState.downloads.history=[];renderDownloads(appState.downloads.tasks);showToast("🧹 Download history cleared");}catch(err){reportAppError(err,{scope:"downloads",action:"clear-history"});showToast("❌ "+(err.message||"Clear history failed"));}}
 
-async function backupStandard(){try{const r=await apiFetch("api/backup",{cache:"no-store",timeoutMs:30000});if(!r.ok)throw new Error("Backup failed");const blob=await r.blob();const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`xrob-music-backup-${new Date().toISOString().replace(/[:.]/g,"-")}.zip`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);showToast("✅ Standard backup created");}catch(err){showToast("❌ "+(err.message||"Backup failed"));}}
-async function backupEncrypted(){const password=prompt("Create an encrypted backup password (12+ characters):");if(password===null)return;if(password.length<12){showToast("❌ Backup password must be at least 12 characters");return;}try{const r=await apiFetch("api/backup/encrypted",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password}),timeoutMs:30000});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.detail||"Encrypted backup failed");}const blob=await r.blob();const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`xrob-music-backup-encrypted-${new Date().toISOString().replace(/[:.]/g,"-")}.xrbk`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);showToast("✅ Encrypted backup created");}catch(err){showToast("❌ "+(err.message||"Encrypted backup failed"));}}
-async function restoreBackup(){const input=document.getElementById("restoreFile");const file=input?.files?.[0];if(!file){showToast("Select a backup first");return;}if(!confirm("Restore this backup? A safety copy of the current database will be kept."))return;const form=new FormData();form.append("file",file);if(file.name.toLowerCase().endsWith(".xrbk")){const password=prompt("Enter the encrypted backup password:");if(password===null)return;form.append("password",password);}try{const r=await apiFetch("api/restore",{method:"POST",body:form,timeoutMs:30000});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Restore failed");showToast("✅ Backup restored. Reloading…");setTimeout(()=>location.reload(),700);}catch(err){showToast("❌ "+(err.message||"Restore failed"));}}
-async function openDiagnostics(){const modal=document.getElementById("diagnostics-modal"),box=document.getElementById("diagnosticsContent");if(!modal||!box)return;modal.hidden=false;box.innerHTML='<div class="queue-empty">Running checks…</div>';try{const r=await apiFetch("api/diagnostics",{cache:"no-store",timeoutMs:30000});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Diagnostics unavailable");const sections=[];for(const [key,val] of Object.entries(d)){if(key==="runtime"&&val){sections.push(`<section class="diag-section"><h3>Runtime</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);continue;}if(key==="tools"&&val){sections.push(`<section class="diag-section"><h3>Tools</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);continue;}if(val&&typeof val==="object")sections.push(`<section class="diag-section"><h3>${escapeHtml(key)}</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);}box.innerHTML=sections.join("");}catch(err){box.innerHTML=`<div class="queue-empty">${escapeHtml(err.message||"Diagnostics failed")}</div>`;}}
+async function backupStandard(){try{const r=await apiFetch("api/backup",{cache:"no-store",timeoutMs:30000});if(!r.ok)throw new Error("Backup failed");const blob=await r.blob();const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`xrob-music-backup-${new Date().toISOString().replace(/[:.]/g,"-")}.zip`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);showToast("✅ Standard backup created");}catch(err){reportAppError(err,{scope:"backup",action:"standard"});showToast("❌ "+(err.message||"Backup failed"));}}
+async function backupEncrypted(){const password=prompt("Create an encrypted backup password (12+ characters):");if(password===null)return;if(password.length<12){showToast("❌ Backup password must be at least 12 characters");return;}try{const r=await apiFetch("api/backup/encrypted",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password}),timeoutMs:30000});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.detail||"Encrypted backup failed");}const blob=await r.blob();const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`xrob-music-backup-encrypted-${new Date().toISOString().replace(/[:.]/g,"-")}.xrbk`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);showToast("✅ Encrypted backup created");}catch(err){reportAppError(err,{scope:"backup",action:"encrypted"});showToast("❌ "+(err.message||"Encrypted backup failed"));}}
+async function restoreBackup(){const input=document.getElementById("restoreFile");const file=input?.files?.[0];if(!file){showToast("Select a backup first");return;}if(!confirm("Restore this backup? A safety copy of the current database will be kept."))return;const form=new FormData();form.append("file",file);if(file.name.toLowerCase().endsWith(".xrbk")){const password=prompt("Enter the encrypted backup password:");if(password===null)return;form.append("password",password);}try{const r=await apiFetch("api/restore",{method:"POST",body:form,timeoutMs:30000});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Restore failed");showToast("✅ Backup restored. Reloading…");setTimeout(()=>location.reload(),700);}catch(err){reportAppError(err,{scope:"backup",action:"restore"});showToast("❌ "+(err.message||"Restore failed"));}}
+async function openDiagnostics(){const modal=document.getElementById("diagnostics-modal"),box=document.getElementById("diagnosticsContent");if(!modal||!box)return;modal.hidden=false;box.innerHTML='<div class="queue-empty">Running checks…</div>';try{const r=await apiFetch("api/diagnostics",{cache:"no-store",timeoutMs:30000});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Diagnostics unavailable");const sections=[];for(const [key,val] of Object.entries(d)){if(key==="runtime"&&val){sections.push(`<section class="diag-section"><h3>Runtime</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);continue;}if(key==="tools"&&val){sections.push(`<section class="diag-section"><h3>Tools</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);continue;}if(val&&typeof val==="object")sections.push(`<section class="diag-section"><h3>${escapeHtml(key)}</h3><pre>${escapeHtml(JSON.stringify(val,null,2))}</pre></section>`);}box.innerHTML=sections.join("");}catch(err){reportAppError(err,{scope:"diagnostics"});box.innerHTML=`<div class="queue-empty">${escapeHtml(err.message||"Diagnostics failed")}</div>`;}}
 
 function renderLibraryTracksWindowed(list, query){
-    const files=rawLibraryFiles.filter(file=>{const hay=`${file.title||file.name||""} ${file.artist||""} ${file.album||""} ${file.name||""}`.toLowerCase();return !query||hay.includes(query);});
-    list.innerHTML=""; if(!files.length){renderEmpty(list,"music-2",rawLibraryFiles.length?"No matching tracks":"Your library is empty",rawLibraryFiles.length?"Try another search.":"Downloaded tracks will appear here.");return;}
+    const files=appState.library.files.filter(file=>{const hay=`${file.title||file.name||""} ${file.artist||""} ${file.album||""} ${file.name||""}`.toLowerCase();return !query||hay.includes(query);});
+    list.innerHTML=""; if(!files.length){renderEmpty(list,"music-2",appState.library.files.length?"No matching tracks":"Your library is empty",appState.library.files.length?"Try another search.":"Downloaded tracks will appear here.");return;}
     const token={files, index:0, query};libraryRenderStates.set(list,token);
     const sentinel=document.createElement("div"); sentinel.className="library-window-sentinel";
     const observer=new IntersectionObserver(entries=>{if(!entries.some(e=>e.isIntersecting))return;const state=libraryRenderStates.get(list);if(!state||state!==token)return;const fragment=document.createDocumentFragment();const end=Math.min(state.index+60,state.files.length);for(;state.index<end;state.index++)fragment.appendChild(createTrackCard(state.files[state.index],state.files));list.insertBefore(fragment,sentinel);renderLocalIcons();if(state.index>=state.files.length)observer.disconnect();},{rootMargin:"900px"});
@@ -6902,7 +6904,7 @@ function installAppFeatures(){
     document.getElementById("diagnosticsClose")?.addEventListener("click",()=>document.getElementById("diagnostics-modal").hidden=true);
     document.getElementById("batchDownloadForm")?.addEventListener("submit",submitBatchDownload);
     document.getElementById("downloadsClearHistory")?.addEventListener("click",clearDownloadHistory);
-    document.querySelectorAll("[data-download-filter]").forEach(btn=>btn.addEventListener("click",()=>{downloadFilter=btn.dataset.downloadFilter||"active";appState.downloads.filter=downloadFilter;document.querySelectorAll("[data-download-filter]").forEach(b=>b.classList.toggle("active",b===btn));renderDownloads(latestTasks);if(downloadFilter==="history")loadDownloadHistory();}));
+    document.querySelectorAll("[data-download-filter]").forEach(btn=>btn.addEventListener("click",()=>{appState.downloads.filter=btn.dataset.downloadFilter||"active";document.querySelectorAll("[data-download-filter]").forEach(b=>b.classList.toggle("active",b===btn));renderDownloads(appState.downloads.tasks);if(appState.downloads.filter==="history")loadDownloadHistory();}));
     document.getElementById("backupButton")?.addEventListener("click",backupStandard);document.getElementById("encryptedBackupButton")?.addEventListener("click",backupEncrypted);document.getElementById("restoreButton")?.addEventListener("click",()=>document.getElementById("restoreFile")?.click());document.getElementById("restoreFile")?.addEventListener("change",()=>{if(document.getElementById("restoreFile")?.files?.[0])restoreBackup();});document.getElementById("diagnosticsButton")?.addEventListener("click",openDiagnostics);
     document.getElementById("set_device_name")?.addEventListener("change",saveDeviceName);
     const artworkSelect=document.getElementById("set_artwork_behavior");
