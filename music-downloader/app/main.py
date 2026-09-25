@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.8"
+SERVER_VERSION = "3.7.9"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -2789,6 +2789,7 @@ async def download_worker():
             existing = await find_existing_track(
                 task.get("title", "Unknown Track"),
                 task.get("artist", "Unknown Artist"),
+                task.get("url", ""),
             )
             if existing:
                 task["status"] = "completed"
@@ -3517,6 +3518,7 @@ def _search_duplicate_state_sync(items, tasks):
     library_index = _load_library_index_sync()
     entries = library_index.get("entries", {}) if isinstance(library_index, dict) else {}
     by_identity = {}
+    by_source_identity = {}
     by_source_url = {}
     for rel, cached in entries.items() if isinstance(entries, dict) else []:
         cached = cached if isinstance(cached, dict) else {}
@@ -3524,10 +3526,13 @@ def _search_duplicate_state_sync(items, tasks):
         artist = cached.get("artist") or "Unknown Artist"
         key = normalize_duplicate_key(title, artist)
         if key:
-            by_identity.setdefault(key, str(rel))
+            by_identity.setdefault(key, []).append(str(rel))
+        source_key = normalize_duplicate_key(cached.get("source_title"), cached.get("source_artist"))
+        if source_key:
+            by_source_identity.setdefault(source_key, []).append(str(rel))
         source_url = str(cached.get("source_url") or "").strip()
         if source_url:
-            by_source_url.setdefault(source_url, str(rel))
+            by_source_url.setdefault(source_url, []).append(str(rel))
 
     active_by_url = set()
     active_by_identity = set()
@@ -3543,12 +3548,20 @@ def _search_duplicate_state_sync(items, tasks):
         if key:
             active_by_identity.add(key)
 
+    def unique(mapping, key):
+        matches = mapping.get(key, []) if key else []
+        return matches[0] if len(matches) == 1 else None
+
     decorated = []
     for item in items or []:
         row = dict(item)
         row_url = str(row.get("url") or "")
         identity = normalize_duplicate_key(row.get("title", ""), row.get("artist", ""))
-        matched_rel = by_source_url.get(row_url) or (by_identity.get(identity) if identity else None)
+        matched_rel = unique(by_source_url, row_url)
+        if not matched_rel:
+            matched_rel = unique(by_identity, identity)
+        if not matched_rel:
+            matched_rel = unique(by_source_identity, identity)
         matched = entries.get(matched_rel) if matched_rel and isinstance(entries, dict) else None
         if isinstance(matched, dict):
             row["library_path"] = matched_rel
@@ -3779,32 +3792,53 @@ async def api_preview(
 # DOWNLOAD API
 # ============================================================
 
-def find_existing_track_fast_sync(title, artist):
-    """Check the persisted library index without reading every audio tag."""
+def find_existing_track_fast_sync(title, artist, source_url=None):
+    """Check the persisted library index using editable and provider identities.
+
+    Source-title matching is only accepted when unambiguous; this prevents two
+    different uploads with the same provider title/artist from being collapsed.
+    """
     target_key = normalize_duplicate_key(title, artist)
-    if not target_key:
-        return None
+    normalized_source_url = str(source_url or "").strip()
 
     try:
         index = _load_library_index_sync()
         entries = index.get("entries", {}) if isinstance(index, dict) else {}
+        current_matches = []
+        source_matches = []
         for rel, cached in entries.items():
             if not isinstance(cached, dict):
                 cached = {}
-            cached_title = cached.get("title") or Path(str(rel)).stem
-            cached_artist = cached.get("artist") or "Unknown Artist"
-            key = normalize_duplicate_key(cached_title, cached_artist)
-            if key == target_key:
-                path = DOWNLOAD_DIR / str(rel)
-                if path.is_file():
-                    return str(rel)
+            path = DOWNLOAD_DIR / str(rel)
+            if not path.is_file():
+                continue
+
+            cached_source_url = str(cached.get("source_url") or "").strip()
+            if normalized_source_url and cached_source_url and cached_source_url == normalized_source_url:
+                return str(rel)
+
+            if target_key:
+                current_key = normalize_duplicate_key(
+                    cached.get("title") or Path(str(rel)).stem,
+                    cached.get("artist") or "Unknown Artist",
+                )
+                if current_key == target_key:
+                    current_matches.append(str(rel))
+                source_key = normalize_duplicate_key(cached.get("source_title"), cached.get("source_artist"))
+                if source_key == target_key:
+                    source_matches.append(str(rel))
+
+        if len(current_matches) == 1:
+            return current_matches[0]
+        if len(source_matches) == 1:
+            return source_matches[0]
     except Exception:
         pass
     return None
 
 
-async def find_existing_track(title, artist):
-    return await asyncio.to_thread(find_existing_track_fast_sync, title, artist)
+async def find_existing_track(title, artist, source_url=None):
+    return await asyncio.to_thread(find_existing_track_fast_sync, title, artist, source_url)
 
 
 @app.post("/api/download")
@@ -3846,7 +3880,7 @@ async def api_download(
             if task.get("url") == url and task.get("status") in {"queued", "downloading", "processing"}:
                 return {"status": "already_queued", "task_id": task["id"]}
 
-        existing = await find_existing_track(task_title, task_artist)
+        existing = await find_existing_track(task_title, task_artist, url)
         if existing:
             return {
                 "status": "already_downloaded",
@@ -8606,42 +8640,137 @@ async def api_errors(limit:int=Query(200,ge=1,le=1000)):
     return {"errors":[dict(r) for r in rows]+failures[:limit]}
 
 
+def _write_library_metadata_sync(path, title, artist, album):
+    """Write editable tags using the container-specific Mutagen API.
+
+    MP4/M4A uses ©nam/©ART/©alb rather than generic Vorbis-style keys.
+    WAV can use an ID3 container. Raw AAC has no portable embedded tag
+    container, so callers can still persist the library metadata in the
+    library index without pretending the audio file itself was rewritten.
+    """
+    if MutagenFile is None:
+        raise RuntimeError("Metadata library unavailable")
+
+    ext = path.suffix.lower()
+    audio = MutagenFile(path, easy=False)
+    if audio is None:
+        raise RuntimeError("Unsupported audio file")
+
+    if ext == ".mp3":
+        try:
+            audio.add_tags()
+        except Exception:
+            pass
+        if audio.tags is None:
+            audio.tags = ID3()
+        audio.tags.delall("TIT2")
+        audio.tags.delall("TPE1")
+        audio.tags.delall("TALB")
+        audio.tags.add(TIT2(encoding=3, text=title))
+        audio.tags.add(TPE1(encoding=3, text=artist))
+        audio.tags.add(TALB(encoding=3, text=album))
+        audio.save()
+        return True
+
+    if ext in {".m4a", ".alac", ".mp4", ".m4b", ".m4p"} or audio.__class__.__name__ == "MP4":
+        tags = audio.tags
+        if tags is None:
+            try:
+                audio.add_tags()
+                tags = audio.tags
+            except Exception as exc:
+                raise RuntimeError(f"Could not create MP4 metadata tags: {exc}") from exc
+        tags["©nam"] = [title] if title else []
+        tags["©ART"] = [artist] if artist else []
+        tags["©alb"] = [album] if album else []
+        audio.save()
+        return True
+
+    if ext in {".flac", ".ogg", ".oga", ".opus"}:
+        tags = audio.tags
+        if tags is None:
+            try:
+                audio.add_tags()
+                tags = audio.tags
+            except Exception as exc:
+                raise RuntimeError(f"Could not create Vorbis metadata tags: {exc}") from exc
+        for key, value in (("title", title), ("artist", artist), ("album", album)):
+            if value:
+                tags[key] = [value]
+            else:
+                try:
+                    del tags[key]
+                except KeyError:
+                    pass
+        audio.save()
+        return True
+
+    if ext == ".wav":
+        # WAV files can carry an ID3 chunk; create it when absent.
+        try:
+            audio.add_tags()
+        except Exception:
+            pass
+        if audio.tags is None:
+            audio.tags = ID3()
+        audio.tags.delall("TIT2")
+        audio.tags.delall("TPE1")
+        audio.tags.delall("TALB")
+        audio.tags.add(TIT2(encoding=3, text=title))
+        audio.tags.add(TPE1(encoding=3, text=artist))
+        audio.tags.add(TALB(encoding=3, text=album))
+        audio.save()
+        return True
+
+    # Raw AAC/other containers may have no writable embedded metadata. The
+    # library index is still updated by the caller, so edits remain persistent
+    # and searchable without corrupting the audio stream.
+    return False
+
+
 @app.post("/api/library/metadata")
 async def api_library_metadata(payload: dict = Body(...)):
-    song_id=str(payload.get("id") or "")
-    song=await find_song(song_id)
-    if not song: raise HTTPException(404,"Track not found")
+    song_id = str(payload.get("id") or "")
+    song = await find_song(song_id)
+    if not song:
+        raise HTTPException(404, "Track not found")
     path = song["path"]
     fields = {}
     for key in ("title", "artist", "album"):
         if key in payload:
-            value = clean_metadata_text(payload.get(key), "")
-            fields[key] = value
+            fields[key] = clean_metadata_text(payload.get(key), "")
     if not fields:
-        return {"status":"ok"}
-    if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
-    def write_tags():
-        audio=MutagenFile(path, easy=False)
-        if audio is None: raise RuntimeError("Unsupported audio file")
-        ext=path.suffix.lower()
-        title=str(fields.get("title",song["title"]))
-        artist=str(fields.get("artist",song["artist"]))
-        album=str(fields.get("album",song["album"]))
-        if ext==".mp3":
-            try: audio.add_tags()
-            except Exception: pass
-            if audio.tags is None: audio.tags=ID3()
-            audio.tags.delall("TIT2"); audio.tags.delall("TPE1"); audio.tags.delall("TALB")
-            audio.tags.add(TIT2(encoding=3,text=title)); audio.tags.add(TPE1(encoding=3,text=artist)); audio.tags.add(TALB(encoding=3,text=album))
-        else:
-            tags=audio.tags or {}
-            for key,val in (("title",title),("artist",artist),("album",album)):
-                if val: tags[key]=[val]
-                else: tags.pop(key,None)
-            audio.tags=tags
-        audio.save()
-    try: await asyncio.to_thread(write_tags)
-    except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
+        return {"status": "ok", "embedded": False}
+
+    title = str(fields.get("title", song.get("title") or path.stem))
+    artist = str(fields.get("artist", song.get("artist") or "Unknown Artist"))
+    album = str(fields.get("album", song.get("album") or "Unknown Album"))
+
+    try:
+        embedded = await asyncio.to_thread(
+            _write_library_metadata_sync, path, title, artist, album
+        )
+    except Exception as exc:
+        await write_app_error("metadata", str(exc), song_id)
+        raise HTTPException(500, f"Metadata update failed: {exc}")
+
+    # Preserve provider/source identity separately from the user's editable
+    # metadata. This is important for older downloads that predate source_url
+    # storage: their original search title/artist can still locate the renamed
+    # library item after an edit.
+    existing_index = await asyncio.to_thread(_load_library_index_sync)
+    existing_row = {}
+    try:
+        rel = str(Path(path).resolve().relative_to(DOWNLOAD_DIR.resolve()))
+        existing_row = dict((existing_index.get("entries") or {}).get(rel) or {})
+    except Exception:
+        existing_row = {}
+    source_title = existing_row.get("source_title") or song.get("title")
+    source_artist = existing_row.get("source_artist") or song.get("artist")
+    source_album = existing_row.get("source_album") or song.get("album")
+
+    # The index is always updated, including formats that cannot safely embed
+    # editable tags. This makes Search and Library agree on the user's edit.
     edited_at = time.time()
     await asyncio.to_thread(
         _update_library_index_entry_sync,
@@ -8649,9 +8778,19 @@ async def api_library_metadata(payload: dict = Body(...)):
         title=title,
         artist=artist,
         album=album,
+        source_title=source_title,
+        source_artist=source_artist,
+        source_album=source_album,
     )
     await asyncio.to_thread(_mark_song_review_sync, song_id, "edited", edited_at, True)
-    invalidate_library_cache(); return {"status":"ok"}
+    METADATA_CACHE.pop(str(path), None)
+    invalidate_library_cache()
+
+    return {
+        "status": "ok",
+        "embedded": bool(embedded),
+        "message": "Metadata saved" if embedded else "Metadata saved to the library index",
+    }
 
 
 @app.get("/api/song-editor")
