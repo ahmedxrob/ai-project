@@ -3214,6 +3214,20 @@ function loadRecentlyAddedCache() {
    LIBRARY
    ============================================================ */
 
+let libraryRefreshTimer = null;
+function scheduleLibraryRefresh() {
+    if (libraryRefreshTimer) window.clearTimeout(libraryRefreshTimer);
+    libraryRefreshTimer = window.setTimeout(async () => {
+        libraryRefreshTimer = null;
+        try {
+            await refreshLibraryCache();
+            renderLibraryView();
+        } catch (error) {
+            reportAppError(error, {scope:"library", action:"live-refresh"});
+        }
+    }, 180);
+}
+
 async function refreshLibraryCache() {
 
     try {
@@ -3244,7 +3258,8 @@ async function refreshLibraryCache() {
         libraryArtists = data.artists || [];
         libraryAlbums = data.albums || [];
         appState.library.ready = data.ready !== false;
-        appState.library.status = String(data.storage_state || (appState.library.ready ? "ready" : "loading"));
+        appState.library.status = String(data.storage_state || data.storage?.state || (appState.library.ready ? "ready" : "loading"));
+        appState.library.storageError = String(data.storage?.error || "");
         appState.library.revision += 1;
         appState.library.lastRefreshAt = Date.now();
         emitAppEvent("library:updated", {revision: appState.library.revision, count: rawLibraryFiles.length, status: appState.library.status});
@@ -5404,6 +5419,16 @@ function initWebSocket() {
 
                     pollTasks();
 
+                } else if (data.type === "library_updated") {
+                    appState.library.status = "ready";
+                    appState.library.lastEventAt = Date.now();
+                    emitAppEvent("library:server-updated", data);
+                    scheduleLibraryRefresh();
+                } else if (data.type === "storage_state") {
+                    appState.library.status = String(data.state || "unknown");
+                    appState.library.storageError = String(data.error || "");
+                    emitAppEvent("storage:state", {state: appState.library.status, error: appState.library.storageError});
+                    if (appState.library.status === "online") scheduleLibraryRefresh();
                 } else if (data.type === "player_state") {
                     if (data.state?.ownerId === PLAYER_TAB_ID) {
                         applyAuthoritativeOwnedPlayerState(data.state, false);
