@@ -92,6 +92,8 @@ let playSessionRecorded = false;
 const PLAY_COUNT_THRESHOLD_SECONDS = 60;
 const ENHANCED_QUEUE_KEY = "xrob_music_up_next_queue";
 const ENHANCED_REPEAT_KEY = "xrob_music_repeat";
+let taskPollTimer = null;
+let statsPollTimer = null;
 /* ============================================================
    PLATFORM-SAFE STORAGE + API TRANSPORT
    ============================================================ */
@@ -189,7 +191,7 @@ async function apiFetch(input, options = {}) {
             });
             if (timeoutId) window.clearTimeout(timeoutId);
             if (detachCallerAbort) detachCallerAbort();
-            if (retryable && attempt + 1 < attempts && [408, 429, 502, 503, 504].includes(response.status)) {
+            if (retryable && attempt + 1 < attempts && [408, 502, 503, 504].includes(response.status)) {
                 await new Promise(resolve => window.setTimeout(resolve, 350 * (attempt + 1)));
                 continue;
             }
@@ -1245,6 +1247,26 @@ function saveEnhancedQueue() {
     try { storageSet(ENHANCED_QUEUE_KEY, JSON.stringify({queue: enhancedQueue, index: enhancedQueueIndex})); } catch (_) {}
 }
 
+async function resolveEnhancedQueueIds() {
+    if (!Array.isArray(enhancedQueue) || !enhancedQueue.length) return;
+    const ids = enhancedQueue.map(item => item?.id).filter(Boolean);
+    if (!ids.length) return;
+    try {
+        const r = await apiFetch("api/player/resolve-queue", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ids}), timeoutMs:5000});
+        if (!r.ok) return;
+        const data = await r.json();
+        const mapping = data?.mapping || {};
+        let changed = false;
+        enhancedQueue = enhancedQueue.map(item => {
+            const oldId = String(item?.id || "");
+            const newId = mapping[oldId];
+            if (newId && newId !== oldId) { changed = true; return {...item, id:newId}; }
+            return item;
+        });
+        if (changed) { saveEnhancedQueue(); libraryPlaybackQueue=[...enhancedQueue]; }
+    } catch (_) {}
+}
+
 function loadEnhancedQueue() {
     try {
         const v = JSON.parse(storageGet(ENHANCED_QUEUE_KEY) || "null");
@@ -1256,6 +1278,7 @@ function loadEnhancedQueue() {
             );
             libraryPlaybackQueue = [...enhancedQueue];
             currentLibraryIndex = enhancedQueueIndex;
+            resolveEnhancedQueueIds().catch(() => {});
         } else {
             enhancedQueue = [];
             enhancedQueueIndex = -1;
@@ -3263,6 +3286,7 @@ async function refreshLibraryCache() {
         appState.library.revision += 1;
         appState.library.lastRefreshAt = Date.now();
         emitAppEvent("library:updated", {revision: appState.library.revision, count: rawLibraryFiles.length, status: appState.library.status});
+        await resolveEnhancedQueueIds();
         reconcileEnhancedQueue();
 
         saveLibraryCache();
@@ -5848,15 +5872,15 @@ async function startAppAfterAuth() {
     restorePlayerState();
 
 
-    setInterval(
-        () => pollTasks(),
-        2000
-    );
+    if (taskPollTimer) window.clearInterval(taskPollTimer);
+    taskPollTimer = window.setInterval(() => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) pollTasks(true).catch(() => {});
+    }, 5000);
 
-    setInterval(
-        () => loadStats().catch(() => {}),
-        5000
-    );
+    if (statsPollTimer) window.clearInterval(statsPollTimer);
+    statsPollTimer = window.setInterval(() => {
+        if (!document.hidden) loadStats().catch(() => {});
+    }, 15000);
 }
 
 
