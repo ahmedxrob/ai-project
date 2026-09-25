@@ -261,12 +261,6 @@ class LibraryCatalog:
         """Reconcile current files while preserving IDs only for proven moves/metadata edits."""
         self.init_schema()
         existing = self.rows()
-        by_path = {str(row["relative_path"]): row for row in existing if not str(row.get("relative_path") or "").startswith(".retired/")}
-        by_fp = defaultdict(list)
-        for row in existing:
-            fp = str(row.get("fingerprint") or "")
-            if fp and not fp.startswith("legacy:") and int(row.get("missing") or 0):
-                by_fp[fp].append(row)
 
         current_paths = set()
         for path in files:
@@ -274,6 +268,31 @@ class LibraryCatalog:
                 current_paths.add(str(path.relative_to(self.library_dir)))
             except (OSError, RuntimeError, ValueError):
                 continue
+
+        by_path = {
+            str(row["relative_path"]): row
+            for row in existing
+            if not str(row.get("relative_path") or "").startswith(".retired/")
+            and not int(row.get("missing") or 0)
+        }
+        # A filesystem move may leave the old catalog row active until the
+        # reconciliation transaction finishes. Match moved files by device/inode
+        # first, then by fast fingerprint only when the old path is no longer
+        # present. This preserves IDs for renames/moves without letting an exact
+        # copied file steal the active source ID.
+        by_location = defaultdict(list)
+        by_fp = defaultdict(list)
+        for row in existing:
+            rel = str(row.get("relative_path") or "")
+            if rel.startswith(".retired/") or rel in current_paths:
+                continue
+            device = int(row.get("device") or 0)
+            inode = int(row.get("inode") or 0)
+            if device and inode:
+                by_location[(device, inode)].append(row)
+            fp = str(row.get("fingerprint") or "")
+            if fp and not fp.startswith("legacy:"):
+                by_fp[fp].append(row)
 
         claimed_lock = threading.Lock()
         claimed = set()
@@ -295,24 +314,28 @@ class LibraryCatalog:
                 # Metadata/stat changed, but the content fingerprint is identical: same song.
                 sid = str(row["id"]); created = row.get("created_at") or time.time(); strong_hash = str(row.get("strong_hash") or "")
             elif row is None:
-                # New path: only inherit an ID from a missing row, and prove the content.
-                candidates = [c for c in by_fp.get(fp, []) if str(c.get("id")) not in claimed and str(c.get("relative_path") or "") not in current_paths]
-                for candidate in candidates:
-                    candidate_hash = str(candidate.get("strong_hash") or "")
-                    current_hash = strong_file_hash(path)
-                    if candidate_hash and candidate_hash != current_hash:
-                        continue
-                    old_rel = str(candidate.get("relative_path") or "")
-                    if not candidate_hash:
-                        try:
-                            old_path = self.library_dir / old_rel
-                            if old_path.is_file() and strong_file_hash(old_path) != current_hash:
-                                continue
-                        except OSError:
-                            pass
-                    sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = current_hash
+                stat_identity = (int(getattr(stat, "st_dev", 0) or 0), int(getattr(stat, "st_ino", 0) or 0))
+                location_candidates = [
+                    c for c in by_location.get(stat_identity, [])
+                    if str(c.get("id")) not in claimed
+                ] if stat_identity[0] and stat_identity[1] else []
+                if location_candidates:
+                    candidate = location_candidates[0]
+                    sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = str(candidate.get("strong_hash") or "")
                     with claimed_lock: claimed.add(sid)
-                    break
+                else:
+                    # Cross-filesystem moves may lose inode identity. Only reuse an
+                    # ID when the previous catalog path is absent from this scan,
+                    # and verify the full content hash before doing so.
+                    candidates = [c for c in by_fp.get(fp, []) if str(c.get("id")) not in claimed and str(c.get("relative_path") or "") not in current_paths]
+                    current_hash = strong_file_hash(path) if candidates else ""
+                    for candidate in candidates:
+                        candidate_hash = str(candidate.get("strong_hash") or "")
+                        if candidate_hash and candidate_hash != current_hash:
+                            continue
+                        sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = current_hash
+                        with claimed_lock: claimed.add(sid)
+                        break
             else:
                 # Same path with different content is a new logical item. The old ID is retired below.
                 replaced_id = str(row["id"])
