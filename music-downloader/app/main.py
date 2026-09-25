@@ -58,7 +58,7 @@ from .catalog import LibraryCatalog, StorageUnavailable, AUDIO_EXTENSIONS as CAT
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.2.2"
+SERVER_VERSION = "4.2.3"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -258,6 +258,9 @@ def _validate_download_location(raw_location, allow_empty=True):
         raise ValueError("Download location could not be resolved.") from exc
     if candidate.exists() and not candidate.is_dir():
         raise ValueError("Download location must be a directory.")
+    base = DOWNLOAD_DIR.resolve()
+    if not (resolved == base or base in resolved.parents):
+        raise ValueError("Download location must be inside the configured music library root.")
     roots = _approved_download_roots()
     if not any(resolved == root or root in resolved.parents for root in roots):
         raise ValueError("Download location must be inside an approved music storage root.")
@@ -524,9 +527,87 @@ def _cleanup_rate_limit_state_sync():
         SUBSONIC_FAILURE_STATE.pop(key, None)
 
 
+async def _retry_catalog_pending_tasks():
+    """Retry durable file->catalog commits without re-downloading media."""
+    pending = [
+        task for task in list(TASKS.values())
+        if task.get("status") == "catalog_pending" and task.get("catalog_pending_path")
+    ]
+    for task in pending[:8]:
+        task_id = str(task.get("id") or "")
+        path = Path(str(task.get("catalog_pending_path") or ""))
+        try:
+            root = task_download_root(task)
+        except (OSError, RuntimeError, ValueError) as exc:
+            safe = _sanitize_external_error(exc, "Pending download location is invalid.", 500)
+            task["status"] = "error"
+            task["step"] = "Library commit failed"
+            task["error"] = safe
+            task["catalog_pending_path"] = ""
+            task["last_updated"] = time.time() * 1000
+            await notify_task_update(task, force_save=True)
+            identity = str(task.get("content_identity") or "")
+            if identity:
+                await _release_content_identity_reservations(identity)
+            continue
+        try:
+            resolved = path.resolve()
+            base = DOWNLOAD_DIR.resolve()
+            if not (resolved == base or base in resolved.parents):
+                raise ValueError("Pending catalog path is outside the music library root.")
+        except (OSError, RuntimeError, ValueError) as exc:
+            safe = _sanitize_external_error(exc, "Pending library file is invalid.", 500)
+            task["status"] = "error"
+            task["step"] = "Library commit failed"
+            task["error"] = safe
+            task["catalog_pending_path"] = ""
+            task["last_updated"] = time.time() * 1000
+            if task_id:
+                await asyncio.to_thread(cleanup_task_files, task_id, root)
+                await notify_task_update(task, force_save=True)
+            continue
+        if not await asyncio.to_thread(resolved.is_file):
+            task["status"] = "error"
+            task["step"] = "Library file missing"
+            task["error"] = "The finalized download file is missing."
+            task["catalog_pending_path"] = ""
+            task["last_updated"] = time.time() * 1000
+            await notify_task_update(task, force_save=True)
+            identity = str(task.get("content_identity") or "")
+            if identity:
+                async with DOWNLOAD_IDENTITY_LOCK:
+                    ACTIVE_CONTENT_DOWNLOADS.discard(identity)
+            continue
+        try:
+            async with DOWNLOAD_GUARD:
+                await refresh_after_download(resolved)
+                task["catalog_pending_path"] = ""
+                task["status"] = "completed"
+                task["percent"] = 100
+                task["speed"] = ""
+                task["step"] = "Ready"
+                task["error"] = ""
+                task["last_updated"] = time.time() * 1000
+                await notify_task_update(task, force_save=True)
+            identity = str(task.get("content_identity") or "")
+            if identity:
+                async with DOWNLOAD_IDENTITY_LOCK:
+                    ACTIVE_CONTENT_DOWNLOADS.discard(identity)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            safe = _sanitize_external_error(exc, "Library commit failed; retrying automatically.", 700)
+            task["status"] = "catalog_pending"
+            task["step"] = "Library commit pending"
+            task["error"] = safe
+            task["last_updated"] = time.time() * 1000
+            await notify_task_update(task, force_save=True)
+
+
 async def runtime_maintenance_loop():
     while True:
         try:
+            await _retry_catalog_pending_tasks()
             _cleanup_rate_limit_state_sync()
             _cleanup_auth_sessions(force=False)
             async with COVER_LOCKS_GUARD:
@@ -584,7 +665,7 @@ BACKUP_ENCRYPTION_NONCE_BYTES = 12
 BACKUP_ENCRYPTION_ITERATIONS = 390000
 BACKUP_PASSWORD_MIN_LENGTH = 12
 LIBRARY_REFRESH_DEBOUNCE_SECONDS = 1.5
-DB_SCHEMA_VERSION = 8
+DB_SCHEMA_VERSION = 9
 LIBRARY_HEALTH_INTERVAL_SECONDS = 6 * 60 * 60
 LIBRARY_HEALTH_MAX_FILES_PER_RUN = 50000
 DUPLICATE_DURATION_TOLERANCE_SECONDS = 2.5
@@ -1293,6 +1374,9 @@ def init_db():
             "created_at": "REAL DEFAULT 0",
             "content_identity": "TEXT DEFAULT ''",
             "identity_version": "INTEGER DEFAULT 1",
+            "album_version": "TEXT DEFAULT ''",
+            "download_root": "TEXT DEFAULT ''",
+            "catalog_pending_path": "TEXT DEFAULT ''",
         }
         for column, definition in task_column_defs.items():
             if column not in task_columns:
@@ -1365,7 +1449,7 @@ def init_db():
             conn.execute("ALTER TABLE tasks ADD COLUMN identity_version INTEGER DEFAULT 1")
         # Older releases did not have identity_key. Fill it deterministically and
         # neutralize duplicate legacy active rows before creating the partial unique index.
-        for row in conn.execute("SELECT id,title,artist,url,status,identity_key FROM tasks WHERE status IN ('queued','downloading','processing')").fetchall():
+        for row in conn.execute("SELECT id,title,artist,url,status,identity_key FROM tasks WHERE status IN ('queued','downloading','processing','catalog_pending')").fetchall():
             identity = str(row[5] or "")
             if not identity:
                 title_key = normalize_duplicate_key(row[1] or "", row[2] or "")
@@ -1373,14 +1457,14 @@ def init_db():
                 identity = f"{title_key}|{url_key}"
                 conn.execute("UPDATE tasks SET identity_key=? WHERE id=?", (identity,row[0]))
         try:
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_active_identity ON tasks(identity_key) WHERE identity_key IS NOT NULL AND identity_key <> '' AND status IN ('queued','downloading','processing')")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_active_identity ON tasks(identity_key) WHERE identity_key IS NOT NULL AND identity_key <> '' AND status IN ('queued','downloading','processing','catalog_pending')")
         except sqlite3.IntegrityError:
-            duplicates = conn.execute("SELECT identity_key, COUNT(*) FROM tasks WHERE identity_key<>'' AND status IN ('queued','downloading','processing') GROUP BY identity_key HAVING COUNT(*)>1").fetchall()
+            duplicates = conn.execute("SELECT identity_key, COUNT(*) FROM tasks WHERE identity_key<>'' AND status IN ('queued','downloading','processing','catalog_pending') GROUP BY identity_key HAVING COUNT(*)>1").fetchall()
             for identity,_count in duplicates:
-                dup_rows = conn.execute("SELECT id FROM tasks WHERE identity_key=? AND status IN ('queued','downloading','processing') ORDER BY created_at ASC",(identity,)).fetchall()
+                dup_rows = conn.execute("SELECT id FROM tasks WHERE identity_key=? AND status IN ('queued','downloading','processing','catalog_pending') ORDER BY created_at ASC",(identity,)).fetchall()
                 for dup in dup_rows[1:]:
                     conn.execute("UPDATE tasks SET identity_key='' WHERE id=?",(dup[0],))
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_active_identity ON tasks(identity_key) WHERE identity_key IS NOT NULL AND identity_key <> '' AND status IN ('queued','downloading','processing')")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_active_identity ON tasks(identity_key) WHERE identity_key IS NOT NULL AND identity_key <> '' AND status IN ('queued','downloading','processing','catalog_pending')")
         # Playlist extensions are additive and preserve the existing schema.
         playlist_cols = {row[1] for row in conn.execute("PRAGMA table_info(playlists)")}
         if "kind" not in playlist_cols:
@@ -1407,8 +1491,9 @@ def db_save_task_sync(task):
                 INSERT INTO tasks (
                     id, title, artist, album, url, elementId, status, percent, speed,
                     step, error, last_updated, final_name, created_at, identity_key,
-                    retry_count, resume_available, content_identity, identity_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    retry_count, resume_available, content_identity, identity_version, album_version,
+                    download_root, catalog_pending_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title, artist=excluded.artist, album=excluded.album,
                     url=excluded.url, elementId=excluded.elementId, status=excluded.status,
@@ -1417,7 +1502,8 @@ def db_save_task_sync(task):
                     final_name=excluded.final_name, created_at=excluded.created_at,
                     identity_key=excluded.identity_key, retry_count=excluded.retry_count,
                     resume_available=excluded.resume_available, content_identity=excluded.content_identity,
-                    identity_version=excluded.identity_version
+                    identity_version=excluded.identity_version, album_version=excluded.album_version,
+                    download_root=excluded.download_root, catalog_pending_path=excluded.catalog_pending_path
                 """,
                 (
                     task.get("id"), task.get("title"), task.get("artist"), task.get("album"),
@@ -1427,14 +1513,16 @@ def db_save_task_sync(task):
                     task.get("created_at", task.get("last_updated", 0)), identity_key,
                     safe_int(task.get("retry_count"), 0), 1 if task.get("resume_available") else 0,
                     str(task.get("content_identity") or ""), safe_int(task.get("identity_version"), 1),
+                    str(task.get("album_version") or ""), str(task.get("download_root") or ""),
+                    str(task.get("catalog_pending_path") or ""),
                 ),
             )
         except sqlite3.IntegrityError as exc:
             # The partial unique index is the final race-condition guard. Never use
             # INSERT OR REPLACE here: REPLACE would delete the existing active task.
-            if task_status in {"queued", "downloading", "processing"} and identity_key:
+            if task_status in ACTIVE_TASK_STATES and identity_key:
                 conflict = conn.execute(
-                    "SELECT id FROM tasks WHERE identity_key=? AND status IN ('queued','downloading','processing') AND id<>? LIMIT 1",
+                    "SELECT id FROM tasks WHERE identity_key=? AND status IN ('queued','downloading','processing','catalog_pending') AND id<>? LIMIT 1",
                     (identity_key, task.get("id")),
                 ).fetchone()
                 if conflict:
@@ -2836,13 +2924,63 @@ async def resolve_cover_id(item_id):
 # DUPLICATES
 # ============================================================
 
-def cleanup_task_files(task_id):
-    for path in DOWNLOAD_DIR.rglob(f"*{task_id}*"):
-        try:
-            if path.is_file():
-                path.unlink()
-        except Exception:
-            pass
+def task_download_root(task):
+    """Return a persisted validated download root; invalid persisted paths fail closed."""
+    raw = str((task or {}).get("download_root") or "").strip()
+    if not raw:
+        return DOWNLOAD_DIR
+    try:
+        root = Path(raw).expanduser().resolve()
+        base = DOWNLOAD_DIR.resolve()
+        if root == base or base in root.parents:
+            return root
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError("Persisted download location is invalid.") from exc
+    raise RuntimeError("Persisted download location is outside the music library root.")
+
+
+def cleanup_task_files(task_id, root=None):
+    root = Path(root or DOWNLOAD_DIR)
+    try:
+        base = DOWNLOAD_DIR.resolve()
+        root = root.resolve()
+        if not (root == base or base in root.parents):
+            root = base
+    except (OSError, RuntimeError, ValueError):
+        root = DOWNLOAD_DIR
+    try:
+        for path in root.rglob(f"*{task_id}*"):
+            try:
+                if path.is_file():
+                    path.unlink()
+            except Exception:
+                pass
+    except OSError:
+        pass
+
+
+async def _switch_content_identity_reservation(old_identity, new_identity):
+    """Atomically move an in-flight download reservation to final normalized identity."""
+    old_identity = str(old_identity or "")
+    new_identity = str(new_identity or "")
+    async with DOWNLOAD_IDENTITY_LOCK:
+        if new_identity and new_identity != old_identity and new_identity in ACTIVE_CONTENT_DOWNLOADS:
+            return False
+        if old_identity and old_identity != new_identity:
+            ACTIVE_CONTENT_DOWNLOADS.discard(old_identity)
+        if new_identity:
+            ACTIVE_CONTENT_DOWNLOADS.add(new_identity)
+        return True
+
+
+async def _release_content_identity_reservations(*identities):
+    """Release one or more reservation keys as one synchronized operation."""
+    keys = {str(identity or "") for identity in identities if str(identity or "")}
+    if not keys:
+        return
+    async with DOWNLOAD_IDENTITY_LOCK:
+        for key in keys:
+            ACTIVE_CONTENT_DOWNLOADS.discard(key)
 
 
 
@@ -3093,7 +3231,7 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
 # ============================================================
 
 TERMINAL_TASK_STATES = {"completed", "error", "failed", "cancelled", "canceled"}
-ACTIVE_TASK_STATES = {"queued", "downloading", "processing"}
+ACTIVE_TASK_STATES = {"queued", "downloading", "processing", "catalog_pending"}
 
 
 def _task_cancelled(task):
@@ -3109,24 +3247,34 @@ def _set_task_cancelled(task):
     task["last_updated"] = time.time() * 1000
 
 
-async def refresh_after_download(final_path: Path):
-    """Commit one newly downloaded file to the authoritative SQLite catalog."""
+async def _commit_download_to_catalog_locked(final_path: Path):
+    """Commit one finalized file while the catalog lock is already held."""
+    final_path = Path(final_path)
+    if LIBRARY_CATALOG is None:
+        raise RuntimeError("Library catalog is not initialized")
+    if not await asyncio.to_thread(final_path.is_file):
+        raise FileNotFoundError("Finalized download file is missing")
+    record = await asyncio.to_thread(LIBRARY_CATALOG.upsert_file, final_path, read_metadata_sync)
+    invalidate_library_cache()
+    song_id = str(record.get("id") or "")
+    # Catalog commit is authoritative. Notification failures must never turn a
+    # successfully committed media file back into a failed download.
     try:
-        final_path = Path(final_path)
-        if LIBRARY_CATALOG is None:
-            raise RuntimeError("Library catalog is not initialized")
-        async with LIBRARY_CATALOG_LOCK:
-            record = await asyncio.to_thread(LIBRARY_CATALOG.upsert_file, final_path, read_metadata_sync)
-        invalidate_library_cache()
-        song_id = str(record.get("id") or "")
         if song_id:
             await asyncio.to_thread(_ensure_song_review_pending_sync, song_id)
-        await manager.broadcast({"type": "library_updated", "songId": song_id, "path": str(final_path)})
-        return song_id
     except Exception as exc:
-        safe = _sanitize_external_error(exc, "Library refresh failed.")
-        await write_app_error("library_refresh", safe)
-        return ""
+        await write_app_error("song_review", exc)
+    try:
+        await manager.broadcast({"type": "library_updated", "songId": song_id, "path": str(final_path)})
+    except Exception as exc:
+        await write_app_error("library_broadcast", exc)
+    return song_id
+
+
+async def refresh_after_download(final_path: Path):
+    """Commit one finalized file to SQLite; catalog failures remain retryable."""
+    async with LIBRARY_CATALOG_LOCK:
+        return await _commit_download_to_catalog_locked(final_path)
 
 
 def _ensure_song_review_pending_sync(song_id):
@@ -3184,7 +3332,18 @@ async def download_worker(stop_event=None):
 
                 continue
 
+            if task.get("status") == "catalog_pending":
+                # Catalog-pending tasks are recovered by runtime maintenance, not the download workers.
+                continue
+
             settings = await load_settings_async()
+            download_root = task_download_root(task)
+            try:
+                await asyncio.to_thread(download_root.mkdir, parents=True, exist_ok=True)
+                # Persist a validated root for restart-safe cleanup/resume handling.
+                task["download_root"] = str(download_root)
+            except OSError as exc:
+                raise RuntimeError(_sanitize_external_error(exc, "Download storage is unavailable.", 400)) from exc
 
             storage_ok, storage_error = await asyncio.to_thread(_probe_storage_sync)
             if not storage_ok:
@@ -3206,7 +3365,8 @@ async def download_worker(stop_event=None):
                     task["artist"] = clean_metadata_text(source_meta.get("artist"), task.get("artist") or "Unknown Artist")
                     task["album"] = clean_metadata_text(source_meta.get("album"), task.get("album") or "")
                     task["duration"] = safe_float(source_meta.get("duration"), task.get("duration") or 0)
-                    task["content_identity"] = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0), source_meta.get("album_version", ""))
+                    task["album_version"] = clean_metadata_text(source_meta.get("album_version", ""), task.get("album_version") or "")
+                    task["content_identity"] = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0), task.get("album_version", ""))
                     task["identity_version"] = 2
                     url_hash = hashlib.sha256(str(task.get("url", "")).encode("utf-8")).hexdigest()
                     task["identity_key"] = f"{task.get('content_identity')}|{url_hash}" if task.get("content_identity") else f"url:{url_hash}"
@@ -3272,7 +3432,6 @@ async def download_worker(stop_event=None):
                 force_save=True,
             )
 
-            download_root = _download_root_for_settings(settings)
             output_template = str(download_root / f"{task_id}.%(ext)s")
 
             command = [
@@ -3440,7 +3599,7 @@ async def download_worker(stop_event=None):
                 def partial_exists_sync():
                     try:
                         for pattern in (f"{task_id}.*", f"clean_{task_id}.*"):
-                            if any(path.is_file() for path in DOWNLOAD_DIR.glob(pattern) if path.suffix.lower() in {".part", ".ytdl", ".temp"}):
+                            if any(path.is_file() for path in download_root.glob(pattern) if path.suffix.lower() in {".part", ".ytdl", ".temp"}):
                                 return True
                         return False
                     except OSError:
@@ -3465,7 +3624,7 @@ async def download_worker(stop_event=None):
 
             def find_downloaded_files_sync():
                 try:
-                    candidates = list(DOWNLOAD_DIR.glob(f"{task_id}.*"))
+                    candidates = list(download_root.glob(f"{task_id}.*"))
                 except OSError:
                     return []
                 audio = [path for path in candidates if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS]
@@ -3500,7 +3659,7 @@ async def download_worker(stop_event=None):
                 task["error"] = _sanitize_external_error(validation, "Downloaded media failed validation.", 500)
                 task["last_updated"] = time.time() * 1000
                 await notify_task_update(task, force_save=True)
-                await asyncio.to_thread(cleanup_task_files, task_id)
+                await asyncio.to_thread(cleanup_task_files, task_id, download_root if 'download_root' in locals() else task_download_root(task))
                 continue
             if isinstance(validation, dict) and validation.get("duration"):
                 task["duration"] = float(validation["duration"])
@@ -3526,7 +3685,7 @@ async def download_worker(stop_event=None):
             task["artist"] = resolved["artist"]
             task["album"] = resolved["album"] or task["artist"] or "Unknown Artist"
             if _task_cancelled(task):
-                await asyncio.to_thread(cleanup_task_files, task_id)
+                await asyncio.to_thread(cleanup_task_files, task_id, download_root if 'download_root' in locals() else task_download_root(task))
                 _set_task_cancelled(task)
                 await notify_task_update(task, force_save=True)
                 continue
@@ -3572,7 +3731,7 @@ async def download_worker(stop_event=None):
                 ACTIVE_PROCESSES.pop(task_id, None)
 
                 if task.get("cancel_requested"):
-                    await asyncio.to_thread(cleanup_task_files, task_id)
+                    await asyncio.to_thread(cleanup_task_files, task_id, download_root if 'download_root' in locals() else task_download_root(task))
                     task["status"] = "cancelled"
                     task["step"] = "Cancelled"
                     task["percent"] = 0
@@ -3589,7 +3748,7 @@ async def download_worker(stop_event=None):
                     audio_file = clean_file
                     valid_media, validation = await asyncio.to_thread(_audio_validation_sync, audio_file)
                     if not valid_media:
-                        await asyncio.to_thread(cleanup_task_files, task_id)
+                        await asyncio.to_thread(cleanup_task_files, task_id, download_root if 'download_root' in locals() else task_download_root(task))
                         raise RuntimeError(_sanitize_external_error(validation, "Final media validation failed.", 500))
                 else:
                     # Keep the downloaded file when metadata rewriting fails; the
@@ -3607,6 +3766,7 @@ async def download_worker(stop_event=None):
                     task["title"] = normalize_catalog_title(final_meta.get("title") or task.get("title") or "Unknown Track", settings.get("title_cleanup_rules", ""))
                     task["artist"] = clean_metadata_text(final_meta.get("artist") or task.get("artist") or "Unknown Artist", "Unknown Artist")
                     task["album"] = clean_metadata_text(final_meta.get("album") or task.get("album") or "", "")
+                    task["album_version"] = clean_metadata_text(final_meta.get("album_version") or task.get("album_version") or "", "")
                     actual_duration = safe_float(final_meta.get("duration"), 0)
                     if actual_duration:
                         task["duration"] = actual_duration
@@ -3622,83 +3782,154 @@ async def download_worker(stop_event=None):
             await notify_task_update(task, force_save=True)
 
             async with DOWNLOAD_GUARD:
-                # Final authoritative duplicate check after metadata normalization.
-                # This runs in the same critical section as the irreversible move.
-                final_duplicate = await find_existing_track(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0))
-                if final_duplicate:
-                    await asyncio.to_thread(cleanup_task_files, task_id)
+                # The final normalized identity becomes the reservation identity.
+                # This is done before the final duplicate check so a second worker
+                # cannot enter the same normalized track while we finalize.
+                final_identity = _download_content_identity(
+                    task.get("title", ""),
+                    task.get("artist", ""),
+                    task.get("album", ""),
+                    task.get("duration", 0),
+                    task.get("album_version", ""),
+                )
+                old_identity = content_identity
+                async with LIBRARY_CATALOG_LOCK:
+                    # Switch to the final normalized identity before consulting the
+                    # catalog. DOWNLOAD_GUARD prevents another local worker from
+                    # interleaving this finalization, while the identity reservation
+                    # prevents a separately queued source from finalizing the same
+                    # normalized track at the same time.
+                    reservation_ok = await _switch_content_identity_reservation(old_identity, final_identity)
+                    if not reservation_ok:
+                        conflict_id = next((str(other.get("id")) for other in TASKS.values() if str(other.get("content_identity") or "") == final_identity and str(other.get("id")) != task_id and other.get("status") in ACTIVE_TASK_STATES), "")
+                        await asyncio.to_thread(cleanup_task_files, task_id, download_root)
+                        task["status"] = "completed"
+                        task["percent"] = 100
+                        task["speed"] = ""
+                        task["step"] = "Duplicate download removed"
+                        task["error"] = ""
+                        task["duplicate_of"] = {"task_id": conflict_id, "identity": final_identity}
+                        task["final_name"] = ""
+                        task["catalog_pending_path"] = ""
+                        task["last_updated"] = time.time() * 1000
+                        await notify_task_update(task, force_save=True)
+                        await _release_content_identity_reservations(old_identity, final_identity)
+                        reserved_identity = False
+                        content_identity = final_identity
+                        continue
+
+                    content_identity = final_identity
+                    reserved_identity = bool(final_identity)
+                    task["content_identity"] = final_identity
+                    task["identity_version"] = 2
+                    task["identity_key"] = f"{final_identity}|{hashlib.sha256(str(task.get('url', '')).encode('utf-8')).hexdigest()}" if final_identity else f"url:{hashlib.sha256(str(task.get('url', '')).encode('utf-8')).hexdigest()}"
+                    await notify_task_update(task, force_save=True)
+
+                    final_duplicate = await find_existing_track(
+                        task.get("title", ""),
+                        task.get("artist", ""),
+                        task.get("album", ""),
+                        task.get("duration", 0),
+                    )
+                    if final_duplicate:
+                        await asyncio.to_thread(cleanup_task_files, task_id, download_root)
+                        task["status"] = "completed"
+                        task["percent"] = 100
+                        task["speed"] = ""
+                        task["step"] = "Already in library — duplicate removed"
+                        task["error"] = ""
+                        task["duplicate_of"] = {
+                            "id": final_duplicate.get("id", ""),
+                            "path": final_duplicate.get("path", ""),
+                            "title": final_duplicate.get("title", ""),
+                            "artist": final_duplicate.get("artist", ""),
+                        }
+                        task["final_name"] = ""
+                        task["catalog_pending_path"] = ""
+                        task["last_updated"] = time.time() * 1000
+                        await notify_task_update(task, force_save=True)
+                        await _release_content_identity_reservations(old_identity, final_identity)
+                        reserved_identity = False
+                        content_identity = final_identity
+                        continue
+
+                    task["catalog_pending_path"] = ""
+
+                    if _task_cancelled(task):
+                        await asyncio.to_thread(cleanup_task_files, task_id, download_root)
+                        _set_task_cancelled(task)
+                        await notify_task_update(task, force_save=True)
+                        continue
+
+                    if settings.get("organize_by_artist", False):
+                        final_dir = download_root / artist
+                    else:
+                        final_dir = download_root
+                    await asyncio.to_thread(final_dir.mkdir, parents=True, exist_ok=True)
+                    filename_mode = str(settings.get("filename_mode") or "title")
+                    if filename_mode == "artist-title":
+                        base_name = f"{clean_filename(task.get('artist') or 'Unknown Artist')} - {clean_title}"
+                    elif filename_mode == "artist-album-title":
+                        base_name = f"{clean_filename(task.get('artist') or 'Unknown Artist')} - {clean_filename(task.get('album') or '')} - {clean_title}"
+                    else:
+                        base_name = clean_title
+                    base_name = clean_filename(base_name) or "Unknown Track"
+                    final_name = f"{base_name}{extension}"
+                    final_path = final_dir / final_name
+                    if await asyncio.to_thread(final_path.exists):
+                        final_name = f"{clean_title}_{task_id[:4]}{extension}"
+                        final_path = final_dir / final_name
+
+                    await asyncio.to_thread(shutil.move, str(audio_file), str(final_path))
+                    if artwork_behavior == "download":
+                        try:
+                            art_candidates=[p for p in download_root.glob(f"{task_id}.*") if p.is_file() and p.suffix.lower() in {".jpg",".jpeg",".png",".webp"}]
+                            if art_candidates:
+                                art_target=final_path.with_suffix(".jpg")
+                                await asyncio.to_thread(shutil.move, str(art_candidates[0]), str(art_target))
+                        except Exception as art_exc:
+                            await write_app_error("artwork", art_exc, task_id)
+
+                    # The file is now physically finalized but not yet considered a
+                    # completed download. Keep a durable pending path until SQLite
+                    # accepts the catalog row. This is the durable commit boundary: a
+                    # restart can retry the catalog commit without re-downloading.
+                    task["final_name"] = str(final_path.relative_to(DOWNLOAD_DIR))
+                    task["catalog_pending_path"] = str(final_path)
+                    task["status"] = "catalog_pending"
+                    task["percent"] = 100
+                    task["speed"] = ""
+                    task["step"] = "Committing to library..."
+                    task["error"] = ""
+                    task["last_updated"] = time.time() * 1000
+                    await notify_task_update(task, force_save=True)
+
+                    try:
+                        await _commit_download_to_catalog_locked(final_path)
+                    except Exception as commit_exc:
+                        safe = _sanitize_external_error(commit_exc, "Library commit failed; retrying automatically.", 700)
+                        task["status"] = "catalog_pending"
+                        task["step"] = "Library commit pending"
+                        task["error"] = safe
+                        task["last_updated"] = time.time() * 1000
+                        await notify_task_update(task, force_save=True)
+                        await write_app_error("library_commit_pending", safe, task_id)
+                        # Keep the reservation and final file; runtime maintenance will retry.
+                        reserved_identity = bool(final_identity)
+                        continue
+
+                    # Only after the catalog commit succeeds is the download terminal.
+                    task["catalog_pending_path"] = ""
                     task["status"] = "completed"
                     task["percent"] = 100
                     task["speed"] = ""
-                    task["step"] = "Already in library — duplicate removed"
+                    task["step"] = "Ready"
                     task["error"] = ""
-                    task["duplicate_of"] = {"id":final_duplicate.get("id", ""),"path":final_duplicate.get("path", ""),"title":final_duplicate.get("title", ""),"artist":final_duplicate.get("artist", "")}
-                    task["final_name"] = ""
                     task["last_updated"] = time.time() * 1000
                     await notify_task_update(task, force_save=True)
-                    if reserved_identity and content_identity:
-                        async with DOWNLOAD_IDENTITY_LOCK:
-                            ACTIVE_CONTENT_DOWNLOADS.discard(content_identity)
-                        reserved_identity = False
-                    continue
-                # Cancellation and the irreversible library move share the same guard.
-                # The move and terminal-state transition are one critical section, so
-                # cancel cannot change a task after it has been made completed.
-                if _task_cancelled(task):
-                    await asyncio.to_thread(cleanup_task_files, task_id)
-                    _set_task_cancelled(task)
-                    await notify_task_update(task, force_save=True)
-                    continue
-                if settings.get("organize_by_artist", False):
-                    final_dir = download_root / artist
-                else:
-                    final_dir = download_root
-                await asyncio.to_thread(final_dir.mkdir, parents=True, exist_ok=True)
-                filename_mode = str(settings.get("filename_mode") or "title")
-                if filename_mode == "artist-title":
-                    base_name = f"{clean_filename(task.get('artist') or 'Unknown Artist')} - {clean_title}"
-                elif filename_mode == "artist-album-title":
-                    base_name = f"{clean_filename(task.get('artist') or 'Unknown Artist')} - {clean_filename(task.get('album') or '')} - {clean_title}"
-                else:
-                    base_name = clean_title
-                base_name = clean_filename(base_name) or "Unknown Track"
-                final_name = f"{base_name}{extension}"
-                final_path = final_dir / final_name
-                if await asyncio.to_thread(final_path.exists):
-                    final_name = f"{clean_title}_{task_id[:4]}{extension}"
-                    final_path = final_dir / final_name
-                await asyncio.to_thread(shutil.move, str(audio_file), str(final_path))
-                if artwork_behavior == "download":
-                    try:
-                        art_candidates=[p for p in DOWNLOAD_DIR.glob(f"{task_id}.*") if p.is_file() and p.suffix.lower() in {".jpg",".jpeg",".png",".webp"}]
-                        if art_candidates:
-                            art_target=final_path.with_suffix(".jpg")
-                            await asyncio.to_thread(shutil.move, str(art_candidates[0]), str(art_target))
-                    except Exception as art_exc:
-                        await write_app_error("artwork", str(art_exc), task_id)
-
-                # Complete the task while the same guard is still held. A concurrent
-                # cancel request will therefore observe this terminal state and cannot
-                # overwrite it after the file is in its final location.
-                task["final_name"] = str(final_path.relative_to(DOWNLOAD_DIR))
-                task["status"] = "completed"
-                task["percent"] = 100
-                task["speed"] = ""
-                task["step"] = "Ready"
-                task["error"] = ""
-                task["last_updated"] = time.time() * 1000
-                try:
-                    await notify_task_update(task, force_save=True)
-                except Exception as save_exc:
-                    # Never turn a physically successful download into an error solely
-                    # because a final notification/database write is temporarily faulty.
-                    await write_app_error("download_completion_persist", str(save_exc), task_id)
 
             METADATA_CACHE.pop(str(final_path), None)
-            invalidate_library_cache()
-            # Commit the finalized file to the catalog before releasing its content identity.
-            await refresh_after_download(final_path)
-            if reserved_identity:
+            if reserved_identity and content_identity:
                 async with DOWNLOAD_IDENTITY_LOCK:
                     ACTIVE_CONTENT_DOWNLOADS.discard(content_identity)
                 reserved_identity = False
@@ -3725,11 +3956,15 @@ async def download_worker(stop_event=None):
 
             if task and not task.get("resume_available"):
                 try:
-                    task["resume_available"] = any(path.is_file() for path in DOWNLOAD_DIR.glob(f"{task_id}.*") if path.suffix.lower() in {".part", ".ytdl"})
-                except OSError:
+                    task_root_for_error = download_root if 'download_root' in locals() else task_download_root(task)
+                    task["resume_available"] = any(path.is_file() for path in task_root_for_error.glob(f"{task_id}.*") if path.suffix.lower() in {".part", ".ytdl"})
+                except (OSError, RuntimeError, ValueError):
+                    task_root_for_error = download_root if 'download_root' in locals() else DOWNLOAD_DIR
                     task["resume_available"] = False
+            else:
+                task_root_for_error = download_root if 'download_root' in locals() else DOWNLOAD_DIR
             if task and not task.get("resume_available"):
-                await asyncio.to_thread(cleanup_task_files, task_id)
+                await asyncio.to_thread(cleanup_task_files, task_id, task_root_for_error)
 
             if task:
 
@@ -3795,6 +4030,15 @@ async def startup_event():
         db_load_tasks_sync
     )
 
+    # A catalog-pending task already owns the durable finalized file. Rebuild its
+    # in-memory identity reservation before any new download request can pass preflight.
+    async with DOWNLOAD_IDENTITY_LOCK:
+        for pending_task in TASKS.values():
+            if pending_task.get("status") == "catalog_pending":
+                pending_identity = str(pending_task.get("content_identity") or "")
+                if pending_identity:
+                    ACTIVE_CONTENT_DOWNLOADS.add(pending_identity)
+
     now = time.time() * 1000
 
     for task in TASKS.values():
@@ -3814,8 +4058,8 @@ async def startup_event():
             task["last_updated"] = now
             task["queue_token"] = uuid.uuid4().hex
             try:
-                task["resume_available"] = any(path.is_file() for path in DOWNLOAD_DIR.glob(f"{task['id']}.*") if path.suffix.lower() in {".part", ".ytdl"})
-            except OSError:
+                task["resume_available"] = any(path.is_file() for path in task_download_root(task).glob(f"{task['id']}.*") if path.suffix.lower() in {".part", ".ytdl"})
+            except (OSError, RuntimeError, ValueError):
                 task["resume_available"] = False
             if int(task.get("identity_version") or 0) < 2:
                 task["content_identity"] = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0))
@@ -3830,11 +4074,21 @@ async def startup_event():
                 force=True,
             )
 
-    # Rebuild v2 identities for every active persisted task and collapse same-track races.
+    # Rebuild v2 identities for active pre-download tasks and collapse same-track races.
+    # Durable catalog-pending tasks already own finalized files and identities; never
+    # rewrite/collapse them during startup or their post-restart commit reservation can drift.
     for task in sorted(TASKS.values(), key=lambda item: safe_float(item.get("created_at", 0), 0)):
-        if task.get("status") not in ACTIVE_TASK_STATES:
+        status = str(task.get("status") or "").lower()
+        if status not in ACTIVE_TASK_STATES:
             continue
-        identity = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0))
+        if status == "catalog_pending":
+            if task.get("content_identity"):
+                startup_seen_content_identities.add(str(task.get("content_identity")))
+            continue
+        identity = _download_content_identity(
+            task.get("title", ""), task.get("artist", ""), task.get("album", ""),
+            task.get("duration", 0), task.get("album_version", "")
+        )
         if identity and identity in startup_seen_content_identities:
             task["status"] = "cancelled"
             task["step"] = "Duplicate active download suppressed"
@@ -3926,7 +4180,7 @@ async def api_health():
         "status": "ok",
         "server": "Xrob Music",
         "version": SERVER_VERSION,
-        "openSubsonic": True,
+        "openSubsonic": bool(subsonic_credentials()[1]),
         "storage": {
             "state": STORAGE_STATE,
             "online": STORAGE_STATE == "online",
@@ -4063,7 +4317,7 @@ def _search_duplicate_state_sync(items, tasks):
     active_by_url = set()
     active_by_identity = set()
     for task in tasks.values() if isinstance(tasks, dict) else []:
-        if str(task.get("status") or "").lower() not in {"queued", "downloading", "processing"}:
+        if str(task.get("status") or "").lower() not in ACTIVE_TASK_STATES:
             continue
         url = str(task.get("url") or "").strip()
         if url:
@@ -4538,21 +4792,22 @@ async def _prepare_download_identity(url, title, artist, album, duration, settin
         resolved_title = normalize_catalog_title(title, cleanup_rules)
     confidence = 0.82 if source_ok and (source.get("title") or source.get("artist")) else 0.25
     source_label = "provider" if source_ok else "supplied_fallback"
-    content_identity = _download_content_identity(resolved_title, resolved_artist, resolved_album, resolved_duration, source.get("album_version", "") if source_ok else "")
-    return resolved_title, resolved_artist or "Unknown Artist", resolved_album, resolved_duration, confidence, source_label, content_identity
+    album_version = clean_metadata_text(source.get("album_version", "") if source_ok else "", "")
+    content_identity = _download_content_identity(resolved_title, resolved_artist, resolved_album, resolved_duration, album_version)
+    return resolved_title, resolved_artist or "Unknown Artist", resolved_album, resolved_duration, confidence, source_label, content_identity, album_version
 
 
 async def _check_download_availability(url, title, artist, album, duration, settings):
-    resolved_title, resolved_artist, resolved_album, resolved_duration, confidence, source_label, content_identity = await _prepare_download_identity(url, title, artist, album, duration, settings)
+    resolved_title, resolved_artist, resolved_album, resolved_duration, confidence, source_label, content_identity, album_version = await _prepare_download_identity(url, title, artist, album, duration, settings)
     existing = await find_existing_track(resolved_title, resolved_artist, resolved_album, resolved_duration)
     if existing:
-        return {"status": "already_downloaded", "file": existing, "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "metadata_confidence": confidence, "metadata_source": source_label}
+        return {"status": "already_downloaded", "file": existing, "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "metadata_confidence": confidence, "metadata_source": source_label, "album_version": album_version}
     for task in TASKS.values():
-        if task.get("status") not in {"queued", "downloading", "processing"}:
+        if task.get("status") not in ACTIVE_TASK_STATES:
             continue
         task_identity = str(task.get("content_identity") or "")
         if content_identity and task_identity == content_identity:
-            return {"status": "already_queued", "task_id": task.get("id"), "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "metadata_confidence": confidence, "metadata_source": source_label}
+            return {"status": "already_queued", "task_id": task.get("id"), "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "metadata_confidence": confidence, "metadata_source": source_label, "album_version": album_version}
         if str(task.get("url") or "") == url:
             return {"status": "already_queued", "task_id": task.get("id"), "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "metadata_confidence": confidence, "metadata_source": source_label}
     return {"status": "available", "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "content_identity": content_identity, "metadata_confidence": confidence, "metadata_source": source_label}
@@ -4581,7 +4836,7 @@ async def api_download(
     url = validate_media_url(payload.get("url"))
 
     settings = await load_settings_async()
-    task_title, task_artist, task_album, task_duration, metadata_confidence, metadata_source, prepared_content_identity = await _prepare_download_identity(
+    task_title, task_artist, task_album, task_duration, metadata_confidence, metadata_source, prepared_content_identity, prepared_album_version = await _prepare_download_identity(
         url,
         str(payload.get("title", "Unknown Track") or "Unknown Track"),
         str(payload.get("artist", "Unknown Artist") or "Unknown Artist"),
@@ -4607,11 +4862,11 @@ async def api_download(
                 normalized = f"{normalized}|{album_identity}" if normalized and album_identity else normalized
                 task_url_hash = hashlib.sha256(str(task.get("url", "")).encode("utf-8")).hexdigest()
                 task_key = f"{normalized}|{task_url_hash}" if normalized else f"url:{task_url_hash}"
-            if task_key == identity_key and task.get("status") in {"queued", "downloading", "processing"}:
+            if task_key == identity_key and task.get("status") in ACTIVE_TASK_STATES:
                 return {"status": "already_queued", "task_id": task["id"]}
-            if content_identity and str(task.get("content_identity") or "") == content_identity and task.get("status") in {"queued", "downloading", "processing"}:
+            if content_identity and str(task.get("content_identity") or "") == content_identity and task.get("status") in ACTIVE_TASK_STATES:
                 return {"status": "already_queued", "task_id": task["id"]}
-            if task.get("url") == url and task.get("status") in {"queued", "downloading", "processing"}:
+            if task.get("url") == url and task.get("status") in ACTIVE_TASK_STATES:
                 return {"status": "already_queued", "task_id": task["id"]}
 
         existing = await find_existing_track(task_title, task_artist, task_album, task_duration)
@@ -4626,7 +4881,7 @@ async def api_download(
         max_pending = max(50, min(5000, safe_int(settings.get("max_pending_downloads"), MAX_PENDING_DOWNLOADS)))
         pending_count = sum(
             1 for item in TASKS.values()
-            if item.get("status") in {"queued", "downloading", "processing"}
+            if item.get("status") in ACTIVE_TASK_STATES
         )
         if pending_count >= max_pending:
             raise HTTPException(429, f"Download queue is full ({max_pending} pending tasks).")
@@ -4640,6 +4895,9 @@ async def api_download(
             "duration": task_duration,
             "content_identity": content_identity,
             "identity_version": 2,
+            "album_version": prepared_album_version,
+            "download_root": str(_download_root_for_settings(settings)),
+            "catalog_pending_path": "",
             "metadata_confidence": metadata_confidence,
             "metadata_source": metadata_source,
             "url": url,
@@ -4713,7 +4971,7 @@ async def api_tasks():
 
     tasks.sort(
         key=lambda task: (
-            0 if task.get("status") in {"queued", "downloading", "processing"} else 1,
+            0 if task.get("status") in ACTIVE_TASK_STATES else 1,
             safe_float(task.get("created_at", task.get("last_updated", 0)), 0) if task.get("status") in {"queued", "downloading", "processing"} else -safe_float(task.get("last_updated", 0), 0),
         )
     )
@@ -4738,6 +4996,8 @@ async def api_cancel_task(
             return {"status": status, "task_id": task_id}
         if status == "cancelled":
             return {"status": "cancelled", "task_id": task_id}
+        if status == "catalog_pending":
+            raise HTTPException(409, "Library commit is pending; this task cannot be cancelled.")
 
         _set_task_cancelled(task)
         QUEUED_TASK_IDS.discard(task_id)
@@ -4766,7 +5026,7 @@ async def api_retry_task(task_id: str):
         max_pending = max(50, min(5000, safe_int(settings.get("max_pending_downloads"), MAX_PENDING_DOWNLOADS)))
         pending_count = sum(
             1 for item in TASKS.values()
-            if item.get("status") in {"queued", "downloading", "processing"} and item.get("id") != task_id
+            if item.get("status") in ACTIVE_TASK_STATES and item.get("id") != task_id
         )
         if pending_count >= max_pending:
             raise HTTPException(429, f"Download queue is full ({max_pending} pending tasks).")
@@ -4852,11 +5112,7 @@ async def api_delete_task(
             detail="Task not found",
         )
 
-    if task.get("status") in {
-        "queued",
-        "downloading",
-        "processing",
-    } or task_id in ACTIVE_PROCESSES:
+    if task.get("status") in ACTIVE_TASK_STATES or task_id in ACTIVE_PROCESSES:
 
         raise HTTPException(
             status_code=400,
@@ -5024,6 +5280,9 @@ async def api_library_intelligence():
     """Actionable library quality checks: duplicates, missing tags/artwork, and ReplayGain coverage."""
     library = await build_library()
     songs = library.get("songs", [])
+    health_state = await asyncio.to_thread(_health_read_sync)
+    health_report = health_state.get("report") if isinstance(health_state, dict) else {}
+    unreadable = list((health_report or {}).get("unreadable") or []) if isinstance(health_report, dict) else []
     duplicate_groups = defaultdict(list)
     missing_metadata = []
     missing_artwork = []
@@ -5499,6 +5758,10 @@ def validate_subsonic_auth(
         "s",
         "",
     )
+
+    # OpenSubsonic is disabled until a non-empty password is configured.
+    if not username or not password:
+        return False
 
     if supplied_user != username:
         _record_subsonic_failure(request, supplied_user)
@@ -8176,8 +8439,9 @@ def _errors_sync(limit):
 
 def write_app_error_sync(source, message, task_id=None):
     try:
+        safe_message = _sanitize_external_error(message, "Operation failed.", 900)
         with db_connect() as conn:
-            conn.execute("INSERT INTO app_errors(created_at,source,message,task_id) VALUES(?,?,?,?)", (time.time(), str(source), str(message), task_id))
+            conn.execute("INSERT INTO app_errors(created_at,source,message,task_id) VALUES(?,?,?,?)", (time.time(), str(source), safe_message, task_id))
             conn.execute("DELETE FROM app_errors WHERE id IN (SELECT id FROM app_errors ORDER BY id DESC LIMIT -1 OFFSET ?)", (APP_ERRORS_MAX_ROWS,))
             conn.commit()
     except Exception:
