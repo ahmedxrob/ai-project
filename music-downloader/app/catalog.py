@@ -157,7 +157,7 @@ class LibraryCatalog:
                 SELECT s.id,s.relative_path,s.metadata_json,s.updated_at
                 FROM library_songs s
                 LEFT JOIN library_song_identity i ON i.song_id=s.id
-                WHERE i.song_id IS NULL
+                WHERE i.song_id IS NULL OR i.song_id=''
             """).fetchall()
             for row in missing_identity_rows:
                 self._upsert_identity_row(conn, row[0], self._metadata_from_row(row), row[1], row[3] or time.time())
@@ -371,36 +371,44 @@ class LibraryCatalog:
                 sid = str(row["id"]); created = row.get("created_at") or time.time(); strong_hash = str(row.get("strong_hash") or "")
             elif row is None:
                 stat_identity = (int(getattr(stat, "st_dev", 0) or 0), int(getattr(stat, "st_ino", 0) or 0))
-                location_candidates = [
-                    c for c in by_location.get(stat_identity, [])
-                    if str(c.get("id")) not in claimed
-                ] if stat_identity[0] and stat_identity[1] else []
-                if location_candidates:
-                    current_hash = None
-                    for candidate in location_candidates:
-                        candidate_fp = str(candidate.get("fingerprint") or "")
-                        if not candidate_fp or candidate_fp != fp:
+                location_candidates = by_location.get(stat_identity, []) if stat_identity[0] and stat_identity[1] else []
+                candidate = None
+                with claimed_lock:
+                    for possible in location_candidates:
+                        if str(possible.get("id")) in claimed:
                             continue
-                        if current_hash is None:
-                            current_hash = strong_file_hash(path)
-                        candidate_hash = str(candidate.get("strong_hash") or "")
-                        if candidate_hash and candidate_hash != current_hash:
-                            continue
-                        sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = current_hash
-                        with claimed_lock: claimed.add(sid)
+                        candidate = possible
+                        claimed.add(str(possible.get("id")))
                         break
-                else:
+                if candidate is not None:
+                    candidate_fp = str(candidate.get("fingerprint") or "")
+                    candidate_hash = str(candidate.get("strong_hash") or "")
+                    current_hash = strong_file_hash(path) if candidate_hash else ""
+                    # Same filesystem + same device/inode + same fast fingerprint is
+                    # a proven rename/move for the active catalog object. Older rows
+                    # may not have a strong hash yet, so do not make the ID unstable
+                    # merely because that optional proof is absent.
+                    if candidate_fp == fp and (not candidate_hash or candidate_hash == current_hash):
+                        sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = current_hash or candidate_hash
+                    else:
+                        with claimed_lock:
+                            claimed.discard(str(candidate.get("id")))
+                if not sid:
                     # Cross-filesystem moves may lose inode identity. Only reuse an
                     # ID when the previous catalog path is absent from this scan,
-                    # and verify the full content hash before doing so.
+                    # and verify the full content hash before doing so. Missing rows
+                    # without a stored strong hash are not safe ID donors.
                     candidates = [c for c in by_fp.get(fp, []) if str(c.get("id")) not in claimed and str(c.get("relative_path") or "") not in current_paths]
                     current_hash = strong_file_hash(path) if candidates else ""
                     for candidate in candidates:
                         candidate_hash = str(candidate.get("strong_hash") or "")
-                        if candidate_hash and candidate_hash != current_hash:
+                        if not candidate_hash or candidate_hash != current_hash:
                             continue
+                        with claimed_lock:
+                            if str(candidate.get("id")) in claimed:
+                                continue
+                            claimed.add(str(candidate.get("id")))
                         sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = current_hash
-                        with claimed_lock: claimed.add(sid)
                         break
             else:
                 # Same path with different content is a new logical item. The old ID is retired below.
@@ -457,7 +465,7 @@ class LibraryCatalog:
                 candidates=conn.execute("SELECT * FROM library_songs WHERE fingerprint=? AND missing=1 ORDER BY updated_at DESC",(fp,)).fetchall()
                 for candidate in candidates:
                     candidate_hash=str(candidate["strong_hash"] or "")
-                    if candidate_hash and candidate_hash != new_hash: continue
+                    if not candidate_hash or candidate_hash != new_hash: continue
                     sid=str(candidate["id"]); created=candidate["created_at"] or now; strong_hash=new_hash; break
                 if not sid: sid=persistent_song_id()
             conn.execute(
@@ -468,6 +476,29 @@ class LibraryCatalog:
             self._upsert_identity_row(conn, sid, metadata, rel, now)
             conn.commit()
         return {"id":sid,"relative_path":rel,"metadata":metadata,"size":int(stat.st_size),"mtime_ns":int(stat.st_mtime_ns)}
+
+    def update_metadata_for_path(self, path, metadata_loader):
+        """Update a catalog row after metadata/artwork edits without changing identity."""
+        self.init_schema()
+        path = Path(path).resolve()
+        base = self.library_dir.resolve()
+        rel = str(path.relative_to(base))
+        stat = path.stat()
+        fp = file_fingerprint(path)
+        metadata = metadata_loader(path)
+        with self._connect() as conn:
+            row = conn.execute("SELECT id,created_at,strong_hash FROM library_songs WHERE relative_path=? AND missing=0", (rel,)).fetchone()
+            if not row:
+                raise FileNotFoundError("Catalog row not found for edited media file")
+            sid = str(row[0])
+            strong_hash = strong_file_hash(path)
+            conn.execute(
+                "UPDATE library_songs SET fingerprint=?,strong_hash=?,device=?,inode=?,size=?,mtime_ns=?,metadata_json=?,missing=0,updated_at=? WHERE id=?",
+                (fp, strong_hash, int(getattr(stat, "st_dev", 0) or 0), int(getattr(stat, "st_ino", 0) or 0), int(stat.st_size), int(stat.st_mtime_ns), json.dumps(metadata, ensure_ascii=False, separators=(",", ":")), time.time(), sid),
+            )
+            self._upsert_identity_row(conn, sid, metadata, rel, time.time())
+            conn.commit()
+        return {"id": sid, "relative_path": rel, "metadata": metadata, "size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
 
     def mark_missing(self, song_id):
         with self._connect() as conn:
