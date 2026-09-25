@@ -4,6 +4,8 @@ import concurrent.futures
 import hashlib
 import json
 import sqlite3
+import re
+import unicodedata
 import threading
 import time
 import uuid
@@ -25,6 +27,37 @@ def legacy_song_id(download_dir: Path, relative_path: str) -> str:
 def persistent_song_id() -> str:
     return "song-" + uuid.uuid4().hex[:24]
 
+
+
+
+def _catalog_norm(value, title=False):
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+    text = re.sub(r"\b(feat\.?|ft\.?|featuring)\b.*$", "", text)
+    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
+
+def _catalog_variants(*values):
+    combined = " ".join(_catalog_norm(v) for v in values if v)
+    tokens = set(re.findall(r"\b(?:deluxe|expanded|anniversary|edition|remaster|remastered|live|acoustic|instrumental|karaoke|radio|single|album|bonus|explicit|clean|demo|mix|version|edit)\b", combined))
+    return ",".join(sorted(tokens))
+
+def _catalog_identity_values(metadata, relative_path):
+    metadata = metadata or {}
+    title = metadata.get("title") or Path(relative_path).stem
+    artist = metadata.get("artist") or "Unknown Artist"
+    album = metadata.get("album") or ""
+    version = metadata.get("album_version") or ""
+    duration = 0.0
+    try:
+        duration = float(metadata.get("duration") or 0)
+    except (TypeError, ValueError):
+        pass
+    bucket = int(round(duration / 5.0) * 5) if duration > 0 else 0
+    title_key = _catalog_norm(title, title=True)
+    artist_key = _catalog_norm(artist)
+    album_key = _catalog_norm(album)
+    variant_key = _catalog_variants(title, album, version)
+    return title_key, artist_key, album_key, variant_key, bucket
 
 def strong_file_hash(path: Path, chunk_size: int = 1024 * 1024) -> str:
     """Full SHA-256 content hash for collision-proof duplicate confirmation."""
@@ -101,11 +134,29 @@ class LibraryCatalog:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_fingerprint ON library_songs(fingerprint)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_strong_hash ON library_songs(strong_hash)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_missing ON library_songs(missing)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS library_song_identity (
+                song_id TEXT PRIMARY KEY,
+                title_key TEXT NOT NULL DEFAULT '',
+                artist_key TEXT NOT NULL DEFAULT '',
+                album_key TEXT NOT NULL DEFAULT '',
+                variant_key TEXT NOT NULL DEFAULT '',
+                duration_bucket INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL DEFAULT 0,
+                FOREIGN KEY(song_id) REFERENCES library_songs(id) ON DELETE CASCADE
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_library_identity_artist_title ON library_song_identity(artist_key,title_key)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_library_identity_title_artist ON library_song_identity(title_key,artist_key)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_library_identity_album ON library_song_identity(album_key)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_library_identity_duration ON library_song_identity(duration_bucket)")
             conn.execute("""CREATE TABLE IF NOT EXISTS library_song_aliases (
                 legacy_id TEXT PRIMARY KEY,
                 song_id TEXT NOT NULL
             )""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_song_aliases_song ON library_song_aliases(song_id)")
+            identity_count = int(conn.execute("SELECT COUNT(*) FROM library_song_identity").fetchone()[0])
+            if identity_count == 0:
+                for row in conn.execute("SELECT id,relative_path,metadata_json,updated_at FROM library_songs").fetchall():
+                    self._upsert_identity_row(conn, row[0], self._metadata_from_row(row), row[1], row[3] or time.time())
             if owned:
                 conn.commit()
         finally:
@@ -207,7 +258,7 @@ class LibraryCatalog:
     def _remap_references(conn, alias_map):
         if not alias_map:
             return
-        for table, column in (("stars", "item_id"), ("playback_positions", "song_id"), ("play_history", "song_id"), ("song_review", "song_id"), ("song_editor_history", "song_id")):
+        for table, column in (("stars", "item_id"), ("playback_positions", "song_id"), ("play_history", "song_id"), ("song_review", "song_id"), ("song_editor_history", "song_id"), ("subsonic_scrobbles", "song_id")):
             try:
                 rows = conn.execute(f"SELECT rowid,{column} FROM {table}").fetchall()
             except sqlite3.Error:
@@ -364,6 +415,7 @@ class LibraryCatalog:
                     ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,strong_hash=CASE WHEN excluded.strong_hash<>'' THEN excluded.strong_hash ELSE library_songs.strong_hash END,device=excluded.device,inode=excluded.inode,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
                     (record["id"],record["relative_path"],record["fingerprint"],record.get("strong_hash") or "",record.get("device",0),record.get("inode",0),0.0,record["size"],record["mtime_ns"],json.dumps(record["metadata"],ensure_ascii=False,separators=(",",":")),record["created_at"] or now,now),
                 )
+                self._upsert_identity_row(conn, record["id"], record["metadata"], record["relative_path"], now)
             if seen:
                 placeholders=",".join("?" for _ in seen)
                 conn.execute(f"UPDATE library_songs SET missing=1,updated_at=? WHERE missing=0 AND id NOT IN ({placeholders})",(now,*sorted(seen)))
@@ -398,6 +450,7 @@ class LibraryCatalog:
                 ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,strong_hash=CASE WHEN excluded.strong_hash<>'' THEN excluded.strong_hash ELSE library_songs.strong_hash END,device=excluded.device,inode=excluded.inode,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
                 (sid,rel,fp,strong_hash,int(getattr(stat,"st_dev",0) or 0),int(getattr(stat,"st_ino",0) or 0),0.0,int(stat.st_size),int(stat.st_mtime_ns),json.dumps(metadata,ensure_ascii=False,separators=(",",":")),created,now),
             )
+            self._upsert_identity_row(conn, sid, metadata, rel, now)
             conn.commit()
         return {"id":sid,"relative_path":rel,"metadata":metadata,"size":int(stat.st_size),"mtime_ns":int(stat.st_mtime_ns)}
 
@@ -414,6 +467,34 @@ class LibraryCatalog:
             if not row: return None
             sid=str(row[0]); retired_rel=f".retired/{sid}/{Path(rel).name or 'track'}"
             conn.execute("UPDATE library_songs SET relative_path=?,missing=1,updated_at=? WHERE id=?",(retired_rel,time.time(),sid)); conn.commit(); return sid
+
+    def _upsert_identity_row(self, conn, song_id, metadata, relative_path, updated_at=None):
+        title_key, artist_key, album_key, variant_key, duration_bucket = _catalog_identity_values(metadata, relative_path)
+        conn.execute(
+            "INSERT INTO library_song_identity(song_id,title_key,artist_key,album_key,variant_key,duration_bucket,updated_at) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(song_id) DO UPDATE SET title_key=excluded.title_key,artist_key=excluded.artist_key,album_key=excluded.album_key,variant_key=excluded.variant_key,duration_bucket=excluded.duration_bucket,updated_at=excluded.updated_at",
+            (str(song_id), title_key, artist_key, album_key, variant_key, duration_bucket, updated_at or time.time()),
+        )
+
+    def duplicate_candidates(self, title, artist, album="", duration=0, limit=120):
+        title_key, artist_key, album_key, variant_key, duration_bucket = _catalog_identity_values(
+            {"title": title, "artist": artist, "album": album, "duration": duration}, title or "track"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT s.*, i.title_key, i.artist_key, i.album_key, i.variant_key, i.duration_bucket
+                   FROM library_song_identity i
+                   JOIN library_songs s ON s.id=i.song_id
+                  WHERE s.missing=0 AND (
+                        (i.artist_key=? AND i.title_key=?) OR
+                        (i.title_key=? AND i.album_key=?) OR
+                        (i.artist_key=? AND i.album_key=?)
+                  )
+                  ORDER BY CASE WHEN i.artist_key=? AND i.title_key=? THEN 0 ELSE 1 END, i.updated_at DESC
+                  LIMIT ?""",
+                (artist_key, title_key, title_key, album_key, artist_key, album_key, artist_key, title_key, max(1, int(limit))),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def health_batch(self, limit):
         self.init_schema()
