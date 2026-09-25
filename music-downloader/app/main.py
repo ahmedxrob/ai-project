@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Optional
 from collections import defaultdict
+from threading import RLock
 
 from fastapi import (
     Body,
@@ -55,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.7"
+SERVER_VERSION = "3.7.8"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -415,6 +416,7 @@ LIBRARY_CACHE_TIME = 0.0
 LIBRARY_CACHE_TTL = 10.0
 LIBRARY_CACHE_LOCK = asyncio.Lock()
 LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
+LIBRARY_INDEX_WRITE_LOCK = RLock()
 LIBRARY_WARMUP_TASK = None
 DOWNLOAD_WORKER_TASKS = set()
 DOWNLOAD_WORKER_SCALE_LOCK = asyncio.Lock()
@@ -1986,22 +1988,64 @@ def make_album_id(
 # ============================================================
 
 def _load_library_index_sync():
-    if not LIBRARY_INDEX_FILE.exists():
-        return {}
-    try:
-        with open(LIBRARY_INDEX_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    with LIBRARY_INDEX_WRITE_LOCK:
+        if not LIBRARY_INDEX_FILE.exists():
+            return {}
+        try:
+            with open(LIBRARY_INDEX_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
 
 def _save_library_index_sync(entries):
-    tmp = LIBRARY_INDEX_FILE.with_suffix(".tmp")
-    payload = {"version": 1, "entries": entries}
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-    tmp.replace(LIBRARY_INDEX_FILE)
+    with LIBRARY_INDEX_WRITE_LOCK:
+        tmp = LIBRARY_INDEX_FILE.with_suffix(".tmp")
+        payload = {"version": 1, "entries": entries}
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+        tmp.replace(LIBRARY_INDEX_FILE)
+
+
+def _update_library_index_entry_sync(path, *, title=None, artist=None, album=None, source_url=None, source_title=None, source_artist=None, source_album=None):
+    """Update one library-index row without rebuilding the complete library.
+
+    The source URL is intentionally kept separate from editable metadata so an
+    edited title/artist can never make a downloaded search result look new again.
+    """
+    try:
+        path = Path(path).resolve()
+        if not path.exists() or not path.is_file() or not path.is_relative_to(DOWNLOAD_DIR.resolve()):
+            return
+        rel = str(path.relative_to(DOWNLOAD_DIR))
+        with LIBRARY_INDEX_WRITE_LOCK:
+            current = _load_library_index_sync()
+            entries = current.get("entries", {}) if isinstance(current, dict) else {}
+            if not isinstance(entries, dict):
+                entries = {}
+            row = dict(entries.get(rel) or {})
+            st = path.stat()
+            row["mtime_ns"] = st.st_mtime_ns
+            row["size"] = st.st_size
+            if title is not None:
+                row["title"] = str(title)
+            if artist is not None:
+                row["artist"] = str(artist)
+            if album is not None:
+                row["album"] = str(album)
+            if source_url:
+                row["source_url"] = str(source_url)
+            if source_title is not None:
+                row["source_title"] = str(source_title)
+            if source_artist is not None:
+                row["source_artist"] = str(source_artist)
+            if source_album is not None:
+                row["source_album"] = str(source_album)
+            entries[rel] = row
+            _save_library_index_sync(entries)
+    except Exception as exc:
+        print("Warning: could not update library index row:", exc)
 
 def _fast_file_library_sync():
     files = get_audio_files_sync()
@@ -2039,12 +2083,18 @@ async def fast_library_snapshot():
     return {"files": files, "total_size": format_size(total), "total_bytes": total, "artists_count": len(artists), "albums_count": len(albums), "ready": False, "storage": await asyncio.to_thread(storage_info_sync)}
 
 def _build_library_index_entries_sync(library):
+    existing = _load_library_index_sync()
+    existing_entries = existing.get("entries", {}) if isinstance(existing, dict) else {}
+    if not isinstance(existing_entries, dict):
+        existing_entries = {}
     entries = {}
     for song in library.get("songs", []):
         try:
             path = song["path"]
             st = path.stat()
-            entries[str(path.relative_to(DOWNLOAD_DIR))] = {
+            rel = str(path.relative_to(DOWNLOAD_DIR))
+            old = existing_entries.get(rel) if isinstance(existing_entries.get(rel), dict) else {}
+            row = {
                 "mtime_ns": st.st_mtime_ns, "size": st.st_size,
                 "title": song.get("title"), "artist": song.get("artist"),
                 "album": song.get("album"), "album_artist": song.get("albumArtist"),
@@ -2054,15 +2104,27 @@ def _build_library_index_entries_sync(library):
                 "sample_rate": song.get("sample_rate"), "channels": song.get("channels"),
                 "bit_depth": song.get("bit_depth"),
             }
+            # Preserve the provider/source identity and explicit metadata aliases.
+            for key in ("source_url", "source_title", "source_artist", "source_album"):
+                if old.get(key):
+                    row[key] = old[key]
+            entries[rel] = row
         except Exception:
             pass
     return entries
 
 
+def _persist_library_index_sync(library):
+    # Build and write under one lock so an in-flight library refresh cannot
+    # overwrite a newer metadata/source-identity update.
+    with LIBRARY_INDEX_WRITE_LOCK:
+        entries = _build_library_index_entries_sync(library)
+        _save_library_index_sync(entries)
+
+
 async def persist_library_index(library):
     try:
-        entries = await asyncio.to_thread(_build_library_index_entries_sync, library)
-        await asyncio.to_thread(_save_library_index_sync, entries)
+        await asyncio.to_thread(_persist_library_index_sync, library)
     except Exception as exc:
         print("Warning: could not save library index:", exc)
 
@@ -3131,6 +3193,17 @@ async def download_worker():
                 task["step"] = "Ready"
                 task["error"] = ""
                 task["last_updated"] = time.time() * 1000
+                await asyncio.to_thread(
+                    _update_library_index_entry_sync,
+                    final_path,
+                    title=task.get("title") or clean_title,
+                    artist=task.get("artist") or "Unknown Artist",
+                    album=task.get("album") or "",
+                    source_url=task.get("url") or "",
+                    source_title=task.get("title") or clean_title,
+                    source_artist=task.get("artist") or "Unknown Artist",
+                    source_album=task.get("album") or "",
+                )
                 try:
                     await notify_task_update(task, force_save=True)
                 except Exception as save_exc:
@@ -3444,6 +3517,7 @@ def _search_duplicate_state_sync(items, tasks):
     library_index = _load_library_index_sync()
     entries = library_index.get("entries", {}) if isinstance(library_index, dict) else {}
     by_identity = {}
+    by_source_url = {}
     for rel, cached in entries.items() if isinstance(entries, dict) else []:
         cached = cached if isinstance(cached, dict) else {}
         title = cached.get("title") or Path(str(rel)).stem
@@ -3451,6 +3525,9 @@ def _search_duplicate_state_sync(items, tasks):
         key = normalize_duplicate_key(title, artist)
         if key:
             by_identity.setdefault(key, str(rel))
+        source_url = str(cached.get("source_url") or "").strip()
+        if source_url:
+            by_source_url.setdefault(source_url, str(rel))
 
     active_by_url = set()
     active_by_identity = set()
@@ -3471,7 +3548,14 @@ def _search_duplicate_state_sync(items, tasks):
         row = dict(item)
         row_url = str(row.get("url") or "")
         identity = normalize_duplicate_key(row.get("title", ""), row.get("artist", ""))
-        row["already_downloaded"] = bool(identity and identity in by_identity)
+        matched_rel = by_source_url.get(row_url) or (by_identity.get(identity) if identity else None)
+        matched = entries.get(matched_rel) if matched_rel and isinstance(entries, dict) else None
+        if isinstance(matched, dict):
+            row["library_path"] = matched_rel
+            row["library_title"] = matched.get("title") or row.get("title")
+            row["library_artist"] = matched.get("artist") or row.get("artist")
+            row["library_album"] = matched.get("album") or row.get("album")
+        row["already_downloaded"] = bool(matched_rel)
         row["already_queued"] = bool((row_url and row_url in active_by_url) or (identity and identity in active_by_identity))
         decorated.append(row)
     return decorated
@@ -8559,6 +8643,13 @@ async def api_library_metadata(payload: dict = Body(...)):
     try: await asyncio.to_thread(write_tags)
     except Exception as exc: await write_app_error("metadata",str(exc)); raise HTTPException(500,f"Metadata update failed: {exc}")
     edited_at = time.time()
+    await asyncio.to_thread(
+        _update_library_index_entry_sync,
+        path,
+        title=title,
+        artist=artist,
+        album=album,
+    )
     await asyncio.to_thread(_mark_song_review_sync, song_id, "edited", edited_at, True)
     invalidate_library_cache(); return {"status":"ok"}
 
