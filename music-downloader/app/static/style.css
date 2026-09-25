@@ -2508,7 +2508,7 @@ button:disabled { opacity:.55; cursor:not-allowed; }
         width: auto;
         height: var(--bottom-nav-height);
         display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
+        grid-template-columns: repeat(5, minmax(0, 1fr));
         padding: 5px;
         gap: 3px;
         border: 1px solid var(--border);
@@ -2664,7 +2664,7 @@ html { background: var(--bg-main); }
 .daily-mix-card { box-shadow: 0 18px 44px rgba(0,0,0,.10); }
 .recent-grid {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0,1fr));
+    grid-template-columns: repeat(5, minmax(0,1fr));
 }
 .recent-grid > * {
     min-width: 0;
@@ -5287,9 +5287,6 @@ button svg, [role="button"] svg { flex: 0 0 auto; }
   --app-header-height: 68px;
 }
 .app-shell.music-shell > .app-column { padding-top: var(--app-header-height); }
-.app-topbar {
-  height: var(--app-header-height);
-}
 .app-topbar-inner {
   padding-inline: clamp(14px, 2vw, 28px);
   gap: 14px;
@@ -5391,7 +5388,6 @@ button svg, [role="button"] svg { flex: 0 0 auto; }
   width: 18px;
   height: 18px;
 }
-.home-stat-icon svg { width: 18px; height: 18px; }
 .library-stats-bar svg { width: 14px; height: 14px; }
 .page-heading h2 svg { width: 18px; height: 18px; }
 
@@ -5555,3 +5551,4 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 @media(max-width:700px){.gp-sleep-btn{display:none}.lyrics-modal-card{padding:14px}.lyrics-line{font-size:1rem}}
 
 .gp-sleep-btn{font-size:.76rem;border-radius:999px;padding:.38rem .65rem;cursor:pointer}
+\n/* XROB 4.3.1 canonical responsive/runtime layer. */\n.content-topbar-status[data-state="online"],\n.content-topbar-status[data-state="success"] { color: var(--text-secondary); }\n.content-topbar-status[data-state="offline"],\n.content-topbar-status[data-state="error"] { color: var(--danger, #ff6678); }\n.content-topbar-status[data-state="scanning"],\n.content-topbar-status[data-state="warning"],\n.content-topbar-status[data-state="unknown"] { color: var(--text-muted); }\n.content-topbar-status .status-dot { transition: background .2s ease, box-shadow .2s ease; }\n.content-topbar-status[data-state="online"] .status-dot,\n.content-topbar-status[data-state="success"] .status-dot { box-shadow: 0 0 0 4px rgba(50,210,120,.12); }\n.content-topbar-status[data-state="offline"] .status-dot,\n.content-topbar-status[data-state="error"] .status-dot { box-shadow: 0 0 0 4px rgba(255,80,105,.12); }\n\n.global-player-bar.music-player.is-idle {\n  --player-height: 56px;\n  min-height: 56px;\n  height: 56px;\n}\n.global-player-bar.music-player.is-idle .gp-progress-container,\n.global-player-bar.music-player.is-idle .gp-extra,\n.global-player-bar.music-player.is-idle .gp-time,\n.global-player-bar.music-player.is-idle .gp-connect-btn { display: none; }\n.global-player-bar.music-player.is-idle .gp-main-controls { justify-content: flex-end; }\n.global-player-bar.music-player.is-idle .gp-now-playing { min-width: 0; }\n\n@media (max-width: 768px) {\n  .bottom-nav.mobile-dock {\n    grid-template-columns: repeat(5, minmax(0,1fr));\n    min-height: calc(64px + env(safe-area-inset-bottom, 0px));\n    height: auto;\n    padding: 5px 6px env(safe-area-inset-bottom, 0px);\n    gap: 4px;\n  }\n  .bottom-nav.mobile-dock .nav-link {\n    min-width: 0;\n    min-height: 50px;\n    padding: 6px 3px;\n    gap: 3px;\n    border-radius: 13px;\n  }\n  .bottom-nav.mobile-dock .nav-text { font-size: 10px; line-height: 1.1; }\n  .bottom-nav.mobile-dock .nav-link > svg { width: 18px; height: 18px; flex-basis: 18px; }\n  .bottom-nav.mobile-dock .nav-count { font-size: 9px; min-width: 16px; height: 16px; right: 5px; top: 3px; }\n  .global-player-bar.music-player.is-idle { height: 56px; min-height: 56px; bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px)); }\n}\n@media (max-width: 520px) {\n  .page-heading p, .downloads-page-subtitle { font-size: 12px; }\n  .library-stats-bar { font-size: 11px; flex-wrap: wrap; }\n  .setting-desc, .catalog-detail-header p { font-size: 12px; line-height: 1.4; }\n  .result-card .track-artist { font-size: 11px; }\n  .result-card .btn-download { font-size: 10px; }\n  .bottom-nav.mobile-dock .nav-text { font-size: 10px; }\n  .bottom-nav.mobile-dock .nav-link { min-height: 50px; }\n}\n@media (min-width: 769px) {\n  .main-content.workspace-main { padding-bottom: calc(var(--player-height) + 30px); }\n}\n\n/* XROB 4.3.1 canonical final component rules. */\n@media (max-width: 768px) {\n  .bottom-nav.mobile-dock { grid-template-columns: repeat(5, minmax(0,1fr)); }\n}\n
