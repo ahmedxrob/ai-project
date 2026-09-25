@@ -11,10 +11,6 @@ let socketPingTimer = null;
 
 let completedSet = new Set();
 
-let libraryView = "tracks";
-let selectedArtistId = null;
-let selectedAlbumId = null;
-let libraryPlaybackQueue = null;
 let playerShuffle = storageGet("xrob_music_shuffle") === "true";
 let shuffleRestoreQueue = null;
 let shuffleRestoreCurrentId = null;
@@ -26,13 +22,8 @@ const LIBRARY_CACHE_KEY =
 
 const RECENT_CACHE_KEY =
     "xrob_music_recently_added_cache";
-let recentTracksCache = [];
 
 let activePreviewBtn = null;
-let currentPlayerSource = null;
-// "home" or "library"
-let currentLibraryIndex = -1;
-
 let searchAbortController = null;
 
 
@@ -74,8 +65,6 @@ let savedPlayerState = {
 };
 
 let playerRepeatMode = storageGet("xrob_music_repeat") || "off";
-let enhancedQueue = [];
-let enhancedQueueIndex = -1;
 let enhancedSongPositions = {};
 let playSessionTrackId = null;
 let playSessionRecorded = false;
@@ -181,6 +170,13 @@ async function apiFetch(input, options = {}) {
             });
             if (timeoutId) window.clearTimeout(timeoutId);
             if (detachCallerAbort) detachCallerAbort();
+            if (!response.ok) {
+                emitAppEvent("api:error", { status: response.status, method, input: typeof input === "string" ? input : "request" });
+                if (response.status === 401) {
+                    appState.auth.authenticated = false;
+                    emitAppEvent("auth:expired", { status: 401 });
+                }
+            }
             if (retryable && attempt + 1 < attempts && [408, 502, 503, 504].includes(response.status)) {
                 await new Promise(resolve => window.setTimeout(resolve, 350 * (attempt + 1)));
                 continue;
@@ -200,6 +196,18 @@ async function apiFetch(input, options = {}) {
     throw lastError || new Error("Request failed");
 }
 
+async function apiFetchJson(input, options = {}, context = {}) {
+    const response = await apiFetch(input, options);
+    let data = null;
+    try { data = await response.json(); } catch (_) { data = {}; }
+    if (!response.ok) {
+        const detail = typeof data?.detail === "string" ? data.detail : `HTTP ${response.status}`;
+        const error = new Error(detail);
+        reportAppError(error, {scope: context.scope || "api", action: context.action || "request", status: response.status, input: typeof input === "string" ? input : "request"});
+        throw error;
+    }
+    return data;
+}
 
 const PLAYER_SYNC_CHANNEL = "xrob_music_player_sync_v2";
 const PLAYER_SYNC_STATE_KEY = "xrob_music_player_sync_state";
@@ -251,10 +259,10 @@ const appState = {
     network: { online: navigator.onLine !== false, visibility: document.visibilityState || "visible", lastTransitionAt: Date.now(), lastReason: "startup" },
     lifecycle: { installed: false, featuresInstalled: false, lastLeaveAt: 0, lastRecoveryAt: 0 },
     search: { query: "", page: 1, loadingMore: false, hasMore: true, requestId: 0, pending: false, lastCompletedAt: 0, lastError: null },
-    library: { ready: false, revision: 0, lastRefreshAt: 0, status: "unknown", files: [], artists: [], albums: [], view: "tracks", selectedArtistId: null, selectedAlbumId: null, playbackQueue: [] },
+    library: { ready: false, revision: 0, lastRefreshAt: 0, status: "unknown", files: [], artists: [], albums: [], view: "tracks", selectedArtistId: null, selectedAlbumId: null, playbackQueue: [], currentIndex: -1, recentTracksCache: [] },
     downloads: { filter: "active", history: [], tasks: [], lastSignature: "", lastUpdatedAt: 0 },
     devices: { items: [], lastUpdatedAt: 0 },
-    player: { ownerId: null, source: null, playing: false, songId: null, currentTime: 0, duration: 0, lastEventAt: 0, queue: [], queueIndex: -1, remoteState: null },
+    player: { ownerId: null, source: null, playing: false, songId: null, currentTime: 0, duration: 0, lastEventAt: 0, queue: [], queueIndex: -1, homeQueue: [], homeQueueIndex: -1, remoteState: null },
     stats: { tracks: null, artists: null, albums: null, plays: null, totalBytes: null, folderSize: null },
     ui: { activePage: null, queueOpen: false, downloadsOpen: false },
     errors: { recent: [], last: null }
@@ -294,11 +302,9 @@ let playerSyncMode = "off";
 let playerSyncDeviceIds = [];
 let playerSyncGroupId = "";
 let playerSyncHeartbeat = null;
-let playerOwnerId = null;
 let applyingRemotePlayerCommand = false;
 let suppressLocalOwnershipUntil = 0;
 let playerTakeoverPending = false;
-let remotePlayerState = null;
 let remotePlayerReceivedAt = 0;
 let remotePlayerTimer = null;
 let remoteRangeLastUpdatedAt = 0;
@@ -336,11 +342,11 @@ function ownerIsFresh(owner) {
 function setPlayerOwner(force = false) {
     const current = getPlayerOwner();
     if (!force && current?.id && current.id !== PLAYER_TAB_ID && ownerIsFresh(current)) {
-        playerOwnerId = current.id;
+        appState.player.ownerId = current.id;
         return false;
     }
-    playerOwnerId = PLAYER_TAB_ID;
-    remotePlayerState = null;
+    appState.player.ownerId = PLAYER_TAB_ID;
+    appState.player.remoteState = null;
     lastRemoteOwnerId = null;
     lastRemoteSequence = -1;
     stopRemoteProgressTicker();
@@ -355,12 +361,12 @@ function setPlayerOwner(force = false) {
 function heartbeatPlayerOwner() {
     const current = getPlayerOwner();
     if (!current?.id || current.id === PLAYER_TAB_ID) {
-        if (playerOwnerId === PLAYER_TAB_ID) {
+        if (appState.player.ownerId === PLAYER_TAB_ID) {
             try { storageSet(PLAYER_OWNER_KEY, JSON.stringify({ id: PLAYER_TAB_ID, at: Date.now() })); } catch (_) {}
         }
         return;
     }
-    playerOwnerId = current.id;
+    appState.player.ownerId = current.id;
 }
 
 function localDeviceLabel() {
@@ -383,7 +389,7 @@ function clearPlayerOwner() {
     const owner = getPlayerOwner();
     if (!owner || owner.id !== PLAYER_TAB_ID) return;
     try { storageRemove(PLAYER_OWNER_KEY); } catch (_) {}
-    playerOwnerId = null;
+    appState.player.ownerId = null;
     updateDeviceOwnershipUI();
 }
 
@@ -391,19 +397,19 @@ function isRemotePlayerOwner() {
     const owner = getPlayerOwner();
     const localOwnerIsFresh = Boolean(owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner));
     if (localOwnerIsFresh) {
-        playerOwnerId = owner.id;
+        appState.player.ownerId = owner.id;
         return true;
     }
-    if (remotePlayerState?._serverSynced && remotePlayerState.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID) {
-        const sameClient = remotePlayerState.clientId && remotePlayerState.clientId === PLAYER_CLIENT_ID;
+    if (appState.player.remoteState?._serverSynced && appState.player.remoteState.ownerId && appState.player.remoteState.ownerId !== PLAYER_TAB_ID) {
+        const sameClient = appState.player.remoteState.clientId && appState.player.remoteState.clientId === PLAYER_CLIENT_ID;
         const age = Date.now() - remotePlayerReceivedAt;
         if (!sameClient && age < PLAYER_SERVER_STATE_STALE_MS) {
-            playerOwnerId = remotePlayerState.ownerId;
+            appState.player.ownerId = appState.player.remoteState.ownerId;
             return true;
         }
     }
     if (owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner)) {
-        playerOwnerId = owner.id;
+        appState.player.ownerId = owner.id;
         return true;
     }
     return false;
@@ -433,12 +439,12 @@ function normalizeSyncQueue(queue) {
 function setSynchronizedHomeQueue(queue, index = -1) {
     const normalized = normalizeSyncQueue(queue);
     const safeIndex = normalized.length ? Math.max(0, Math.min(Number.isInteger(Number(index)) ? Number(index) : 0, normalized.length - 1)) : -1;
-    window.xrobHomeQueue = normalized;
-    window.xrobHomeQueueIndex = safeIndex;
-    enhancedQueue = [...normalized];
-    enhancedQueueIndex = safeIndex;
-    libraryPlaybackQueue = [...normalized];
-    currentLibraryIndex = safeIndex;
+    appState.player.homeQueue = normalized;
+    appState.player.homeQueueIndex = safeIndex;
+    appState.player.queue = [...normalized];
+    appState.player.queueIndex = safeIndex;
+    appState.library.playbackQueue = [...normalized];
+    appState.library.currentIndex = safeIndex;
     saveEnhancedQueue();
 }
 
@@ -455,9 +461,9 @@ function buildPlayerSyncState(includeQueue = true) {
         artist: playerArtist?.textContent || "",
         art: syncResourceUrl(playerArt?.src || ""),
         songId: audio.dataset.xrobSongId || currentSongId() || "",
-        source: currentPlayerSource || "",
+        source: appState.player.source || "",
         deviceName: localDeviceLabel(),
-        queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
+        queueIndex: appState.player.source === "library" ? appState.player.queueIndex : (Number.isInteger(appState.player.homeQueueIndex) ? appState.player.homeQueueIndex : -1),
         paused: Boolean(audio.paused),
         muted: Boolean(audio.muted),
         repeatMode: ["off", "track", "queue"].includes(playerRepeatMode) ? playerRepeatMode : "off",
@@ -468,7 +474,7 @@ function buildPlayerSyncState(includeQueue = true) {
         at: Date.now()
     };
     if (includeQueue) {
-        state.queue = normalizeSyncQueue(currentPlayerSource === "library" ? enhancedQueue : (window.xrobHomeQueue || []));
+        state.queue = normalizeSyncQueue(appState.player.source === "library" ? appState.player.queue : (appState.player.homeQueue || []));
         state.dailyMix = {
             tracks: normalizeSyncQueue(Array.isArray(dailyMixTracks) ? dailyMixTracks : []),
             variant: Number(dailyMixVariant || 0),
@@ -483,7 +489,7 @@ function buildPlayerSyncState(includeQueue = true) {
 }
 
 function broadcastPlayerState(force = false, unload = false) {
-    if (!audio || (playerOwnerId && playerOwnerId !== PLAYER_TAB_ID) || isRemotePlayerOwner()) return;
+    if (!audio || (appState.player.ownerId && appState.player.ownerId !== PLAYER_TAB_ID) || isRemotePlayerOwner()) return;
     const state = buildPlayerSyncState(force);
     if (!state) return;
     state.seq = ++playerSyncSequence;
@@ -583,7 +589,7 @@ function applyAuthoritativeOwnedPlayerState(state, force = false) {
             audio.volume = Math.max(0, Math.min(1, Number(state.volume)));
         }
         audio.muted = Boolean(state.muted);
-        currentPlayerSource = state.source === "home" ? "home" : (state.source ? "library" : currentPlayerSource);
+        appState.player.source = state.source === "home" ? "home" : (state.source ? "library" : appState.player.source);
         audio.dataset.xrobSongId = String(state.songId || "");
 
         const incomingSrc = syncResourceUrl(state.src || "");
@@ -644,7 +650,7 @@ async function loadServerPlayerState() {
             const enriched = { ...data.state, _serverUpdatedAt: serverUpdatedAt, _serverLastSeenAt: serverLastSeenAt, _serverActive: Boolean(data.active), _serverPersistent: persistent, _serverStale: Boolean(data.stale) || ageMs > PLAYER_SERVER_STATE_STALE_MS };
             serverPlayerStateLoaded = true;
             if (enriched.clientId && enriched.clientId === PLAYER_CLIENT_ID && enriched.src) {
-                remotePlayerState = enriched;
+                appState.player.remoteState = enriched;
                 return takeoverRemotePlayer(true);
             }
             applyRemotePlayerState(enriched, true);
@@ -677,17 +683,17 @@ function claimLocalPlayerWhenOwnerIsGone() {
         setPlayerOwner();
         return true;
     }
-    if (remotePlayerState?.ownerId === owner.id) return false;
+    if (appState.player.remoteState?.ownerId === owner.id) return false;
     setPlayerOwner();
-    remotePlayerState = null;
-    playerOwnerId = PLAYER_TAB_ID;
+    appState.player.remoteState = null;
+    appState.player.ownerId = PLAYER_TAB_ID;
     return true;
 }
 
 function sendPlayerCommand(command, payload = {}) {
     let targetId = null;
-    if (remotePlayerState?._serverSynced && remotePlayerState.ownerId && remotePlayerState.ownerId !== PLAYER_TAB_ID) {
-        targetId = remotePlayerState.ownerId;
+    if (appState.player.remoteState?._serverSynced && appState.player.remoteState.ownerId && appState.player.remoteState.ownerId !== PLAYER_TAB_ID) {
+        targetId = appState.player.remoteState.ownerId;
     } else {
         const owner = getPlayerOwner();
         if (owner?.id && owner.id !== PLAYER_TAB_ID && ownerIsFresh(owner)) targetId = owner.id;
@@ -712,12 +718,12 @@ function sendPlayerCommand(command, payload = {}) {
 }
 
 function updateRemoteProgress(animationFrame = false) {
-    if (!remotePlayerState || !remotePlayerState.ownerId || remotePlayerState.ownerId === PLAYER_TAB_ID) return;
-    const base = Number(remotePlayerState._serverCurrentTime ?? remotePlayerState.currentTime ?? 0);
-    const duration = Number(remotePlayerState.duration || 0);
-    const elapsed = remotePlayerState.paused ? 0 : Math.max(0, (Date.now() - remotePlayerReceivedAt) / 1000);
+    if (!appState.player.remoteState || !appState.player.remoteState.ownerId || appState.player.remoteState.ownerId === PLAYER_TAB_ID) return;
+    const base = Number(appState.player.remoteState._serverCurrentTime ?? appState.player.remoteState.currentTime ?? 0);
+    const duration = Number(appState.player.remoteState.duration || 0);
+    const elapsed = appState.player.remoteState.paused ? 0 : Math.max(0, (Date.now() - remotePlayerReceivedAt) / 1000);
     let current = duration > 0 ? Math.min(duration, base + elapsed) : base + elapsed;
-    if (!remotePlayerState.paused) current = Math.max(current, remoteDisplayTime);
+    if (!appState.player.remoteState.paused) current = Math.max(current, remoteDisplayTime);
     remoteDisplayTime = current;
     if (curTime) {
         const formatted = formatSeconds(current);
@@ -741,10 +747,10 @@ function startRemoteProgressTicker() {
     if (remotePlayerTimer) return;
     const tick = () => {
         remotePlayerTimer = requestAnimationFrame(tick);
-        const linkedMember = remotePlayerState?.syncMode === "linked"
-            && Array.isArray(remotePlayerState?.syncDeviceIds)
-            && remotePlayerState.syncDeviceIds.includes(String(PLAYER_TAB_ID))
-            && remotePlayerState.ownerId !== PLAYER_TAB_ID;
+        const linkedMember = appState.player.remoteState?.syncMode === "linked"
+            && Array.isArray(appState.player.remoteState?.syncDeviceIds)
+            && appState.player.remoteState.syncDeviceIds.includes(String(PLAYER_TAB_ID))
+            && appState.player.remoteState.ownerId !== PLAYER_TAB_ID;
         if (linkedMember) {
             const age = Date.now() - Number(remotePlayerReceivedAt || 0);
             if (age > PLAYER_SERVER_STATE_STALE_MS && !linkedRecoveryInFlight) {
@@ -754,7 +760,7 @@ function startRemoteProgressTicker() {
             updateRemoteProgress(true);
             return;
         }
-        if (remotePlayerState && !isRemotePlayerOwner()) {
+        if (appState.player.remoteState && !isRemotePlayerOwner()) {
             stopRemoteProgressTicker();
             return;
         }
@@ -772,18 +778,18 @@ function stopRemoteProgressTicker() {
 
 
 function updateRemotePlayerOptimistic(patch = {}) {
-    if (!remotePlayerState) return;
-    remotePlayerState = { ...remotePlayerState, ...patch };
+    if (!appState.player.remoteState) return;
+    appState.player.remoteState = { ...appState.player.remoteState, ...patch };
     remotePlayerReceivedAt = Date.now();
     if (patch.currentTime !== undefined && Number.isFinite(Number(patch.currentTime))) {
         remoteDisplayTime = Math.max(0, Number(patch.currentTime));
     }
     if (patch.title !== undefined || patch.artist !== undefined || patch.art !== undefined) {
-        updatePlayerInfo(remotePlayerState.title, remotePlayerState.artist, remotePlayerState.art);
+        updatePlayerInfo(appState.player.remoteState.title, appState.player.remoteState.artist, appState.player.remoteState.art);
     }
-    if (patch.volume !== undefined && volume) volume.value = Math.max(0, Math.min(1, Number(remotePlayerState.volume || 0)));
+    if (patch.volume !== undefined && volume) volume.value = Math.max(0, Math.min(1, Number(appState.player.remoteState.volume || 0)));
     updateRemoteProgress();
-    if (patch.paused !== undefined) updatePlayingState(!remotePlayerState.paused);
+    if (patch.paused !== undefined) updatePlayingState(!appState.player.remoteState.paused);
 }
 
 function applyRemoteDailyMixState(state, persist = true) {
@@ -836,7 +842,7 @@ function applyRemotePlayerState(state, fromServer = false) {
     const sequence = Number(state.seq ?? 0);
     if (lastRemoteOwnerId === state.ownerId && sequence && sequence <= lastRemoteSequence && !state.force) return;
 
-    const previous = remotePlayerState;
+    const previous = appState.player.remoteState;
     const ownerChanged = lastRemoteOwnerId !== state.ownerId;
     // Server state carries a timestamped playback clock. Use it as the anchor instead
     // of the browser message-arrival time, which can be delayed by network jitter.
@@ -867,9 +873,9 @@ function applyRemotePlayerState(state, fromServer = false) {
 
     lastRemoteOwnerId = state.ownerId;
     lastRemoteSequence = sequence;
-    remotePlayerState = merged;
+    appState.player.remoteState = merged;
     remotePlayerReceivedAt = serverClockAnchor;
-    playerOwnerId = state.ownerId;
+    appState.player.ownerId = state.ownerId;
     if (merged.repeatMode && ["off", "track", "queue"].includes(String(merged.repeatMode))) {
         playerRepeatMode = String(merged.repeatMode);
         storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode);
@@ -925,7 +931,7 @@ async function syncRemoteAudioState(state) {
 }
 
 async function takeoverRemotePlayer(force = false) {
-    const state = remotePlayerState;
+    const state = appState.player.remoteState;
     if (!audio || !state?.src || (!force && isRemotePlayerOwner()) || playerHandoffInFlight) return false;
 
     playerHandoffInFlight = true;
@@ -967,7 +973,7 @@ async function takeoverRemotePlayer(force = false) {
         // controller. Suppress the normal play-event owner claim during loading.
         setPlayerOwner(true);
         suppressLocalOwnershipUntil = Date.now() + 8000;
-        remotePlayerState = null;
+        appState.player.remoteState = null;
         stopRemoteProgressTicker();
 
         if (Array.isArray(synced.queue) && synced.queue.length) {
@@ -975,7 +981,7 @@ async function takeoverRemotePlayer(force = false) {
             if (synced.source === "home") setSynchronizedHomeQueue(queue, synced.queueIndex);
             else syncLibraryQueue(queue, Number(synced.queueIndex ?? 0));
         }
-        currentPlayerSource = synced.source === "home" ? "home" : (synced.source ? "library" : currentPlayerSource);
+        appState.player.source = synced.source === "home" ? "home" : (synced.source ? "library" : appState.player.source);
         updatePlayerInfo(synced.title, synced.artist, synced.art);
         audio.dataset.xrobSongId = String(synced.songId || "");
         activePreviewBtn = null;
@@ -1068,9 +1074,9 @@ function applyRemoteHandoff(message) {
             playerHandoffStoppingRemote = false;
             applyingRemotePlayerCommand = previousApplying;
         }
-        remotePlayerState = { ...state, _serverSynced: true };
+        appState.player.remoteState = { ...state, _serverSynced: true };
         remotePlayerReceivedAt = Number(state._serverUpdatedAt || Date.now());
-        applyRemotePlayerState(remotePlayerState, true);
+        applyRemotePlayerState(appState.player.remoteState, true);
         return;
     }
 
@@ -1114,7 +1120,7 @@ function applyRemoteCommand(message) {
         } else if (message.command === "mirror-play") {
             const src = p.src ? syncResourceUrl(p.src) : "";
             if (src) {
-                currentPlayerSource = p.source === "home" ? "home" : (p.source || currentPlayerSource || "library");
+                appState.player.source = p.source === "home" ? "home" : (p.source || appState.player.source || "library");
                 updatePlayerInfo(p.title, p.artist, syncResourceUrl(p.art || ""));
                 if (player) player.style.display = "grid";
                 const absolute = new URL(src, location.href).href;
@@ -1140,7 +1146,7 @@ function applyRemoteCommand(message) {
 }
 
 async function sendPlayerHeartbeat() {
-    if (!audio || playerOwnerId !== PLAYER_TAB_ID || isRemotePlayerOwner()) return;
+    if (!audio || appState.player.ownerId !== PLAYER_TAB_ID || isRemotePlayerOwner()) return;
     try {
         const response = await apiFetch("api/player/heartbeat", {
             method: "POST",
@@ -1179,7 +1185,7 @@ async function initPlayerSync() {
             } else if (event.key === PLAYER_SYNC_COMMAND_KEY && event.newValue) {
                 try { const message = JSON.parse(event.newValue); if (!message.targetId || message.targetId === PLAYER_TAB_ID) applyRemoteCommand(message); } catch (_) {}
             } else if (event.key === PLAYER_OWNER_KEY && event.newValue) {
-                try { const owner = JSON.parse(event.newValue); if (owner?.id) playerOwnerId = owner.id; } catch (_) {}
+                try { const owner = JSON.parse(event.newValue); if (owner?.id) appState.player.ownerId = owner.id; } catch (_) {}
                 heartbeatPlayerOwner();
                 loadServerPlayerState();
             }
@@ -1196,15 +1202,15 @@ async function initPlayerSync() {
             applyRemoteCommand(msg);
         } else if (msg.type === "player_handoff") {
             applyRemoteHandoff(msg);
-        } else if (msg.type === "owner-closing" && msg.ownerId === playerOwnerId) {
-            remotePlayerState = null;
-            playerOwnerId = null;
+        } else if (msg.type === "owner-closing" && msg.ownerId === appState.player.ownerId) {
+            appState.player.remoteState = null;
+            appState.player.ownerId = null;
             stopRemoteProgressTicker();
             updatePlayingState(false);
         }
     });
     const owner = getPlayerOwner();
-    if (ownerIsFresh(owner)) playerOwnerId = owner.id;
+    if (ownerIsFresh(owner)) appState.player.ownerId = owner.id;
     await loadServerPlayerState();
     const raw = storageGet(PLAYER_SYNC_STATE_KEY);
     // When another tab owns the player, trust a live BroadcastChannel response
@@ -1213,10 +1219,10 @@ async function initPlayerSync() {
         try { applyRemotePlayerState(JSON.parse(raw)); } catch (_) {}
     }
     try { playerSyncChannel?.postMessage({ type: "request-state", requesterId: PLAYER_TAB_ID }); } catch (_) {}
-    if (ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID && !remotePlayerState) {
+    if (ownerIsFresh(owner) && owner.id !== PLAYER_TAB_ID && !appState.player.remoteState) {
         playerOwnerClaimTimer = window.setTimeout(() => {
             playerOwnerClaimTimer = null;
-            if (!remotePlayerState) claimLocalPlayerWhenOwnerIsGone();
+            if (!appState.player.remoteState) claimLocalPlayerWhenOwnerIsGone();
         }, PLAYER_OWNER_CLAIM_DELAY_MS);
     }
     playerSyncHeartbeat = window.setInterval(() => {
@@ -1227,20 +1233,20 @@ async function initPlayerSync() {
 
 
 function currentSongId() {
-    const useEnhanced = currentPlayerSource === "library" && enhancedQueue.length;
-    const q = useEnhanced ? enhancedQueue : (currentPlayerSource === "library" ? getLibraryQueue() : (window.xrobHomeQueue || []));
-    const idx = useEnhanced ? enhancedQueueIndex : (currentPlayerSource === "library" ? currentLibraryIndex : window.xrobHomeQueueIndex);
+    const useEnhanced = appState.player.source === "library" && appState.player.queue.length;
+    const q = useEnhanced ? appState.player.queue : (appState.player.source === "library" ? getLibraryQueue() : (appState.player.homeQueue || []));
+    const idx = useEnhanced ? appState.player.queueIndex : (appState.player.source === "library" ? appState.library.currentIndex : appState.player.homeQueueIndex);
     const item = Number.isInteger(idx) && idx >= 0 ? q[idx] : null;
     return item?.id || null;
 }
 
 function saveEnhancedQueue() {
-    try { storageSet(ENHANCED_QUEUE_KEY, JSON.stringify({queue: enhancedQueue, index: enhancedQueueIndex})); } catch (_) {}
+    try { storageSet(ENHANCED_QUEUE_KEY, JSON.stringify({queue: appState.player.queue, index: appState.player.queueIndex})); } catch (_) {}
 }
 
 async function resolveEnhancedQueueIds() {
-    if (!Array.isArray(enhancedQueue) || !enhancedQueue.length) return;
-    const ids = enhancedQueue.map(item => item?.id).filter(Boolean);
+    if (!Array.isArray(appState.player.queue) || !appState.player.queue.length) return;
+    const ids = appState.player.queue.map(item => item?.id).filter(Boolean);
     if (!ids.length) return;
     try {
         const r = await apiFetch("api/player/resolve-queue", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ids}), timeoutMs:5000});
@@ -1248,13 +1254,13 @@ async function resolveEnhancedQueueIds() {
         const data = await r.json();
         const mapping = data?.mapping || {};
         let changed = false;
-        enhancedQueue = enhancedQueue.map(item => {
+        appState.player.queue = appState.player.queue.map(item => {
             const oldId = String(item?.id || "");
             const newId = mapping[oldId];
             if (newId && newId !== oldId) { changed = true; return {...item, id:newId}; }
             return item;
         });
-        if (changed) { saveEnhancedQueue(); libraryPlaybackQueue=[...enhancedQueue]; syncLibraryUiState(); appState.player.queue=[...enhancedQueue]; appState.player.queueIndex=enhancedQueueIndex; }
+        if (changed) { saveEnhancedQueue(); appState.library.playbackQueue=[...appState.player.queue]; syncLibraryUiState(); appState.player.queue=[...appState.player.queue]; appState.player.queueIndex=appState.player.queueIndex; }
     } catch (_) {}
 }
 
@@ -1262,28 +1268,28 @@ function loadEnhancedQueue() {
     try {
         const v = JSON.parse(storageGet(ENHANCED_QUEUE_KEY) || "null");
         if (Array.isArray(v?.queue) && v.queue.length) {
-            enhancedQueue = [...v.queue];
-            enhancedQueueIndex = Math.max(
+            appState.player.queue = [...v.queue];
+            appState.player.queueIndex = Math.max(
                 0,
-                Math.min(Number.isInteger(v.index) ? v.index : 0, enhancedQueue.length - 1)
+                Math.min(Number.isInteger(v.index) ? v.index : 0, appState.player.queue.length - 1)
             );
-            libraryPlaybackQueue = [...enhancedQueue];
-            currentLibraryIndex = enhancedQueueIndex;
+            appState.library.playbackQueue = [...appState.player.queue];
+            appState.library.currentIndex = appState.player.queueIndex;
             syncLibraryUiState();
-            appState.player.queue=[...enhancedQueue];
-            appState.player.queueIndex=enhancedQueueIndex;
+            appState.player.queue=[...appState.player.queue];
+            appState.player.queueIndex=appState.player.queueIndex;
             resolveEnhancedQueueIds().catch(() => {});
         } else {
-            enhancedQueue = [];
-            enhancedQueueIndex = -1;
-            libraryPlaybackQueue = [];
-            currentLibraryIndex = -1;
+            appState.player.queue = [];
+            appState.player.queueIndex = -1;
+            appState.library.playbackQueue = [];
+            appState.library.currentIndex = -1;
         }
     } catch (_) {
-        enhancedQueue = [];
-        enhancedQueueIndex = -1;
-        libraryPlaybackQueue = [];
-        currentLibraryIndex = -1;
+        appState.player.queue = [];
+        appState.player.queueIndex = -1;
+        appState.library.playbackQueue = [];
+        appState.library.currentIndex = -1;
     }
 }
 
@@ -1474,24 +1480,24 @@ function normalizeQueue(queue) {
 }
 
 function getLibraryQueue() {
-    return Array.isArray(enhancedQueue) && enhancedQueue.length
-        ? enhancedQueue
-        : (Array.isArray(libraryPlaybackQueue) && libraryPlaybackQueue.length ? libraryPlaybackQueue : (Array.isArray(appState.library.files) ? appState.library.files : []));
+    return Array.isArray(appState.player.queue) && appState.player.queue.length
+        ? appState.player.queue
+        : (Array.isArray(appState.library.playbackQueue) && appState.library.playbackQueue.length ? appState.library.playbackQueue : (Array.isArray(appState.library.files) ? appState.library.files : []));
 }
 
 function syncLibraryQueue(queue, index) {
     const normalized = normalizeQueue(queue);
-    enhancedQueue = normalized;
-    enhancedQueueIndex = normalized.length
+    appState.player.queue = normalized;
+    appState.player.queueIndex = normalized.length
         ? Math.max(0, Math.min(Number.isInteger(Number(index)) ? Number(index) : 0, normalized.length - 1))
         : -1;
-    libraryPlaybackQueue = [...normalized];
-    currentLibraryIndex = enhancedQueueIndex;
+    appState.library.playbackQueue = [...normalized];
+    appState.library.currentIndex = appState.player.queueIndex;
     if (normalized.length) saveEnhancedQueue();
     else storageRemove(ENHANCED_QUEUE_KEY);
     if (!applyingRemotePlayerCommand) {
         if (playerSyncMode === "linked" && playerSyncDeviceIds.length > 1 && !isRemotePlayerOwner()) {
-            const sentToOwner = sendPlayerCommand("queue", { queue: normalized, queueIndex: enhancedQueueIndex, source: currentPlayerSource });
+            const sentToOwner = sendPlayerCommand("queue", { queue: normalized, queueIndex: appState.player.queueIndex, source: appState.player.source });
             if (!sentToOwner) schedulePlayerStateBroadcast(true);
         } else if (!isRemotePlayerOwner()) {
             schedulePlayerStateBroadcast(true);
@@ -1500,16 +1506,16 @@ function syncLibraryQueue(queue, index) {
 }
 
 function reconcileEnhancedQueue() {
-    if (!enhancedQueue.length) return;
-    const currentId = trackKey(enhancedQueue[enhancedQueueIndex]);
+    if (!appState.player.queue.length) return;
+    const currentId = trackKey(appState.player.queue[appState.player.queueIndex]);
     const valid = new Set(appState.library.files.map(trackKey));
-    const filtered = enhancedQueue.filter(track => valid.has(trackKey(track)));
+    const filtered = appState.player.queue.filter(track => valid.has(trackKey(track)));
     if (!filtered.length) {
         syncLibraryQueue([], -1);
         return;
     }
     const nextIndex = filtered.findIndex(track => trackKey(track) === currentId);
-    syncLibraryQueue(filtered, nextIndex >= 0 ? nextIndex : Math.min(enhancedQueueIndex, filtered.length - 1));
+    syncLibraryQueue(filtered, nextIndex >= 0 ? nextIndex : Math.min(appState.player.queueIndex, filtered.length - 1));
 }
 
 function addTrackToQueue(track, playNext = false) {
@@ -1517,7 +1523,7 @@ function addTrackToQueue(track, playNext = false) {
     const key = trackKey(track);
     if (!key) return false;
     const queue = getLibraryQueue();
-    const currentIndex = currentPlayerSource === 'library' ? getQueueIndex() : -1;
+    const currentIndex = appState.player.source === 'library' ? getQueueIndex() : -1;
     const already = queue.findIndex(item => trackKey(item) === key);
     if (already >= 0) {
         if (playNext && currentIndex >= 0 && already !== currentIndex + 1) {
@@ -1553,7 +1559,7 @@ function addTrackToQueue(track, playNext = false) {
     return true;
 }
 
-function getQueueIndex() { return enhancedQueueIndex; }
+function getQueueIndex() { return appState.player.queueIndex; }
 
 function shuffledCopy(items) {
     const copy = [...items];
@@ -1566,7 +1572,7 @@ function shuffledCopy(items) {
 
 function getActiveLibraryQueueState() {
     const queue = getLibraryQueue();
-    const index = Number.isInteger(currentLibraryIndex) ? currentLibraryIndex : -1;
+    const index = Number.isInteger(appState.library.currentIndex) ? appState.library.currentIndex : -1;
     return { queue, index };
 }
 
@@ -1599,14 +1605,14 @@ function setShuffle(enabled) {
         }
         return;
     }
-    if (currentPlayerSource === "library" && enhancedQueue.length) {
+    if (appState.player.source === "library" && appState.player.queue.length) {
         const currentId = currentSongId();
         if (nextValue) {
-            shuffleRestoreQueue = [...enhancedQueue];
+            shuffleRestoreQueue = [...appState.player.queue];
             shuffleRestoreCurrentId = currentId;
-            const currentIndex = enhancedQueueIndex;
-            const current = enhancedQueue[currentIndex];
-            syncLibraryQueue([...enhancedQueue.slice(0, currentIndex), current, ...shuffledCopy(enhancedQueue.slice(currentIndex + 1))], currentIndex);
+            const currentIndex = appState.player.queueIndex;
+            const current = appState.player.queue[currentIndex];
+            syncLibraryQueue([...appState.player.queue.slice(0, currentIndex), current, ...shuffledCopy(appState.player.queue.slice(currentIndex + 1))], currentIndex);
         } else if (Array.isArray(shuffleRestoreQueue) && shuffleRestoreQueue.length) {
             const restored = [...shuffleRestoreQueue];
             const restoredIndex = restored.findIndex(item => (item.id || item.name) === currentId || (item.id || item.name) === shuffleRestoreCurrentId);
@@ -1626,22 +1632,22 @@ function setShuffle(enabled) {
 function shuffleLibrary() {
     if (isRemotePlayerOwner()) { setShuffle(true); return; }
     if (!appState.library.files.length) { showToast("No tracks to shuffle"); return; }
-    libraryView = "tracks";
-    selectedArtistId = null;
-    selectedAlbumId = null;
-    document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.libraryView === "tracks"));
+    appState.library.view = "tracks";
+    appState.library.selectedArtistId = null;
+    appState.library.selectedAlbumId = null;
+    document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.appState.library.view === "tracks"));
     renderLibraryView();
-    if (currentPlayerSource === "library" && enhancedQueue.length) {
+    if (appState.player.source === "library" && appState.player.queue.length) {
         const { queue, index } = getActiveLibraryQueueState();
         if (!playerShuffle) {
             shuffleRestoreQueue = [...queue];
             shuffleRestoreCurrentId = queue[index]?.id || queue[index]?.name || null;
         }
         const result = shuffleQueueAfterCurrent(queue, index);
-        enhancedQueue = result.queue;
-        enhancedQueueIndex = result.index;
-        libraryPlaybackQueue = [...enhancedQueue];
-        currentLibraryIndex = enhancedQueueIndex;
+        appState.player.queue = result.queue;
+        appState.player.queueIndex = result.index;
+        appState.library.playbackQueue = [...appState.player.queue];
+        appState.library.currentIndex = appState.player.queueIndex;
         playerShuffle = true;
         storageSet("xrob_music_shuffle", "true");
         updateShuffleButtons();
@@ -1914,8 +1920,8 @@ function savePlayerState(force = false) {
         artist: playerArtist?.textContent || "",
         art: syncResourceUrl(playerArt?.src || ""),
         songId: audio.dataset.xrobSongId || currentSongId() || "",
-        source: currentPlayerSource || "",
-        queueIndex: currentPlayerSource === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1),
+        source: appState.player.source || "",
+        queueIndex: appState.player.source === "library" ? appState.player.queueIndex : (Number.isInteger(appState.player.homeQueueIndex) ? appState.player.homeQueueIndex : -1),
         wasPlaying: !audio.paused,
     };
     try { storageSet("xrob_music_player_state", JSON.stringify(state)); lastPlayerStateSavedAt = now; } catch (_) {}
@@ -1926,7 +1932,7 @@ function restorePlayerState() {
     if (isRemotePlayerOwner()) {
         // A remote owner must have a live state message; an orphaned owner key
         // from a closed/crashed tab should never block the restored local player.
-        if (remotePlayerState) return;
+        if (appState.player.remoteState) return;
         claimLocalPlayerWhenOwnerIsGone();
     }
     try {
@@ -1941,16 +1947,16 @@ function restorePlayerState() {
 
         // Restore queue/source identity before loading the media so Next/Previous
         // continue from the same queue after a browser refresh.
-        if (Array.isArray(enhancedQueue) && enhancedQueue.length && state.queueIndex >= 0) {
+        if (Array.isArray(appState.player.queue) && appState.player.queue.length && state.queueIndex >= 0) {
             const savedId = String(state.songId || "");
-            const found = savedId ? enhancedQueue.findIndex(item => trackKey(item) === savedId || String(item.id || "") === savedId) : -1;
-            enhancedQueueIndex = found >= 0 ? found : Math.max(0, Math.min(Number(state.queueIndex) || 0, enhancedQueue.length - 1));
-            currentLibraryIndex = enhancedQueueIndex;
-            currentPlayerSource = "library";
+            const found = savedId ? appState.player.queue.findIndex(item => trackKey(item) === savedId || String(item.id || "") === savedId) : -1;
+            appState.player.queueIndex = found >= 0 ? found : Math.max(0, Math.min(Number(state.queueIndex) || 0, appState.player.queue.length - 1));
+            appState.library.currentIndex = appState.player.queueIndex;
+            appState.player.source = "library";
             saveEnhancedQueue();
-        } else if (state.source === "home" && Array.isArray(window.xrobHomeQueue) && window.xrobHomeQueue.length) {
-            currentPlayerSource = "home";
-            window.xrobHomeQueueIndex = Math.max(0, Math.min(Number(state.queueIndex) || 0, window.xrobHomeQueue.length - 1));
+        } else if (state.source === "home" && Array.isArray(appState.player.homeQueue) && appState.player.homeQueue.length) {
+            appState.player.source = "home";
+            appState.player.homeQueueIndex = Math.max(0, Math.min(Number(state.queueIndex) || 0, appState.player.homeQueue.length - 1));
         }
 
         const restorePosition = () => {
@@ -2153,8 +2159,8 @@ function currentReplayGain(track) {
 }
 
 function activeQueueTrack() {
-    const q = currentPlayerSource === "library" ? getLibraryQueue() : (window.xrobHomeQueue || []);
-    const idx = currentPlayerSource === "library" ? enhancedQueueIndex : window.xrobHomeQueueIndex;
+    const q = appState.player.source === "library" ? getLibraryQueue() : (appState.player.homeQueue || []);
+    const idx = appState.player.source === "library" ? appState.player.queueIndex : appState.player.homeQueueIndex;
     return q?.[Number(idx)] || null;
 }
 
@@ -2173,8 +2179,8 @@ function stopCrossfadePreload() {
 }
 
 function nextQueueTrack() {
-    const q = currentPlayerSource === "library" ? getLibraryQueue() : (window.xrobHomeQueue || []);
-    const idx = currentPlayerSource === "library" ? enhancedQueueIndex : window.xrobHomeQueueIndex;
+    const q = appState.player.source === "library" ? getLibraryQueue() : (appState.player.homeQueue || []);
+    const idx = appState.player.source === "library" ? appState.player.queueIndex : appState.player.homeQueueIndex;
     if (!q.length || !Number.isInteger(Number(idx))) return null;
     let next = Number(idx) + 1;
     if (next >= q.length) {
@@ -2236,14 +2242,14 @@ function finalizePreparedTrackIfNeeded() {
     if (crossfadeAudio.paused && crossfadeAudio.readyState < 2) return false;
     const prepared = crossfadePrepared;
     const carried = Math.max(0, Number(crossfadeAudio.currentTime || 0));
-    const idx = currentPlayerSource === "library"
+    const idx = appState.player.source === "library"
         ? getLibraryQueue().findIndex(t => trackKey(t) === trackKey(prepared.track))
-        : (window.xrobHomeQueue || []).findIndex(t => trackKey(t) === trackKey(prepared.track));
+        : (appState.player.homeQueue || []).findIndex(t => trackKey(t) === trackKey(prepared.track));
     if (idx < 0) return false;
     crossfadeAudio.pause();
     stopCrossfadePreload();
-    if (currentPlayerSource === "library") { enhancedQueueIndex = idx; currentLibraryIndex = idx; }
-    else window.xrobHomeQueueIndex = idx;
+    if (appState.player.source === "library") { appState.player.queueIndex = idx; appState.library.currentIndex = idx; }
+    else appState.player.homeQueueIndex = idx;
     audio.pause();
     const loadGeneration = ++audioLoadGeneration;
     const expectedSource = new URL(prepared.url, location.href).href;
@@ -2421,7 +2427,7 @@ function stopVisualizer() {
 
 function updatePlayerBarMode() {
     if (!player) return;
-    const active = Boolean((audio && audio.src) || String(currentPlayerSource || "").trim());
+    const active = Boolean((audio && audio.src) || String(appState.player.source || "").trim());
     player.classList.toggle("is-idle", !active);
     player.dataset.mode = active ? "active" : "idle";
 }
@@ -2462,8 +2468,8 @@ function updateMediaSession() {
     const artwork = playerArt?.src ? [{ src: playerArt.src, sizes: "512x512" }] : [];
     try {
         navigator.mediaSession.metadata = new MediaMetadata({ title, artist, album: "Xrob Music", artwork });
-        const remotePlayback = isRemotePlayerOwner() && remotePlayerState;
-        navigator.mediaSession.playbackState = (remotePlayback ? Boolean(remotePlayerState.paused) : Boolean(audio?.paused)) ? "paused" : "playing";
+        const remotePlayback = isRemotePlayerOwner() && appState.player.remoteState;
+        navigator.mediaSession.playbackState = (remotePlayback ? Boolean(appState.player.remoteState.paused) : Boolean(audio?.paused)) ? "paused" : "playing";
     } catch (_) {}
 }
 
@@ -2479,7 +2485,7 @@ function installMediaSession() {
             else audio?.pause();
         },
         previoustrack: () => {
-            if (isRemotePlayerOwner()) { const current = Number(remotePlayerState?.currentTime || 0); if (current > 3) sendPlayerCommand("seek", { time: 0 }); else sendPlayerCommand("previous", { repeat: playerRepeatMode }); }
+            if (isRemotePlayerOwner()) { const current = Number(appState.player.remoteState?.currentTime || 0); if (current > 3) sendPlayerCommand("seek", { time: 0 }); else sendPlayerCommand("previous", { repeat: playerRepeatMode }); }
             else { setPlayerOwner(); playPreviousTrack(); }
         },
         nexttrack: () => {
@@ -2488,12 +2494,12 @@ function installMediaSession() {
         },
         seekbackward: details => {
             const offset = Math.max(1, Number(details.seekOffset || 10));
-            if (isRemotePlayerOwner()) { const time = Math.max(0, Number(remotePlayerState?.currentTime || 0) - offset); if (sendPlayerCommand("seek", { time })) updateRemotePlayerOptimistic({ currentTime: time }); }
+            if (isRemotePlayerOwner()) { const time = Math.max(0, Number(appState.player.remoteState?.currentTime || 0) - offset); if (sendPlayerCommand("seek", { time })) updateRemotePlayerOptimistic({ currentTime: time }); }
             else if (audio) audio.currentTime = Math.max(0, audio.currentTime - offset);
         },
         seekforward: details => {
             const offset = Math.max(1, Number(details.seekOffset || 10));
-            if (isRemotePlayerOwner()) { const base = Number(remotePlayerState?.currentTime || 0); const duration = Number(remotePlayerState?.duration || 0); const time = Math.min(duration > 0 ? duration : base + offset, base + offset); if (sendPlayerCommand("seek", { time })) updateRemotePlayerOptimistic({ currentTime: time }); }
+            if (isRemotePlayerOwner()) { const base = Number(appState.player.remoteState?.currentTime || 0); const duration = Number(appState.player.remoteState?.duration || 0); const time = Math.min(duration > 0 ? duration : base + offset, base + offset); if (sendPlayerCommand("seek", { time })) updateRemotePlayerOptimistic({ currentTime: time }); }
             else if (audio && Number.isFinite(audio.duration)) audio.currentTime = Math.min(audio.duration, audio.currentTime + offset);
         },
         seekto: details => {
@@ -2529,8 +2535,8 @@ function toggleAudioStream(
 
     if (!fromRemote && isRemotePlayerOwner()) {
         const sourceName = type === "search" ? "home" : (type || "library");
-        const queue = sourceName === "library" ? enhancedQueue : (window.xrobHomeQueue || []);
-        const queueIndex = sourceName === "library" ? enhancedQueueIndex : (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1);
+        const queue = sourceName === "library" ? appState.player.queue : (appState.player.homeQueue || []);
+        const queueIndex = sourceName === "library" ? appState.player.queueIndex : (Number.isInteger(appState.player.homeQueueIndex) ? appState.player.homeQueueIndex : -1);
         sendPlayerCommand("load-play", { src: syncResourceUrl(new URL(url, location.href).href), title, artist, art: syncResourceUrl(art), songId, source: sourceName, queue: normalizeSyncQueue(queue), queueIndex });
         updateRemotePlayerOptimistic({ src: syncResourceUrl(new URL(url, location.href).href), title, artist, art: syncResourceUrl(art), songId, source: sourceName, paused: false, queueIndex, currentTime: 0 });
         return;
@@ -2644,7 +2650,7 @@ function toggleAudioStream(
     audio.removeAttribute("src");
 
     audio.dataset.xrobSongId = String(songId || "");
-    if (type) currentPlayerSource = type === "search" ? "home" : type;
+    if (type) appState.player.source = type === "search" ? "home" : type;
     savePlayerState();
     stopCrossfadePreload();
     const loadGeneration = ++audioLoadGeneration;
@@ -2818,11 +2824,11 @@ function bindAudioEvents() {
                 return;
             }
 
-            if (currentPlayerSource === "home") {
+            if (appState.player.source === "home") {
                 if (advanceHomeQueue(1)) return;
             }
 
-            if (currentPlayerSource === "library") {
+            if (appState.player.source === "library") {
                 if (advanceLibraryQueue(1, true)) return;
             }
 
@@ -2840,7 +2846,7 @@ function bindAudioEvents() {
                 activePreviewBtn = null;
             }
 
-            window.xrobHomeQueueIndex = -1;
+            appState.player.homeQueueIndex = -1;
         }
     );
 
@@ -2876,14 +2882,14 @@ function bindPlayerControls() {
             }
 
             const remoteOwner = isRemotePlayerOwner();
-            if (remoteOwner && !audio.src && remotePlayerState?.src) {
+            if (remoteOwner && !audio.src && appState.player.remoteState?.src) {
                 takeoverRemotePlayer().then(moved => {
-                    if (moved && audio.paused && !remotePlayerState) audio.play().catch(() => {});
+                    if (moved && audio.paused && !appState.player.remoteState) audio.play().catch(() => {});
                 }).catch(() => {});
                 return;
             }
             if (remoteOwner) {
-                const remotePaused = remotePlayerState ? Boolean(remotePlayerState.paused) : Boolean(audio.paused);
+                const remotePaused = appState.player.remoteState ? Boolean(appState.player.remoteState.paused) : Boolean(audio.paused);
                 if (sendPlayerCommand(remotePaused ? "play" : "pause")) {
                     updateRemotePlayerOptimistic({ paused: !remotePaused });
                 }
@@ -2902,7 +2908,7 @@ function bindPlayerControls() {
 
     prevBtn?.addEventListener("click", () => {
         if (isRemotePlayerOwner()) {
-            const current = Number(remotePlayerState?.currentTime || 0);
+            const current = Number(appState.player.remoteState?.currentTime || 0);
             if (current > 3) { if (sendPlayerCommand("seek", { time: 0 })) updateRemotePlayerOptimistic({ currentTime: 0 }); }
             else sendPlayerCommand("previous", { repeat: playerRepeatMode });
         } else { setPlayerOwner(); playPreviousTrack(); }
@@ -2926,7 +2932,7 @@ function bindPlayerControls() {
 
     const seekWrap = document.getElementById("gp-seek-wrap") || seek;
     const seekFromPointer = event => {
-        const duration = isRemotePlayerOwner() ? Number(remotePlayerState?.duration || 0) : Number(audio?.duration || 0);
+        const duration = isRemotePlayerOwner() ? Number(appState.player.remoteState?.duration || 0) : Number(audio?.duration || 0);
         if (!seek || !seekWrap || !(duration > 0) || !Number.isFinite(Number(event.clientX))) return;
         const rect = seekWrap.getBoundingClientRect();
         if (!(rect.width > 0)) return;
@@ -2984,13 +2990,13 @@ function bindPlayerControls() {
         }, 90);
     };
     seek?.addEventListener("input", () => {
-        const duration = isRemotePlayerOwner() ? Number(remotePlayerState?.duration || 0) : Number(audio?.duration || 0);
+        const duration = isRemotePlayerOwner() ? Number(appState.player.remoteState?.duration || 0) : Number(audio?.duration || 0);
         if (duration > 0) {
             const ratio = Math.max(0, Math.min(1, Number(seek.value) / 100));
             const targetTime = ratio * duration;
             if (isRemotePlayerOwner()) scheduleRemoteSeek(targetTime);
             else { setPlayerOwner(); try { audio.currentTime = targetTime; } catch (_) {} }
-            if (isRemotePlayerOwner() && remotePlayerState) updateRemotePlayerOptimistic({ currentTime: targetTime });
+            if (isRemotePlayerOwner() && appState.player.remoteState) updateRemotePlayerOptimistic({ currentTime: targetTime });
             renderSeekVisual(ratio * 100);
             if (curTime) curTime.textContent = formatSeconds(targetTime);
             persistCurrentPosition(false);
@@ -3080,7 +3086,7 @@ function renderStorage(storage) {
         if (data.state === "offline" || !data.exists) topText.textContent = "Music storage offline";
         else if (!data.writable) topText.textContent = "Music storage read-only";
         else if (data.state === "unknown") topText.textContent = "Checking music storage…";
-        else topText.textContent = "Music storage online";
+        else topText.textContent = `Music storage online · ${data.free || "0 B"} free`;
     }
     if (status) {
         if (data.state === "offline" || !data.exists) { status.textContent = data.error ? `Library storage is offline: ${data.error}` : "Library storage is unavailable."; status.dataset.state = "error"; }
@@ -3101,12 +3107,10 @@ function updateQualityState() {
 
 async function loadSettings() {
     try {
-        const response = await apiFetch("api/settings", { cache: "no-store" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const settings = await response.json();
+        const settings = await apiFetchJson("api/settings", { cache: "no-store" }, {scope:"settings", action:"load"});
         applySettingsToForm(settings);
     } catch (error) {
-        reportAppError(error, {scope:"settings", action:"load"});
+        // apiFetchJson already reports the transport/application error.
     }
 }
 
@@ -3297,13 +3301,15 @@ async function refreshLibraryCache() {
 
 
         appState.library.files = data.files || [];
-        libraryPlaybackQueue = enhancedQueue.length ? [...enhancedQueue] : appState.library.files;
+        appState.library.playbackQueue = appState.player.queue.length ? [...appState.player.queue] : appState.library.files;
         appState.library.artists = data.artists || [];
         appState.library.albums = data.albums || [];
         syncLibraryUiState();
         appState.library.ready = data.ready !== false;
         appState.library.status = String(data.library_state || data.storage_state || data.storage?.state || (appState.library.ready ? "ready" : "loading"));
+        appState.library.revision = Number.isFinite(Number(data.revision)) ? Number(data.revision) : appState.library.revision;
         appState.library.storageError = String(data.storage?.error || "");
+        appState.library.revision = Number.isFinite(Number(data.revision)) ? Number(data.revision) : appState.library.revision;
         renderStorage(data.storage || {state: data.storage_state || appState.library.status});
         appState.library.revision += 1;
         appState.library.lastRefreshAt = Date.now();
@@ -3414,27 +3420,7 @@ async function loadStats() {
 
     try {
 
-        const response =
-            await apiFetch(
-                "/api/stats",
-                {
-                    cache:
-                        "no-store",
-
-                    signal:
-                        controller.signal
-                }
-            );
-
-        if (!response.ok) {
-            throw new Error(
-                `HTTP ${response.status}`
-            );
-        }
-
-        const stats =
-            await response.json();
-
+        const stats = await apiFetchJson("/api/stats", {cache:"no-store", signal:controller.signal}, {scope:"stats", action:"load"});
         applyLiveStats(stats);
 
     } catch (error) {
@@ -3495,7 +3481,7 @@ function renderLibraryView() {
     const dashboard = document.getElementById("libraryStatsDashboard");
     if (!list) return;
 
-    const showStatistics = libraryView === "statistics";
+    const showStatistics = appState.library.view === "statistics";
     if (dashboard) dashboard.hidden = !showStatistics;
     list.hidden = showStatistics;
 
@@ -3521,15 +3507,15 @@ function renderLibraryView() {
             return;
         }
     }
-    if (libraryView === "playlists") return loadPlaylistsView();
-    if (libraryView === "recent") return renderLibraryCollections("recent");
-    if (libraryView === "most") return renderLibraryCollections("most");
+    if (appState.library.view === "playlists") return loadPlaylistsView();
+    if (appState.library.view === "recent") return renderLibraryCollections("recent");
+    if (appState.library.view === "most") return renderLibraryCollections("most");
 
     const query = String(document.getElementById("libSearchQuery")?.value || "").trim().toLowerCase();
-    if (libraryView === "artists") return renderArtists(list, query);
-    if (libraryView === "albums") return renderAlbums(list, query);
-    if (libraryView === "artist-detail") return renderArtistDetail(list, query);
-    if (libraryView === "album-detail") return renderAlbumDetail(list, query);
+    if (appState.library.view === "artists") return renderArtists(list, query);
+    if (appState.library.view === "albums") return renderAlbums(list, query);
+    if (appState.library.view === "artist-detail") return renderArtistDetail(list, query);
+    if (appState.library.view === "album-detail") return renderAlbumDetail(list, query);
     renderTracks(list, query);
 }
 
@@ -3558,8 +3544,8 @@ function playQueue(queue, index = 0, shuffle = false) {
         shuffleRestoreCurrentId = null;
     }
     syncLibraryQueue(playbackQueue, playbackIndex);
-    currentPlayerSource = "library";
-    appState.player.source = currentPlayerSource;
+    appState.player.source = "library";
+    
     appState.player.lastEventAt = Date.now();
     playerShuffle = Boolean(shuffle);
     storageSet("xrob_music_shuffle", String(playerShuffle));
@@ -3582,11 +3568,11 @@ function createTrackCard(file, queue = appState.library.files) {
     const play = () => {
         const activeQueue = getLibraryQueue();
         const activeIndex = activeQueue.findIndex(x => x.id === file.id || x.name === file.name);
-        if (currentPlayerSource === "library" && activeQueue.length && activeIndex >= 0) {
-            libraryPlaybackQueue = [...activeQueue];
-            currentLibraryIndex = activeIndex;
-            enhancedQueue = [...activeQueue];
-            enhancedQueueIndex = activeIndex;
+        if (appState.player.source === "library" && activeQueue.length && activeIndex >= 0) {
+            appState.library.playbackQueue = [...activeQueue];
+            appState.library.currentIndex = activeIndex;
+            appState.player.queue = [...activeQueue];
+            appState.player.queueIndex = activeIndex;
             saveEnhancedQueue();
             renderEnhancedQueue();
         } else {
@@ -3595,7 +3581,7 @@ function createTrackCard(file, queue = appState.library.files) {
                 playQueue(queue, startIndex, true);
             } else {
                 setEnhancedQueue(queue, startIndex);
-                currentPlayerSource = "library";
+                appState.player.source = "library";
                 toggleAudioStream(
                     card.querySelector(".btn-preview"),
                     stream,
@@ -3608,7 +3594,7 @@ function createTrackCard(file, queue = appState.library.files) {
             }
             return;
         }
-        currentPlayerSource = "library";
+        appState.player.source = "library";
         toggleAudioStream(card.querySelector(".btn-preview"), stream, "library", file.title || file.name, file.artist || "Unknown Artist", cover, file.id || null);
     };
     card.querySelector(".btn-preview")?.addEventListener("click", e => { e.stopPropagation(); play(); });
@@ -3656,13 +3642,13 @@ function createAlbumCard(album) {
 }
 
 function renderArtistDetail(list, query) {
-    const artist = appState.library.artists.find(a => a.id === selectedArtistId);
-    if (!artist) { libraryView = "artists"; return renderArtists(list, query); }
+    const artist = appState.library.artists.find(a => a.id === appState.library.selectedArtistId);
+    if (!artist) { appState.library.view = "artists"; return renderArtists(list, query); }
     const ids = new Set(artist.song_ids || []);
     const tracks = appState.library.files.filter(f => ids.has(f.id));
     const albums = appState.library.albums.filter(a => (a.song_ids || []).some(id => ids.has(id)));
     list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button"><i data-lucide="arrow-left" aria-hidden="true"></i> Artists</button><div><h3>${escapeHtml(artist.name)}</h3><p>${albums.length} album${albums.length === 1 ? "" : "s"} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview artist-detail-play"><i data-lucide="play" aria-hidden="true"></i> Play artist</button></div>`;
-    list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedArtistId = null; libraryView = "artists"; renderLibraryView(); });
+    list.querySelector(".library-back-button")?.addEventListener("click", () => { appState.library.selectedArtistId = null; appState.library.view = "artists"; renderLibraryView(); });
     list.querySelector(".artist-detail-play")?.addEventListener("click", () => playQueue(tracks, 0, false));
     if (albums.length) {
         const heading = document.createElement("h3"); heading.className = "catalog-section-heading"; heading.textContent = "Albums"; list.appendChild(heading);
@@ -3677,12 +3663,12 @@ function renderArtistDetail(list, query) {
 }
 
 function renderAlbumDetail(list, query) {
-    const album = appState.library.albums.find(a => a.id === selectedAlbumId);
-    if (!album) { libraryView = "albums"; return renderAlbums(list, query); }
+    const album = appState.library.albums.find(a => a.id === appState.library.selectedAlbumId);
+    if (!album) { appState.library.view = "albums"; return renderAlbums(list, query); }
     const ids = new Set(album.song_ids || []);
     const tracks = appState.library.files.filter(f => ids.has(f.id));
     list.innerHTML = `<div class="catalog-detail-header"><button type="button" class="btn-refresh library-back-button"><i data-lucide="arrow-left" aria-hidden="true"></i> Albums</button><div><h3>${escapeHtml(album.name)}</h3><p>${escapeHtml(album.artist || "Unknown Artist")} · ${tracks.length} track${tracks.length === 1 ? "" : "s"}</p></div><button type="button" class="btn-preview album-detail-play"><i data-lucide="play" aria-hidden="true"></i> Play album</button></div>`;
-    list.querySelector(".library-back-button")?.addEventListener("click", () => { selectedAlbumId = null; libraryView = "albums"; renderLibraryView(); });
+    list.querySelector(".library-back-button")?.addEventListener("click", () => { appState.library.selectedAlbumId = null; appState.library.view = "albums"; renderLibraryView(); });
     list.querySelector(".album-detail-play")?.addEventListener("click", () => playAlbum(album.id));
     const filtered = tracks.filter(file => { const hay = `${file.title || ""} ${file.artist || ""}`.toLowerCase(); return !query || hay.includes(query); });
     if (filtered.length) filtered.forEach(file => list.appendChild(createTrackCard(file, tracks))); else renderEmpty(list, "disc-3", "No matching tracks", "Try another search.");
@@ -3690,20 +3676,20 @@ function renderAlbumDetail(list, query) {
 }
 
 function filterLibrary() { renderLibraryView(); }
-function openArtist(id) { if (!appState.library.artists.some(a => a.id === id)) return; selectedArtistId = id; selectedAlbumId = null; libraryView = "artist-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
-function openAlbum(id) { if (!appState.library.albums.some(a => a.id === id)) return; selectedAlbumId = id; selectedArtistId = null; libraryView = "album-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
+function openArtist(id) { if (!appState.library.artists.some(a => a.id === id)) return; appState.library.selectedArtistId = id; appState.library.selectedAlbumId = null; appState.library.view = "artist-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
+function openAlbum(id) { if (!appState.library.albums.some(a => a.id === id)) return; appState.library.selectedAlbumId = id; appState.library.selectedArtistId = null; appState.library.view = "album-detail"; document.getElementById("libSearchQuery").value = ""; renderLibraryView(); }
 function playAlbum(id) { const album = appState.library.albums.find(a => a.id === id); if (!album) return showToast("Album not found"); const ids = new Set(album.song_ids || []); const tracks = appState.library.files.filter(f => ids.has(f.id)); playQueue(tracks, 0, false); }
 function playLibraryTrack(index) {
     const queue = getLibraryQueue();
     if (!queue.length || index < 0 || index >= queue.length) return;
-    if (!enhancedQueue.length) syncLibraryQueue(queue, index);
-    currentPlayerSource = "library";
-    enhancedQueueIndex = index;
-    currentLibraryIndex = index;
-    libraryPlaybackQueue = [...enhancedQueue];
+    if (!appState.player.queue.length) syncLibraryQueue(queue, index);
+    appState.player.source = "library";
+    appState.player.queueIndex = index;
+    appState.library.currentIndex = index;
+    appState.library.playbackQueue = [...appState.player.queue];
     saveEnhancedQueue();
     renderEnhancedQueue();
-    const file = enhancedQueue[index] || queue[index];
+    const file = appState.player.queue[index] || queue[index];
     const encoded = encodeURIComponent(file.name || "");
     const cover = file.cover || `api/library/cover/${encoded}`;
     const stream = file.stream || `api/library/stream/${encoded}`;
@@ -4972,7 +4958,7 @@ async function continuePlayingAutomatically() {
     const queue = [...getLibraryQueue(), ...candidates];
     const startIndex = queue.findIndex(item => trackKey(item) === trackKey(candidates[0]));
     syncLibraryQueue(queue, startIndex);
-    currentPlayerSource = "library";
+    appState.player.source = "library";
     renderEnhancedQueue();
     playLibraryTrack(startIndex);
     showToast("▶ Keeping playback going");
@@ -4999,9 +4985,9 @@ function advanceLibraryQueue(direction = 1, fromEnded = false) {
 }
 
 function advanceHomeQueue(direction = 1) {
-    const queue = window.xrobHomeQueue || [];
+    const queue = appState.player.homeQueue || [];
     if (!queue.length) return false;
-    const current = Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1;
+    const current = Number.isInteger(appState.player.homeQueueIndex) ? appState.player.homeQueueIndex : -1;
     let next = current + (direction >= 0 ? 1 : -1);
     if (next >= queue.length || next < 0) {
         if (playerRepeatMode !== "queue") {
@@ -5016,8 +5002,8 @@ function advanceHomeQueue(direction = 1) {
 }
 
 function playNextTrack() {
-    if (currentPlayerSource === "home") return advanceHomeQueue(1);
-    if (currentPlayerSource === "library") return advanceLibraryQueue(1);
+    if (appState.player.source === "home") return advanceHomeQueue(1);
+    if (appState.player.source === "library") return advanceLibraryQueue(1);
     return false;
 }
 
@@ -5026,8 +5012,8 @@ function playPreviousTrack() {
         audio.currentTime = 0;
         return true;
     }
-    if (currentPlayerSource === "home") return advanceHomeQueue(-1);
-    if (currentPlayerSource === "library") return advanceLibraryQueue(-1);
+    if (appState.player.source === "home") return advanceHomeQueue(-1);
+    if (appState.player.source === "library") return advanceLibraryQueue(-1);
     return false;
 }
 
@@ -5062,16 +5048,16 @@ function renderRecentlyAdded(
     }
 
 
-    window.xrobHomeQueue =
+    appState.player.homeQueue =
         recent;
 
     if (
         !Number.isInteger(
-            window.xrobHomeQueueIndex
+            appState.player.homeQueueIndex
         )
     ) {
 
-        window.xrobHomeQueueIndex =
+        appState.player.homeQueueIndex =
             -1;
     }
 
@@ -5173,7 +5159,7 @@ function renderRecentlyAdded(
                 "click",
                 () => {
 
-                    window.xrobHomeQueueIndex =
+                    appState.player.homeQueueIndex =
                         index;
 
                     playHomeTrack(
@@ -5212,7 +5198,7 @@ async function loadHome() {
         cachedRecent.length
     ) {
 
-        recentTracksCache =
+        appState.library.recentTracksCache =
             cachedRecent;
 
         renderRecentlyAdded(
@@ -5301,7 +5287,7 @@ async function loadHome() {
                 : [];
 
 
-        recentTracksCache =
+        appState.library.recentTracksCache =
             recent;
 
         saveRecentlyAddedCache(
@@ -5464,7 +5450,7 @@ function initWebSocket() {
                 } else if (data.type === "library_updated") {
                     appState.library.status = "ready";
                     appState.library.lastEventAt = Date.now();
-                    appState.library.revision = Number(appState.library.revision || 0) + 1;
+                    appState.library.revision = Number.isFinite(Number(data.revision)) ? Number(data.revision) : (Number(appState.library.revision || 0) + 1);
                     emitAppEvent("library:server-updated", data);
                     scheduleLibraryRefresh();
                 } else if (data.type === "storage_state") {
@@ -5476,6 +5462,9 @@ function initWebSocket() {
                 } else if (data.type === "stats_invalidated") {
                     emitAppEvent("stats:invalidated", data);
                     scheduleStatsRefresh(120);
+                } else if (data.type === "stats_invalidated") {
+                    emitAppEvent("stats:invalidated", data);
+                    loadStats();
                 } else if (data.type === "player_state") {
                     if (data.state?.ownerId === PLAYER_TAB_ID) {
                         applyAuthoritativeOwnedPlayerState(data.state, false);
@@ -5575,10 +5564,10 @@ function bindInfiniteScroll() {
 
 function playHomeTrack(index) {
 
-    currentPlayerSource = "home";
+    appState.player.source = "home";
 
     const queue =
-        window.xrobHomeQueue || [];
+        appState.player.homeQueue || [];
 
     if (
         index < 0 ||
@@ -5607,7 +5596,7 @@ function playHomeTrack(index) {
         return;
     }
 
-    window.xrobHomeQueueIndex =
+    appState.player.homeQueueIndex =
         index;
 
     const card =
@@ -5837,16 +5826,16 @@ async function startAppAfterAuth() {
         input?.focus();
     });
     document.querySelectorAll(".library-tab").forEach(button => button.addEventListener("click", () => {
-        libraryView = button.dataset.libraryView || "tracks";
-        selectedArtistId = null;
-        selectedAlbumId = null;
+        appState.library.view = button.dataset.appState.library.view || "tracks";
+        appState.library.selectedArtistId = null;
+        appState.library.selectedAlbumId = null;
         syncLibraryUiState();
         document.querySelectorAll(".library-tab").forEach(item => item.classList.toggle("active", item === button));
 
         // Statistics is a dedicated Library view: never leave the catalog list visible.
         const list = document.getElementById("libraryList");
         const dashboard = document.getElementById("libraryStatsDashboard");
-        const isStatistics = libraryView === "statistics";
+        const isStatistics = appState.library.view === "statistics";
         if (dashboard) dashboard.hidden = !isStatistics;
         if (list) list.hidden = isStatistics;
 
@@ -5871,7 +5860,7 @@ async function startAppAfterAuth() {
             if (d.library_state && d.library_state !== "scanning") {
                 clearInterval(warmupTimer);
                 appState.library.files = d.files || [];
-                libraryPlaybackQueue = appState.library.files;
+                appState.library.playbackQueue = appState.library.files;
                 appState.library.artists = d.artists || appState.library.artists;
                 appState.library.albums = d.albums || appState.library.albums;
                 saveLibraryCache();
@@ -5891,7 +5880,7 @@ async function startAppAfterAuth() {
     installAppFeatures();
     installLifecycleHandlers();
     installMediaSession();
-    document.getElementById("errorsButton")?.addEventListener("click",async()=>{const r=await apiFetch("api/errors");const d=await r.json();document.getElementById("errorsContent").innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';document.getElementById("errors-modal").hidden=false;});
+    document.getElementById("errorsButton")?.addEventListener("click",async()=>{const d=await apiFetchJson("api/errors",{}, {scope:"errors",action:"load"});document.getElementById("errorsContent").innerHTML=(d.errors||[]).length?`<pre>${escapeHtml(JSON.stringify(d.errors,null,2))}</pre>`:'<div class="queue-empty">No errors recorded.</div>';document.getElementById("errors-modal").hidden=false;});
     document.getElementById("errorsClose")?.addEventListener("click",()=>document.getElementById("errors-modal").hidden=true);
     restorePlayerState();
 
@@ -5904,7 +5893,7 @@ async function startAppAfterAuth() {
     if (statsPollTimer) window.clearInterval(statsPollTimer);
     statsPollTimer = window.setInterval(() => {
         if (!document.hidden && !statsRefreshTimer) loadStats().catch(error => reportAppError(error, {scope:"stats", action:"safety-refresh"}));
-    }, 60000);
+    }, 120000);
     scheduleStatsRefresh(0);
 }
 
@@ -5928,26 +5917,26 @@ function renderEnhancedQueue() {
     const box = document.getElementById("queueList");
     if (!box) return;
     box.innerHTML = "";
-    appState.player.queue = [...enhancedQueue];
-    appState.player.queueIndex = enhancedQueueIndex;
-    if (!enhancedQueue.length) {
+    appState.player.queue = [...appState.player.queue];
+    appState.player.queueIndex = appState.player.queueIndex;
+    if (!appState.player.queue.length) {
         box.innerHTML = '<div class="queue-empty"><i data-lucide="list-music" aria-hidden="true"></i><span>Queue is empty</span></div>';
         renderLocalIcons();
         return;
     }
-    enhancedQueue.forEach((t, i) => {
+    appState.player.queue.forEach((t, i) => {
         const row = document.createElement("div");
-        row.className = `queue-row ${i === enhancedQueueIndex ? "current" : ""}`;
+        row.className = `queue-row ${i === appState.player.queueIndex ? "current" : ""}`;
         row.draggable = true;
         row.dataset.index = String(i);
         row.innerHTML = `<span class="queue-drag" aria-hidden="true"><i data-lucide="grip-vertical"></i></span><img src="${escapeHtml(t.cover || "")}" alt=""><div class="queue-row-info"><strong>${escapeHtml(t.title || t.name || "Unknown")}</strong><span>${escapeHtml(t.artist || "Unknown Artist")}</span></div><button class="queue-next btn-refresh" title="Play next">Next</button><button class="queue-remove icon-btn" title="Remove" aria-label="Remove track"><i data-lucide="x" aria-hidden="true"></i></button>`;
         const nextButton = row.querySelector(".queue-next");
         const removeButton = row.querySelector(".queue-remove");
-        if (i === enhancedQueueIndex) { removeButton.disabled = true; nextButton.disabled = true; }
+        if (i === appState.player.queueIndex) { removeButton.disabled = true; nextButton.disabled = true; }
         nextButton.onclick = e => {
             e.stopPropagation();
-            if (i === enhancedQueueIndex || i === enhancedQueueIndex + 1) return;
-            const q = [...enhancedQueue]; const [item] = q.splice(i, 1);
+            if (i === appState.player.queueIndex || i === appState.player.queueIndex + 1) return;
+            const q = [...appState.player.queue]; const [item] = q.splice(i, 1);
             const currentId = currentSongId();
             const currentPos = q.findIndex(x => (x.id || x.name) === currentId);
             q.splice(Math.min(currentPos + 1, q.length), 0, item);
@@ -5956,8 +5945,8 @@ function renderEnhancedQueue() {
         };
         removeButton.onclick = e => {
             e.stopPropagation();
-            if (i === enhancedQueueIndex) return showToast("Current track stays in the queue while playing");
-            const q = [...enhancedQueue]; q.splice(i, 1);
+            if (i === appState.player.queueIndex) return showToast("Current track stays in the queue while playing");
+            const q = [...appState.player.queue]; q.splice(i, 1);
             const currentId = currentSongId();
             syncLibraryQueue(q, q.findIndex(x => (x.id || x.name) === currentId));
             renderEnhancedQueue();
@@ -5970,7 +5959,7 @@ function renderEnhancedQueue() {
             e.preventDefault();
             const from = Number(e.dataTransfer.getData("text/plain")); const to = Number(row.dataset.index);
             if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
-            const currentId = currentSongId(); const q = [...enhancedQueue]; const [item] = q.splice(from,1); q.splice(to,0,item);
+            const currentId = currentSongId(); const q = [...appState.player.queue]; const [item] = q.splice(from,1); q.splice(to,0,item);
             syncLibraryQueue(q, q.findIndex(x => (x.id || x.name) === currentId)); renderEnhancedQueue();
         });
         box.appendChild(row);
@@ -5986,8 +5975,8 @@ function setEnhancedQueue(queue, index = 0) {
 }
 
 function updateQueueIndicators(){
-    const total = Array.isArray(enhancedQueue) ? enhancedQueue.length : 0;
-    const nextCount = enhancedQueueIndex >= 0 ? Math.max(0, total - enhancedQueueIndex - 1) : total;
+    const total = Array.isArray(appState.player.queue) ? appState.player.queue.length : 0;
+    const nextCount = appState.player.queueIndex >= 0 ? Math.max(0, total - appState.player.queueIndex - 1) : total;
     ["topbarQueueCount","mobQueueTrackCount"].forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent=String(nextCount); });
     ["topbarQueueBtn","gp-queue-btn"].forEach(id=>{ const el=document.getElementById(id); if(el) el.setAttribute("aria-label", nextCount ? `Open queue · ${nextCount} up next` : "Open queue"); });
 }
@@ -6027,14 +6016,14 @@ function closeDownloadsDrawer(){
     emitAppEvent("ui:drawer", {drawer:"downloads", open:false});
 }
 
-async function saveQueueAsPlaylist(){ if(!enhancedQueue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await apiFetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:enhancedQueue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
+async function saveQueueAsPlaylist(){ if(!appState.player.queue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await apiFetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:appState.player.queue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
 
 async function renderLibraryCollections(mode){
     const list=document.getElementById("libraryList"); if(!list)return;
     list.innerHTML='<div class="downloads-empty"><div class="empty-title">Loading…</div></div>';
     let endpoint=mode==="recent"?"recent":mode==="most"?"most_played":null;
     if(!endpoint)return;
-    const r=await apiFetch("api/library/recent-most",{cache:"no-store"}); const d=await r.json(); const rows=d[endpoint]||[]; list.innerHTML="";
+    let d; try { d = await apiFetchJson("api/library/recent-most",{cache:"no-store"},{scope:"library",action:"recent-most"}); } catch (_) { renderEmpty(list,"circle-alert","Could not load history","Try again after checking the library."); return; } const rows=d[endpoint]||[]; list.innerHTML="";
     if(!rows.length){renderEmpty(list,"clock-3",mode==="recent"?"Nothing recently played":"No play history yet","Play some tracks to build this list.");return;}
     rows.forEach((t, rank)=>{ const f={...t,name:t.title,stream:t.stream,cover:t.cover,play_count:Number(t.plays||0)}; const card=createTrackCard(f,rows); card.classList.add("collection-track"); card.dataset.rank=String(rank+1); list.appendChild(card); });
     renderLocalIcons();
@@ -6351,7 +6340,7 @@ function renderDailyMixCards(title = "Daily Mix", subtitle = "Personalized from 
         card.innerHTML = `<img src="${escapeHtml(track.cover || '')}" alt="" loading="lazy"><strong>${escapeHtml(track.title || 'Unknown Track')}</strong><span>${escapeHtml(track.artist || 'Unknown Artist')}</span>`;
         card.addEventListener('click', () => {
             setEnhancedQueue(dailyMixTracks, index);
-            currentPlayerSource = 'library';
+            appState.player.source = 'library';
             playLibraryTrack(index);
         });
         card.querySelector('img')?.addEventListener('error', e => e.currentTarget.removeAttribute('src'), {once:true});
@@ -6403,7 +6392,7 @@ function installEnhancedFeatures(){
     loadEnhancedQueue(); loadEnhancedPositions(); applyRepeatLabel();
     document.getElementById("libraryStatsRefresh")?.addEventListener("click", loadDetailedLibraryStats);
     document.getElementById("dailyMixRefresh")?.addEventListener("click", () => loadDailyMix(true));
-    document.getElementById("dailyMixPlay")?.addEventListener("click", () => { if (!dailyMixTracks.length) return; setEnhancedQueue(dailyMixTracks, 0); currentPlayerSource="library"; playLibraryTrack(0); });
+    document.getElementById("dailyMixPlay")?.addEventListener("click", () => { if (!dailyMixTracks.length) return; setEnhancedQueue(dailyMixTracks, 0); appState.player.source="library"; playLibraryTrack(0); });
     loadDetailedLibraryStats();
     const restoredDailyMix = loadPersistedDailyMixState();
     if (!restoredDailyMix) loadDailyMix();
@@ -6433,8 +6422,8 @@ function installEnhancedFeatures(){
         if (event.key === "Escape") { closeDownloadsDrawer(); closeQueueDrawer(); }
     });
     document.getElementById("queueClear")?.addEventListener("click",()=>{
-    if (currentPlayerSource === "library" && enhancedQueue.length && enhancedQueueIndex >= 0) {
-        const current = enhancedQueue[enhancedQueueIndex];
+    if (appState.player.source === "library" && appState.player.queue.length && appState.player.queueIndex >= 0) {
+        const current = appState.player.queue[appState.player.queueIndex];
         syncLibraryQueue(current ? [current] : [], 0);
     } else {
         syncLibraryQueue([], -1);
@@ -6660,9 +6649,9 @@ function renderDevices() {
 }
 async function mirrorToDevice(device) {
     if(!device?.deviceId || !device.online || !device.tabId){showToast("⚠️ Device is offline");return;}
-    const state=isRemotePlayerOwner()?remotePlayerState:null; const src=state?.src||syncResourceUrl(audio?.src||"");
+    const state=isRemotePlayerOwner()?appState.player.remoteState:null; const src=state?.src||syncResourceUrl(audio?.src||"");
     if(!src){showToast("▶ Start a track first");return;}
-    const payload={targetId:device.tabId,src,title:state?.title||playerTitle?.textContent||"Unknown Track",artist:state?.artist||playerArtist?.textContent||"Unknown Artist",art:state?.art||playerArt?.src||"",songId:state?.songId||audio?.dataset?.xrobSongId||"",source:state?.source||currentPlayerSource||"library",currentTime:state?Number(state.currentTime||0):Number(audio?.currentTime||0)};
+    const payload={targetId:device.tabId,src,title:state?.title||playerTitle?.textContent||"Unknown Track",artist:state?.artist||playerArtist?.textContent||"Unknown Artist",art:state?.art||playerArt?.src||"",songId:state?.songId||audio?.dataset?.xrobSongId||"",source:state?.source||appState.player.source||"library",currentTime:state?Number(state.currentTime||0):Number(audio?.currentTime||0)};
     try{const r=await apiFetch("api/player/mirror",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Could not mirror playback");showToast(`▶ Playing on ${device.name||"device"} too`);}catch(err){showToast("❌ "+(err.message||"Mirror playback failed"));}
 }
 async function stopSyncDevice(device) {
@@ -6692,7 +6681,7 @@ async function remoteCommand(device, command, payload={}) {
 }
 async function switchToDevice(device) {
     if (!device?.tabId || device.deviceId===deviceId()) return;
-    const currentOwner = remotePlayerState?.ownerId || getPlayerOwner()?.id || PLAYER_TAB_ID;
+    const currentOwner = appState.player.remoteState?.ownerId || getPlayerOwner()?.id || PLAYER_TAB_ID;
     if (!device.online) { showToast("⚠️ Device is offline"); return; }
     try {
         const r=await apiFetch("api/player/handoff",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({newOwnerId:device.tabId,clientId:device.clientId||device.deviceId,deviceName:device.name||"Device",expectedOwnerId:currentOwner})});
@@ -6707,11 +6696,11 @@ function updateDeviceOwnershipUI() {
     const button=document.getElementById("gp-connect-btn");
     const takeover=document.getElementById("gp-device-takeover");
     const local = !isRemotePlayerOwner();
-    const ownerName = devices.find(d=>d.tabId===String(remotePlayerState?.ownerId||"") || d.isOwner)?.name || remotePlayerState?.deviceName || "another device";
+    const ownerName = devices.find(d=>d.tabId===String(appState.player.remoteState?.ownerId||"") || d.isOwner)?.name || appState.player.remoteState?.deviceName || "another device";
     const label = document.getElementById("gp-device-status");
     if (label) label.textContent = local ? deviceName() : ownerName;
     if (button) { button.dataset.remote=String(!local); button.title=local?"Choose a playback device":"Playback device"; }
-    if (takeover) { const hasRemote=Boolean(remotePlayerState?.src && remotePlayerState?.ownerId && remotePlayerState.ownerId!==PLAYER_TAB_ID); takeover.hidden=!hasRemote; takeover.disabled=!hasRemote; takeover.textContent="Resume here"; }
+    if (takeover) { const hasRemote=Boolean(appState.player.remoteState?.src && appState.player.remoteState?.ownerId && appState.player.remoteState.ownerId!==PLAYER_TAB_ID); takeover.hidden=!hasRemote; takeover.disabled=!hasRemote; takeover.textContent="Resume here"; }
 }
 function openConnect() { const m=document.getElementById("connect-modal"); if(!m)return; m.hidden=false; loadDevices(); renderDevices(); }
 function closeConnect() { const m=document.getElementById("connect-modal"); if(m)m.hidden=true; }
@@ -6808,7 +6797,7 @@ function renderTracks(list,query){return renderLibraryTracksWindowed(list,query)
 
 
 function installKeyboardShortcuts(){document.addEventListener("keydown",event=>{if(event.target?.matches?.("input,textarea,select,[contenteditable=true]"))return;if(event.key===" "){event.preventDefault();playBtn?.click();}else if(event.key==="ArrowRight"&&event.shiftKey){event.preventDefault();seekFromKeyboard(10);}else if(event.key==="ArrowLeft"&&event.shiftKey){event.preventDefault();seekFromKeyboard(-10);}else if(event.key.toLowerCase()==="m"){event.preventDefault();if(audio)audio.muted=!audio.muted;}});}
-function seekFromKeyboard(delta){const current=isRemotePlayerOwner()?Number(remotePlayerState?.currentTime||0):Number(audio?.currentTime||0),duration=isRemotePlayerOwner()?Number(remotePlayerState?.duration||0):Number(audio?.duration||0),next=Math.max(0,Math.min(duration||Infinity,current+delta));if(isRemotePlayerOwner())sendPlayerCommand("seek",{time:next});else if(audio){audio.currentTime=next;persistCurrentPosition(true);schedulePlayerStateBroadcast(true);}}
+function seekFromKeyboard(delta){const current=isRemotePlayerOwner()?Number(appState.player.remoteState?.currentTime||0):Number(audio?.currentTime||0),duration=isRemotePlayerOwner()?Number(appState.player.remoteState?.duration||0):Number(audio?.duration||0),next=Math.max(0,Math.min(duration||Infinity,current+delta));if(isRemotePlayerOwner())sendPlayerCommand("seek",{time:next});else if(audio){audio.currentTime=next;persistCurrentPosition(true);schedulePlayerStateBroadcast(true);}}
 
 function installDrawerSwipe(){["downloads-drawer","queue-drawer"].forEach(id=>{const el=document.getElementById(id);if(!el||el.dataset.swipeBound)return;el.dataset.swipeBound="1";let startX=0;let startY=0;el.addEventListener("touchstart",e=>{const t=e.touches[0];if(!t)return;startX=t.clientX;startY=t.clientY;},{passive:true});el.addEventListener("touchend",e=>{const t=e.changedTouches[0];if(!t)return;const dx=t.clientX-startX,dy=t.clientY-startY;if(window.innerWidth<=700&&Math.abs(dx)>90&&Math.abs(dx)>Math.abs(dy)*1.25){if(id==="downloads-drawer")closeDownloadsDrawer();else closeQueueDrawer();}},{passive:true});});}
 function applyNoHorizontalOverflow(){document.documentElement.style.overflowX="hidden";document.body.style.overflowX="hidden";}
@@ -6819,7 +6808,7 @@ function applySettingsToForm(settings){
     setValue("set_format",settings.audio_format||"mp3");setValue("set_quality",settings.audio_quality||"320K");setValue("set_metadata_mode",settings.metadata_mode||"auto");const artworkMode=settings.artwork_behavior||((settings.embed_thumbnail!==false)?"embed":"none");setValue("set_artwork_behavior",artworkMode);setChecked("set_thumb",artworkMode!=="none");setChecked("set_meta",settings.embed_metadata);setChecked("set_organize",settings.organize_by_artist);setChecked("set_scan_enabled",settings.scan_enabled!==false);setValue("set_scan_interval",settings.scan_interval_minutes||60);setValue("set_health_scan_interval",settings.health_scan_interval_minutes||360);setValue("set_title_cleanup_rules",settings.title_cleanup_rules||"");setValue("set_daily_mix_count",Math.max(5,Math.min(50,Number(settings.daily_mix_track_count||30))));storageSet("xrob_music_daily_mix_count",String(settings.daily_mix_track_count||30));
     playerSettings={...playerSettings,replaygain_enabled:settings.replaygain_enabled!==false,replaygain_mode:settings.replaygain_mode||"track",replaygain_preamp_db:Number(settings.replaygain_preamp_db||0),replaygain_prevent_clipping:settings.replaygain_prevent_clipping!==false,crossfade_seconds:Number(settings.crossfade_seconds||0),gapless_playback:settings.gapless_playback!==false,keep_playing:settings.keep_playing!==false};
     setChecked("set_replaygain_enabled",playerSettings.replaygain_enabled);setValue("set_replaygain_mode",playerSettings.replaygain_mode);setValue("set_replaygain_preamp",playerSettings.replaygain_preamp_db);setChecked("set_replaygain_clip",playerSettings.replaygain_prevent_clipping);setValue("set_crossfade",playerSettings.crossfade_seconds);setChecked("set_gapless",playerSettings.gapless_playback);setChecked("set_keep_playing",playerSettings.keep_playing);
-    setValue("set_download_location",settings.download_location||"");setValue("set_max_concurrent",settings.max_concurrent_downloads||3);setValue("set_max_pending",settings.max_pending_downloads||500);setChecked("set_auto_retry",settings.auto_retry_downloads!==false);setValue("set_retry_limit",settings.download_retry_limit??2);setValue("set_retry_backoff",settings.download_retry_backoff_seconds||3);setValue("set_filename_mode",settings.filename_mode||"title");setValue("set_cache_size",settings.cache_size_mb||256);setValue("set_stats_retention",settings.stats_retention_days||365);setValue("set_device_name",deviceName());setValue("set_web_username",settings.web_username||"admin");setValue("set_web_password","");renderStorage(settings.storage);updateQualityState();
+    setValue("set_download_location",settings.download_location || "/media/xrob-music");setValue("set_max_concurrent",settings.max_concurrent_downloads||3);setValue("set_max_pending",settings.max_pending_downloads||500);setChecked("set_auto_retry",settings.auto_retry_downloads!==false);setValue("set_retry_limit",settings.download_retry_limit??2);setValue("set_retry_backoff",settings.download_retry_backoff_seconds||3);setValue("set_filename_mode",settings.filename_mode||"title");setValue("set_cache_size",settings.cache_size_mb||256);setValue("set_stats_retention",settings.stats_retention_days||365);setValue("set_device_name",deviceName());setValue("set_web_username",settings.web_username||"admin");setValue("set_web_password","");renderStorage(settings.storage);updateQualityState();
 }
 async function saveSettings(){
     const gv=id=>document.getElementById(id)?.value||"",gc=id=>document.getElementById(id)?.checked??false;
@@ -6827,7 +6816,7 @@ async function saveSettings(){
     const data={audio_format:gv("set_format")||"mp3",audio_quality:gv("set_quality")||"320K",metadata_mode:gv("set_metadata_mode")||"auto",embed_thumbnail:artwork==="embed",embed_metadata:gc("set_meta"),organize_by_artist:gc("set_organize"),scan_enabled:gc("set_scan_enabled"),scan_interval_minutes:Math.max(5,Number(gv("set_scan_interval")||60)),health_scan_interval_minutes:Math.max(30,Math.min(10080,Number(gv("set_health_scan_interval")||360))),title_cleanup_rules:gv("set_title_cleanup_rules"),daily_mix_track_count:Math.max(5,Math.min(50,Number(gv("set_daily_mix_count")||30))),replaygain_enabled:gc("set_replaygain_enabled"),replaygain_mode:gv("set_replaygain_mode")||"track",replaygain_preamp_db:Math.max(-12,Math.min(12,Number(gv("set_replaygain_preamp")||0))),replaygain_prevent_clipping:gc("set_replaygain_clip"),crossfade_seconds:Math.max(0,Math.min(12,Number(gv("set_crossfade")||0))),gapless_playback:gc("set_gapless"),keep_playing:gc("set_keep_playing"),web_username:gv("set_web_username")||"admin",download_location:gv("set_download_location").trim(),max_concurrent_downloads:Math.max(1,Math.min(8,Number(gv("set_max_concurrent")||3))),max_pending_downloads:Math.max(50,Math.min(5000,Number(gv("set_max_pending")||500))),auto_retry_downloads:gc("set_auto_retry"),download_retry_limit:Math.max(0,Math.min(5,Number(gv("set_retry_limit")||2))),download_retry_backoff_seconds:Math.max(1,Math.min(60,Number(gv("set_retry_backoff")||3))),artwork_behavior:artwork,filename_mode:gv("set_filename_mode")||"title",cache_size_mb:Math.max(32,Math.min(2048,Number(gv("set_cache_size")||256))),stats_retention_days:Math.max(30,Math.min(3650,Number(gv("set_stats_retention")||365))),...(gv("set_web_password")?{web_password:gv("set_web_password")}: {})};
     try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Failed to save settings.");applySettingsToForm(d);saveDeviceName();showToast("✅ Settings saved");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent=data.download_location?"Settings saved. Changed download location applies to new downloads.":"Settings saved.";loadDevices();}catch(err){const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="❌ "+(err.message||"Failed to save settings.");showToast("❌ "+(err.message||"Failed to save settings."));}
 }
-async function resetSettings(){const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,health_scan_interval_minutes:360,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,keep_playing:true,download_location:"",max_concurrent_downloads:3,max_pending_downloads:500,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",cache_size_mb:256,stats_retention_days:365};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToForm(d);showToast("↺ Settings reset");}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
+async function resetSettings(){const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,health_scan_interval_minutes:360,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,keep_playing:true,download_location:"/media/xrob-music",max_concurrent_downloads:3,max_pending_downloads:500,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",cache_size_mb:256,stats_retention_days:365};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToForm(d);showToast("↺ Settings reset");}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
 
 
 function installLifecycleHandlers(){
@@ -6953,7 +6942,6 @@ function installAppFeatures(){
 
 window.navigate = navigate;
 window.switchTab = switchTab;
-window.filterLibrary = filterLibrary;
 window.openArtist = openArtist;
 window.playAlbum = playAlbum;
 window.playLibraryTrack = playLibraryTrack;
