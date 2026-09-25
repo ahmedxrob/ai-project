@@ -322,6 +322,39 @@ class LibraryCatalog:
             conn.commit()
         return records
 
+    def upsert_file(self, path, metadata_loader):
+        """Upsert one newly finalized media file without marking the rest missing."""
+        self.init_schema()
+        path = Path(path).resolve()
+        base = self.library_dir.resolve()
+        rel = str(path.relative_to(base))
+        stat = path.stat()
+        fp = file_fingerprint(path)
+        now = time.time()
+        metadata = metadata_loader(path)
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM library_songs WHERE relative_path=?", (rel,)).fetchone()
+            if row:
+                sid = str(row["id"])
+                created = row["created_at"] or now
+                strong_hash = str(row["strong_hash"] or "")
+            else:
+                fp_row = conn.execute(
+                    "SELECT * FROM library_songs WHERE fingerprint=? ORDER BY missing ASC, updated_at DESC LIMIT 1",
+                    (fp,),
+                ).fetchone()
+                sid = str(fp_row["id"]) if fp_row else persistent_song_id()
+                created = (fp_row["created_at"] if fp_row else now) or now
+                strong_hash = str(fp_row["strong_hash"] or "") if fp_row else ""
+            conn.execute(
+                """INSERT INTO library_songs(id,relative_path,fingerprint,strong_hash,size,mtime_ns,metadata_json,missing,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,0,?,?)
+                   ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,strong_hash=CASE WHEN excluded.strong_hash<>'' THEN excluded.strong_hash ELSE library_songs.strong_hash END,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
+                (sid, rel, fp, strong_hash, int(stat.st_size), int(stat.st_mtime_ns), json.dumps(metadata, ensure_ascii=False, separators=(",", ":")), created, now),
+            )
+            conn.commit()
+        return {"id": sid, "relative_path": rel, "metadata": metadata, "size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+
     def mark_missing(self, song_id):
         with self._connect() as conn:
             conn.execute("UPDATE library_songs SET missing=1,updated_at=? WHERE id=?", (time.time(), song_id))
