@@ -58,7 +58,7 @@ from .catalog import LibraryCatalog, StorageUnavailable, AUDIO_EXTENSIONS as CAT
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.0.0"
+SERVER_VERSION = "4.1.1"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -1235,6 +1235,18 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_play_history_song_id ON play_history(song_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_play_history_played_at ON play_history(played_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_play_history_song_played_at ON play_history(song_id, played_at DESC)")
+        # Legacy installations can have a reduced tasks schema. Add missing columns
+        # before creating indexes that depend on them; otherwise an upgrade can fail
+        # during startup with "no such column: tasks.last_updated".
+        task_columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        task_column_defs = {
+            "last_updated": "REAL DEFAULT 0",
+            "final_name": "TEXT DEFAULT ''",
+            "created_at": "REAL DEFAULT 0",
+        }
+        for column, definition in task_column_defs.items():
+            if column not in task_columns:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, last_updated DESC)")
         conn.execute("""CREATE TABLE IF NOT EXISTS player_sessions (session_key TEXT PRIMARY KEY, owner_id TEXT, client_id TEXT, state_json TEXT NOT NULL, updated_at REAL NOT NULL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id=1), started_at REAL, finished_at REAL, mode TEXT, status TEXT, message TEXT)""")
@@ -9340,7 +9352,9 @@ async def rest_similar_songs(request: Request,id: str = Query(...),count: int = 
         year=1.0 if target.get("year") and target.get("year")==song.get("year") else 0.0
         dur_a=safe_float(target.get("duration"),0); dur_b=safe_float(song.get("duration"),0)
         duration=max(0.0,1.0-min(abs(dur_a-dur_b),30.0)/30.0) if dur_a and dur_b else 0.0
-        same_album_artist=1.0 if _compact_identity(target.get("albumArtist")) and _compact_identity(target.get("albumArtist"))==_compact_identity(song.get("albumArtist")) else 0.0
+        target_album_artist = _compact_identity(target.get("albumArtist"))
+        song_album_artist = _compact_identity(song.get("albumArtist"))
+        same_album_artist = 1.0 if target_album_artist and target_album_artist == song_album_artist else 0.0
         score=artist*0.32+album_artist*0.12+album*0.14+genre*0.14+year*0.05+duration*0.08+same_album_artist*0.10+title*0.05
         scored.append((score,song))
     scored.sort(key=lambda x:(x[0],safe_int(x[1].get("play_count"),0)),reverse=True)
