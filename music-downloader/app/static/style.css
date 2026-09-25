@@ -5551,4 +5551,40 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 @media(max-width:700px){.gp-sleep-btn{display:none}.lyrics-modal-card{padding:14px}.lyrics-line{font-size:1rem}}
 
 .gp-sleep-btn{font-size:.76rem;border-radius:999px;padding:.38rem .65rem;cursor:pointer}
-\n/* XROB 4.3.1 canonical responsive/runtime layer. */\n.content-topbar-status[data-state="online"],\n.content-topbar-status[data-state="success"] { color: var(--text-secondary); }\n.content-topbar-status[data-state="offline"],\n.content-topbar-status[data-state="error"] { color: var(--danger, #ff6678); }\n.content-topbar-status[data-state="scanning"],\n.content-topbar-status[data-state="warning"],\n.content-topbar-status[data-state="unknown"] { color: var(--text-muted); }\n.content-topbar-status .status-dot { transition: background .2s ease, box-shadow .2s ease; }\n.content-topbar-status[data-state="online"] .status-dot,\n.content-topbar-status[data-state="success"] .status-dot { box-shadow: 0 0 0 4px rgba(50,210,120,.12); }\n.content-topbar-status[data-state="offline"] .status-dot,\n.content-topbar-status[data-state="error"] .status-dot { box-shadow: 0 0 0 4px rgba(255,80,105,.12); }\n\n.global-player-bar.music-player.is-idle {\n  --player-height: 56px;\n  min-height: 56px;\n  height: 56px;\n}\n.global-player-bar.music-player.is-idle .gp-progress-container,\n.global-player-bar.music-player.is-idle .gp-extra,\n.global-player-bar.music-player.is-idle .gp-time,\n.global-player-bar.music-player.is-idle .gp-connect-btn { display: none; }\n.global-player-bar.music-player.is-idle .gp-main-controls { justify-content: flex-end; }\n.global-player-bar.music-player.is-idle .gp-now-playing { min-width: 0; }\n\n@media (max-width: 768px) {\n  .bottom-nav.mobile-dock {\n    grid-template-columns: repeat(5, minmax(0,1fr));\n    min-height: calc(64px + env(safe-area-inset-bottom, 0px));\n    height: auto;\n    padding: 5px 6px env(safe-area-inset-bottom, 0px);\n    gap: 4px;\n  }\n  .bottom-nav.mobile-dock .nav-link {\n    min-width: 0;\n    min-height: 50px;\n    padding: 6px 3px;\n    gap: 3px;\n    border-radius: 13px;\n  }\n  .bottom-nav.mobile-dock .nav-text { font-size: 10px; line-height: 1.1; }\n  .bottom-nav.mobile-dock .nav-link > svg { width: 18px; height: 18px; flex-basis: 18px; }\n  .bottom-nav.mobile-dock .nav-count { font-size: 9px; min-width: 16px; height: 16px; right: 5px; top: 3px; }\n  .global-player-bar.music-player.is-idle { height: 56px; min-height: 56px; bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px)); }\n}\n@media (max-width: 520px) {\n  .page-heading p, .downloads-page-subtitle { font-size: 12px; }\n  .library-stats-bar { font-size: 11px; flex-wrap: wrap; }\n  .setting-desc, .catalog-detail-header p { font-size: 12px; line-height: 1.4; }\n  .result-card .track-artist { font-size: 11px; }\n  .result-card .btn-download { font-size: 10px; }\n  .bottom-nav.mobile-dock .nav-text { font-size: 10px; }\n  .bottom-nav.mobile-dock .nav-link { min-height: 50px; }\n}\n@media (min-width: 769px) {\n  .main-content.workspace-main { padding-bottom: calc(var(--player-height) + 30px); }\n}\n\n/* XROB 4.3.1 canonical final component rules. */\n@media (max-width: 768px) {\n  .bottom-nav.mobile-dock { grid-template-columns: repeat(5, minmax(0,1fr)); }\n}\n
+/* XROB 4.3.3 canonical UI layer: final source of truth for app chrome. */
+:root { --bottom-nav-height: 64px; --player-height: 72px; --player-idle-height: 52px; }
+.content-topbar-status { font-size: 12px; min-height: 30px; }
+.content-topbar-status .status-dot { width: 8px; height: 8px; min-width: 8px; }
+.global-player-bar.music-player { height: var(--player-height); min-height: var(--player-height); }
+.global-player-bar.music-player.is-idle { height: var(--player-idle-height); min-height: var(--player-idle-height); }
+.global-player-bar.music-player.is-idle .gp-progress-container,
+.global-player-bar.music-player.is-idle .gp-extra,
+.global-player-bar.music-player.is-idle .gp-time,
+.global-player-bar.music-player.is-idle .gp-connect-btn { display: none; }
+.global-player-bar.music-player.is-idle .gp-main-controls { justify-content: flex-end; }
+.global-player-bar.music-player.is-idle .gp-now-playing { min-width: 0; }
+.bottom-nav.mobile-dock { height: var(--bottom-nav-height); min-height: var(--bottom-nav-height); }
+.bottom-nav.mobile-dock .nav-link { min-width: 0; }
+.bottom-nav .nav-text { font-size: 11px; line-height: 1.15; }
+.bottom-nav .nav-count { font-size: 10px; min-width: 17px; height: 17px; }
+.page-heading p, .setting-desc, .catalog-detail-header p, .downloads-page-subtitle { font-size: 13px; line-height: 1.45; }
+.result-card .track-artist { font-size: 12px; }
+.result-card .btn-download { font-size: 12px; }
+.setting-label, .setting-title, .filter-label, .queue-row .queue-meta { font-size: 12px; }
+@media (max-width: 768px) {
+  body.music-app { padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px)); }
+  .main-content.workspace-main { padding-bottom: calc(var(--player-height) + var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 28px); }
+  .bottom-nav.mobile-dock { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 4px 6px env(safe-area-inset-bottom, 0px); }
+  .bottom-nav.mobile-dock .nav-link { min-height: 50px; height: auto; padding: 5px 3px; gap: 3px; }
+  .bottom-nav .nav-text { font-size: 12px; }
+  .bottom-nav .nav-link > svg { width: 18px; height: 18px; }
+  .global-player-bar.music-player { bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px)); }
+  .global-player-bar.music-player.is-idle { height: var(--player-idle-height); min-height: var(--player-idle-height); }
+}
+@media (max-width: 520px) {
+  .content-topbar-status { font-size: 11px; max-width: 48vw; overflow: hidden; text-overflow: ellipsis; }
+  .bottom-nav .nav-text { font-size: 12px; }
+  .page-heading p, .setting-desc, .catalog-detail-header p, .downloads-page-subtitle { font-size: 13px; line-height: 1.45; }
+  .main-content.workspace-main { padding-inline: 10px; }
+  .global-player-bar.music-player.is-idle { height: 50px; min-height: 50px; }
+}
