@@ -469,6 +469,23 @@ a { color:inherit; }
     border-color: var(--danger);
     color: #fff;
 }
+.badge-library, .badge-possible {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.badge-possible {
+    opacity: 0.92;
+}
+.search-match-path {
+    margin-top: 6px;
+    font-size: 11px;
+    opacity: 0.72;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .badge-library {
     padding: 7px 10px;
     border-radius: 17px;
