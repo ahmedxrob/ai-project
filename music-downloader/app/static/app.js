@@ -273,6 +273,67 @@ function emitAppEvent(type, detail = {}) {
     try { appEvents.dispatchEvent(new CustomEvent(type, { detail: payload })); } catch (_) {}
     return payload;
 }
+
+function syncLibraryUiState() {
+    // Keep every Library surface in sync with the single source of truth in
+    // appState.library. This function is intentionally idempotent because it is
+    // called by refresh, cache restore, player queue sync and navigation.
+    const library = appState.library || {};
+    const files = Array.isArray(library.files) ? library.files : [];
+    const artists = Array.isArray(library.artists) ? library.artists : [];
+    const albums = Array.isArray(library.albums) ? library.albums : [];
+    const count = files.length;
+    const view = String(library.view || "tracks");
+
+    // Navigation counters.
+    ["sideLibCount", "mobLibCount", "statTracks"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(count);
+    });
+    const statusTracks = document.getElementById("statusTracks");
+    if (statusTracks && appState.stats?.tracks == null) {
+        statusTracks.textContent = String(count);
+    }
+    const statusArtists = document.getElementById("statusArtists");
+    if (statusArtists && appState.stats?.artists == null) {
+        statusArtists.textContent = String(artists.length);
+    }
+    const statusAlbums = document.getElementById("statusAlbums");
+    if (statusAlbums && appState.stats?.albums == null) {
+        statusAlbums.textContent = String(albums.length);
+    }
+
+    // Library tabs use data-library-view in the canonical HTML. Do not read
+    // dataset.appState (which is a string and was the source of the runtime
+    // TypeError that stopped library rendering).
+    document.querySelectorAll(".library-tab").forEach(tab => {
+        const tabView = String(tab.dataset.libraryView || "");
+        const active = tabView === view;
+        tab.classList.toggle("active", active);
+        tab.setAttribute("aria-selected", active ? "true" : "false");
+    });
+
+    const list = document.getElementById("libraryList");
+    const dashboard = document.getElementById("libraryStatsDashboard");
+    const isStatistics = view === "statistics";
+    if (dashboard) dashboard.hidden = !isStatistics;
+    if (list) list.hidden = isStatistics;
+
+    const search = document.getElementById("libSearchQuery");
+    const clear = document.getElementById("librarySearchClear");
+    if (clear && search) clear.hidden = !String(search.value || "").trim();
+
+    // Keep player/library queue metadata coherent without replacing an active
+    // queue with the complete catalog.
+    if (appState.player && Array.isArray(appState.player.queue)) {
+        library.playbackQueue = appState.player.queue.length
+            ? [...appState.player.queue]
+            : files;
+        library.currentIndex = Number.isInteger(appState.player.queueIndex)
+            ? appState.player.queueIndex
+            : -1;
+    }
+}
 function onAppEvent(type, handler) { appEvents.addEventListener(type, handler); return () => appEvents.removeEventListener(type, handler); }
 function setAppState(section, key, value, meta = {}) {
     if (!appState[section] || typeof appState[section] !== "object") appState[section] = {};
@@ -1635,7 +1696,7 @@ function shuffleLibrary() {
     appState.library.view = "tracks";
     appState.library.selectedArtistId = null;
     appState.library.selectedAlbumId = null;
-    document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.appState.library.view === "tracks"));
+    document.querySelectorAll(".library-tab").forEach(btn => btn.classList.toggle("active", btn.dataset.libraryView === "tracks"));
     renderLibraryView();
     if (appState.player.source === "library" && appState.player.queue.length) {
         const { queue, index } = getActiveLibraryQueueState();
@@ -5821,7 +5882,7 @@ async function startAppAfterAuth() {
         input?.focus();
     });
     document.querySelectorAll(".library-tab").forEach(button => button.addEventListener("click", () => {
-        appState.library.view = button.dataset.appState.library.view || "tracks";
+        appState.library.view = button.dataset.libraryView || "tracks";
         appState.library.selectedArtistId = null;
         appState.library.selectedAlbumId = null;
         syncLibraryUiState();
