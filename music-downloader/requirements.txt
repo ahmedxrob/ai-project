@@ -3,4 +3,3 @@ uvicorn[standard]
 yt-dlp[default]==2026.08.19
 mutagen
 python-multipart
-cryptography==46.0.4
