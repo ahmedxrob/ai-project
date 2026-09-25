@@ -759,8 +759,12 @@
          <input id="set_crossfade" max="12" min="0" step="0.5" style="max-width:120px" type="number" value="0"/>
         </div>
         <div class="setting-row">
-         <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload the next local track to reduce transition gaps when crossfade is off.</div></div>
+         <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload and switch to the next local track just before the current one ends when crossfade is off.</div></div>
          <label class="switch"><input id="set_gapless" type="checkbox"/><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Keep playing</div><div class="setting-desc">When the queue ends, continue with a fresh personalized mix from your library.</div></div>
+         <label class="switch"><input id="set_keep_playing" type="checkbox"/><span class="slider"></span></label>
         </div>
        </div>
        <div class="settings-card page-section">
@@ -1101,6 +1105,9 @@
       <button aria-label="Next track" class="gp-skip-btn" id="gp-next-btn" title="Next track" type="button">
        <i aria-hidden="true" data-lucide="skip-forward"></i>
       </button>
+      <button aria-label="Open lyrics" class="gp-skip-btn" id="gp-lyrics-btn" title="Lyrics" type="button">
+       <i aria-hidden="true" data-lucide="mic-2"></i>
+      </button>
      </div>
      <!-- PROGRESS -->
      <div class="gp-progress-container">
@@ -1126,6 +1133,7 @@
       <i data-lucide="volume-2">
       </i>
      </span>
+     <button class="btn-secondary gp-sleep-btn" id="gp-sleep-btn" type="button" title="Sleep timer">Sleep: Off</button>
      <input aria-label="Volume" id="gp-volume" max="1" min="0" step=".01" type="range" value=".8"/>
     </div>
    </div>
@@ -1165,9 +1173,11 @@
     <button class="btn-refresh" type="button" id="queueRepeat">
      Repeat: Off
     </button>
+    <button class="btn-refresh" type="button" id="queueSleep">Sleep: Off</button>
    </div>
   </aside>
   </div>
+  <div class="xrob-modal overlay-region" hidden id="lyrics-modal"><div class="xrob-modal-card lyrics-modal-card"><div class="xrob-modal-head"><div><strong id="lyricsTitle">Lyrics</strong><div class="modal-subtitle">Synced lyrics when available, otherwise plain text.</div></div><button class="icon-btn" id="lyricsClose" type="button" aria-label="Close lyrics"><i data-lucide="x"></i></button></div><div id="lyricsContent" class="lyrics-content"></div></div></div>
   <div class="xrob-modal overlay-region" hidden id="connect-modal"><div class="xrob-modal-card connect-card"><div class="xrob-modal-head"><div><strong>Connect</strong><div class="modal-subtitle">Switch playback between Xrob Music devices.</div></div><button class="icon-btn" id="connectClose" type="button" aria-label="Close"><i data-lucide="x"></i></button></div><div class="device-list" id="deviceList"></div></div></div>
   <div class="xrob-modal overlay-region" hidden id="batch-download-modal"><div class="xrob-modal-card"><div class="xrob-modal-head"><div><strong>Batch downloads</strong><div class="modal-subtitle">One URL per line. Metadata can be supplied when known.</div></div><button class="icon-btn" id="batchDownloadClose" type="button"><i data-lucide="x"></i></button></div><form id="batchDownloadForm"><label>URLs<textarea id="batchDownloadUrls" rows="8" placeholder="https://…
 https://…" required></textarea></label><div class="batch-meta-grid"><label>Artist<input id="batchDownloadArtist" placeholder="Optional"/></label><label>Album<input id="batchDownloadAlbum" placeholder="Optional"/></label></div><div class="settings-actions"><button class="save-btn" type="submit"><i data-lucide="download"></i> Add downloads</button></div></form></div></div>
