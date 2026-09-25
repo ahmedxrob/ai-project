@@ -58,7 +58,7 @@ from .catalog import LibraryCatalog, StorageUnavailable, AUDIO_EXTENSIONS as CAT
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.2.1"
+SERVER_VERSION = "4.2.2"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -75,6 +75,8 @@ async def app_lifespan(_app):
             tasks.append(LIBRARY_HEALTH_TASK)
         if LIBRARY_REFRESH_TASK is not None:
             tasks.append(LIBRARY_REFRESH_TASK)
+        if RUNTIME_MAINTENANCE_TASK is not None:
+            tasks.append(RUNTIME_MAINTENANCE_TASK)
         for task in tasks:
             if task and not task.done():
                 task.cancel()
@@ -509,10 +511,37 @@ async def _enforce_rate_limit(request: Request, bucket: str, limit: int, window_
 
 
 def _cleanup_rate_limit_state_sync():
-    now = time.monotonic()
-    stale = [key for key, entries in RATE_LIMIT_STATE.items() if not entries or now - entries[-1] >= 300]
+    mono_now = time.monotonic()
+    wall_now = time.time()
+    stale = [key for key, entries in RATE_LIMIT_STATE.items() if not entries or mono_now - entries[-1] >= 300]
     for key in stale:
         RATE_LIMIT_STATE.pop(key, None)
+    stale_login = [key for key, entries in AUTH_LOGIN_ATTEMPTS.items() if not entries or wall_now - entries[-1] >= AUTH_LOGIN_WINDOW]
+    for key in stale_login:
+        AUTH_LOGIN_ATTEMPTS.pop(key, None)
+    stale_subsonic = [key for key, entries in SUBSONIC_FAILURE_STATE.items() if not entries or mono_now - entries[-1] >= SUBSONIC_FAILURE_LIMIT[1]]
+    for key in stale_subsonic:
+        SUBSONIC_FAILURE_STATE.pop(key, None)
+
+
+async def runtime_maintenance_loop():
+    while True:
+        try:
+            _cleanup_rate_limit_state_sync()
+            _cleanup_auth_sessions(force=False)
+            async with COVER_LOCKS_GUARD:
+                stale_cover_keys = []
+                for key, entry in COVER_LOCKS.items():
+                    if isinstance(entry, dict) and int(entry.get("users") or 0) <= 0 and not entry.get("lock").locked():
+                        stale_cover_keys.append(key)
+                for key in stale_cover_keys:
+                    COVER_LOCKS.pop(key, None)
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            await write_app_error("runtime_maintenance", _sanitize_external_error(exc, "Runtime maintenance failed."))
+            await asyncio.sleep(60)
 
 
 def _is_authenticated(token):
@@ -555,7 +584,7 @@ BACKUP_ENCRYPTION_NONCE_BYTES = 12
 BACKUP_ENCRYPTION_ITERATIONS = 390000
 BACKUP_PASSWORD_MIN_LENGTH = 12
 LIBRARY_REFRESH_DEBOUNCE_SECONDS = 1.5
-DB_SCHEMA_VERSION = 7
+DB_SCHEMA_VERSION = 8
 LIBRARY_HEALTH_INTERVAL_SECONDS = 6 * 60 * 60
 LIBRARY_HEALTH_MAX_FILES_PER_RUN = 50000
 DUPLICATE_DURATION_TOLERANCE_SECONDS = 2.5
@@ -681,6 +710,7 @@ QUEUED_TASK_IDS = set()
 BACKGROUND_TASKS = set()
 SCHEDULED_SCANNER_TASK = None
 LIBRARY_HEALTH_TASK = None
+RUNTIME_MAINTENANCE_TASK = None
 LIBRARY_SCAN_LOCK = asyncio.Lock()
 LIBRARY_CATALOG_LOCK = asyncio.Lock()
 LIBRARY_REFRESH_TASK = None
@@ -692,6 +722,9 @@ LIBRARY_REFRESH_REASONS = set()
 LIBRARY_REFRESH_WAITERS = []
 COVER_LOCKS = {}
 COVER_LOCKS_GUARD = asyncio.Lock()
+SIMILARITY_RESULTS_CACHE = {}
+SIMILARITY_CACHE_MAX = 512
+SIMILARITY_CACHE_TTL = 60.0
 HISTORY_MAX_ROWS = 100000
 APP_ERRORS_MAX_ROWS = 5000
 MAX_PLAYLIST_SONGS = 10000
@@ -899,6 +932,7 @@ def invalidate_library_cache():
     global LIBRARY_CACHE, LIBRARY_CACHE_TIME
     LIBRARY_CACHE = None
     LIBRARY_CACHE_TIME = 0.0
+    SIMILARITY_RESULTS_CACHE.clear()
 
 
 def load_settings():
@@ -1257,6 +1291,8 @@ def init_db():
             "last_updated": "REAL DEFAULT 0",
             "final_name": "TEXT DEFAULT ''",
             "created_at": "REAL DEFAULT 0",
+            "content_identity": "TEXT DEFAULT ''",
+            "identity_version": "INTEGER DEFAULT 1",
         }
         for column, definition in task_column_defs.items():
             if column not in task_columns:
@@ -1323,6 +1359,10 @@ def init_db():
             conn.execute("ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0")
         if "resume_available" not in columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN resume_available INTEGER DEFAULT 0")
+        if "content_identity" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN content_identity TEXT DEFAULT ''")
+        if "identity_version" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN identity_version INTEGER DEFAULT 1")
         # Older releases did not have identity_key. Fill it deterministically and
         # neutralize duplicate legacy active rows before creating the partial unique index.
         for row in conn.execute("SELECT id,title,artist,url,status,identity_key FROM tasks WHERE status IN ('queued','downloading','processing')").fetchall():
@@ -1367,8 +1407,8 @@ def db_save_task_sync(task):
                 INSERT INTO tasks (
                     id, title, artist, album, url, elementId, status, percent, speed,
                     step, error, last_updated, final_name, created_at, identity_key,
-                    retry_count, resume_available
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    retry_count, resume_available, content_identity, identity_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title, artist=excluded.artist, album=excluded.album,
                     url=excluded.url, elementId=excluded.elementId, status=excluded.status,
@@ -1376,7 +1416,8 @@ def db_save_task_sync(task):
                     error=excluded.error, last_updated=excluded.last_updated,
                     final_name=excluded.final_name, created_at=excluded.created_at,
                     identity_key=excluded.identity_key, retry_count=excluded.retry_count,
-                    resume_available=excluded.resume_available
+                    resume_available=excluded.resume_available, content_identity=excluded.content_identity,
+                    identity_version=excluded.identity_version
                 """,
                 (
                     task.get("id"), task.get("title"), task.get("artist"), task.get("album"),
@@ -1385,6 +1426,7 @@ def db_save_task_sync(task):
                     task.get("last_updated", 0), task.get("final_name", ""),
                     task.get("created_at", task.get("last_updated", 0)), identity_key,
                     safe_int(task.get("retry_count"), 0), 1 if task.get("resume_available") else 0,
+                    str(task.get("content_identity") or ""), safe_int(task.get("identity_version"), 1),
                 ),
             )
         except sqlite3.IntegrityError as exc:
@@ -1661,10 +1703,18 @@ def _sanitize_player_state(state):
 
     if "queue" in cleaned:
         if isinstance(cleaned.get("queue"), list):
-            cleaned["queue"] = [
-                t for t in (_sanitize_player_track(item) for item in cleaned["queue"][:PLAYER_STATE_MAX_QUEUE_ITEMS])
-                if t
-            ]
+            raw_queue=[_sanitize_player_track(item) for item in cleaned["queue"][:PLAYER_STATE_MAX_QUEUE_ITEMS]]
+            raw_queue=[item for item in raw_queue if item]
+            if LIBRARY_CATALOG is not None:
+                try:
+                    id_map=LIBRARY_CATALOG.resolve_song_ids([item.get("id") for item in raw_queue if item.get("id")])
+                    for item in raw_queue:
+                        sid=str(item.get("id") or "")
+                        if sid in id_map:
+                            item["id"]=id_map[sid]
+                except Exception:
+                    pass
+            cleaned["queue"] = raw_queue
         else:
             cleaned.pop("queue", None)
 
@@ -1689,10 +1739,17 @@ def _sanitize_player_state(state):
             daily = dict(daily)
             if "tracks" in daily:
                 tracks = daily.get("tracks") if isinstance(daily.get("tracks"), list) else []
-                daily["tracks"] = [
-                    t for t in (_sanitize_player_track(item) for item in tracks[:PLAYER_STATE_MAX_DAILY_MIX_ITEMS])
-                    if t
-                ]
+                cleaned_tracks=[t for t in (_sanitize_player_track(item) for item in tracks[:PLAYER_STATE_MAX_DAILY_MIX_ITEMS]) if t]
+                if LIBRARY_CATALOG is not None:
+                    try:
+                        id_map=LIBRARY_CATALOG.resolve_song_ids([item.get("id") for item in cleaned_tracks if item.get("id")])
+                        for item in cleaned_tracks:
+                            sid=str(item.get("id") or "")
+                            if sid in id_map:
+                                item["id"]=id_map[sid]
+                    except Exception:
+                        pass
+                daily["tracks"] = cleaned_tracks
             if "variant" in daily:
                 try:
                     daily["variant"] = max(0, int(daily.get("variant", 0) or 0))
@@ -2314,7 +2371,7 @@ def read_metadata_sync(path):
                 "album": album,
                 "album_artist": album_artist,
                 "album_version": first_tag("album_version", "albumversion", "version", "edition", "release_version"),
-                "is_compilation": str(first_tag("compilation", "itunescompilation")).strip().lower() in {"1", "true", "yes"},
+                "is_compilation": str(first_tag("compilation", "itunescompilation", "album_type", "release_type")).strip().lower() in {"1", "true", "yes", "compilation", "various artists"},
                 "genre": first_tag("genre"),
                 "year": first_tag("date", "year"),
                 "track": parse_tag_int(first_tag("tracknumber", "track"), fallback["track"]),
@@ -2352,7 +2409,7 @@ def read_metadata_sync(path):
                 metadata["album"] = mt("album") or metadata["album"]
                 metadata["album_artist"] = mt("albumartist", "album artist") or metadata["album_artist"] or metadata["artist"]
                 metadata["album_version"] = mt("albumversion", "version", "edition", "release_version") or metadata.get("album_version", "")
-                compilation_raw = mt("compilation", "itunescompilation")
+                compilation_raw = mt("compilation", "itunescompilation", "albumtype", "release_type")
                 if compilation_raw:
                     metadata["is_compilation"] = compilation_raw.strip().lower() in {"1", "true", "yes"}
                 metadata["genre"] = mt("genre") or metadata["genre"]
@@ -2458,6 +2515,21 @@ def _resolve_song_id_sync(song_id):
         return str(song_id or "")[:512]
     return LIBRARY_CATALOG.resolve_song_id(song_id)
 
+def _resolve_song_ids_sync(song_ids):
+    if LIBRARY_CATALOG is None:
+        return {str(v):str(v) for v in song_ids or [] if str(v)}
+    aliases=LIBRARY_CATALOG.resolve_song_ids(song_ids)
+    return {str(v): aliases.get(str(v), str(v)) for v in song_ids or [] if str(v)}
+
+
+@app.post("/api/player/resolve-queue")
+async def api_player_resolve_queue(payload: dict = Body(...)):
+    raw=payload.get("ids") if isinstance(payload,dict) else []
+    if not isinstance(raw,list):
+        raise HTTPException(400,"ids must be an array")
+    ids=[str(v)[:512] for v in raw[:PLAYER_STATE_MAX_QUEUE_ITEMS] if str(v)]
+    return {"mapping": await asyncio.to_thread(_resolve_song_ids_sync, ids)}
+
 
 async def fast_library_snapshot():
     rows = await asyncio.to_thread(lambda: [row for row in _catalog_rows_sync() if not int(row.get("missing") or 0)])
@@ -2507,8 +2579,12 @@ async def build_library(force=False):
 
             path=(DOWNLOAD_DIR / str(row["relative_path"])).resolve()
             artist_name=clean_metadata_text(metadata.get("artist"),"Unknown Artist")
-            inferred_compilation = bool(metadata.get("is_compilation")) or len(album_artist_votes.get(album_group_key, set())) >= 2
-            album_artist=clean_metadata_text(metadata.get("album_artist"),artist_name)
+            explicit_album_artist=clean_metadata_text(metadata.get("album_artist"), "")
+            explicit_compilation=bool(metadata.get("is_compilation")) or _compact_identity(explicit_album_artist) == "various artists"
+            vote_count=len(album_artist_votes.get(album_group_key, set()))
+            infer_from_folder=(not explicit_album_artist or _compact_identity(explicit_album_artist) in {"unknown", "unknown artist", _compact_identity(artist_name)}) and vote_count >= 2
+            inferred_compilation=explicit_compilation or infer_from_folder
+            album_artist=explicit_album_artist or artist_name
             if inferred_compilation:
                 album_artist = "Various Artists"
             album_name=clean_metadata_text(metadata.get("album"),path.stem)
@@ -2688,28 +2764,41 @@ def cover_cache_path(path):
 async def _cover_lock_for(cover):
     key = str(cover)
     async with COVER_LOCKS_GUARD:
-        lock = COVER_LOCKS.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            COVER_LOCKS[key] = lock
-        return lock
+        entry = COVER_LOCKS.get(key)
+        if not isinstance(entry, dict):
+            entry = {"lock": asyncio.Lock(), "users": 0}
+            COVER_LOCKS[key] = entry
+        entry["users"] = int(entry.get("users") or 0) + 1
+        return key, entry["lock"]
+
+
+async def _cover_lock_release(key, lock):
+    async with COVER_LOCKS_GUARD:
+        entry = COVER_LOCKS.get(key)
+        if isinstance(entry, dict) and entry.get("lock") is lock:
+            entry["users"] = max(0, int(entry.get("users") or 0) - 1)
+            if entry["users"] == 0 and not lock.locked():
+                COVER_LOCKS.pop(key, None)
 
 
 async def ensure_cover(path):
     cover = await asyncio.to_thread(cover_cache_path, path)
-    lock = await _cover_lock_for(cover)
-    async with lock:
-        if await asyncio.to_thread(cover.exists):
-            return cover
-        command = ["ffmpeg", "-y", "-i", str(path), "-an", "-vcodec", "mjpeg", "-vframes", "1", str(cover)]
-        try:
-            await asyncio.to_thread(
-                subprocess.run, command, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=10,
-            )
-        except Exception:
-            return None
-        return cover if await asyncio.to_thread(cover.exists) else None
+    lock_key, lock = await _cover_lock_for(cover)
+    try:
+        async with lock:
+            if await asyncio.to_thread(cover.exists):
+                return cover
+            command = ["ffmpeg", "-y", "-i", str(path), "-an", "-vcodec", "mjpeg", "-vframes", "1", str(cover)]
+            try:
+                await asyncio.to_thread(
+                    subprocess.run, command, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=10,
+                )
+            except Exception:
+                return None
+            return cover if await asyncio.to_thread(cover.exists) else None
+    finally:
+        await _cover_lock_release(lock_key, lock)
 
 async def resolve_cover_id(item_id):
 
@@ -2837,16 +2926,18 @@ async def _metadata_http_json(url, headers=None, timeout=12, attempts=3):
     return {}
 
 
-async def _musicbrainz_lookup(artist, title, cleanup_rules=""):
+async def _musicbrainz_lookup(artist, title, cleanup_rules="", album_hint=""):
     global _METADATA_LAST_MB_CALL
     artist = _usable_artist_hint(artist)
     title = clean_title_with_rules(title, cleanup_rules)
-    cache_key = ("mb", _compact_identity(artist), _compact_identity(title))
+    cache_key = ("mb", _compact_identity(artist), _compact_identity(title), _compact_identity(album_hint))
     if cache_key in _METADATA_CACHE:
         return _METADATA_CACHE[cache_key]
     if not title:
         return None
     queries = [f'artist:"{artist}" AND recording:"{title}"'] if artist else []
+    if album_hint:
+        queries.insert(0, f'artist:"{artist}" AND recording:"{title}" AND release:"{album_hint}"' if artist else f'recording:"{title}" AND release:"{album_hint}"')
     queries.append(f'recording:"{title}"')
     best = None
     async with _METADATA_LOOKUP_SEMAPHORE:
@@ -2865,7 +2956,7 @@ async def _musicbrainz_lookup(artist, title, cleanup_rules=""):
                         "Accept": "application/json",
                     }, timeout=12, attempts=3)
                 except Exception as exc:
-                    await write_app_error("musicbrainz", str(exc))
+                    await write_app_error("musicbrainz", _sanitize_external_error(exc, "MusicBrainz lookup failed.", 900))
                     continue
             for rec in data.get("recordings") or []:
                 rec_title = clean_metadata_text(rec.get("title"), "")
@@ -2878,10 +2969,27 @@ async def _musicbrainz_lookup(artist, title, cleanup_rules=""):
                 artist_score = _similarity(artist, rec_artist) if artist else 0.0
                 score = title_score if not artist else title_score * 0.72 + artist_score * 0.28
                 releases = rec.get("releases") or []
-                release = next((r for r in releases if clean_metadata_text(r.get("title"), "")), None)
+                def release_score(rel):
+                    rel_title=clean_metadata_text(rel.get("title"), "")
+                    album_score=_similarity(album_hint, rel_title) if album_hint else 0.0
+                    tokens_target=_duplicate_variant_tokens(album_hint)
+                    tokens_rel=_duplicate_variant_tokens(rel_title)
+                    variant_bonus=0.20 if tokens_target and tokens_target == tokens_rel else 0.0
+                    official_bonus=0.10 if str(rel.get("status") or "").casefold() == "official" else 0.0
+                    group=rel.get("release-group") or {}
+                    primary_bonus=0.05 if str(group.get("primary-type") or "").casefold() == "album" else 0.0
+                    secondary=group.get("secondary-types") or []
+                    secondary_penalty=0.05 if secondary and not tokens_target else 0.0
+                    return album_score*0.70 + variant_bonus + official_bonus + primary_bonus - secondary_penalty
+                release=max(releases, key=release_score) if releases else None
+                candidate_album=clean_metadata_text((release or {}).get("title"), "")
+                candidate_version=""
+                if candidate_album:
+                    raw_tokens=_duplicate_variant_tokens(candidate_album)
+                    candidate_version=" ".join(sorted(raw_tokens))
                 candidate = {
                     "title": rec_title, "artist": rec_artist or artist,
-                    "album": clean_metadata_text((release or {}).get("title"), ""),
+                    "album": candidate_album, "album_version": candidate_version,
                     "score": float(score), "source": "MusicBrainz", "id": rec.get("id"),
                 }
                 artist_ok = not artist or artist_score >= 0.55
@@ -2908,7 +3016,7 @@ async def _itunes_lookup(artist, title, cleanup_rules=""):
         try:
             data = await _metadata_http_json(url, {"User-Agent": f"Xrob Music/{SERVER_VERSION}"}, timeout=10, attempts=3)
         except Exception as exc:
-            await write_app_error("itunes", str(exc))
+            await write_app_error("itunes", _sanitize_external_error(exc, "Apple catalog lookup failed.", 900))
             _cache_set_bounded(_METADATA_CACHE, cache_key, None, METADATA_CACHE_MAX)
             return None
     best = None
@@ -2938,10 +3046,13 @@ async def resolve_source_metadata(url):
         if proc.returncode != 0:
             raise RuntimeError(err.decode("utf-8", errors="ignore")[-600:] or "Source metadata lookup failed")
         payload = json.loads(out.decode("utf-8", errors="ignore"))
-        return _source_metadata_from_payload(payload) if isinstance(payload, dict) else {}
+        result = _source_metadata_from_payload(payload) if isinstance(payload, dict) else {}
+        result["_lookup_ok"] = True
+        return result
     except Exception as exc:
-        await write_app_error("source_metadata", str(exc))
-        return {}
+        safe = _sanitize_external_error(exc, "Source metadata lookup failed.", 900)
+        await write_app_error("source_metadata", safe)
+        return {"_lookup_ok": False, "_lookup_error": safe}
 
 
 async def resolve_download_metadata(raw_title, artist, album, settings):
@@ -2961,7 +3072,7 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
         return result
     lookup_tasks = []
     if mode in {"auto", "musicbrainz"}:
-        lookup_tasks.append(_musicbrainz_lookup(artist, title, rules_text))
+        lookup_tasks.append(_musicbrainz_lookup(artist, title, rules_text, supplied_album))
     if mode == "auto":
         lookup_tasks.append(_itunes_lookup(artist, title, rules_text))
     candidates = [c for c in await asyncio.gather(*lookup_tasks, return_exceptions=True) if isinstance(c, dict) and c.get("score", 0.0) >= 0.72]
@@ -2973,7 +3084,7 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
         gap = max(0.0, best_score - second_score)
         chosen_album = supplied_album or clean_metadata_text(best.get("album"), "")
         level = _normalize_confidence(best_score, gap)
-        result.update({"title": normalize_catalog_title(best.get("title") or title, rules_text), "artist": _usable_artist_hint(best.get("artist")) or artist, "album": chosen_album, "confidence": best_score, "confidence_level": level, "confidence_gap": gap, "source": best.get("source") or "Catalog", "reason": f"Catalog confidence {best_score:.2f}; {level} confidence; candidate gap {gap:.2f}"})
+        result.update({"title": normalize_catalog_title(best.get("title") or title, rules_text), "artist": _usable_artist_hint(best.get("artist")) or artist, "album": chosen_album, "album_version": best.get("album_version", ""), "confidence": best_score, "confidence_level": level, "confidence_gap": gap, "source": best.get("source") or "Catalog", "reason": f"Catalog confidence {best_score:.2f}; {level} confidence; candidate gap {gap:.2f}"})
     return result
 
 
@@ -3090,18 +3201,15 @@ async def download_worker(stop_event=None):
 
             if str(task.get("title") or "").strip().casefold() in {"unknown track", "unknown", ""}:
                 source_meta = await resolve_source_metadata(str(task.get("url") or ""))
-                if source_meta:
+                if source_meta.get("_lookup_ok"):
                     task["title"] = normalize_catalog_title(source_meta.get("title") or task.get("title") or "Unknown Track", settings.get("title_cleanup_rules", ""))
                     task["artist"] = clean_metadata_text(source_meta.get("artist"), task.get("artist") or "Unknown Artist")
                     task["album"] = clean_metadata_text(source_meta.get("album"), task.get("album") or "")
                     task["duration"] = safe_float(source_meta.get("duration"), task.get("duration") or 0)
-                    normalized = normalize_duplicate_key(task.get("title", ""), task.get("artist", ""))
-                    content_identity = normalized
-                    if task.get("album"):
-                        content_identity = f"{content_identity}|{_compact_identity(task.get('album'))}" if content_identity else _compact_identity(task.get('album'))
-                    task["content_identity"] = content_identity
+                    task["content_identity"] = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0), source_meta.get("album_version", ""))
+                    task["identity_version"] = 2
                     url_hash = hashlib.sha256(str(task.get("url", "")).encode("utf-8")).hexdigest()
-                    task["identity_key"] = f"{normalized}|{url_hash}" if normalized else f"url:{url_hash}"
+                    task["identity_key"] = f"{task.get('content_identity')}|{url_hash}" if task.get("content_identity") else f"url:{url_hash}"
                     await notify_task_update(task, force_save=True)
 
             # Re-check immediately before provider work. A content-identity reservation
@@ -3709,17 +3817,40 @@ async def startup_event():
                 task["resume_available"] = any(path.is_file() for path in DOWNLOAD_DIR.glob(f"{task['id']}.*") if path.suffix.lower() in {".part", ".ytdl"})
             except OSError:
                 task["resume_available"] = False
-            if not task.get("identity_key"):
-                normalized = normalize_duplicate_key(task.get("title", ""), task.get("artist", ""))
-                url_hash = hashlib.sha256(str(task.get("url", "")).encode("utf-8")).hexdigest()
-                task["identity_key"] = f"{normalized}|{url_hash}" if normalized else f"url:{url_hash}"
+            if int(task.get("identity_version") or 0) < 2:
+                task["content_identity"] = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0))
+                task["identity_version"] = 2
+            if not task.get("content_identity"):
+                task["content_identity"] = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0))
+            url_hash = hashlib.sha256(str(task.get("url", "")).encode("utf-8")).hexdigest()
+            task["identity_key"] = f"{task.get('content_identity')}|{url_hash}" if task.get("content_identity") else f"url:{url_hash}"
 
             await db_save_task(
                 task,
                 force=True,
             )
 
-    global LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, DOWNLOAD_WORKER_TASKS, SCHEDULED_SCANNER_TASK, QUEUED_TASK_IDS
+    # Rebuild v2 identities for every active persisted task and collapse same-track races.
+    for task in sorted(TASKS.values(), key=lambda item: safe_float(item.get("created_at", 0), 0)):
+        if task.get("status") not in ACTIVE_TASK_STATES:
+            continue
+        identity = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0))
+        if identity and identity in startup_seen_content_identities:
+            task["status"] = "cancelled"
+            task["step"] = "Duplicate active download suppressed"
+            task["error"] = "An active download for this track already exists."
+            task["cancel_requested"] = False
+            task["last_updated"] = time.time() * 1000
+        else:
+            if identity:
+                startup_seen_content_identities.add(identity)
+            task["content_identity"] = identity
+            task["identity_version"] = 2
+            url_hash = hashlib.sha256(str(task.get("url", "")).encode("utf-8")).hexdigest()
+            task["identity_key"] = f"{identity}|{url_hash}" if identity else f"url:{url_hash}"
+        await db_save_task(task, force=True)
+
+    global LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, DOWNLOAD_WORKER_TASKS, SCHEDULED_SCANNER_TASK, QUEUED_TASK_IDS, RUNTIME_MAINTENANCE_TASK
     QUEUED_TASK_IDS.clear()
     settings = await load_settings_async()
     await resize_download_workers(settings.get("max_concurrent_downloads", MAX_CONCURRENT_DOWNLOADS))
@@ -3732,6 +3863,9 @@ async def startup_event():
 
     if LIBRARY_HEALTH_TASK is None or LIBRARY_HEALTH_TASK.done():
         LIBRARY_HEALTH_TASK = asyncio.create_task(background_library_health_scanner())
+
+    if RUNTIME_MAINTENANCE_TASK is None or RUNTIME_MAINTENANCE_TASK.done():
+        RUNTIME_MAINTENANCE_TASK = asyncio.create_task(runtime_maintenance_loop())
 
     await _refill_download_queue()
 
@@ -3934,12 +4068,9 @@ def _search_duplicate_state_sync(items, tasks):
         url = str(task.get("url") or "").strip()
         if url:
             active_by_url.add(url)
-        key = str(task.get("content_identity") or task.get("identity_key") or "")
-        if "|" in key and str(task.get("url") or ""):
-            # identity_key historically included a URL hash; content_identity is preferred.
-            key = str(task.get("content_identity") or "") or key.rsplit("|", 1)[0]
-        if not key:
-            key = normalize_duplicate_key(task.get("title", ""), task.get("artist", ""))
+        key = str(task.get("content_identity") or "")
+        if int(task.get("identity_version") or 0) < 2 or not key:
+            key = _download_content_identity(task.get("title", ""), task.get("artist", ""), task.get("album", ""), task.get("duration", 0))
         if key:
             active_by_identity.add(key)
 
@@ -3959,33 +4090,44 @@ def _search_duplicate_state_sync(items, tasks):
         row = dict(item)
         row_url = str(row.get("url") or "")
         match = None
+        match_score = 0.0
         for title, artist in alternatives(row):
             identity = normalize_duplicate_key(title, artist)
             if identity and identity in by_identity:
                 match = by_identity[identity]
+                match_score = 1.0
                 break
-            # Exact title/artist candidate lookup for cases where accents or YouTube
-            # uploader hints differ slightly from the library metadata.
             title_key = normalize_identity_text(title, title=True)
             artist_key = normalize_identity_text(artist)
             candidates = by_artist.get(artist_key, []) if artist_key else []
             if not candidates and title_key:
                 candidates = by_title.get(title_key, [])
             best = None
-            best_score = 0.0
+            alternative_score = 0.0
             for candidate in candidates[:80]:
                 score, _ = _candidate_duplicate_score({"title": title, "artist": artist, "album": row.get("album", ""), "duration": row.get("duration", 0)}, candidate)
-                if score > best_score:
-                    best_score, best = score, candidate
-            if best is not None and best_score >= 0.87:
-                match = best
-                break
+                if score > alternative_score:
+                    alternative_score, best = score, candidate
+            if best is not None and alternative_score > match_score:
+                match_score, match = alternative_score, best
         primary_identity = normalize_duplicate_key(row.get("title", ""), row.get("artist", ""))
-        row["already_downloaded"] = bool(match)
+        duration_close = True
+        if match is not None and safe_float(row.get("duration"), 0) and safe_float(match.get("duration"), 0):
+            duration_close = abs(safe_float(row.get("duration"), 0) - safe_float(match.get("duration"), 0)) <= DUPLICATE_DURATION_TOLERANCE_SECONDS
+        target_variants = _duplicate_variant_tokens(row.get("title", "")) | _duplicate_variant_tokens(row.get("album", ""))
+        match_variants = (_duplicate_variant_tokens(match.get("title", "")) | _duplicate_variant_tokens(match.get("album", ""))) if match else set()
+        variant_compatible = not target_variants and not match_variants or target_variants == match_variants
+        exact_enough = bool(match and duration_close and variant_compatible and match_score >= 0.92)
+        row["already_downloaded"] = exact_enough
+        row["possible_match"] = bool(match and not exact_enough and match_score >= 0.84 and duration_close and variant_compatible)
+        row["match_confidence"] = round(float(match_score), 3) if match else 0.0
         row["library_match"] = match or None
-        row["already_queued"] = bool((row_url and row_url in active_by_url) or (primary_identity and primary_identity in active_by_identity))
+        active_content_identity = _download_content_identity(row.get("title", ""), row.get("artist", ""), row.get("album", ""), row.get("duration", 0))
+        row["already_queued"] = bool((row_url and row_url in active_by_url) or (active_content_identity and active_content_identity in active_by_identity) or (primary_identity and primary_identity in active_by_identity))
         if row["already_downloaded"]:
             row["download_state"] = "library"
+        elif row["possible_match"]:
+            row["download_state"] = "possible"
         elif row["already_queued"]:
             row["download_state"] = "queued"
         else:
@@ -4371,36 +4513,49 @@ async def find_existing_track(title, artist, album="", duration=0):
     return await asyncio.to_thread(find_existing_track_fast_sync, title, artist, album, duration)
 
 
+def _download_content_identity(title, artist, album="", duration=0, album_version=""):
+    title_key = normalize_identity_text(title, title=True)
+    artist_key = normalize_identity_text(artist)
+    album_key = normalize_identity_text(album)
+    variants = sorted((_duplicate_variant_tokens(title) | _duplicate_variant_tokens(album) | _duplicate_variant_tokens(album_version)))
+    duration_value = safe_float(duration, 0)
+    duration_bucket = int(round(duration_value / 5.0) * 5) if duration_value > 0 else 0
+    parts = ["v2", artist_key, title_key, album_key, str(duration_bucket)]
+    parts.append(",".join(variants))
+    return "|".join(parts) if title_key and artist_key else ""
+
+
 async def _prepare_download_identity(url, title, artist, album, duration, settings):
-    """Resolve provider metadata before any download is queued, then normalize identity."""
+    """Resolve provider metadata and retain explicit confidence when the provider lookup fails."""
     source = await resolve_source_metadata(url)
     cleanup_rules = settings.get("title_cleanup_rules", "")
+    source_ok = bool(source.get("_lookup_ok", False)) if isinstance(source, dict) else False
     resolved_title = normalize_catalog_title(source.get("title") or title or "Unknown Track", cleanup_rules)
     resolved_artist = _usable_artist_hint(source.get("artist")) or clean_metadata_text(artist, "Unknown Artist")
-    resolved_album = clean_metadata_text(album, "") or clean_metadata_text(source.get("album"), "")
-    resolved_duration = safe_float(duration, 0) or safe_float(source.get("duration"), 0)
+    resolved_album = clean_metadata_text(source.get("album"), "") or clean_metadata_text(album, "")
+    resolved_duration = safe_float(source.get("duration"), 0) or safe_float(duration, 0)
     if resolved_title.casefold() in {"unknown track", "unknown"} and title:
         resolved_title = normalize_catalog_title(title, cleanup_rules)
-    return resolved_title, resolved_artist or "Unknown Artist", resolved_album, resolved_duration
+    confidence = 0.82 if source_ok and (source.get("title") or source.get("artist")) else 0.25
+    source_label = "provider" if source_ok else "supplied_fallback"
+    content_identity = _download_content_identity(resolved_title, resolved_artist, resolved_album, resolved_duration, source.get("album_version", "") if source_ok else "")
+    return resolved_title, resolved_artist or "Unknown Artist", resolved_album, resolved_duration, confidence, source_label, content_identity
 
 
 async def _check_download_availability(url, title, artist, album, duration, settings):
-    resolved_title, resolved_artist, resolved_album, resolved_duration = await _prepare_download_identity(url, title, artist, album, duration, settings)
+    resolved_title, resolved_artist, resolved_album, resolved_duration, confidence, source_label, content_identity = await _prepare_download_identity(url, title, artist, album, duration, settings)
     existing = await find_existing_track(resolved_title, resolved_artist, resolved_album, resolved_duration)
     if existing:
-        return {"status": "already_downloaded", "file": existing, "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration}
-    content_identity = normalize_duplicate_key(resolved_title, resolved_artist)
-    if resolved_album:
-        content_identity = f"{content_identity}|{_compact_identity(resolved_album)}" if content_identity else _compact_identity(resolved_album)
+        return {"status": "already_downloaded", "file": existing, "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "metadata_confidence": confidence, "metadata_source": source_label}
     for task in TASKS.values():
         if task.get("status") not in {"queued", "downloading", "processing"}:
             continue
         task_identity = str(task.get("content_identity") or "")
         if content_identity and task_identity == content_identity:
-            return {"status": "already_queued", "task_id": task.get("id"), "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration}
+            return {"status": "already_queued", "task_id": task.get("id"), "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "metadata_confidence": confidence, "metadata_source": source_label}
         if str(task.get("url") or "") == url:
-            return {"status": "already_queued", "task_id": task.get("id"), "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration}
-    return {"status": "available", "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "content_identity": content_identity}
+            return {"status": "already_queued", "task_id": task.get("id"), "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "metadata_confidence": confidence, "metadata_source": source_label}
+    return {"status": "available", "title": resolved_title, "artist": resolved_artist, "album": resolved_album, "duration": resolved_duration, "content_identity": content_identity, "metadata_confidence": confidence, "metadata_source": source_label}
 
 
 @app.post("/api/download/check")
@@ -4426,7 +4581,7 @@ async def api_download(
     url = validate_media_url(payload.get("url"))
 
     settings = await load_settings_async()
-    task_title, task_artist, task_album, task_duration = await _prepare_download_identity(
+    task_title, task_artist, task_album, task_duration, metadata_confidence, metadata_source, prepared_content_identity = await _prepare_download_identity(
         url,
         str(payload.get("title", "Unknown Track") or "Unknown Track"),
         str(payload.get("artist", "Unknown Artist") or "Unknown Artist"),
@@ -4440,12 +4595,9 @@ async def api_download(
     # Make the Save operation idempotent. The lock prevents two rapid/concurrent
     # clicks from both passing the duplicate check before either task is registered.
     async with DOWNLOAD_GUARD:
-        target_key = normalize_duplicate_key(task_title, task_artist)
-        if task_album:
-            target_key = f"{target_key}|{_compact_identity(task_album)}" if target_key else _compact_identity(task_album)
-        content_identity = target_key
+        content_identity = prepared_content_identity or _download_content_identity(task_title, task_artist, task_album, task_duration)
         url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
-        identity_key = f"{target_key}|{url_hash}" if target_key else f"url:{url_hash}"
+        identity_key = f"{content_identity}|{url_hash}" if content_identity else f"url:{url_hash}"
         for task in TASKS.values():
             if task.get("identity_key"):
                 task_key = task["identity_key"]
@@ -4487,6 +4639,9 @@ async def api_download(
             "album": task_album,
             "duration": task_duration,
             "content_identity": content_identity,
+            "identity_version": 2,
+            "metadata_confidence": metadata_confidence,
+            "metadata_source": metadata_source,
             "url": url,
             "elementId": str(payload.get("elementId", "")),
             "status": "queued",
@@ -9025,9 +9180,9 @@ async def api_backup_encrypted(payload: dict = Body(...)):
 
 
 async def _stop_runtime_for_restore():
-    global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, LIBRARY_REFRESH_TASK, DOWNLOAD_WORKER_TASKS
+    global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, LIBRARY_REFRESH_TASK, DOWNLOAD_WORKER_TASKS, RUNTIME_MAINTENANCE_TASK
     tasks = list(DOWNLOAD_WORKER_TASKS)
-    for candidate in (SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, LIBRARY_REFRESH_TASK):
+    for candidate in (SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, LIBRARY_REFRESH_TASK, RUNTIME_MAINTENANCE_TASK):
         if candidate is not None:
             tasks.append(candidate)
     for task in tasks:
@@ -9040,6 +9195,7 @@ async def _stop_runtime_for_restore():
     LIBRARY_WARMUP_TASK = None
     LIBRARY_HEALTH_TASK = None
     LIBRARY_REFRESH_TASK = None
+    RUNTIME_MAINTENANCE_TASK = None
     QUEUED_TASK_IDS.clear()
     # Remove queued jobs; the restored DB becomes the sole source of truth.
     while True:
@@ -9051,7 +9207,7 @@ async def _stop_runtime_for_restore():
 
 
 async def _restart_runtime_after_restore():
-    global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, DOWNLOAD_WORKER_TASKS, LIBRARY_CATALOG
+    global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, LIBRARY_HEALTH_TASK, DOWNLOAD_WORKER_TASKS, LIBRARY_CATALOG, RUNTIME_MAINTENANCE_TASK
     if LIBRARY_CATALOG is None:
         LIBRARY_CATALOG = LibraryCatalog(DB_FILE, DOWNLOAD_DIR, LIBRARY_INDEX_FILE)
     await asyncio.to_thread(init_db)
@@ -9061,6 +9217,7 @@ async def _restart_runtime_after_restore():
     SCHEDULED_SCANNER_TASK = asyncio.create_task(scheduled_library_scanner())
     LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
     LIBRARY_HEALTH_TASK = asyncio.create_task(background_library_health_scanner())
+    RUNTIME_MAINTENANCE_TASK = asyncio.create_task(runtime_maintenance_loop())
     QUEUED_TASK_IDS.clear()
     await _refill_download_queue()
 
@@ -9382,12 +9539,12 @@ async def scheduled_library_scanner():
                 try:
                     await request_library_refresh(reason="scheduled", mode="quick", wait=False)
                 except Exception as exc:
-                    await write_app_error("scheduled_scan", str(exc))
+                    await write_app_error("scheduled_scan", _sanitize_external_error(exc, "Scheduled scan failed.", 900))
             else:
                 await asyncio.sleep(300)
         except asyncio.CancelledError: return
         except Exception as exc:
-            await write_app_error("scheduled_scan",str(exc)); await asyncio.sleep(300)
+            await write_app_error("scheduled_scan",_sanitize_external_error(exc, "Scheduled scan failed.", 900)); await asyncio.sleep(300)
 
 
 # ============================================================
@@ -9471,25 +9628,47 @@ async def rest_similar_songs(request: Request,id: str = Query(...),count: int = 
     if error: return error
     target=await find_song(id)
     if not target: return subsonic_error(request,70,"Song not found.")
+    wanted=_bounded_subsonic_int(count,20,500)
+    cache_key=(str(target.get("id") or id),wanted)
+    cached=SIMILARITY_RESULTS_CACHE.get(cache_key)
+    now=time.monotonic()
+    if cached and now-cached[0] < SIMILARITY_CACHE_TTL:
+        chosen_ids=cached[1]
+        library=await build_library()
+        by_id=library.get("_songs_by_id",{})
+        chosen=[by_id[sid] for sid in chosen_ids if sid in by_id]
+        return make_subsonic_response({"status":"ok","version":SUBSONIC_VERSION,"serverVersion":SERVER_VERSION,"openSubsonic":True,"type":"Xrob Music","similarSongs2":{"song":await songs_to_subsonic_async(chosen)}},request)
     library=await build_library()
+    songs=library["songs"]
+    target_artist=_compact_identity(target.get("artist")); target_genre=_compact_identity(target.get("genre")); target_album_artist=_compact_identity(target.get("albumArtist")); target_album=_compact_identity(target.get("album")); target_year=str(target.get("year") or "")
+    dur_a=safe_float(target.get("duration"),0)
+    candidates=[]; seen=set()
+    for song in songs:
+        if song["id"]==target["id"] or song["id"] in seen: continue
+        artist_key=_compact_identity(song.get("artist")); genre_key=_compact_identity(song.get("genre")); album_artist_key=_compact_identity(song.get("albumArtist")); album_key=_compact_identity(song.get("album")); year=str(song.get("year") or "")
+        dur_b=safe_float(song.get("duration"),0)
+        duration_band=bool(dur_a and dur_b and abs(dur_a-dur_b)<=45)
+        if not (artist_key==target_artist or genre_key==target_genre or album_artist_key==target_album_artist or album_key==target_album or (target_year and year==target_year) or duration_band):
+            continue
+        seen.add(song["id"]); candidates.append(song)
+    if len(candidates) < wanted * 4:
+        candidates=[song for song in songs if song["id"]!=target["id"]][:min(len(songs), max(wanted*8, 160))]
     scored=[]
-    for song in library["songs"]:
-        if song["id"]==target["id"]: continue
+    for song in candidates:
         title=_similarity(target.get("title",""),song.get("title",""))
         artist=_similarity(target.get("artist",""),song.get("artist",""))
         album_artist=_similarity(target.get("albumArtist",""),song.get("albumArtist",""))
         album=_similarity(target.get("album",""),song.get("album",""))
         genre=1.0 if target.get("genre") and target.get("genre").casefold()==song.get("genre","").casefold() else 0.0
         year=1.0 if target.get("year") and target.get("year")==song.get("year") else 0.0
-        dur_a=safe_float(target.get("duration"),0); dur_b=safe_float(song.get("duration"),0)
+        dur_b=safe_float(song.get("duration"),0)
         duration=max(0.0,1.0-min(abs(dur_a-dur_b),30.0)/30.0) if dur_a and dur_b else 0.0
-        target_album_artist = _compact_identity(target.get("albumArtist"))
-        song_album_artist = _compact_identity(song.get("albumArtist"))
-        same_album_artist = 1.0 if target_album_artist and target_album_artist == song_album_artist else 0.0
+        same_album_artist = 1.0 if target_album_artist and target_album_artist == _compact_identity(song.get("albumArtist")) else 0.0
         score=artist*0.32+album_artist*0.12+album*0.14+genre*0.14+year*0.05+duration*0.08+same_album_artist*0.10+title*0.05
         scored.append((score,song))
     scored.sort(key=lambda x:(x[0],safe_int(x[1].get("play_count"),0)),reverse=True)
-    chosen=[song for _score,song in scored[:_bounded_subsonic_int(count,20,500)]]
+    chosen=[song for _score,song in scored[:wanted]]
+    _cache_set_bounded(SIMILARITY_RESULTS_CACHE,cache_key,([time.monotonic(),[s["id"] for s in chosen]]),SIMILARITY_CACHE_MAX)
     return make_subsonic_response({"status":"ok","version":SUBSONIC_VERSION,"serverVersion":SERVER_VERSION,"openSubsonic":True,"type":"Xrob Music","similarSongs2":{"song":await songs_to_subsonic_async(chosen)}},request)
 
 
