@@ -251,11 +251,11 @@ const appState = {
     network: { online: navigator.onLine !== false, visibility: document.visibilityState || "visible", lastTransitionAt: Date.now(), lastReason: "startup" },
     lifecycle: { installed: false, featuresInstalled: false, lastLeaveAt: 0, lastRecoveryAt: 0 },
     search: { query: "", page: 1, loadingMore: false, hasMore: true, requestId: 0, pending: false, lastCompletedAt: 0, lastError: null },
-    library: { ready: false, revision: 0, lastRefreshAt: 0, status: "unknown", files: [], artists: [], albums: [] },
+    library: { ready: false, revision: 0, lastRefreshAt: 0, status: "unknown", files: [], artists: [], albums: [], view: "tracks", selectedArtistId: null, selectedAlbumId: null, playbackQueue: [] },
     downloads: { filter: "active", history: [], tasks: [], lastSignature: "", lastUpdatedAt: 0 },
     devices: { items: [], lastUpdatedAt: 0 },
-    player: { ownerId: null, source: null, playing: false, songId: null, currentTime: 0, duration: 0, lastEventAt: 0 },
-    stats: { tracks: null, artists: null, albums: null, plays: null, totalBytes: null },
+    player: { ownerId: null, source: null, playing: false, songId: null, currentTime: 0, duration: 0, lastEventAt: 0, queue: [], queueIndex: -1, remoteState: null },
+    stats: { tracks: null, artists: null, albums: null, plays: null, totalBytes: null, folderSize: null },
     ui: { activePage: null, queueOpen: false, downloadsOpen: false },
     errors: { recent: [], last: null }
 };
@@ -893,7 +893,8 @@ function applyRemotePlayerState(state, fromServer = false) {
     }
     if (merged.dailyMix) applyRemoteDailyMixState(merged.dailyMix);
     updatePlayerInfo(merged.title, merged.artist, merged.art);
-    if (player) player.style.display = "grid";
+    if (player) { player.style.display = "grid"; updatePlayerBarMode(); }
+    syncLibraryUiState();
     if (volume && Number.isFinite(Number(merged.volume))) volume.value = Math.max(0, Math.min(1, Number(merged.volume)));
     const shouldFollowLinkedPlayback = playerSyncMode === "linked" && playerSyncDeviceIds.includes(String(PLAYER_TAB_ID)) && Boolean(merged.src);
     if (shouldFollowLinkedPlayback && !applyingRemotePlayerCommand) syncRemoteAudioState(merged);
@@ -1253,7 +1254,7 @@ async function resolveEnhancedQueueIds() {
             if (newId && newId !== oldId) { changed = true; return {...item, id:newId}; }
             return item;
         });
-        if (changed) { saveEnhancedQueue(); libraryPlaybackQueue=[...enhancedQueue]; }
+        if (changed) { saveEnhancedQueue(); libraryPlaybackQueue=[...enhancedQueue]; syncLibraryUiState(); appState.player.queue=[...enhancedQueue]; appState.player.queueIndex=enhancedQueueIndex; }
     } catch (_) {}
 }
 
@@ -1268,6 +1269,9 @@ function loadEnhancedQueue() {
             );
             libraryPlaybackQueue = [...enhancedQueue];
             currentLibraryIndex = enhancedQueueIndex;
+            syncLibraryUiState();
+            appState.player.queue=[...enhancedQueue];
+            appState.player.queueIndex=enhancedQueueIndex;
             resolveEnhancedQueueIds().catch(() => {});
         } else {
             enhancedQueue = [];
@@ -2415,6 +2419,13 @@ function stopVisualizer() {
 }
 
 
+function updatePlayerBarMode() {
+    if (!player) return;
+    const active = Boolean((audio && audio.src) || String(currentPlayerSource || "").trim());
+    player.classList.toggle("is-idle", !active);
+    player.dataset.mode = active ? "active" : "idle";
+}
+
 function updatePlayerInfo(
     title,
     artist,
@@ -2439,6 +2450,7 @@ function updatePlayerInfo(
         playerArt.src = art || "";
         playerArt.alt = title || "";
     }
+    updatePlayerBarMode();
     updateMediaSession();
 }
 
@@ -3061,6 +3073,15 @@ function renderStorage(storage) {
     if (fill) fill.style.width = `${pct.toFixed(1)}%`;
     const progress = fill?.parentElement;
     if (progress) progress.setAttribute("aria-valuenow", String(Math.round(pct)));
+    const topStatus=document.getElementById("contentStorageStatus");
+    const topText=document.getElementById("contentStorageStatusText");
+    if (topStatus) topStatus.dataset.state = String(data.state || "unknown");
+    if (topText) {
+        if (data.state === "offline" || !data.exists) topText.textContent = "Music storage offline";
+        else if (!data.writable) topText.textContent = "Music storage read-only";
+        else if (data.state === "unknown") topText.textContent = "Checking music storage…";
+        else topText.textContent = "Music storage online";
+    }
     if (status) {
         if (data.state === "offline" || !data.exists) { status.textContent = data.error ? `Library storage is offline: ${data.error}` : "Library storage is unavailable."; status.dataset.state = "error"; }
         else if (data.state === "unknown") { status.textContent = "Checking library storage…"; status.dataset.state = "warning"; }
@@ -3085,7 +3106,7 @@ async function loadSettings() {
         const settings = await response.json();
         applySettingsToForm(settings);
     } catch (error) {
-        console.warn("Settings load:", error);
+        reportAppError(error, {scope:"settings", action:"load"});
     }
 }
 
@@ -3279,9 +3300,11 @@ async function refreshLibraryCache() {
         libraryPlaybackQueue = enhancedQueue.length ? [...enhancedQueue] : appState.library.files;
         appState.library.artists = data.artists || [];
         appState.library.albums = data.albums || [];
+        syncLibraryUiState();
         appState.library.ready = data.ready !== false;
-        appState.library.status = String(data.storage_state || data.storage?.state || (appState.library.ready ? "ready" : "loading"));
+        appState.library.status = String(data.library_state || data.storage_state || data.storage?.state || (appState.library.ready ? "ready" : "loading"));
         appState.library.storageError = String(data.storage?.error || "");
+        renderStorage(data.storage || {state: data.storage_state || appState.library.status});
         appState.library.revision += 1;
         appState.library.lastRefreshAt = Date.now();
         emitAppEvent("library:updated", {revision: appState.library.revision, count: appState.library.files.length, status: appState.library.status});
@@ -3343,59 +3366,38 @@ async function refreshLibraryCache() {
         }
 
     } catch (error) {
-
-        console.warn(
-            "Library:",
-            error
-        );
+        reportAppError(error, {scope:"library", action:"refresh"});
+        throw error;
     }
 }
 
-
-const liveStats = {
-    tracks: null,
-    artists: null,
-    albums: null,
-    all_play_count: null,
-    total_bytes: null,
-    folder_size: null
-};
-
-function setLiveCounter(id, value) {
-    const element = document.getElementById(id);
-    if (!element) return;
-    const number = Number(value);
-    if (!Number.isFinite(number) || number < 0) return;
-    element.textContent = String(Math.trunc(number));
-}
 
 function applyLiveStats(stats) {
     if (!stats || stats.ready === false) return;
-
-    appState.stats = { tracks: stats.tracks ?? null, artists: stats.artists ?? null, albums: stats.albums ?? null, plays: stats.all_play_count ?? null, totalBytes: stats.total_bytes ?? null };
+    appState.stats = {
+        tracks: Number.isFinite(Number(stats.tracks)) ? Number(stats.tracks) : appState.stats.tracks,
+        artists: Number.isFinite(Number(stats.artists)) ? Number(stats.artists) : appState.stats.artists,
+        albums: Number.isFinite(Number(stats.albums)) ? Number(stats.albums) : appState.stats.albums,
+        plays: Number.isFinite(Number(stats.all_play_count)) ? Number(stats.all_play_count) : appState.stats.plays,
+        totalBytes: Number.isFinite(Number(stats.total_bytes)) ? Number(stats.total_bytes) : appState.stats.totalBytes,
+        folderSize: typeof stats.folder_size === "string" ? stats.folder_size : appState.stats.folderSize
+    };
     emitAppEvent("stats:updated", appState.stats);
-
-    ["tracks", "artists", "albums", "all_play_count", "total_bytes"].forEach(key => {
-        const value = Number(stats[key]);
-        if (Number.isFinite(value) && value >= 0) liveStats[key] = value;
-    });
-    if (typeof stats.folder_size === "string" && stats.folder_size.trim()) liveStats.folder_size = stats.folder_size;
-
-    if (liveStats.tracks !== null) ["statTracks", "downloadStatTracks", "homeTracks", "statusTracks", "subsonicTracks"].forEach(id => setLiveCounter(id, liveStats.tracks));
-    if (liveStats.artists !== null) ["statArtists", "homeArtists", "statusArtists"].forEach(id => setLiveCounter(id, liveStats.artists));
-    if (liveStats.albums !== null) ["statAlbums", "downloadStatAlbums", "homeAlbums", "statusAlbums"].forEach(id => setLiveCounter(id, liveStats.albums));
-    if (liveStats.all_play_count !== null) ["homePlays", "statusPlays"].forEach(id => setLiveCounter(id, liveStats.all_play_count));
-    if (liveStats.folder_size !== null) {
-        const el = document.getElementById("statusSize");
-        if (el) el.textContent = liveStats.folder_size;
-    }
+    if (appState.stats.tracks !== null) ["statTracks","downloadStatTracks","homeTracks","statusTracks","subsonicTracks"].forEach(id => setLiveCounter(id, appState.stats.tracks));
+    if (appState.stats.artists !== null) ["statArtists","homeArtists","statusArtists"].forEach(id => setLiveCounter(id, appState.stats.artists));
+    if (appState.stats.albums !== null) ["statAlbums","downloadStatAlbums","homeAlbums","statusAlbums"].forEach(id => setLiveCounter(id, appState.stats.albums));
+    if (appState.stats.plays !== null) ["homePlays","statusPlays"].forEach(id => setLiveCounter(id, appState.stats.plays));
+    if (appState.stats.folderSize) { const el=document.getElementById("statusSize"); if(el) el.textContent=appState.stats.folderSize; }
 }
-
 function applyLivePlayCount(value) {
-    const count = Number(value);
-    if (!Number.isFinite(count) || count < 0) return;
-    if (liveStats.all_play_count === null || count > liveStats.all_play_count) liveStats.all_play_count = count;
-    ["homePlays", "statusPlays"].forEach(id => setLiveCounter(id, liveStats.all_play_count));
+    const count=Number(value); if(!Number.isFinite(count)||count<0) return;
+    if(appState.stats.plays===null || count>appState.stats.plays) appState.stats.plays=count;
+    ["homePlays","statusPlays"].forEach(id=>setLiveCounter(id,appState.stats.plays));
+}
+let statsRefreshTimer = null;
+function scheduleStatsRefresh(delay=150) {
+    if(statsRefreshTimer) window.clearTimeout(statsRefreshTimer);
+    statsRefreshTimer = window.setTimeout(()=>{ statsRefreshTimer=null; if(!document.hidden) loadStats().catch(error=>reportAppError(error,{scope:"stats",action:"event-refresh"})); }, Math.max(0, Number(delay)||0));
 }
 
 async function loadStats() {
@@ -3442,16 +3444,11 @@ async function loadStats() {
             "AbortError"
         ) {
 
-            console.warn(
-                "Stats request timed out"
-            );
+            reportAppError(error, {scope:"stats", action:"timeout"});
 
         } else {
 
-            console.warn(
-                "Stats:",
-                error
-            );
+            reportAppError(error, {scope:"stats", action:"load"});
         }
 
     } finally {
@@ -3493,6 +3490,7 @@ async function loadLibrary() {
 }
 
 function renderLibraryView() {
+    syncLibraryUiState();
     const list = document.getElementById("libraryList");
     const dashboard = document.getElementById("libraryStatsDashboard");
     if (!list) return;
@@ -3505,7 +3503,24 @@ function renderLibraryView() {
         loadDetailedLibraryStats();
         return;
     }
-
+    if (!appState.library.files.length) {
+        if (appState.library.status === "offline") {
+            renderEmpty(list, "cloud-off", "Music storage is offline", "Reconnect your NAS or music storage, then run a scan.");
+            return;
+        }
+        if (appState.library.status === "scanning" || appState.library.status === "loading") {
+            renderEmpty(list, "loader-circle", "Library is scanning", "Your music catalog will appear here when the scan finishes.");
+            return;
+        }
+        if (appState.library.status === "error") {
+            renderEmpty(list, "circle-alert", "Library scan failed", "Open Settings or run a new scan after checking the music storage.");
+            return;
+        }
+        if (appState.library.status === "empty") {
+            renderEmpty(list, "music-2", "Your library is empty", "Add music to the configured folder, then run a library scan.");
+            return;
+        }
+    }
     if (libraryView === "playlists") return loadPlaylistsView();
     if (libraryView === "recent") return renderLibraryCollections("recent");
     if (libraryView === "most") return renderLibraryCollections("most");
@@ -5456,7 +5471,11 @@ function initWebSocket() {
                     appState.library.status = String(data.state || "unknown");
                     appState.library.storageError = String(data.error || "");
                     emitAppEvent("storage:state", {state: appState.library.status, error: appState.library.storageError});
+                    renderStorage({state: appState.library.status, error: appState.library.storageError, exists: appState.library.status !== "offline", writable: appState.library.status === "online"});
                     if (appState.library.status === "online") scheduleLibraryRefresh();
+                } else if (data.type === "stats_invalidated") {
+                    emitAppEvent("stats:invalidated", data);
+                    scheduleStatsRefresh(120);
                 } else if (data.type === "player_state") {
                     if (data.state?.ownerId === PLAYER_TAB_ID) {
                         applyAuthoritativeOwnedPlayerState(data.state, false);
@@ -5821,6 +5840,7 @@ async function startAppAfterAuth() {
         libraryView = button.dataset.libraryView || "tracks";
         selectedArtistId = null;
         selectedAlbumId = null;
+        syncLibraryUiState();
         document.querySelectorAll(".library-tab").forEach(item => item.classList.toggle("active", item === button));
 
         // Statistics is a dedicated Library view: never leave the catalog list visible.
@@ -5848,7 +5868,7 @@ async function startAppAfterAuth() {
             const r = await apiFetch('api/library', {cache:'no-store'});
             if (!r.ok) return;
             const d = await r.json();
-            if (d.ready) {
+            if (d.library_state && d.library_state !== "scanning") {
                 clearInterval(warmupTimer);
                 appState.library.files = d.files || [];
                 libraryPlaybackQueue = appState.library.files;
@@ -5856,7 +5876,7 @@ async function startAppAfterAuth() {
                 appState.library.albums = d.albums || appState.library.albums;
                 saveLibraryCache();
                 renderLibraryView();
-                loadStats();
+                scheduleStatsRefresh(120);
                 loadSongEditor();
             }
         } catch (error) { reportAppError(error, {scope:"library", action:"warmup"}); }
@@ -5883,8 +5903,9 @@ async function startAppAfterAuth() {
 
     if (statsPollTimer) window.clearInterval(statsPollTimer);
     statsPollTimer = window.setInterval(() => {
-        if (!document.hidden) loadStats().catch(error => reportAppError(error, {scope:"stats", action:"refresh-after-download"}));
-    }, 15000);
+        if (!document.hidden && !statsRefreshTimer) loadStats().catch(error => reportAppError(error, {scope:"stats", action:"safety-refresh"}));
+    }, 60000);
+    scheduleStatsRefresh(0);
 }
 
 
@@ -5907,6 +5928,8 @@ function renderEnhancedQueue() {
     const box = document.getElementById("queueList");
     if (!box) return;
     box.innerHTML = "";
+    appState.player.queue = [...enhancedQueue];
+    appState.player.queueIndex = enhancedQueueIndex;
     if (!enhancedQueue.length) {
         box.innerHTML = '<div class="queue-empty"><i data-lucide="list-music" aria-hidden="true"></i><span>Queue is empty</span></div>';
         renderLocalIcons();
@@ -6462,11 +6485,16 @@ function installEnhancedFeatures(){
         if (!content) return;
         content.innerHTML = '<div class="queue-empty">Checking library health…</div>';
         try {
-            const r = await apiFetch("api/library/health", {cache:"no-store"});
+            const [r, dr] = await Promise.all([
+                apiFetch("api/library/health", {cache:"no-store"}),
+                apiFetch("api/library/duplicates", {cache:"no-store"})
+            ]);
             const d = await r.json().catch(() => ({}));
+            const duplicateData = await dr.json().catch(() => ({}));
             if (!r.ok) throw new Error(d.detail || "Could not check library health");
-            const duplicates = Array.isArray(d.duplicates) ? d.duplicates : [];
-            content.innerHTML = `<div class="health-summary"><strong>Unreadable: ${d.counts?.unreadable || 0}</strong><strong>Bad tags: ${d.counts?.bad_tags || 0}</strong><strong>Missing artwork: ${d.counts?.missing_artwork || 0}</strong><strong>Duplicate groups: ${d.counts?.duplicates || 0}</strong><strong>Duplicate files: ${d.counts?.duplicate_files || 0}</strong></div>`;
+            const duplicates = Array.isArray(duplicateData.duplicates) ? duplicateData.duplicates : [];
+            const duplicateFiles = duplicates.reduce((sum, group) => sum + Math.max(0, Number(group.count || 0)), 0);
+            content.innerHTML = `<div class="health-summary"><strong>Unreadable: ${d.counts?.unreadable || 0}</strong><strong>Bad tags: ${d.counts?.bad_tags || 0}</strong><strong>Missing artwork: ${d.counts?.missing_artwork || 0}</strong><strong>Duplicate groups: ${duplicates.length}</strong><strong>Duplicate files: ${duplicateFiles}</strong></div>`;
             if (duplicates.length) {
                 const section = document.createElement("section");
                 section.className = "duplicate-groups";
@@ -6568,7 +6596,7 @@ async function registerDevice() {
         appState.devices.lastUpdatedAt = Date.now();
         renderDevices();
         updateDeviceOwnershipUI();
-    } catch (_) {}
+    } catch (error) { reportAppError(error, {scope:"devices", action:"register"}); }
 }
 async function heartbeatDevice() {
     if (document.visibilityState === "hidden" || navigator.onLine === false) return;
@@ -6788,7 +6816,7 @@ function applyNoHorizontalOverflow(){document.documentElement.style.overflowX="h
 function saveDeviceName(){const value=(document.getElementById("set_device_name")?.value||"").trim();if(value){storageSet("xrob_music_device_name",value);apiFetch("api/devices/rename",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({deviceId:deviceId(),name:value})}).catch(()=>{});}else storageRemove("xrob_music_device_name");}
 function applySettingsToForm(settings){
     const setValue=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??""}; const setChecked=(id,v)=>{const e=document.getElementById(id);if(e)e.checked=Boolean(v)};
-    setValue("set_format",settings.audio_format||"mp3");setValue("set_quality",settings.audio_quality||"320K");setValue("set_metadata_mode",settings.metadata_mode||"auto");const artworkMode=settings.artwork_behavior||((settings.embed_thumbnail!==false)?"embed":"none");setValue("set_artwork_behavior",artworkMode);setChecked("set_thumb",artworkMode!=="none");setChecked("set_meta",settings.embed_metadata);setChecked("set_organize",settings.organize_by_artist);setChecked("set_scan_enabled",settings.scan_enabled!==false);setValue("set_scan_interval",settings.scan_interval_minutes||60);setValue("set_title_cleanup_rules",settings.title_cleanup_rules||"");setValue("set_daily_mix_count",Math.max(5,Math.min(50,Number(settings.daily_mix_track_count||30))));storageSet("xrob_music_daily_mix_count",String(settings.daily_mix_track_count||30));
+    setValue("set_format",settings.audio_format||"mp3");setValue("set_quality",settings.audio_quality||"320K");setValue("set_metadata_mode",settings.metadata_mode||"auto");const artworkMode=settings.artwork_behavior||((settings.embed_thumbnail!==false)?"embed":"none");setValue("set_artwork_behavior",artworkMode);setChecked("set_thumb",artworkMode!=="none");setChecked("set_meta",settings.embed_metadata);setChecked("set_organize",settings.organize_by_artist);setChecked("set_scan_enabled",settings.scan_enabled!==false);setValue("set_scan_interval",settings.scan_interval_minutes||60);setValue("set_health_scan_interval",settings.health_scan_interval_minutes||360);setValue("set_title_cleanup_rules",settings.title_cleanup_rules||"");setValue("set_daily_mix_count",Math.max(5,Math.min(50,Number(settings.daily_mix_track_count||30))));storageSet("xrob_music_daily_mix_count",String(settings.daily_mix_track_count||30));
     playerSettings={...playerSettings,replaygain_enabled:settings.replaygain_enabled!==false,replaygain_mode:settings.replaygain_mode||"track",replaygain_preamp_db:Number(settings.replaygain_preamp_db||0),replaygain_prevent_clipping:settings.replaygain_prevent_clipping!==false,crossfade_seconds:Number(settings.crossfade_seconds||0),gapless_playback:settings.gapless_playback!==false,keep_playing:settings.keep_playing!==false};
     setChecked("set_replaygain_enabled",playerSettings.replaygain_enabled);setValue("set_replaygain_mode",playerSettings.replaygain_mode);setValue("set_replaygain_preamp",playerSettings.replaygain_preamp_db);setChecked("set_replaygain_clip",playerSettings.replaygain_prevent_clipping);setValue("set_crossfade",playerSettings.crossfade_seconds);setChecked("set_gapless",playerSettings.gapless_playback);setChecked("set_keep_playing",playerSettings.keep_playing);
     setValue("set_download_location",settings.download_location||"");setValue("set_max_concurrent",settings.max_concurrent_downloads||3);setValue("set_max_pending",settings.max_pending_downloads||500);setChecked("set_auto_retry",settings.auto_retry_downloads!==false);setValue("set_retry_limit",settings.download_retry_limit??2);setValue("set_retry_backoff",settings.download_retry_backoff_seconds||3);setValue("set_filename_mode",settings.filename_mode||"title");setValue("set_cache_size",settings.cache_size_mb||256);setValue("set_stats_retention",settings.stats_retention_days||365);setValue("set_device_name",deviceName());setValue("set_web_username",settings.web_username||"admin");setValue("set_web_password","");renderStorage(settings.storage);updateQualityState();
@@ -6796,10 +6824,10 @@ function applySettingsToForm(settings){
 async function saveSettings(){
     const gv=id=>document.getElementById(id)?.value||"",gc=id=>document.getElementById(id)?.checked??false;
     const artwork=gv("set_artwork_behavior")|| (gc("set_thumb")?"embed":"none");
-    const data={audio_format:gv("set_format")||"mp3",audio_quality:gv("set_quality")||"320K",metadata_mode:gv("set_metadata_mode")||"auto",embed_thumbnail:artwork==="embed",embed_metadata:gc("set_meta"),organize_by_artist:gc("set_organize"),scan_enabled:gc("set_scan_enabled"),scan_interval_minutes:Math.max(5,Number(gv("set_scan_interval")||60)),title_cleanup_rules:gv("set_title_cleanup_rules"),daily_mix_track_count:Math.max(5,Math.min(50,Number(gv("set_daily_mix_count")||30))),replaygain_enabled:gc("set_replaygain_enabled"),replaygain_mode:gv("set_replaygain_mode")||"track",replaygain_preamp_db:Math.max(-12,Math.min(12,Number(gv("set_replaygain_preamp")||0))),replaygain_prevent_clipping:gc("set_replaygain_clip"),crossfade_seconds:Math.max(0,Math.min(12,Number(gv("set_crossfade")||0))),gapless_playback:gc("set_gapless"),keep_playing:gc("set_keep_playing"),web_username:gv("set_web_username")||"admin",download_location:gv("set_download_location").trim(),max_concurrent_downloads:Math.max(1,Math.min(8,Number(gv("set_max_concurrent")||3))),max_pending_downloads:Math.max(50,Math.min(5000,Number(gv("set_max_pending")||500))),auto_retry_downloads:gc("set_auto_retry"),download_retry_limit:Math.max(0,Math.min(5,Number(gv("set_retry_limit")||2))),download_retry_backoff_seconds:Math.max(1,Math.min(60,Number(gv("set_retry_backoff")||3))),artwork_behavior:artwork,filename_mode:gv("set_filename_mode")||"title",cache_size_mb:Math.max(32,Math.min(2048,Number(gv("set_cache_size")||256))),stats_retention_days:Math.max(30,Math.min(3650,Number(gv("set_stats_retention")||365))),...(gv("set_web_password")?{web_password:gv("set_web_password")}: {})};
-    try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Failed to save settings.");applySettingsToForm(d);saveDeviceName();showToast("✅ Settings saved");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent=data.download_location?"Settings saved. Restart Xrob Music to apply a changed download location.":"Settings saved.";loadDevices();}catch(err){const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="❌ "+(err.message||"Failed to save settings.");showToast("❌ "+(err.message||"Failed to save settings."));}
+    const data={audio_format:gv("set_format")||"mp3",audio_quality:gv("set_quality")||"320K",metadata_mode:gv("set_metadata_mode")||"auto",embed_thumbnail:artwork==="embed",embed_metadata:gc("set_meta"),organize_by_artist:gc("set_organize"),scan_enabled:gc("set_scan_enabled"),scan_interval_minutes:Math.max(5,Number(gv("set_scan_interval")||60)),health_scan_interval_minutes:Math.max(30,Math.min(10080,Number(gv("set_health_scan_interval")||360))),title_cleanup_rules:gv("set_title_cleanup_rules"),daily_mix_track_count:Math.max(5,Math.min(50,Number(gv("set_daily_mix_count")||30))),replaygain_enabled:gc("set_replaygain_enabled"),replaygain_mode:gv("set_replaygain_mode")||"track",replaygain_preamp_db:Math.max(-12,Math.min(12,Number(gv("set_replaygain_preamp")||0))),replaygain_prevent_clipping:gc("set_replaygain_clip"),crossfade_seconds:Math.max(0,Math.min(12,Number(gv("set_crossfade")||0))),gapless_playback:gc("set_gapless"),keep_playing:gc("set_keep_playing"),web_username:gv("set_web_username")||"admin",download_location:gv("set_download_location").trim(),max_concurrent_downloads:Math.max(1,Math.min(8,Number(gv("set_max_concurrent")||3))),max_pending_downloads:Math.max(50,Math.min(5000,Number(gv("set_max_pending")||500))),auto_retry_downloads:gc("set_auto_retry"),download_retry_limit:Math.max(0,Math.min(5,Number(gv("set_retry_limit")||2))),download_retry_backoff_seconds:Math.max(1,Math.min(60,Number(gv("set_retry_backoff")||3))),artwork_behavior:artwork,filename_mode:gv("set_filename_mode")||"title",cache_size_mb:Math.max(32,Math.min(2048,Number(gv("set_cache_size")||256))),stats_retention_days:Math.max(30,Math.min(3650,Number(gv("set_stats_retention")||365))),...(gv("set_web_password")?{web_password:gv("set_web_password")}: {})};
+    try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Failed to save settings.");applySettingsToForm(d);saveDeviceName();showToast("✅ Settings saved");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent=data.download_location?"Settings saved. Changed download location applies to new downloads.":"Settings saved.";loadDevices();}catch(err){const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="❌ "+(err.message||"Failed to save settings.");showToast("❌ "+(err.message||"Failed to save settings."));}
 }
-async function resetSettings(){const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,keep_playing:true,download_location:"",max_concurrent_downloads:3,max_pending_downloads:500,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",cache_size_mb:256,stats_retention_days:365};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToForm(d);showToast("↺ Settings reset");}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
+async function resetSettings(){const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,health_scan_interval_minutes:360,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,keep_playing:true,download_location:"",max_concurrent_downloads:3,max_pending_downloads:500,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",cache_size_mb:256,stats_retention_days:365};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToForm(d);showToast("↺ Settings reset");}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
 
 
 function installLifecycleHandlers(){
