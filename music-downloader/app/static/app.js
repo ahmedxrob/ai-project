@@ -6234,6 +6234,7 @@ async function initializeApp() {
 async function startAppAfterAuth() {
 
     cacheDom();
+    try { v37Install(); } catch (_) {}
 
     toggleTheme(
         storageGet(
@@ -7336,6 +7337,9 @@ function v373InstallCrossPlatformLifecycle(){
 
 
 function v37Install(){
+    if (window.__xrobV37Installed) return;
+    if (document.getElementById("app-shell")?.hidden) return;
+    window.__xrobV37Installed = true;
     try{v373InstallCrossPlatformLifecycle();}catch(_){}
     try{v37WrapFetchers();}catch(_){}
     // Replace handlers/functions after the original startup has installed its base listeners.
@@ -7361,8 +7365,6 @@ function v37Install(){
     // settings/download cards from becoming the initial UI state.
     updateQueueIndicators();renderV37Devices();v37BindSearchDebounce();v37InstallKeyboard();v37InstallDrawerSwipe();v37NoOverflow();
     registerV37Device();heartbeatV37Device();loadV37Devices();loadV37DownloadHistory();
-    loadSettings().catch(() => {});
-    pollTasks(true).catch(() => {});
     if(v37DeviceTimer)clearInterval(v37DeviceTimer);v37DeviceTimer=setInterval(heartbeatV37Device,8000);
     if(v37DeviceRefreshTimer)clearInterval(v37DeviceRefreshTimer);v37DeviceRefreshTimer=setInterval(()=>{if(!document.getElementById("connect-modal")?.hidden)loadV37Devices();},5000);
 }
