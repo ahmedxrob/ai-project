@@ -10,6 +10,7 @@ let socketReconnectAttempt = 0;
 let socketPingTimer = null;
 
 let completedSet = new Set();
+let completedSetHydrated = false;
 
 let rawLibraryFiles = [];
 let libraryArtists = [];
@@ -4100,6 +4101,16 @@ function renderItems(items) {
                     item.thumbnail || ""
                 );
 
+            // Once a search result maps to a real library file, use the
+            // persisted library metadata. This keeps manual title/artist/album
+            // edits visible on Search instead of reverting to the provider title.
+            const displayTitle = item.already_downloaded
+                ? (item.library_title || item.title || "Unknown Track")
+                : (item.title || "Unknown Track");
+            const displayArtist = item.already_downloaded
+                ? (item.library_artist || item.artist || item.channel || "Unknown Artist")
+                : (item.artist || item.channel || "Unknown Artist");
+
 
             card.innerHTML = `
 
@@ -4124,13 +4135,13 @@ function renderItems(items) {
 
                     <div class="track-title">
                         ${escapeHtml(
-                            item.title || "Unknown Track"
+                            displayTitle
                         )}
                     </div>
 
                     <div class="track-artist">
                         <i data-lucide="user-round" aria-hidden="true"></i> ${escapeHtml(
-                            item.artist || item.channel || "Unknown Artist"
+                            displayArtist
                         )}
                     </div>
 
@@ -5060,28 +5071,21 @@ async function pollTasks(force = false) {
                 : [];
 
 
-        latestTasks.forEach(
-            task => {
-
-                if (
-                    task.status === "completed" &&
-                    !completedSet.has(task.id)
-                ) {
-
-                    completedSet.add(
-                        task.id
-                    );
-
-
-                    showToast(
-                        `🎉 ${
-                            task.title ||
-                            "Track"
-                        } is ready`
-                    );
+        // The first task poll establishes the baseline. Historical completed
+        // tasks must never be announced as fresh downloads after every reload.
+        if (!completedSetHydrated) {
+            latestTasks.forEach(task => {
+                if (task.status === "completed") completedSet.add(task.id);
+            });
+            completedSetHydrated = true;
+        } else {
+            latestTasks.forEach(task => {
+                if (task.status === "completed" && !completedSet.has(task.id)) {
+                    completedSet.add(task.id);
+                    showToast(`🎉 ${task.title || "Track"} is ready`);
                 }
-            }
-        );
+            });
+        }
 
 
         updateQueueCounters(
