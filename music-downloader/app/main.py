@@ -139,6 +139,12 @@ RATE_LIMIT_STATE = defaultdict(list)
 RATE_LIMIT_LOCK = asyncio.Lock()
 SEARCH_RATE_LIMIT = (30, 60.0)   # requests / rolling window / client
 PREVIEW_RATE_LIMIT = (12, 60.0)  # requests / rolling window / client
+# yt-dlp search pagination is implemented as a bounded ytsearch{N} lookup.
+# Keep the externally requested page count tight so a malicious/deep scroll
+# cannot turn page=500 into a 25,000-result provider request.
+SEARCH_MAX_PAGE = 50
+SEARCH_CACHE_TTL_SECONDS = 45.0
+SEARCH_CACHE_MAX = 128
 AUTH_BOOTSTRAP_FILE = DATA_DIR / "web_bootstrap.txt"
 PLAYER_STATE = None
 PLAYER_STATE_UPDATED_AT = 0.0
@@ -383,6 +389,7 @@ ACTIVE_PROCESSES = {}
 LAST_SAVED_TIME = {}
 METADATA_CACHE = {}
 METADATA_CACHE_MAX = 2000
+SEARCH_CACHE = {}
 
 def _cache_set_bounded(cache, key, value, maximum=2000):
     cache[key] = value
@@ -3290,9 +3297,17 @@ async def youtube_search(
     if not query:
         return []
     max_results = max(1, min(50, safe_int(max_results, 20)))
-    page = max(1, safe_int(page, 1))
+    page = max(1, min(SEARCH_MAX_PAGE, safe_int(page, 1)))
+    cache_key = (query.casefold(), max_results, page)
+    cached = SEARCH_CACHE.get(cache_key)
+    if cached:
+        stamp, cached_results = cached
+        if time.monotonic() - stamp < SEARCH_CACHE_TTL_SECONDS:
+            return [dict(item) for item in cached_results]
+        SEARCH_CACHE.pop(cache_key, None)
+
     start = (page - 1) * max_results + 1
-    end = page * max_results
+    end = min(page * max_results, SEARCH_MAX_PAGE * max_results)
     command = [
         *YT_DLP_COMMAND, "--flat-playlist", "--dump-single-json", "--skip-download", "--no-warnings",
         "--retries", "3", "--socket-timeout", "15",
@@ -3334,7 +3349,8 @@ async def youtube_search(
             "thumbnail": item.get("thumbnail") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
             "url": f"https://www.youtube.com/watch?v={video_id}", "source": "youtube",
         })
-    return results
+    _cache_set_bounded(SEARCH_CACHE, cache_key, (time.monotonic(), results), SEARCH_CACHE_MAX)
+    return [dict(item) for item in results]
 
 
 def _search_duplicate_state_sync(items, tasks):
@@ -3379,7 +3395,7 @@ async def api_search(
     request: Request,
     q: str = Query(""),
     source: str = Query("youtube"),
-    page: int = Query(1, ge=1, le=500),
+    page: int = Query(1, ge=1, le=SEARCH_MAX_PAGE),
     limit: int = Query(20, ge=1, le=50),
 ):
     """Search external music sources used by the web UI.
