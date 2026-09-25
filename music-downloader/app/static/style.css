@@ -5551,7 +5551,7 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 @media(max-width:700px){.gp-sleep-btn{display:none}.lyrics-modal-card{padding:14px}.lyrics-line{font-size:1rem}}
 
 .gp-sleep-btn{font-size:.76rem;border-radius:999px;padding:.38rem .65rem;cursor:pointer}
-/* XROB 4.3.3 canonical UI layer: final source of truth for app chrome. */
+/* XROB 4.3.5 canonical UI layer: final source of truth for app chrome. */
 :root { --bottom-nav-height: 64px; --player-height: 72px; --player-idle-height: 52px; }
 .content-topbar-status { font-size: 12px; min-height: 30px; }
 .content-topbar-status .status-dot { width: 8px; height: 8px; min-width: 8px; }
