@@ -153,10 +153,15 @@ class LibraryCatalog:
                 song_id TEXT NOT NULL
             )""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_song_aliases_song ON library_song_aliases(song_id)")
-            identity_count = int(conn.execute("SELECT COUNT(*) FROM library_song_identity").fetchone()[0])
-            if identity_count == 0:
-                for row in conn.execute("SELECT id,relative_path,metadata_json,updated_at FROM library_songs").fetchall():
-                    self._upsert_identity_row(conn, row[0], self._metadata_from_row(row), row[1], row[3] or time.time())
+            missing_identity_rows = conn.execute("""
+                SELECT s.id,s.relative_path,s.metadata_json,s.updated_at
+                FROM library_songs s
+                LEFT JOIN library_song_identity i ON i.song_id=s.id
+                WHERE i.song_id IS NULL
+            """).fetchall()
+            for row in missing_identity_rows:
+                self._upsert_identity_row(conn, row[0], self._metadata_from_row(row), row[1], row[3] or time.time())
+            conn.execute("DELETE FROM library_song_identity WHERE song_id NOT IN (SELECT id FROM library_songs)")
             if owned:
                 conn.commit()
         finally:
@@ -371,9 +376,19 @@ class LibraryCatalog:
                     if str(c.get("id")) not in claimed
                 ] if stat_identity[0] and stat_identity[1] else []
                 if location_candidates:
-                    candidate = location_candidates[0]
-                    sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = str(candidate.get("strong_hash") or "")
-                    with claimed_lock: claimed.add(sid)
+                    current_hash = None
+                    for candidate in location_candidates:
+                        candidate_fp = str(candidate.get("fingerprint") or "")
+                        if not candidate_fp or candidate_fp != fp:
+                            continue
+                        if current_hash is None:
+                            current_hash = strong_file_hash(path)
+                        candidate_hash = str(candidate.get("strong_hash") or "")
+                        if candidate_hash and candidate_hash != current_hash:
+                            continue
+                        sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = current_hash
+                        with claimed_lock: claimed.add(sid)
+                        break
                 else:
                     # Cross-filesystem moves may lose inode identity. Only reuse an
                     # ID when the previous catalog path is absent from this scan,
