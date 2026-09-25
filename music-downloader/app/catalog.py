@@ -81,6 +81,9 @@ class LibraryCatalog:
                 mtime_ns INTEGER DEFAULT 0,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 strong_hash TEXT DEFAULT '',
+                device INTEGER DEFAULT 0,
+                inode INTEGER DEFAULT 0,
+                health_checked_at REAL DEFAULT 0,
                 missing INTEGER NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL DEFAULT 0,
                 updated_at REAL NOT NULL DEFAULT 0
@@ -89,6 +92,12 @@ class LibraryCatalog:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(library_songs)")}
             if "strong_hash" not in columns:
                 conn.execute("ALTER TABLE library_songs ADD COLUMN strong_hash TEXT DEFAULT ''")
+            if "device" not in columns:
+                conn.execute("ALTER TABLE library_songs ADD COLUMN device INTEGER DEFAULT 0")
+            if "inode" not in columns:
+                conn.execute("ALTER TABLE library_songs ADD COLUMN inode INTEGER DEFAULT 0")
+            if "health_checked_at" not in columns:
+                conn.execute("ALTER TABLE library_songs ADD COLUMN health_checked_at REAL DEFAULT 0")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_fingerprint ON library_songs(fingerprint)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_strong_hash ON library_songs(strong_hash)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_library_songs_missing ON library_songs(missing)")
@@ -249,14 +258,14 @@ class LibraryCatalog:
             pass
 
     def reconcile(self, files, metadata_loader, metadata_workers=8):
-        """Reconcile current files. Rename/move detection preserves IDs by fingerprint."""
+        """Reconcile current files while preserving IDs only for proven moves/metadata edits."""
         self.init_schema()
         existing = self.rows()
-        by_path = {str(row["relative_path"]): row for row in existing}
+        by_path = {str(row["relative_path"]): row for row in existing if not str(row.get("relative_path") or "").startswith(".retired/")}
         by_fp = defaultdict(list)
         for row in existing:
             fp = str(row.get("fingerprint") or "")
-            if fp and not fp.startswith("legacy:"):
+            if fp and not fp.startswith("legacy:") and int(row.get("missing") or 0):
                 by_fp[fp].append(row)
 
         current_paths = set()
@@ -267,98 +276,135 @@ class LibraryCatalog:
                 continue
 
         claimed_lock = threading.Lock()
+        claimed = set()
 
         def inspect(path):
             stat = path.stat()
             rel = str(path.relative_to(self.library_dir))
             row = by_path.get(rel)
-            unchanged = bool(row and int(row.get("size") or -1) == int(stat.st_size) and int(row.get("mtime_ns") or -1) == int(stat.st_mtime_ns))
+            device = int(getattr(stat, "st_dev", 0) or 0)
+            inode = int(getattr(stat, "st_ino", 0) or 0)
+            unchanged = bool(row and int(row.get("size") or -1) == int(stat.st_size) and int(row.get("mtime_ns") or -1) == int(stat.st_mtime_ns) and int(row.get("device") or 0) == device and int(row.get("inode") or 0) == inode)
             if unchanged:
-                with claimed_lock:
-                    claimed.add(str(row["id"]))
-                return {
-                    "id": str(row["id"]), "relative_path": rel, "fingerprint": str(row.get("fingerprint") or ""),
-                    "strong_hash": str(row.get("strong_hash") or ""), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "metadata": self._metadata_from_row(row), "created_at": row.get("created_at") or time.time(),
-                }
+                with claimed_lock: claimed.add(str(row["id"]))
+                return {"id":str(row["id"]),"relative_path":rel,"fingerprint":str(row.get("fingerprint") or ""),"strong_hash":str(row.get("strong_hash") or ""),"device":device,"inode":inode,"size":stat.st_size,"mtime_ns":stat.st_mtime_ns,"metadata":self._metadata_from_row(row),"created_at":row.get("created_at") or time.time(),"replaced_id":""}
+
             fp = file_fingerprint(path)
-            sid = str(row["id"]) if row else None
-            created = row.get("created_at") if row else None
+            sid = None; created = None; strong_hash = ""; replaced_id = ""
+            if row and str(row.get("fingerprint") or "") == fp:
+                # Metadata/stat changed, but the content fingerprint is identical: same song.
+                sid = str(row["id"]); created = row.get("created_at") or time.time(); strong_hash = str(row.get("strong_hash") or "")
+            elif row is None:
+                # New path: only inherit an ID from a missing row, and prove the content.
+                candidates = [c for c in by_fp.get(fp, []) if str(c.get("id")) not in claimed and str(c.get("relative_path") or "") not in current_paths]
+                for candidate in candidates:
+                    candidate_hash = str(candidate.get("strong_hash") or "")
+                    current_hash = strong_file_hash(path)
+                    if candidate_hash and candidate_hash != current_hash:
+                        continue
+                    old_rel = str(candidate.get("relative_path") or "")
+                    if not candidate_hash:
+                        try:
+                            old_path = self.library_dir / old_rel
+                            if old_path.is_file() and strong_file_hash(old_path) != current_hash:
+                                continue
+                        except OSError:
+                            pass
+                    sid = str(candidate["id"]); created = candidate.get("created_at") or time.time(); strong_hash = current_hash
+                    with claimed_lock: claimed.add(sid)
+                    break
+            else:
+                # Same path with different content is a new logical item. The old ID is retired below.
+                replaced_id = str(row["id"])
+
             if not sid:
-                with claimed_lock:
-                    for candidate in by_fp.get(fp, []):
-                        candidate_path = str(candidate.get("relative_path") or "")
-                        if candidate_path not in current_paths and str(candidate["id"]) not in claimed:
-                            sid = str(candidate["id"])
-                            created = candidate.get("created_at") or time.time()
-                            claimed.add(sid)
-                            break
-            if not sid:
-                sid = persistent_song_id()
-                created = time.time()
+                sid = persistent_song_id(); created = time.time()
             metadata = metadata_loader(path)
-            with claimed_lock:
-                claimed.add(sid)
-            return {"id": sid, "relative_path": rel, "fingerprint": fp, "strong_hash": str(row.get("strong_hash") or "") if row else "", "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "metadata": metadata, "created_at": created}
+            with claimed_lock: claimed.add(sid)
+            return {"id":sid,"relative_path":rel,"fingerprint":fp,"strong_hash":strong_hash,"device":device,"inode":inode,"size":stat.st_size,"mtime_ns":stat.st_mtime_ns,"metadata":metadata,"created_at":created,"replaced_id":replaced_id}
 
-        claimed = set()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, int(metadata_workers))) as pool:
-            futures = [pool.submit(inspect, path) for path in files]
-            records = [future.result() for future in futures]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1,int(metadata_workers))) as pool:
+            records = [future.result() for future in (pool.submit(inspect, path) for path in files)]
 
-        seen = {str(record["id"]) for record in records}
-        now = time.time()
+        seen={str(record["id"]) for record in records}; now=time.time()
         with self._connect() as conn:
             for record in records:
+                replaced_id=str(record.get("replaced_id") or "")
+                if replaced_id and replaced_id != str(record["id"]):
+                    old=conn.execute("SELECT relative_path FROM library_songs WHERE id=?",(replaced_id,)).fetchone()
+                    if old:
+                        original_rel=str(old[0] or record["relative_path"])
+                        retired_rel=f".retired/{replaced_id}/{Path(original_rel).name or 'track'}"
+                        conn.execute("UPDATE library_songs SET relative_path=?,missing=1,updated_at=? WHERE id=?",(retired_rel,now,replaced_id))
                 conn.execute(
-                    """INSERT INTO library_songs(id,relative_path,fingerprint,strong_hash,size,mtime_ns,metadata_json,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,0,?,?)
-                    ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,strong_hash=CASE WHEN excluded.strong_hash<>'' THEN excluded.strong_hash ELSE library_songs.strong_hash END,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
-                    (record["id"],record["relative_path"],record["fingerprint"],record.get("strong_hash") or "",record["size"],record["mtime_ns"],json.dumps(record["metadata"],ensure_ascii=False,separators=(",", ":")),record["created_at"] or now,now),
+                    """INSERT INTO library_songs(id,relative_path,fingerprint,strong_hash,device,inode,health_checked_at,size,mtime_ns,metadata_json,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?)
+                    ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,strong_hash=CASE WHEN excluded.strong_hash<>'' THEN excluded.strong_hash ELSE library_songs.strong_hash END,device=excluded.device,inode=excluded.inode,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
+                    (record["id"],record["relative_path"],record["fingerprint"],record.get("strong_hash") or "",record.get("device",0),record.get("inode",0),0.0,record["size"],record["mtime_ns"],json.dumps(record["metadata"],ensure_ascii=False,separators=(",",":")),record["created_at"] or now,now),
                 )
             if seen:
-                placeholders = ",".join("?" for _ in seen)
-                conn.execute(f"UPDATE library_songs SET missing=1,updated_at=? WHERE missing=0 AND id NOT IN ({placeholders})", (now,*sorted(seen)))
+                placeholders=",".join("?" for _ in seen)
+                conn.execute(f"UPDATE library_songs SET missing=1,updated_at=? WHERE missing=0 AND id NOT IN ({placeholders})",(now,*sorted(seen)))
             else:
-                conn.execute("UPDATE library_songs SET missing=1,updated_at=? WHERE missing=0", (now,))
+                conn.execute("UPDATE library_songs SET missing=1,updated_at=? WHERE missing=0",(now,))
             conn.commit()
         return records
 
     def upsert_file(self, path, metadata_loader):
-        """Upsert one newly finalized media file without marking the rest missing."""
-        self.init_schema()
-        path = Path(path).resolve()
-        base = self.library_dir.resolve()
-        rel = str(path.relative_to(base))
-        stat = path.stat()
-        fp = file_fingerprint(path)
-        now = time.time()
-        metadata = metadata_loader(path)
+        """Upsert one newly finalized file without stealing active identities."""
+        self.init_schema(); path=Path(path).resolve(); base=self.library_dir.resolve(); rel=str(path.relative_to(base)); stat=path.stat(); fp=file_fingerprint(path); now=time.time(); metadata=metadata_loader(path)
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM library_songs WHERE relative_path=?", (rel,)).fetchone()
-            if row:
-                sid = str(row["id"])
-                created = row["created_at"] or now
-                strong_hash = str(row["strong_hash"] or "")
-            else:
-                fp_row = conn.execute(
-                    "SELECT * FROM library_songs WHERE fingerprint=? ORDER BY missing ASC, updated_at DESC LIMIT 1",
-                    (fp,),
-                ).fetchone()
-                sid = str(fp_row["id"]) if fp_row else persistent_song_id()
-                created = (fp_row["created_at"] if fp_row else now) or now
-                strong_hash = str(fp_row["strong_hash"] or "") if fp_row else ""
+            row=conn.execute("SELECT * FROM library_songs WHERE relative_path=? AND missing=0",(rel,)).fetchone()
+            sid=None; created=now; strong_hash=""
+            if row and str(row["fingerprint"] or "") == fp:
+                sid=str(row["id"]); created=row["created_at"] or now; strong_hash=str(row["strong_hash"] or "")
+            elif row:
+                # Final path already exists with different content; retire old identity.
+                replaced_id=str(row["id"]); retired_rel=f".retired/{replaced_id}/{Path(rel).name or 'track'}"
+                conn.execute("UPDATE library_songs SET relative_path=?,missing=1,updated_at=? WHERE id=?",(retired_rel,now,replaced_id))
+            if not sid:
+                # Only missing catalog rows can donate identity to a new path. Full hash proves the move.
+                new_hash=strong_file_hash(path)
+                candidates=conn.execute("SELECT * FROM library_songs WHERE fingerprint=? AND missing=1 ORDER BY updated_at DESC",(fp,)).fetchall()
+                for candidate in candidates:
+                    candidate_hash=str(candidate["strong_hash"] or "")
+                    if candidate_hash and candidate_hash != new_hash: continue
+                    sid=str(candidate["id"]); created=candidate["created_at"] or now; strong_hash=new_hash; break
+                if not sid: sid=persistent_song_id()
             conn.execute(
-                """INSERT INTO library_songs(id,relative_path,fingerprint,strong_hash,size,mtime_ns,metadata_json,missing,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,0,?,?)
-                   ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,strong_hash=CASE WHEN excluded.strong_hash<>'' THEN excluded.strong_hash ELSE library_songs.strong_hash END,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
-                (sid, rel, fp, strong_hash, int(stat.st_size), int(stat.st_mtime_ns), json.dumps(metadata, ensure_ascii=False, separators=(",", ":")), created, now),
+                """INSERT INTO library_songs(id,relative_path,fingerprint,strong_hash,device,inode,health_checked_at,size,mtime_ns,metadata_json,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?)
+                ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,fingerprint=excluded.fingerprint,strong_hash=CASE WHEN excluded.strong_hash<>'' THEN excluded.strong_hash ELSE library_songs.strong_hash END,device=excluded.device,inode=excluded.inode,size=excluded.size,mtime_ns=excluded.mtime_ns,metadata_json=excluded.metadata_json,missing=0,updated_at=excluded.updated_at""",
+                (sid,rel,fp,strong_hash,int(getattr(stat,"st_dev",0) or 0),int(getattr(stat,"st_ino",0) or 0),0.0,int(stat.st_size),int(stat.st_mtime_ns),json.dumps(metadata,ensure_ascii=False,separators=(",",":")),created,now),
             )
             conn.commit()
-        return {"id": sid, "relative_path": rel, "metadata": metadata, "size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+        return {"id":sid,"relative_path":rel,"metadata":metadata,"size":int(stat.st_size),"mtime_ns":int(stat.st_mtime_ns)}
 
     def mark_missing(self, song_id):
         with self._connect() as conn:
             conn.execute("UPDATE library_songs SET missing=1,updated_at=? WHERE id=?", (time.time(), song_id))
             conn.commit()
+
+    def retire_path(self, path):
+        """Retire a current catalog row after a physical file is deleted."""
+        rel=str(Path(path).resolve().relative_to(self.library_dir.resolve()))
+        with self._connect() as conn:
+            row=conn.execute("SELECT id FROM library_songs WHERE relative_path=? AND missing=0",(rel,)).fetchone()
+            if not row: return None
+            sid=str(row[0]); retired_rel=f".retired/{sid}/{Path(rel).name or 'track'}"
+            conn.execute("UPDATE library_songs SET relative_path=?,missing=1,updated_at=? WHERE id=?",(retired_rel,time.time(),sid)); conn.commit(); return sid
+
+    def health_batch(self, limit):
+        self.init_schema()
+        with self._connect() as conn:
+            rows=conn.execute("SELECT * FROM library_songs WHERE missing=0 ORDER BY COALESCE(health_checked_at,0) ASC,id ASC LIMIT ?",(max(1,int(limit)),)).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_health_checked(self, song_ids, checked_at=None):
+        ids=[str(value) for value in (song_ids or []) if str(value)]
+        if not ids: return
+        checked_at=checked_at or time.time()
+        with self._connect() as conn:
+            placeholders=",".join("?" for _ in ids)
+            conn.execute(f"UPDATE library_songs SET health_checked_at=? WHERE id IN ({placeholders})",(checked_at,*ids)); conn.commit()
 
     def song_for_path(self, path):
         rel = str(Path(path).resolve().relative_to(self.library_dir.resolve()))
