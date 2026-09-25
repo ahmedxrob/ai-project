@@ -58,7 +58,7 @@ from .catalog import LibraryCatalog, StorageUnavailable, strong_file_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.3.0"
+SERVER_VERSION = "4.3.1"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -224,55 +224,76 @@ def _cleanup_auth_sessions(now=None, force=False):
 
 
 def _approved_download_roots():
-    roots = [DOWNLOAD_DIR]
-    for raw in os.getenv("XROB_APPROVED_DOWNLOAD_ROOTS", "").split(","):
-        raw = raw.strip()
-        if raw:
-            roots.append(Path(raw).expanduser())
-    unique = []
-    seen = set()
-    for root in roots:
-        try:
-            resolved = root.resolve()
-        except OSError:
+    """Return canonical approved download roots, all constrained to DOWNLOAD_DIR."""
+    base = DOWNLOAD_DIR.resolve()
+    roots = [base]
+    raw_roots = os.getenv("XROB_APPROVED_DOWNLOAD_ROOTS", "")
+    for raw in raw_roots.split(","):
+        raw = str(raw).strip()
+        if not raw:
             continue
-        key = str(resolved)
+        try:
+            candidate = Path(raw).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if candidate == base or base in candidate.parents:
+            roots.append(candidate)
+    unique=[]
+    seen=set()
+    for path in roots:
+        key=str(path)
         if key not in seen:
-            seen.add(key)
-            unique.append(resolved)
+            seen.add(key); unique.append(path)
     return unique
 
-
-def _validate_download_location(raw_location, allow_empty=True):
-    raw = str(raw_location or "").strip()[:4096]
+def _resolve_approved_download_root(raw_location, allow_empty=True):
+    raw = str(raw_location or "").strip()
     if not raw:
         if allow_empty:
-            return ""
+            return DOWNLOAD_DIR.resolve()
         raise ValueError("Download location is required.")
     candidate = Path(raw).expanduser()
     if not candidate.is_absolute():
         raise ValueError("Download location must be an absolute path.")
     try:
         resolved = candidate.resolve()
-    except OSError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         raise ValueError("Download location could not be resolved.") from exc
-    if candidate.exists() and not candidate.is_dir():
-        raise ValueError("Download location must be a directory.")
     base = DOWNLOAD_DIR.resolve()
     if not (resolved == base or base in resolved.parents):
         raise ValueError("Download location must be inside the configured music library root.")
-    roots = _approved_download_roots()
-    if not any(resolved == root or root in resolved.parents for root in roots):
+    if not any(resolved == root or root in resolved.parents for root in _approved_download_roots()):
         raise ValueError("Download location must be inside an approved music storage root.")
+    if candidate.exists() and not candidate.is_dir():
+        raise ValueError("Download location must be a directory.")
     if not candidate.exists():
         raise ValueError("Download location does not exist. Mount or create it first.")
-    return str(resolved)
+    return resolved
 
+def _validate_download_location(raw_location):
+    return str(_resolve_approved_download_root(raw_location, allow_empty=False))
 
 def _download_root_for_settings(settings):
-    raw = str(settings.get("download_location") or "").strip()
-    return Path(_validate_download_location(raw) or DOWNLOAD_DIR)
+    return _resolve_approved_download_root(str((settings or {}).get("download_location") or ""), allow_empty=False)
 
+def task_download_root(task):
+    """Resolve a persisted task root through the same canonical policy as settings."""
+    return _resolve_approved_download_root(str((task or {}).get("download_root") or ""), allow_empty=True)
+
+def cleanup_task_files(task_id, root=None):
+    try:
+        resolved_root = _resolve_approved_download_root(str(root or ""), allow_empty=True)
+    except (ValueError, RuntimeError):
+        return
+    try:
+        for path in resolved_root.rglob(f"*{task_id}*"):
+            try:
+                if path.is_file():
+                    path.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 def _validate_image_payload(data, declared_mime="", max_bytes=15 * 1024 * 1024):
     if not data or len(data) > max_bytes:
@@ -806,6 +827,7 @@ LIBRARY_REFRESH_MODE = "quick"
 LIBRARY_REFRESH_REASONS = set()
 LIBRARY_REFRESH_WAITERS = []
 SCHEDULED_SCANNER_WAKE = None
+LIBRARY_HEALTH_WAKE = None
 COVER_LOCKS = {}
 COVER_LOCKS_GUARD = asyncio.Lock()
 SIMILARITY_RESULTS_CACHE = {}
@@ -1155,7 +1177,7 @@ def save_settings(data: dict):
         "replaygain_enabled", "replaygain_mode", "replaygain_preamp_db", "replaygain_prevent_clipping",
         "crossfade_seconds", "gapless_playback", "keep_playing", "web_username", "web_password",
         "download_location", "max_concurrent_downloads", "max_pending_downloads", "auto_retry_downloads", "download_retry_limit",
-        "download_retry_backoff_seconds", "artwork_behavior", "cache_size_mb", "filename_mode", "stats_retention_days",
+        "download_retry_backoff_seconds", "artwork_behavior", "cache_size_mb", "filename_mode", "stats_retention_days", "health_scan_interval_minutes",
     }
 
     old_user = str(settings.get("web_username") or "")
@@ -1194,6 +1216,11 @@ def save_settings(data: dict):
     except (TypeError, ValueError):
         scan_interval = 60
     settings["scan_interval_minutes"] = max(5, min(10080, scan_interval))
+    try:
+        health_interval = int(settings.get("health_scan_interval_minutes", 360) or 360)
+    except (TypeError, ValueError):
+        health_interval = 360
+    settings["health_scan_interval_minutes"] = max(30, min(10080, health_interval))
     try:
         daily_mix_count = int(settings.get("daily_mix_track_count", 30) or 30)
     except (TypeError, ValueError):
@@ -1260,6 +1287,11 @@ def save_settings(data: dict):
     settings["web_password_hash"] = str(settings.get("web_password_hash") or "")
 
     _write_settings_sync(settings)
+    if AUTH_BOOTSTRAP_FILE.exists() and ("web_password" in data or settings.get("web_password_hash")):
+        try:
+            AUTH_BOOTSTRAP_FILE.unlink()
+        except OSError:
+            pass
     if old_user != settings.get("web_username") or ("web_password" in data and str(data.get("web_password") or "")):
         AUTH_SESSIONS.clear()
 
@@ -1289,12 +1321,13 @@ async def save_settings_async(data):
         await resize_download_workers(settings.get("max_concurrent_downloads", MAX_CONCURRENT_DOWNLOADS))
     except Exception as exc:
         await write_app_error("worker_resize", exc)
-    global SCHEDULED_SCANNER_WAKE
-    if SCHEDULED_SCANNER_WAKE is not None:
-        try:
-            SCHEDULED_SCANNER_WAKE.set()
-        except Exception:
-            pass
+    global SCHEDULED_SCANNER_WAKE, LIBRARY_HEALTH_WAKE
+    for wake in (SCHEDULED_SCANNER_WAKE, LIBRARY_HEALTH_WAKE):
+        if wake is not None:
+            try:
+                wake.set()
+            except Exception:
+                pass
     return settings
 
 
@@ -1732,6 +1765,13 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+async def broadcast_stats_invalidated(reason="state_changed"):
+    try:
+        await manager.broadcast({"type":"stats_invalidated","reason":str(reason)[:120]})
+    except Exception as exc:
+        await write_app_error("stats_broadcast", _sanitize_external_error(exc, "Statistics event failed.", 300))
+
 
 
 def _bounded_text(value, limit=PLAYER_STATE_MAX_TEXT):
@@ -2647,7 +2687,20 @@ async def fast_library_snapshot():
         enc=urllib.parse.quote(rel,safe="/")
         version = f"{int(row.get('mtime_ns') or 0)}-{int(row.get('size') or 0)}"
         files.append({"id":str(row["id"]),"name":rel,"title":title,"artist":artist,"album":album,"size":format_size(size),"bytes":size,"duration":safe_float(metadata.get("duration"),0),"play_count":0,"cover":f"/api/library/cover/{enc}?v={urllib.parse.quote(version)}","stream":"/api/library/stream/"+enc})
-    return {"files":files,"total_size":format_size(total),"total_bytes":total,"artists_count":len(artists),"albums_count":len(albums),"ready":bool(rows),"storage":await asyncio.to_thread(storage_info_sync)}
+    storage=await asyncio.to_thread(storage_info_sync)
+    scan_state=await asyncio.to_thread(_scan_state_read_sync)
+    scan_status=str(scan_state.get("status") or "idle")
+    if storage.get("state") == "offline":
+        library_state="offline"
+    elif scan_status == "running":
+        library_state="scanning"
+    elif scan_status == "error":
+        library_state="error"
+    elif not rows:
+        library_state="empty"
+    else:
+        library_state="ready"
+    return {"files":files,"total_size":format_size(total),"total_bytes":total,"artists_count":len(artists),"albums_count":len(albums),"ready":library_state in {"ready","empty"},"library_state":library_state,"storage":storage,"storage_state":storage.get("state",STORAGE_STATE),"scan_state":scan_state}
 
 
 async def build_library(force=False):
@@ -2781,6 +2834,7 @@ async def _perform_library_refresh(mode="quick", reason="manual"):
                     await asyncio.gather(*(cover_one(c) for c in cover_tasks),return_exceptions=True)
             await asyncio.to_thread(_scan_state_sync,"ok",mode,f"{len(library['songs'])} tracks scanned")
             await manager.broadcast({"type":"library_updated","reason":reason,"count":len(library["songs"])})
+            await broadcast_stats_invalidated("library_updated")
             return library
         except StorageUnavailable as exc:
             safe = _sanitize_external_error(exc, "Music storage is offline.")
@@ -2948,41 +3002,6 @@ async def resolve_cover_id(item_id):
 # ============================================================
 # DUPLICATES
 # ============================================================
-
-def task_download_root(task):
-    """Return a persisted validated download root; invalid persisted paths fail closed."""
-    raw = str((task or {}).get("download_root") or "").strip()
-    if not raw:
-        return DOWNLOAD_DIR
-    try:
-        root = Path(raw).expanduser().resolve()
-        base = DOWNLOAD_DIR.resolve()
-        if root == base or base in root.parents:
-            return root
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise RuntimeError("Persisted download location is invalid.") from exc
-    raise RuntimeError("Persisted download location is outside the music library root.")
-
-
-def cleanup_task_files(task_id, root=None):
-    root = Path(root or DOWNLOAD_DIR)
-    try:
-        base = DOWNLOAD_DIR.resolve()
-        root = root.resolve()
-        if not (root == base or base in root.parents):
-            root = base
-    except (OSError, RuntimeError, ValueError):
-        root = DOWNLOAD_DIR
-    try:
-        for path in root.rglob(f"*{task_id}*"):
-            try:
-                if path.is_file():
-                    path.unlink()
-            except Exception:
-                pass
-    except OSError:
-        pass
-
 
 async def _switch_content_identity_reservation(old_identity, new_identity):
     """Atomically move an in-flight download reservation to final normalized identity."""
@@ -5182,7 +5201,7 @@ async def api_library():
     result=[]; total=0
     for song in library.get("songs",[]):
         rel=str(Path(song["path"]).resolve().relative_to(DOWNLOAD_DIR.resolve())); size=int(song.get("size") or 0); total += size
-        result.append({"id":song["id"],"name":rel,"size":format_size(size),"bytes":size,"title":song.get("title",Path(rel).stem),"artist":song.get("artist","Unknown Artist"),"album":song.get("album","Unknown Album"),"album_artist":song.get("albumArtist",song.get("artist","Unknown Artist")),"genre":song.get("genre",""),"year":song.get("year",""),"track":song.get("track",0),"duration":song.get("duration",0),"replaygain_track_gain":song.get("replaygain_track_gain"),"replaygain_album_gain":song.get("replaygain_album_gain"),"replaygain_track_peak":song.get("replaygain_track_peak"),"replaygain_album_peak":song.get("replaygain_album_peak"),"has_artwork":bool(song.get("has_artwork")),"play_count":play_counts.get(song["id"],0),"cover":versioned_cover_url(s["path"]),"stream":"/api/library/stream/"+urllib.parse.quote(rel,safe="/")})
+        result.append({"id":song["id"],"name":rel,"size":format_size(size),"bytes":size,"title":song.get("title",Path(rel).stem),"artist":song.get("artist","Unknown Artist"),"album":song.get("album","Unknown Album"),"album_artist":song.get("albumArtist",song.get("artist","Unknown Artist")),"genre":song.get("genre",""),"year":song.get("year",""),"track":song.get("track",0),"duration":song.get("duration",0),"replaygain_track_gain":song.get("replaygain_track_gain"),"replaygain_album_gain":song.get("replaygain_album_gain"),"replaygain_track_peak":song.get("replaygain_track_peak"),"replaygain_album_peak":song.get("replaygain_album_peak"),"has_artwork":bool(song.get("has_artwork")),"play_count":play_counts.get(song["id"],0),"cover":versioned_cover_url(song["path"]),"stream":"/api/library/stream/"+urllib.parse.quote(rel,safe="/")})
     result.sort(key=lambda item:item["name"].lower())
     artists=[]
     for artist in library["artists"].values():
@@ -5196,7 +5215,19 @@ async def api_library():
         albums.append({"id":album["id"],"name":album["name"],"artist":album["artist"],"artist_id":album["artistId"],"year":album.get("year",""),"genre":album.get("genre",""),"song_count":len(songs),"cover":cover,"song_ids":[song["id"] for song in songs]})
     albums.sort(key=lambda item:(item["artist"].lower(),item["name"].lower()))
     storage=await asyncio.to_thread(storage_info_sync)
-    return {"files":result,"total_size":format_size(total),"total_bytes":total,"storage":storage,"storage_state":storage.get("state",STORAGE_STATE),"artists":artists,"albums":albums,"ready":True}
+    scan_state=await asyncio.to_thread(_scan_state_read_sync)
+    scan_status=str(scan_state.get("status") or "idle")
+    if storage.get("state") == "offline":
+        library_state="offline"
+    elif scan_status == "running":
+        library_state="scanning"
+    elif scan_status == "error" and not result:
+        library_state="error"
+    elif not result:
+        library_state="empty"
+    else:
+        library_state="ready"
+    return {"files":result,"total_size":format_size(total),"total_bytes":total,"storage":storage,"storage_state":storage.get("state",STORAGE_STATE),"artists":artists,"albums":albums,"ready":library_state in {"ready","empty"},"library_state":library_state,"scan_state":scan_state}
 
 
 @app.post("/api/library/scan")
@@ -5298,62 +5329,49 @@ async def api_library_statistics():
 
 @app.get("/api/library/intelligence")
 async def api_library_intelligence():
-    """Actionable library quality checks: duplicates, missing tags/artwork, and ReplayGain coverage."""
+    """Actionable library quality checks using the same duplicate engine as the duplicate API."""
     library = await build_library()
     songs = library.get("songs", [])
+    by_id = {str(song.get("id")): song for song in songs}
     health_state = await asyncio.to_thread(_health_read_sync)
     health_report = health_state.get("report") if isinstance(health_state, dict) else {}
     unreadable = list((health_report or {}).get("unreadable") or []) if isinstance(health_report, dict) else []
-    duplicate_groups = defaultdict(list)
-    missing_metadata = []
-    missing_artwork = []
-    replaygain_missing = []
-    suspicious_names = []
+    raw_duplicates = await asyncio.to_thread(strong_duplicate_report_sync, 100)
+    duplicate_groups_out = []
+    for group in raw_duplicates:
+        files = []
+        for sid in group.get("ids") or []:
+            song = by_id.get(str(sid))
+            if not song:
+                continue
+            files.append({
+                "id": song["id"], "name": str(song["path"].relative_to(DOWNLOAD_DIR)),
+                "title": song.get("title", ""), "artist": song.get("artist", "Unknown Artist"),
+                "album": song.get("album", "Unknown Album"), "duration": song.get("duration", 0), "size": song.get("size", 0),
+            })
+        if len(files) >= 2:
+            first = files[0]
+            duplicate_groups_out.append({"key": group.get("strong_hash", ""), "count": len(files), "files": files, "title": first.get("title"), "artist": first.get("artist"), "album": first.get("album"), "verified": True})
 
+    missing_metadata=[]; missing_artwork=[]; replaygain_missing=[]; suspicious_names=[]
     for song in songs:
-        title = str(song.get("title") or "").strip()
-        artist = str(song.get("artist") or "").strip()
-        album = str(song.get("album") or "").strip()
-        key = "|".join([re.sub(r"\s+", " ", artist).casefold(), re.sub(r"\s+", " ", title).casefold(), re.sub(r"\s+", " ", album).casefold()])
-        duplicate_groups[key].append(song)
-        issues = []
+        title = str(song.get("title") or "").strip(); artist = str(song.get("artist") or "").strip(); album = str(song.get("album") or "").strip()
+        issues=[]
         if not title or title.casefold() in {"unknown track", "unknown"}: issues.append("title")
         if not artist or artist.casefold() in {"unknown artist", "unknown"}: issues.append("artist")
         if not album or album.casefold() in {"unknown album", "unknown"}: issues.append("album")
-        if issues:
-            missing_metadata.append({"id": song["id"], "title": title or song.get("path", Path("track")).stem, "artist": artist or "Unknown Artist", "album": album or "Unknown Album", "issues": issues})
-        if not song.get("has_artwork"):
-            missing_artwork.append({"id": song["id"], "title": title or song.get("path", Path("track")).stem, "artist": artist or "Unknown Artist", "album": album or "Unknown Album"})
-        if song.get("replaygain_track_gain") is None and song.get("replaygain_album_gain") is None:
-            replaygain_missing.append({"id": song["id"], "title": title or song.get("path", Path("track")).stem, "artist": artist or "Unknown Artist"})
-        name = Path(str(song.get("path") or "")).name
-        if re.search(r"(?:\[?\(?(?:official|lyric|lyrics|music video|video|visualizer)|\d{1,3}[-_. ])", name, re.I):
-            suspicious_names.append({"id": song["id"], "name": name, "title": title, "artist": artist})
-
-    duplicate_groups_out = []
-    for key, group in duplicate_groups.items():
-        if len(group) < 2:
-            continue
-        files = []
-        for song in group[:20]:
-            files.append({"id": song["id"], "name": str(song["path"].relative_to(DOWNLOAD_DIR)), "title": song["title"], "artist": song["artist"], "album": song["album"], "duration": song["duration"], "size": song["size"]})
-        duplicate_groups_out.append({"key": key, "count": len(group), "files": files})
-    duplicate_groups_out.sort(key=lambda x: (-x["count"], x["key"]))
-
+        if issues: missing_metadata.append({"id":song["id"],"title":title or Path(str(song.get("path") or "track")).stem,"artist":artist or "Unknown Artist","album":album or "Unknown Album","issues":issues})
+        if not song.get("has_artwork"): missing_artwork.append({"id":song["id"],"title":title or Path(str(song.get("path") or "track")).stem,"artist":artist or "Unknown Artist","album":album or "Unknown Album"})
+        if song.get("replaygain_track_gain") is None and song.get("replaygain_album_gain") is None: replaygain_missing.append({"id":song["id"],"title":title or Path(str(song.get("path") or "track")).stem,"artist":artist or "Unknown Artist"})
+        name=Path(str(song.get("path") or "")).name
+        if re.search(r"(?:\[?\(?(?:official|lyric|lyrics|music video|video|visualizer)|\d{1,3}[-_. ])", name, re.I): suspicious_names.append({"id":song["id"],"name":name,"title":title,"artist":artist})
     return {
-        "track_count": len(songs),
-        "unreadable": unreadable[:200],
-        "unreadable_count": len(unreadable),
-        "duplicate_groups": duplicate_groups_out[:100],
-        "duplicate_tracks": sum(max(0, x["count"] - 1) for x in duplicate_groups_out),
-        "missing_metadata": missing_metadata[:200],
-        "missing_metadata_count": len(missing_metadata),
-        "missing_artwork": missing_artwork[:200],
-        "missing_artwork_count": len(missing_artwork),
-        "replaygain_missing": replaygain_missing[:200],
-        "replaygain_missing_count": len(replaygain_missing),
-        "suspicious_names": suspicious_names[:200],
-        "suspicious_names_count": len(suspicious_names),
+        "track_count":len(songs), "unreadable":unreadable[:200], "unreadable_count":len(unreadable),
+        "duplicate_groups":duplicate_groups_out[:100], "duplicate_tracks":sum(max(0,x["count"]-1) for x in duplicate_groups_out),
+        "missing_metadata":missing_metadata[:200], "missing_metadata_count":len(missing_metadata),
+        "missing_artwork":missing_artwork[:200], "missing_artwork_count":len(missing_artwork),
+        "replaygain_missing":replaygain_missing[:200], "replaygain_missing_count":len(replaygain_missing),
+        "suspicious_names":suspicious_names[:200], "suspicious_names_count":len(suspicious_names),
     }
 
 
@@ -9039,6 +9057,7 @@ async def api_player_history(payload: dict = Body(...)):
     duration = finite_nonnegative_float(payload.get("duration") or 0, "duration")
     position = finite_nonnegative_float(payload.get("position") or 0, "position")
     total_plays = await asyncio.to_thread(save_player_history_sync, song_id, duration, position)
+    await broadcast_stats_invalidated("play_history")
     return {"status":"ok", "all_play_count": total_plays}
 
 
@@ -9053,7 +9072,7 @@ async def api_recent_most():
             song=by_id.get(r[0])
             if not song: continue
             rel=str(song["path"].relative_to(DOWNLOAD_DIR)); enc=urllib.parse.quote(rel,safe="/")
-            out.append({"id":song["id"],"title":song["title"],"artist":song["artist"],"album":song["album"],"duration":song["duration"],"plays":int(r[1]),"cover":versioned_cover_url(s["path"]),"stream":"/api/library/stream/"+enc})
+            out.append({"id":song["id"],"title":song["title"],"artist":song["artist"],"album":song["album"],"duration":song["duration"],"plays":int(r[1]),"cover":versioned_cover_url(song["path"]),"stream":"/api/library/stream/"+enc})
         return out
     return {"recent":pack(recent),"most_played":pack(most)}
 
@@ -9158,7 +9177,7 @@ async def api_playlist_get(playlist_id:str):
                 s=by_id.get(sid)
                 if s:
                     rel=str(s["path"].relative_to(DOWNLOAD_DIR)); enc=urllib.parse.quote(rel,safe="/")
-                    tracks.append({"id":s["id"],"title":s["title"],"artist":s["artist"],"album":s["album"],"duration":s["duration"],"cover":versioned_cover_url(song["path"]),"stream":"/api/library/stream/"+enc})
+                    tracks.append({"id":s["id"],"title":s["title"],"artist":s["artist"],"album":s["album"],"duration":s["duration"],"cover":versioned_cover_url(s["path"]),"stream":"/api/library/stream/"+enc})
             p["tracks"]=tracks
             return p
     raise HTTPException(404,"Playlist not found")
@@ -9234,18 +9253,26 @@ def _run_library_health_sync():
             missing_art.append(rel)
     if LIBRARY_CATALOG is not None and checked_ids:
         LIBRARY_CATALOG.mark_health_checked(checked_ids, time.time())
-    exact_duplicates = strong_duplicate_report_sync(100)
-    report={"checked":len(checked_ids),"total":len(all_rows),"unreadable":unreadable[:200],"bad_tags":bad_tags[:500],"missing_artwork":missing_art[:500],"duplicate_groups":exact_duplicates,"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":len(exact_duplicates),"duplicate_files":sum(x["count"] for x in exact_duplicates)}}
+    report={"checked":len(checked_ids),"total":len(all_rows),"unreadable":unreadable[:200],"bad_tags":bad_tags[:500],"missing_artwork":missing_art[:500],"duplicate_groups":[],"counts":{"unreadable":len(unreadable),"bad_tags":len(bad_tags),"missing_artwork":len(missing_art),"duplicates":0,"duplicate_files":0}}
     return report
 
 
 async def background_library_health_scanner():
-    global LIBRARY_HEALTH_TASK
-    try:
-        await asyncio.sleep(120)
-    except asyncio.CancelledError:
-        return
+    global LIBRARY_HEALTH_TASK, LIBRARY_HEALTH_WAKE
+    if LIBRARY_HEALTH_WAKE is None:
+        LIBRARY_HEALTH_WAKE = asyncio.Event()
+    first_run = True
     while True:
+        if first_run:
+            first_run = False
+            try:
+                await asyncio.wait_for(LIBRARY_HEALTH_WAKE.wait(), timeout=120)
+                LIBRARY_HEALTH_WAKE.clear()
+                continue
+            except asyncio.TimeoutError:
+                pass
+            except asyncio.CancelledError:
+                return
         started=time.time()
         try:
             await asyncio.to_thread(_health_store_sync,"running",{},"Library health scan running",started,0)
@@ -9264,7 +9291,15 @@ async def background_library_health_scanner():
             interval=max(30,min(10080,int(settings.get("health_scan_interval_minutes",LIBRARY_HEALTH_INTERVAL_SECONDS/60) or LIBRARY_HEALTH_INTERVAL_SECONDS/60)))
         except Exception:
             interval=int(LIBRARY_HEALTH_INTERVAL_SECONDS/60)
-        await asyncio.sleep(interval*60)
+        LIBRARY_HEALTH_WAKE.clear()
+        try:
+            await asyncio.wait_for(LIBRARY_HEALTH_WAKE.wait(), timeout=interval * 60)
+            LIBRARY_HEALTH_WAKE.clear()
+            continue
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            return
 
 
 @app.get("/api/library/health/status")
