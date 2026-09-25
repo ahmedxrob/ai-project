@@ -74,7 +74,7 @@ let crossfadeGainNode = null;
 let crossfadePrepared = null;
 let crossfadeTimer = null;
 let crossfadeActive = false;
-let playerSettings = { replaygain_enabled: true, replaygain_mode: "track", replaygain_preamp_db: 0, replaygain_prevent_clipping: true, crossfade_seconds: 0, gapless_playback: true };
+let playerSettings = { replaygain_enabled: true, replaygain_mode: "track", replaygain_preamp_db: 0, replaygain_prevent_clipping: true, crossfade_seconds: 0, gapless_playback: true, keep_playing: true };
 
 let savedPlayerState = {
     track: null,
@@ -243,6 +243,12 @@ let playerHandoffStoppingRemote = false;
 let serverPlayerStateLoaded = false;
 let remoteDisplayTime = 0;
 const DAILY_MIX_STATE_KEY = "xrob_music_daily_mix_state_v2";
+const SLEEP_TIMER_KEY = "xrob_music_sleep_timer_v1";
+const SLEEP_TIMER_PRESETS = [0, 15, 30, 60, 90];
+let sleepTimerDeadline = Number(storageGet(SLEEP_TIMER_KEY) || 0) || 0;
+let sleepTimerInterval = null;
+let lyricsRequestId = 0;
+let lyricsAnimationFrame = null;
 
 /* ============================================================
    SHARED APPLICATION STATE + EVENT BUS
@@ -2109,7 +2115,7 @@ function initCrossfadeAudioGraph() {
         crossfadeGainNode = audioContext.createGain();
         crossfadeGainNode.gain.value = 0;
         crossfadeSourceNode.connect(crossfadeGainNode);
-        crossfadeGainNode.connect(audioContext.destination);
+        crossfadeGainNode.connect(analyser);
     } catch (_) {}
 }
 
@@ -2243,6 +2249,94 @@ function finalizeCrossfadeIfNeeded() {
     return finalizePreparedTrackIfNeeded();
 }
 
+
+function sleepTimerRemainingMs() { return sleepTimerDeadline > Date.now() ? sleepTimerDeadline - Date.now() : 0; }
+function sleepTimerLabel() {
+    const remaining = sleepTimerRemainingMs();
+    if (!remaining) return "Sleep: Off";
+    const mins = Math.max(1, Math.ceil(remaining / 60000));
+    return `Sleep: ${mins}m`;
+}
+function updateSleepTimerUI() {
+    const label = sleepTimerLabel();
+    ["gp-sleep-btn", "queueSleep"].forEach(id => { const el=document.getElementById(id); if(el) { el.textContent=label; el.setAttribute("aria-label", label); el.title=label; } });
+}
+function clearSleepTimer() { sleepTimerDeadline = 0; storageRemove(SLEEP_TIMER_KEY); if (sleepTimerInterval) { clearInterval(sleepTimerInterval); sleepTimerInterval=null; } updateSleepTimerUI(); }
+function setSleepTimer(minutes) {
+    const safe = Math.max(0, Number(minutes)||0);
+    if (!safe) { clearSleepTimer(); showToast("Sleep timer off"); return; }
+    sleepTimerDeadline = Date.now() + safe * 60000;
+    storageSet(SLEEP_TIMER_KEY, String(sleepTimerDeadline));
+    if (!sleepTimerInterval) sleepTimerInterval = setInterval(() => {
+        if (!sleepTimerRemainingMs()) {
+            clearSleepTimer();
+            if (isRemotePlayerOwner()) sendPlayerCommand("pause");
+            else audio?.pause();
+            showToast("⏰ Sleep timer paused playback");
+            return;
+        }
+        updateSleepTimerUI();
+    }, 1000);
+    updateSleepTimerUI();
+    showToast(`⏰ Sleep timer: ${safe} minutes`);
+}
+function cycleSleepTimer() {
+    const remaining = sleepTimerRemainingMs();
+    if (!remaining) return setSleepTimer(15);
+    const current = Math.round(remaining / 60000);
+    const idx = SLEEP_TIMER_PRESETS.findIndex(v => v > current);
+    const next = idx >= 0 ? SLEEP_TIMER_PRESETS[idx] : 0;
+    setSleepTimer(next);
+}
+async function openLyricsPanel() {
+    const songId = audio?.dataset?.xrobSongId || currentSongId();
+    if (!songId) { showToast("No track is playing"); return; }
+    const modal = document.getElementById("lyrics-modal");
+    const body = document.getElementById("lyricsContent");
+    const title = document.getElementById("lyricsTitle");
+    if (!modal || !body) return;
+    const requestId = ++lyricsRequestId;
+    modal.hidden = false;
+    body.innerHTML = '<div class="lyrics-loading">Loading lyrics…</div>';
+    if (title) title.textContent = playerTitle?.textContent || "Lyrics";
+    try {
+        const response = await apiFetch(`api/lyrics/${encodeURIComponent(songId)}`, {cache:"no-store"});
+        const data = await response.json().catch(()=>({}));
+        if (requestId !== lyricsRequestId) return;
+        if (!response.ok) throw new Error(data.detail || "Lyrics unavailable");
+        renderLyricsPanel(data);
+    } catch (error) {
+        if (requestId !== lyricsRequestId) return;
+        body.innerHTML = `<div class="lyrics-empty"><i data-lucide="file-question" aria-hidden="true"></i><strong>No lyrics available</strong><span>${escapeHtml(error.message || "Lyrics could not be loaded")}</span></div>`;
+        renderLocalIcons();
+    }
+}
+function renderLyricsPanel(data) {
+    const body=document.getElementById("lyricsContent"); if(!body) return;
+    if (lyricsAnimationFrame) cancelAnimationFrame(lyricsAnimationFrame);
+    lyricsAnimationFrame = null;
+    const synced = Array.isArray(data.structuredLyrics?.[0]?.line) ? data.structuredLyrics[0].line : [];
+    const plain = String(data.plainLyrics || "");
+    if (!synced.length && !plain) {
+        body.innerHTML = '<div class="lyrics-empty"><i data-lucide="file-question" aria-hidden="true"></i><strong>No lyrics found</strong><span>Embedded lyrics and LRCLIB did not return a result.</span></div>'; renderLocalIcons(); return;
+    }
+    if (synced.length) {
+        body.innerHTML = `<div class="lyrics-source">${escapeHtml(data.source || "Lyrics")}</div><div class="lyrics-lines"></div>`;
+        const list=body.querySelector(".lyrics-lines");
+        synced.forEach(line => { const row=document.createElement("div"); row.className="lyrics-line"; row.dataset.start=String(line.start||0); row.textContent=String(line.value||""); list.appendChild(row); });
+        const tick = () => {
+            if (body.closest(".xrob-modal")?.hidden) return;
+            const pos=Number(audio?.currentTime||0)*1000; let active=null;
+            body.querySelectorAll(".lyrics-line").forEach(el=>{const start=Number(el.dataset.start||0); if(start<=pos) active=el;});
+            body.querySelectorAll(".lyrics-line.active").forEach(el=>el.classList.remove("active"));
+            if(active){active.classList.add("active");active.scrollIntoView({block:"center",behavior:"smooth"});}
+            lyricsAnimationFrame = requestAnimationFrame(tick);
+        };
+        lyricsAnimationFrame = requestAnimationFrame(tick);
+    } else {
+        body.innerHTML = `<div class="lyrics-source">${escapeHtml(data.source || "Lyrics")}</div><pre class="lyrics-plain">${escapeHtml(plain)}</pre>`;
+    }
+}
 
 function drawVisualizer() {
 
@@ -2603,6 +2697,7 @@ function bindAudioEvents() {
             if (playerSettings.gapless_playback || fadeWindow > 0) {
                 if (remaining < Math.max(8, fadeWindow + 4)) prepareNextTrack();
                 if (fadeWindow > 0 && remaining <= fadeWindow + 0.25) maybeStartCrossfade();
+                if (playerSettings.gapless_playback && fadeWindow <= 0 && remaining <= 0.12 && finalizePreparedTrackIfNeeded()) return;
             }
             if (!applyingRemotePlayerCommand && !isRemotePlayerOwner()) schedulePlayerStateBroadcast(false);
 
@@ -2695,6 +2790,11 @@ function bindAudioEvents() {
 
             if (currentPlayerSource === "library") {
                 if (advanceLibraryQueue(1, true)) return;
+            }
+
+            if (playerSettings.keep_playing) {
+                continuePlayingAutomatically().catch(error => reportAppError(error, {scope:"player", action:"keep-playing"}));
+                return;
             }
 
             if (activePreviewBtn) {
@@ -3976,8 +4076,10 @@ function renderItems(items) {
 
             if (item.already_downloaded) {
 
+                const match = item.library_match;
+                const matchText = match?.path ? ` · ${escapeHtml(match.path)}` : "";
                 group.innerHTML = `
-                    <div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library</div>
+                    <div class="badge-library"><i data-lucide="circle-check" aria-hidden="true"></i> In Library${matchText}</div>
                 `;
 
             } else if (item.already_queued) {
@@ -4056,7 +4158,8 @@ function renderItems(items) {
                             item.id,
                             item.artist || item.channel,
                             download,
-                            item.album || ""
+                            item.album || "",
+                            item.duration || 0
                         )
                 );
 
@@ -4479,7 +4582,8 @@ async function startDownload(
     elementId,
     artist,
     button,
-    album = ""
+    album = "",
+    duration = 0
 ) {
 
     if (!url) {
@@ -4503,6 +4607,26 @@ async function startDownload(
 
     try {
 
+        // Authoritative click-time library check. Search badges are only advisory;
+        // this check resolves provider metadata and prevents downloading an existing track.
+        const checkResponse = await apiFetch("/api/download/check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url, title, artist, album, duration })
+        });
+        const check = await checkResponse.json().catch(() => ({}));
+        if (!checkResponse.ok) throw new Error(check.detail || "Could not verify library duplicate state.");
+        if (check.status === "already_downloaded") {
+            if (button) { button.disabled = true; button.className = "btn-refresh"; button.innerHTML = '<i data-lucide="circle-check" aria-hidden="true"></i> In Library'; renderLocalIcons(); }
+            showToast("✓ Already in library — download skipped");
+            return;
+        }
+        if (check.status === "already_queued") {
+            if (button) { button.disabled = true; button.className = "btn-refresh"; button.innerHTML = '<i data-lucide="clock-3" aria-hidden="true"></i> In Queue'; renderLocalIcons(); }
+            showToast("⏳ Already in download queue");
+            return;
+        }
+
         const response =
             await apiFetch(
                 "/api/download",
@@ -4520,7 +4644,8 @@ async function startDownload(
                             title,
                             elementId,
                             artist,
-                            album
+                            album,
+                            duration
                         })
                 }
             );
@@ -4778,6 +4903,24 @@ async function clearDoneTasks() {
 /* ============================================================
    HOME
    ============================================================ */
+
+async function continuePlayingAutomatically() {
+    const currentId = currentSongId();
+    const response = await apiFetch(`api/daily-mix?limit=12&variant=${Date.now()}&exclude=${encodeURIComponent(currentId || "")}`, {cache:"no-store"});
+    const data = await response.json().catch(()=>({}));
+    if (!response.ok) throw new Error(data.detail || "Could not continue playback");
+    const currentKeys = new Set(getLibraryQueue().map(trackKey));
+    const candidates = (Array.isArray(data.tracks) ? data.tracks : []).filter(track => track?.stream && !currentKeys.has(trackKey(track)));
+    if (!candidates.length) { showToast("🎵 Nothing else to play"); return false; }
+    const queue = [...getLibraryQueue(), ...candidates];
+    const startIndex = queue.findIndex(item => trackKey(item) === trackKey(candidates[0]));
+    syncLibraryQueue(queue, startIndex);
+    currentPlayerSource = "library";
+    renderEnhancedQueue();
+    playLibraryTrack(startIndex);
+    showToast("▶ Keeping playback going");
+    return true;
+}
 
 function advanceLibraryQueue(direction = 1, fromEnded = false) {
     const queue = getLibraryQueue();
@@ -5744,6 +5887,7 @@ function renderEnhancedQueue() {
             renderEnhancedQueue();
         };
         row.addEventListener("dblclick", () => playLibraryTrack(i));
+        row.addEventListener("click", e => { if (e.target.closest("button")) return; playLibraryTrack(i); });
         row.addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", String(i)); e.dataTransfer.effectAllowed = "move"; });
         row.addEventListener("dragover", e => e.preventDefault());
         row.addEventListener("drop", e => {
@@ -6224,7 +6368,7 @@ function installEnhancedFeatures(){
     shuffleRestoreCurrentId = null;
     saveEnhancedQueue();
     renderEnhancedQueue();
-}); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
+}); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode); document.getElementById("queueSleep")?.addEventListener("click",cycleSleepTimer); document.getElementById("gp-sleep-btn")?.addEventListener("click",cycleSleepTimer); document.getElementById("gp-lyrics-btn")?.addEventListener("click",openLyricsPanel); document.getElementById("lyricsClose")?.addEventListener("click",()=>{const m=document.getElementById("lyrics-modal");if(m)m.hidden=true;if(lyricsAnimationFrame){cancelAnimationFrame(lyricsAnimationFrame);lyricsAnimationFrame=null;}}); updateSleepTimerUI(); if(sleepTimerRemainingMs() && !sleepTimerInterval) sleepTimerInterval=setInterval(()=>{if(!sleepTimerRemainingMs()){clearSleepTimer();if(isRemotePlayerOwner())sendPlayerCommand("pause");else audio?.pause();showToast("⏰ Sleep timer paused playback");}updateSleepTimerUI();},1000);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
     document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await apiFetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();await loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
     document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{
@@ -6594,17 +6738,17 @@ function saveDeviceName(){const value=(document.getElementById("set_device_name"
 function applySettingsToForm(settings){
     const setValue=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??""}; const setChecked=(id,v)=>{const e=document.getElementById(id);if(e)e.checked=Boolean(v)};
     setValue("set_format",settings.audio_format||"mp3");setValue("set_quality",settings.audio_quality||"320K");setValue("set_metadata_mode",settings.metadata_mode||"auto");const artworkMode=settings.artwork_behavior||((settings.embed_thumbnail!==false)?"embed":"none");setValue("set_artwork_behavior",artworkMode);setChecked("set_thumb",artworkMode!=="none");setChecked("set_meta",settings.embed_metadata);setChecked("set_organize",settings.organize_by_artist);setChecked("set_scan_enabled",settings.scan_enabled!==false);setValue("set_scan_interval",settings.scan_interval_minutes||60);setValue("set_title_cleanup_rules",settings.title_cleanup_rules||"");setValue("set_daily_mix_count",Math.max(5,Math.min(50,Number(settings.daily_mix_track_count||30))));storageSet("xrob_music_daily_mix_count",String(settings.daily_mix_track_count||30));
-    playerSettings={...playerSettings,replaygain_enabled:settings.replaygain_enabled!==false,replaygain_mode:settings.replaygain_mode||"track",replaygain_preamp_db:Number(settings.replaygain_preamp_db||0),replaygain_prevent_clipping:settings.replaygain_prevent_clipping!==false,crossfade_seconds:Number(settings.crossfade_seconds||0),gapless_playback:settings.gapless_playback!==false};
-    setChecked("set_replaygain_enabled",playerSettings.replaygain_enabled);setValue("set_replaygain_mode",playerSettings.replaygain_mode);setValue("set_replaygain_preamp",playerSettings.replaygain_preamp_db);setChecked("set_replaygain_clip",playerSettings.replaygain_prevent_clipping);setValue("set_crossfade",playerSettings.crossfade_seconds);setChecked("set_gapless",playerSettings.gapless_playback);
+    playerSettings={...playerSettings,replaygain_enabled:settings.replaygain_enabled!==false,replaygain_mode:settings.replaygain_mode||"track",replaygain_preamp_db:Number(settings.replaygain_preamp_db||0),replaygain_prevent_clipping:settings.replaygain_prevent_clipping!==false,crossfade_seconds:Number(settings.crossfade_seconds||0),gapless_playback:settings.gapless_playback!==false,keep_playing:settings.keep_playing!==false};
+    setChecked("set_replaygain_enabled",playerSettings.replaygain_enabled);setValue("set_replaygain_mode",playerSettings.replaygain_mode);setValue("set_replaygain_preamp",playerSettings.replaygain_preamp_db);setChecked("set_replaygain_clip",playerSettings.replaygain_prevent_clipping);setValue("set_crossfade",playerSettings.crossfade_seconds);setChecked("set_gapless",playerSettings.gapless_playback);setChecked("set_keep_playing",playerSettings.keep_playing);
     setValue("set_download_location",settings.download_location||"");setValue("set_max_concurrent",settings.max_concurrent_downloads||3);setValue("set_max_pending",settings.max_pending_downloads||500);setChecked("set_auto_retry",settings.auto_retry_downloads!==false);setValue("set_retry_limit",settings.download_retry_limit??2);setValue("set_retry_backoff",settings.download_retry_backoff_seconds||3);setValue("set_filename_mode",settings.filename_mode||"title");setValue("set_cache_size",settings.cache_size_mb||256);setValue("set_stats_retention",settings.stats_retention_days||365);setValue("set_device_name",deviceName());setValue("set_web_username",settings.web_username||"admin");setValue("set_web_password","");renderStorage(settings.storage);updateQualityState();
 }
 async function saveSettings(){
     const gv=id=>document.getElementById(id)?.value||"",gc=id=>document.getElementById(id)?.checked??false;
     const artwork=gv("set_artwork_behavior")|| (gc("set_thumb")?"embed":"none");
-    const data={audio_format:gv("set_format")||"mp3",audio_quality:gv("set_quality")||"320K",metadata_mode:gv("set_metadata_mode")||"auto",embed_thumbnail:artwork==="embed",embed_metadata:gc("set_meta"),organize_by_artist:gc("set_organize"),scan_enabled:gc("set_scan_enabled"),scan_interval_minutes:Math.max(5,Number(gv("set_scan_interval")||60)),title_cleanup_rules:gv("set_title_cleanup_rules"),daily_mix_track_count:Math.max(5,Math.min(50,Number(gv("set_daily_mix_count")||30))),replaygain_enabled:gc("set_replaygain_enabled"),replaygain_mode:gv("set_replaygain_mode")||"track",replaygain_preamp_db:Math.max(-12,Math.min(12,Number(gv("set_replaygain_preamp")||0))),replaygain_prevent_clipping:gc("set_replaygain_clip"),crossfade_seconds:Math.max(0,Math.min(12,Number(gv("set_crossfade")||0))),gapless_playback:gc("set_gapless"),web_username:gv("set_web_username")||"admin",download_location:gv("set_download_location").trim(),max_concurrent_downloads:Math.max(1,Math.min(8,Number(gv("set_max_concurrent")||3))),max_pending_downloads:Math.max(50,Math.min(5000,Number(gv("set_max_pending")||500))),auto_retry_downloads:gc("set_auto_retry"),download_retry_limit:Math.max(0,Math.min(5,Number(gv("set_retry_limit")||2))),download_retry_backoff_seconds:Math.max(1,Math.min(60,Number(gv("set_retry_backoff")||3))),artwork_behavior:artwork,filename_mode:gv("set_filename_mode")||"title",cache_size_mb:Math.max(32,Math.min(2048,Number(gv("set_cache_size")||256))),stats_retention_days:Math.max(30,Math.min(3650,Number(gv("set_stats_retention")||365))),...(gv("set_web_password")?{web_password:gv("set_web_password")}: {})};
+    const data={audio_format:gv("set_format")||"mp3",audio_quality:gv("set_quality")||"320K",metadata_mode:gv("set_metadata_mode")||"auto",embed_thumbnail:artwork==="embed",embed_metadata:gc("set_meta"),organize_by_artist:gc("set_organize"),scan_enabled:gc("set_scan_enabled"),scan_interval_minutes:Math.max(5,Number(gv("set_scan_interval")||60)),title_cleanup_rules:gv("set_title_cleanup_rules"),daily_mix_track_count:Math.max(5,Math.min(50,Number(gv("set_daily_mix_count")||30))),replaygain_enabled:gc("set_replaygain_enabled"),replaygain_mode:gv("set_replaygain_mode")||"track",replaygain_preamp_db:Math.max(-12,Math.min(12,Number(gv("set_replaygain_preamp")||0))),replaygain_prevent_clipping:gc("set_replaygain_clip"),crossfade_seconds:Math.max(0,Math.min(12,Number(gv("set_crossfade")||0))),gapless_playback:gc("set_gapless"),keep_playing:gc("set_keep_playing"),web_username:gv("set_web_username")||"admin",download_location:gv("set_download_location").trim(),max_concurrent_downloads:Math.max(1,Math.min(8,Number(gv("set_max_concurrent")||3))),max_pending_downloads:Math.max(50,Math.min(5000,Number(gv("set_max_pending")||500))),auto_retry_downloads:gc("set_auto_retry"),download_retry_limit:Math.max(0,Math.min(5,Number(gv("set_retry_limit")||2))),download_retry_backoff_seconds:Math.max(1,Math.min(60,Number(gv("set_retry_backoff")||3))),artwork_behavior:artwork,filename_mode:gv("set_filename_mode")||"title",cache_size_mb:Math.max(32,Math.min(2048,Number(gv("set_cache_size")||256))),stats_retention_days:Math.max(30,Math.min(3650,Number(gv("set_stats_retention")||365))),...(gv("set_web_password")?{web_password:gv("set_web_password")}: {})};
     try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Failed to save settings.");applySettingsToForm(d);saveDeviceName();showToast("✅ Settings saved");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent=data.download_location?"Settings saved. Restart Xrob Music to apply a changed download location.":"Settings saved.";loadDevices();}catch(err){const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="❌ "+(err.message||"Failed to save settings.");showToast("❌ "+(err.message||"Failed to save settings."));}
 }
-async function resetSettings(){const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,download_location:"",max_concurrent_downloads:3,max_pending_downloads:500,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",cache_size_mb:256,stats_retention_days:365};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToForm(d);showToast("↺ Settings reset");}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
+async function resetSettings(){const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,keep_playing:true,download_location:"",max_concurrent_downloads:3,max_pending_downloads:500,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",cache_size_mb:256,stats_retention_days:365};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToForm(d);showToast("↺ Settings reset");}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
 
 
 function installLifecycleHandlers(){
