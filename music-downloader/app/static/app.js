@@ -150,11 +150,34 @@ function websocketUrl() {
     return new URL("ws", base).href;
 }
 
+function sleepWithAbort(ms, signal) {
+    return new Promise((resolve, reject) => {
+        let timer = null;
+        const finish = () => {
+            if (timer) window.clearTimeout(timer);
+            if (signal && typeof signal.removeEventListener === "function") signal.removeEventListener("abort", onAbort);
+            resolve();
+        };
+        const onAbort = () => {
+            if (timer) window.clearTimeout(timer);
+            if (signal && typeof signal.removeEventListener === "function") signal.removeEventListener("abort", onAbort);
+            const error = new Error("Request aborted");
+            error.name = "AbortError";
+            reject(error);
+        };
+        if (signal?.aborted) return onAbort();
+        timer = window.setTimeout(finish, Math.max(0, Number(ms) || 0));
+        signal?.addEventListener?.("abort", onAbort, { once: true });
+    });
+}
+
 async function apiFetch(input, options = {}) {
     const baseOptions = { ...options };
     const method = String(baseOptions.method || (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")).toUpperCase();
     const retryable = method === "GET" || method === "HEAD";
-    const attempts = retryable ? 2 : 1;
+    const retryEnabled = baseOptions.retry !== false;
+    const requestedAttempts = Number.isFinite(Number(baseOptions.retryAttempts)) ? Number(baseOptions.retryAttempts) : 2;
+    const attempts = retryable && retryEnabled ? Math.max(1, Math.min(3, Math.trunc(requestedAttempts))) : 1;
     let lastError = null;
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -165,6 +188,8 @@ async function apiFetch(input, options = {}) {
             const requestOptions = { ...baseOptions };
             const callerSignal = requestOptions.signal;
             delete requestOptions.timeoutMs;
+            delete requestOptions.retry;
+            delete requestOptions.retryAttempts;
             if (typeof AbortController !== "undefined") {
                 controller = new AbortController();
                 if (callerSignal) {
@@ -189,8 +214,10 @@ async function apiFetch(input, options = {}) {
             });
             if (timeoutId) window.clearTimeout(timeoutId);
             if (detachCallerAbort) detachCallerAbort();
-            if (retryable && attempt + 1 < attempts && [408, 429, 502, 503, 504].includes(response.status)) {
-                await new Promise(resolve => window.setTimeout(resolve, 350 * (attempt + 1)));
+            // Never hammer a rate-limited API with an automatic second request.
+            // The server already returns Retry-After for callers that need it.
+            if (retryable && attempt + 1 < attempts && [408, 502, 503, 504].includes(response.status)) {
+                await sleepWithAbort(350 * (attempt + 1), callerSignal);
                 continue;
             }
             return response;
@@ -198,10 +225,10 @@ async function apiFetch(input, options = {}) {
             if (timeoutId) window.clearTimeout(timeoutId);
             if (detachCallerAbort) detachCallerAbort();
             lastError = error;
-            if (!retryable || attempt + 1 >= attempts) throw error;
-            // Only retry a request when the caller did not explicitly abort it.
-            if (baseOptions.signal?.aborted) throw error;
-            await new Promise(resolve => window.setTimeout(resolve, 350 * (attempt + 1)));
+            // An AbortError from the caller must propagate immediately. An AbortError
+            // raised by our own timeout controller is transient and may be retried.
+            if (baseOptions.signal?.aborted || !retryable || attempt + 1 >= attempts) throw error;
+            await sleepWithAbort(350 * (attempt + 1), baseOptions.signal);
         }
     }
     throw lastError || new Error("Request failed");
@@ -3903,6 +3930,8 @@ async function searchMusic() {
                 }&source=youtube&page=1`,
                 {
                     cache: "no-store",
+                    timeoutMs: 50000,
+                    retry: false,
                     ...(requestController ? { signal: requestController.signal } : {})
                 }
             );
@@ -4293,6 +4322,8 @@ async function loadMoreResults() {
                 }`,
                 {
                     cache: "no-store",
+                    timeoutMs: 50000,
+                    retry: false,
                     ...(requestController ? { signal: requestController.signal } : {})
                 }
             );
@@ -6221,8 +6252,11 @@ async function startAppAfterAuth() {
     bindSearch();
     bindInfiniteScroll();
     document.getElementById("set_format")?.addEventListener("change", updateQualityState);
-    document.getElementById("settings-save")?.addEventListener("click", saveSettings);
-    document.getElementById("settings-reset")?.addEventListener("click", resetSettings);
+    // Resolve these through the current function binding at click time. The v3.7
+    // hardening layer replaces saveSettings/resetSettings after base startup, so
+    // passing the original function object here would permanently capture stale logic.
+    document.getElementById("settings-save")?.addEventListener("click", () => saveSettings());
+    document.getElementById("settings-reset")?.addEventListener("click", () => resetSettings());
     document.getElementById("songEditorRefresh")?.addEventListener("click",loadSongEditor);
     document.getElementById("libraryRefreshButton")?.addEventListener("click", refreshLibrary);
     document.getElementById("libSearchQuery")?.addEventListener("input", () => {
@@ -7192,7 +7226,8 @@ function renderLibraryTracksV37(list, query){
 }
 function renderTracksV37(list,query){return renderLibraryTracksV37(list,query);}
 
-function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";input.addEventListener("input",()=>{if(v37SearchTimer)clearTimeout(v37SearchTimer);const q=input.value.trim();if(!q){searchMusic();return;}v37SearchTimer=setTimeout(()=>searchMusic(),420);});}
+function v37ClearSearchDebounce(){if(v37SearchTimer){clearTimeout(v37SearchTimer);v37SearchTimer=null;}}
+function v37BindSearchDebounce(){const input=document.getElementById("query");if(!input||input.dataset.v37Bound)return;input.dataset.v37Bound="1";const clear=()=>v37ClearSearchDebounce();const schedule=()=>{clear();const q=input.value.trim();if(!q){searchMusic();return;}v37SearchTimer=setTimeout(()=>{v37SearchTimer=null;searchMusic();},420);};input.addEventListener("input",schedule);input.addEventListener("keydown",event=>{if(event.key==="Enter"&&!event.isComposing)clear();},{capture:true});document.getElementById("searchBtn")?.addEventListener("click",clear,{capture:true});window.addEventListener("pagehide",clear,{once:true});}
 
 function v37InstallKeyboard(){document.addEventListener("keydown",event=>{if(event.target?.matches?.("input,textarea,select,[contenteditable=true]"))return;if(event.key===" "){event.preventDefault();playBtn?.click();}else if(event.key==="ArrowRight"&&event.shiftKey){event.preventDefault();seekFromKeyboard(10);}else if(event.key==="ArrowLeft"&&event.shiftKey){event.preventDefault();seekFromKeyboard(-10);}else if(event.key.toLowerCase()==="m"){event.preventDefault();if(audio)audio.muted=!audio.muted;}});}
 function seekFromKeyboard(delta){const current=isRemotePlayerOwner()?Number(remotePlayerState?.currentTime||0):Number(audio?.currentTime||0),duration=isRemotePlayerOwner()?Number(remotePlayerState?.duration||0):Number(audio?.duration||0),next=Math.max(0,Math.min(duration||Infinity,current+delta));if(isRemotePlayerOwner())sendPlayerCommand("seek",{time:next});else if(audio){audio.currentTime=next;persistCurrentPosition(true);schedulePlayerStateBroadcast(true);}}
@@ -7218,9 +7253,9 @@ async function resetSettingsV37(){const defaults={audio_format:"mp3",audio_quali
 
 function v37WrapFetchers(){
     const rawPoll= pollTasks;
-    pollTasks=async function(force=false){const now=Date.now();if(!force&&v37TaskFetchPromise)return v37TaskFetchPromise;if(!force&&now-v37LastTaskFetch<4500)return;v37TaskFetchPromise=rawPoll(force).finally(()=>{v37LastTaskFetch=Date.now();v37TaskFetchPromise=null;});return v37TaskFetchPromise;};
+    pollTasks=async function(force=false){const now=Date.now();if(!force&&v37TaskFetchPromise)return v37TaskFetchPromise;if(!force&&now-v37LastTaskFetch<1800)return;v37TaskFetchPromise=rawPoll(force).finally(()=>{v37LastTaskFetch=Date.now();v37TaskFetchPromise=null;});return v37TaskFetchPromise;};
     const rawStats=loadStats;
-    loadStats=async function(){const now=Date.now();if(v37StatsFetchPromise)return v37StatsFetchPromise;if(now-v37LastStatsFetch<30000)return;v37StatsFetchPromise=rawStats().finally(()=>{v37LastStatsFetch=Date.now();v37StatsFetchPromise=null;});return v37StatsFetchPromise;};
+    loadStats=async function(){const now=Date.now();if(v37StatsFetchPromise)return v37StatsFetchPromise;if(now-v37LastStatsFetch<10000)return;v37StatsFetchPromise=rawStats().finally(()=>{v37LastStatsFetch=Date.now();v37StatsFetchPromise=null;});return v37StatsFetchPromise;};
 }
 // Install the hardened v3.7 overrides before authenticated app startup.
 updateDeviceOwnershipUI = updateDeviceOwnershipUIV37;
@@ -7321,9 +7356,13 @@ function v37Install(){
     artworkSelect?.addEventListener("change",()=>{if(artworkToggle)artworkToggle.checked=artworkSelect.value!=="none";});
     artworkToggle?.addEventListener("change",()=>{if(artworkSelect)artworkSelect.value=artworkToggle.checked?"embed":"none";});
     if(typeof window._xrobOriginalRenderLibraryView==="function"){ /* keep enhanced library wrapper */ }
-    // Function bindings used by existing listeners resolve these latest function declarations.
+    // Refresh surfaces once after installing the hardened implementations. Base startup
+    // begins before this layer exists, so one post-install render prevents stale pre-patch
+    // settings/download cards from becoming the initial UI state.
     updateQueueIndicators();renderV37Devices();v37BindSearchDebounce();v37InstallKeyboard();v37InstallDrawerSwipe();v37NoOverflow();
     registerV37Device();heartbeatV37Device();loadV37Devices();loadV37DownloadHistory();
+    loadSettings().catch(() => {});
+    pollTasks(true).catch(() => {});
     if(v37DeviceTimer)clearInterval(v37DeviceTimer);v37DeviceTimer=setInterval(heartbeatV37Device,8000);
     if(v37DeviceRefreshTimer)clearInterval(v37DeviceRefreshTimer);v37DeviceRefreshTimer=setInterval(()=>{if(!document.getElementById("connect-modal")?.hidden)loadV37Devices();},5000);
 }
