@@ -1487,8 +1487,11 @@ function syncLibraryQueue(queue, index) {
 function reconcileEnhancedQueue() {
     if (!enhancedQueue.length) return;
     const currentId = trackKey(enhancedQueue[enhancedQueueIndex]);
-    const valid = new Set(rawLibraryFiles.map(trackKey));
-    const filtered = enhancedQueue.filter(track => valid.has(trackKey(track)));
+    const freshByKey = new Map(rawLibraryFiles.map(track => [trackKey(track), track]));
+    const valid = new Set(freshByKey.keys());
+    const filtered = enhancedQueue
+        .filter(track => valid.has(trackKey(track)))
+        .map(track => ({ ...track, ...freshByKey.get(trackKey(track)) }));
     if (!filtered.length) {
         syncLibraryQueue([], -1);
         return;
@@ -6362,6 +6365,36 @@ async function openMetadataEditor(file) {
     modal.hidden=false;
 }
 
+function syncEditedTrackAcrossClientCaches(updated) {
+    if (!updated?.id) return;
+    const id = String(updated.id);
+    const merge = track => track && String(track.id || '') === id ? { ...track, ...updated } : track;
+    rawLibraryFiles = rawLibraryFiles.map(merge);
+    enhancedQueue = enhancedQueue.map(merge);
+    libraryPlaybackQueue = libraryPlaybackQueue.map(merge);
+    recentTracksCache = recentTracksCache.map(merge);
+    dailyMixTracks = dailyMixTracks.map(merge);
+    if (Array.isArray(window.xrobHomeQueue)) window.xrobHomeQueue = window.xrobHomeQueue.map(merge);
+    if (savedPlayerState?.track) savedPlayerState.track = merge(savedPlayerState.track);
+    saveLibraryCache();
+    saveEnhancedQueue();
+    saveRecentlyAddedCache(recentTracksCache);
+    try {
+        const raw = storageGet(DAILY_MIX_STATE_KEY);
+        if (raw) {
+            const state = JSON.parse(raw);
+            if (Array.isArray(state?.tracks)) {
+                state.tracks = state.tracks.map(merge);
+                storageSet(DAILY_MIX_STATE_KEY, JSON.stringify(state));
+            }
+        }
+    } catch (_) {}
+    if (currentPlayerSource === 'library' && String(audio?.dataset?.xrobSongId || '') === id) {
+        updatePlayerInfo(updated.title || playerTitle?.textContent || '', updated.artist || playerArtist?.textContent || '', updated.cover || playerArt?.src || '');
+        savePlayerState(true);
+    }
+}
+
 function renderEnhancedQueue() {
     const box = document.getElementById("queueList");
     if (!box) return;
@@ -6873,7 +6906,39 @@ function installEnhancedFeatures(){
     renderEnhancedQueue();
 }); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
     document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
-    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{e.preventDefault();const id=document.getElementById('metadataId').value;const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};const r=await apiFetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.ok){showToast('✅ Metadata saved and removed from editor');document.getElementById('metadata-modal').hidden=true;await refreshLibraryCache();renderLibraryView();await loadSongEditor();}else{const d=await r.json().catch(()=>({}));showToast('❌ '+(d.detail||'Metadata update failed'));}});
+    document.getElementById("metadataForm")?.addEventListener("submit",async e=>{
+        e.preventDefault();
+        const form=e.currentTarget;
+        const button=form.querySelector('button[type="submit"]');
+        if(button?.disabled) return;
+        const id=document.getElementById('metadataId').value;
+        if(!id){showToast('❌ Track identity is missing');return;}
+        const body={id,title:document.getElementById('metadataTitle').value,artist:document.getElementById('metadataArtist').value,album:document.getElementById('metadataAlbum').value};
+        if(button) { button.disabled=true; button.dataset.originalText=button.textContent; button.textContent='Saving…'; }
+        try {
+            const r=await apiFetch('api/library/metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+            const d=await r.json().catch(()=>({}));
+            if(!r.ok) throw new Error(d.detail||'Metadata update failed');
+            showToast(d.message==='Metadata saved to the library index' ? '✅ Metadata saved to library' : '✅ Metadata saved and removed from editor');
+            document.getElementById('metadata-modal').hidden=true;
+            try {
+                await refreshLibraryCache();
+                const updated = rawLibraryFiles.find(t => String(t.id || '') === String(id));
+                if (updated) syncEditedTrackAcrossClientCaches(updated);
+                renderLibraryView();
+                renderEnhancedQueue();
+                await loadSongEditor();
+            } catch(refreshErr) {
+                // The metadata write succeeded; a later cache refresh must not
+                // misreport that success as a failed edit.
+                console.warn('Metadata saved, library refresh deferred:', refreshErr);
+            }
+        } catch(err) {
+            showToast('❌ '+(err.message||'Metadata update failed'));
+        } finally {
+            if(button){button.disabled=false;button.textContent=button.dataset.originalText||'Save & remove from editor';}
+        }
+    });
     document.getElementById("libraryFullScanButton")?.addEventListener("click",async()=>{
         const btn=document.getElementById("libraryFullScanButton"); if(btn) btn.disabled=true;
         showToast('⏳ Full metadata rebuild…');
