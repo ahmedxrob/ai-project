@@ -131,6 +131,7 @@ AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "")
 AUTH_COOKIE = "xrob_session"
 AUTH_MIN_PASSWORD_LENGTH = 12
 AUTH_SESSIONS = {}
+AUTH_SESSION_IDLE_SECONDS = 7 * 24 * 60 * 60
 AUTH_LOGIN_ATTEMPTS = defaultdict(list)
 AUTH_LOGIN_WINDOW = 300
 AUTH_LOGIN_MAX_ATTEMPTS = 5
@@ -262,6 +263,8 @@ async def _enforce_rate_limit(request: Request, bucket: str, limit: int, window_
     now = time.monotonic()
     key = f"{bucket}:{_auth_client_key(request)}"
     async with RATE_LIMIT_LOCK:
+        if len(RATE_LIMIT_STATE) > 2048:
+            _cleanup_rate_limit_state_sync()
         entries = [ts for ts in RATE_LIMIT_STATE.get(key, []) if now - ts < window_seconds]
         allowed = len(entries) < limit
         if allowed:
@@ -289,7 +292,12 @@ def _is_authenticated(token):
     session = AUTH_SESSIONS.get(token)
     if not session:
         return False
-    session["last_seen"] = time.time()
+    now = time.time()
+    last_seen = float(session.get("last_seen") or session.get("created") or 0)
+    if last_seen <= 0 or now - last_seen > AUTH_SESSION_IDLE_SECONDS:
+        AUTH_SESSIONS.pop(token, None)
+        return False
+    session["last_seen"] = now
     return True
 
 
@@ -409,10 +417,14 @@ LIBRARY_CACHE_LOCK = asyncio.Lock()
 LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
 LIBRARY_WARMUP_TASK = None
 DOWNLOAD_WORKER_TASKS = set()
+DOWNLOAD_WORKER_SCALE_LOCK = asyncio.Lock()
+DOWNLOAD_WORKER_RETIRE_REQUESTS = 0
+DOWNLOAD_WORKER_STOP_SENTINEL = "__xrob_music_stop_worker__"
 BACKGROUND_TASKS = set()
 SCHEDULED_SCANNER_TASK = None
 LIBRARY_SCAN_LOCK = asyncio.Lock()
 LIBRARY_REFRESH_LOCK = asyncio.Lock()
+RESTORE_LOCK = asyncio.Lock()
 COVER_LOCKS = {}
 COVER_LOCKS_GUARD = asyncio.Lock()
 HISTORY_MAX_ROWS = 100000
@@ -528,10 +540,10 @@ def configure_storage():
 
     # Do not silently create a missing explicitly configured NAS mount. That
     # would make a disconnected NAS look like an empty local library.
-    explicit_path = bool(configured)
+    explicit_path = bool(configured or persisted_location)
     if explicit_path and not DOWNLOAD_DIR.exists():
         raise RuntimeError(
-            f"Configured music_path does not exist or is not mounted: {DOWNLOAD_DIR}"
+            f"Configured music_path/download location does not exist or is not mounted: {DOWNLOAD_DIR}"
         )
 
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -1160,10 +1172,15 @@ class ConnectionManager:
         connections = list(self.connections)
         if not connections:
             return
-        results = await asyncio.gather(
-            *(websocket.send_json(message) for websocket in connections),
-            return_exceptions=True,
-        )
+
+        async def send_one(websocket):
+            try:
+                await asyncio.wait_for(websocket.send_json(message), timeout=5.0)
+                return None
+            except Exception as exc:
+                return exc
+
+        results = await asyncio.gather(*(send_one(websocket) for websocket in connections))
         for websocket, result in zip(connections, results):
             if isinstance(result, Exception):
                 self.disconnect(websocket)
@@ -1474,6 +1491,8 @@ async def notify_task_update(task, force_save=False):
             "task": task,
         }
     )
+    if str(task.get("status") or "").lower() in TERMINAL_TASK_STATES:
+        prune_terminal_tasks_memory()
 
 
 # ============================================================
@@ -2099,10 +2118,14 @@ async def build_library(force=False):
             except Exception:
                 return path, None, None
 
-        prepared = await asyncio.gather(
-            *(prepare_song_input(path) for path in files),
-            return_exceptions=False,
-        )
+        prepared = []
+        batch_size = 256
+        for start in range(0, len(files), batch_size):
+            batch = files[start:start + batch_size]
+            prepared.extend(await asyncio.gather(
+                *(prepare_song_input(path) for path in batch),
+                return_exceptions=False,
+            ))
 
         for path, stat, metadata in prepared:
             if stat is None or metadata is None:
@@ -2547,6 +2570,19 @@ async def resolve_download_metadata(raw_title, artist, album, settings):
 
 TERMINAL_TASK_STATES = {"completed", "error", "failed", "cancelled", "canceled"}
 ACTIVE_TASK_STATES = {"queued", "downloading", "processing"}
+TERMINAL_TASK_MEMORY_MAX = 1200
+
+def prune_terminal_tasks_memory():
+    if len(TASKS) <= TERMINAL_TASK_MEMORY_MAX:
+        return
+    terminal = [(task_id, task) for task_id, task in TASKS.items()
+                if str(task.get("status") or "").lower() in TERMINAL_TASK_STATES
+                and task_id not in ACTIVE_PROCESSES]
+    excess = len(TASKS) - TERMINAL_TASK_MEMORY_MAX
+    terminal.sort(key=lambda item: safe_float(item[1].get("last_updated"), 0))
+    for task_id, _task in terminal[:max(0, excess)]:
+        TASKS.pop(task_id, None)
+        LAST_SAVED_TIME.pop(task_id, None)
 
 
 def _task_cancelled(task):
@@ -2562,23 +2598,40 @@ def _set_task_cancelled(task):
     task["last_updated"] = time.time() * 1000
 
 
-async def refresh_after_download(final_path: Path):
-    """Refresh the persisted library index/editor state after a successful move.
+LIBRARY_REFRESH_TASK = None
+LIBRARY_REFRESH_PENDING_PATHS = set()
 
-    This is deliberately best-effort and isolated from the download task's terminal
-    state: an index/editor refresh failure must never turn a successfully downloaded
-    file into a failed download.
-    """
+async def _coalesced_library_refresh_worker():
+    global LIBRARY_REFRESH_TASK
     try:
-        final_path = Path(final_path)
-        library = await build_library(force=True)
-        await persist_library_index(library)
-        song = next((item for item in library.get("songs", []) if Path(item.get("path")) == final_path), None)
-        if song and song.get("id"):
-            await asyncio.to_thread(_ensure_song_review_pending_sync, str(song["id"]))
-        await manager.broadcast({"type": "library_updated", "songId": song.get("id") if song else "", "path": str(final_path)})
-    except Exception as exc:
-        await write_app_error("library_refresh", str(exc))
+        await asyncio.sleep(0.25)
+        while LIBRARY_REFRESH_PENDING_PATHS:
+            paths = [Path(p) for p in LIBRARY_REFRESH_PENDING_PATHS]
+            LIBRARY_REFRESH_PENDING_PATHS.clear()
+            try:
+                library = await build_library(force=True)
+                await persist_library_index(library)
+                by_path = {Path(item.get("path")): item for item in library.get("songs", []) if item.get("path")}
+                ids = []
+                for final_path in paths:
+                    song = by_path.get(final_path)
+                    if song and song.get("id"):
+                        ids.append(str(song["id"]))
+                        await asyncio.to_thread(_ensure_song_review_pending_sync, str(song["id"]))
+                await manager.broadcast({"type": "library_updated", "songIds": ids, "count": len(paths)})
+            except Exception as exc:
+                await write_app_error("library_refresh", str(exc))
+    finally:
+        LIBRARY_REFRESH_TASK = None
+        if LIBRARY_REFRESH_PENDING_PATHS:
+            queue_library_refresh(None)
+
+def queue_library_refresh(final_path):
+    global LIBRARY_REFRESH_TASK
+    if final_path is not None:
+        LIBRARY_REFRESH_PENDING_PATHS.add(str(Path(final_path)))
+    if LIBRARY_REFRESH_TASK is None or LIBRARY_REFRESH_TASK.done():
+        LIBRARY_REFRESH_TASK = track_background_task(_coalesced_library_refresh_worker())
 
 
 def _ensure_song_review_pending_sync(song_id):
@@ -2590,11 +2643,39 @@ def _ensure_song_review_pending_sync(song_id):
         conn.commit()
 
 
+def _spawn_download_worker():
+    task = asyncio.create_task(download_worker())
+    DOWNLOAD_WORKER_TASKS.add(task)
+    task.add_done_callback(DOWNLOAD_WORKER_TASKS.discard)
+    return task
+
+
+async def reconcile_download_workers(desired: int):
+    global DOWNLOAD_WORKER_RETIRE_REQUESTS
+    desired = max(1, min(8, int(desired)))
+    async with DOWNLOAD_WORKER_SCALE_LOCK:
+        active = sum(1 for task in DOWNLOAD_WORKER_TASKS if not task.done())
+        effective = max(0, active - DOWNLOAD_WORKER_RETIRE_REQUESTS)
+        if effective < desired:
+            for _ in range(desired - effective):
+                _spawn_download_worker()
+        elif effective > desired:
+            retire = effective - desired
+            DOWNLOAD_WORKER_RETIRE_REQUESTS += retire
+            for _ in range(retire):
+                await TASK_QUEUE.put(DOWNLOAD_WORKER_STOP_SENTINEL)
+
+
 async def download_worker():
+    global DOWNLOAD_WORKER_RETIRE_REQUESTS
 
     while True:
 
         queue_item = await TASK_QUEUE.get()
+        if queue_item == DOWNLOAD_WORKER_STOP_SENTINEL:
+            DOWNLOAD_WORKER_RETIRE_REQUESTS = max(0, DOWNLOAD_WORKER_RETIRE_REQUESTS - 1)
+            TASK_QUEUE.task_done()
+            return
         if isinstance(queue_item, (tuple, list)) and len(queue_item) == 2:
             task_id, queue_token = queue_item
         else:
@@ -3062,7 +3143,7 @@ async def download_worker():
             # Do not block completion on a full-library metadata rebuild. The file
             # is already safely in the library; queue a background refresh that also
             # persists the duplicate-detection index and adds the song to the editor.
-            track_background_task(refresh_after_download(final_path))
+            queue_library_refresh(final_path)
 
         except asyncio.CancelledError:
             raise
@@ -3167,8 +3248,7 @@ async def startup_event():
     if not DOWNLOAD_WORKER_TASKS:
         settings = await load_settings_async()
         workers = max(1, min(8, safe_int(settings.get("max_concurrent_downloads"), MAX_CONCURRENT_DOWNLOADS)))
-        for _ in range(workers):
-            DOWNLOAD_WORKER_TASKS.add(asyncio.create_task(download_worker()))
+        await reconcile_download_workers(workers)
 
     if SCHEDULED_SCANNER_TASK is None or SCHEDULED_SCANNER_TASK.done():
         SCHEDULED_SCANNER_TASK = asyncio.create_task(scheduled_library_scanner())
@@ -3258,6 +3338,13 @@ async def api_post_settings(
         await save_settings_async(data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        settings_now = await load_settings_async()
+        await reconcile_download_workers(
+            safe_int(settings_now.get("max_concurrent_downloads"), MAX_CONCURRENT_DOWNLOADS)
+        )
+    except Exception as exc:
+        await write_app_error("worker_scaling", str(exc))
     return await public_settings_async()
 
 
@@ -3801,27 +3888,28 @@ async def api_cancel_task(
 
 @app.post("/api/tasks/{task_id}/retry")
 async def api_retry_task(task_id: str):
-    task = TASKS.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if task.get("status") not in {"error", "failed", "cancelled", "canceled"}:
-        raise HTTPException(status_code=400, detail="Only failed or cancelled tasks can be retried.")
-    if task_id in ACTIVE_PROCESSES:
-        raise HTTPException(status_code=409, detail="Task is still stopping; retry in a moment.")
+    async with DOWNLOAD_GUARD:
+        task = TASKS.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task.get("status") not in {"error", "failed", "cancelled", "canceled"}:
+            raise HTTPException(status_code=400, detail="Only failed or cancelled tasks can be retried.")
+        if task_id in ACTIVE_PROCESSES:
+            raise HTTPException(status_code=409, detail="Task is still stopping; retry in a moment.")
 
-    task["status"] = "queued"
-    task["percent"] = 0
-    task["speed"] = ""
-    task["step"] = "Queued..."
-    task["error"] = ""
-    task["cancel_requested"] = False
-    task["created_at"] = time.time() * 1000
-    task["last_updated"] = task["created_at"]
-    task["queue_token"] = uuid.uuid4().hex
-    task["retry_count"] = 0
-
-    await notify_task_update(task, force_save=True)
-    await TASK_QUEUE.put((task_id, task["queue_token"]))
+        task["status"] = "queued"
+        task["percent"] = 0
+        task["speed"] = ""
+        task["step"] = "Queued..."
+        task["error"] = ""
+        task["cancel_requested"] = False
+        task["created_at"] = time.time() * 1000
+        task["last_updated"] = task["created_at"]
+        task["queue_token"] = uuid.uuid4().hex
+        task["retry_count"] = 0
+        queue_token = task["queue_token"]
+        await notify_task_update(task, force_save=True)
+    await TASK_QUEUE.put((task_id, queue_token))
     return {"status": "queued", "task_id": task_id}
 
 
@@ -8039,12 +8127,21 @@ async def api_library_health():
     library = await build_library()
     songs = library.get("songs", [])
     unreadable = []
-    for path in await get_all_audio_files():
-        try:
-            if not await asyncio.to_thread(_audio_file_readable_sync, path):
-                unreadable.append({"path": str(path.relative_to(DOWNLOAD_DIR)), "reason": "Audio decoder could not read the file"})
-        except Exception as exc:
-            unreadable.append({"path": str(path.relative_to(DOWNLOAD_DIR)), "reason": str(exc)[:240]})
+    health_paths = await get_all_audio_files()
+    health_semaphore = asyncio.Semaphore(4)
+
+    async def check_health_path(path):
+        async with health_semaphore:
+            try:
+                readable = await asyncio.to_thread(_audio_file_readable_sync, path)
+                if readable:
+                    return None
+                return {"path": str(path.relative_to(DOWNLOAD_DIR)), "reason": "Audio decoder could not read the file"}
+            except Exception as exc:
+                return {"path": str(path.relative_to(DOWNLOAD_DIR)), "reason": str(exc)[:240]}
+
+    health_results = await asyncio.gather(*(check_health_path(path) for path in health_paths), return_exceptions=False)
+    unreadable = [item for item in health_results if item is not None]
     bad_tags, missing_art, groups = [], [], {}
     for song in songs:
         rel = str(song["path"].relative_to(DOWNLOAD_DIR))
@@ -8151,7 +8248,8 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
     response = JSONResponse({"status":"ok", "username":expected_user})
     response.set_cookie(
         AUTH_COOKIE, token, httponly=True, samesite="lax",
-        secure=request.url.scheme == "https", path="/"
+        secure=request.url.scheme == "https", path="/",
+        max_age=AUTH_SESSION_IDLE_SECONDS
     )
     return response
 
@@ -8275,8 +8373,7 @@ async def _restart_runtime_after_restore():
     global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, DOWNLOAD_WORKER_TASKS
     settings = await load_settings_async()
     workers = max(1, min(8, safe_int(settings.get("max_concurrent_downloads"), MAX_CONCURRENT_DOWNLOADS)))
-    for _ in range(workers):
-        DOWNLOAD_WORKER_TASKS.add(asyncio.create_task(download_worker()))
+    await reconcile_download_workers(workers)
     SCHEDULED_SCANNER_TASK = asyncio.create_task(scheduled_library_scanner())
     LIBRARY_WARMUP_TASK = asyncio.create_task(background_library_warmup())
     for task in TASKS.values():
@@ -8289,6 +8386,13 @@ async def _restart_runtime_after_restore():
 
 @app.post("/api/restore")
 async def api_restore(file: UploadFile = File(...)):
+    if RESTORE_LOCK.locked():
+        raise HTTPException(409, "A restore is already running")
+    async with RESTORE_LOCK:
+        return await _api_restore_impl(file)
+
+
+async def _api_restore_impl(file: UploadFile = File(...)):
     global TASKS, LIBRARY_CACHE, LIBRARY_CACHE_TIME, PLAYER_STATE, PLAYER_STATE_UPDATED_AT
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(400, "A .zip Xrob Music backup is required")
@@ -8588,14 +8692,30 @@ async def scheduled_library_scanner():
                 minutes = 60
             minutes = max(5, min(10080, minutes))
             if enabled:
-                await asyncio.sleep(minutes*60)
-                try:
-                    await api_library_scan_mode("quick")
-                except HTTPException as exc:
-                    if exc.status_code != 409:
-                        raise
+                remaining = float(minutes * 60)
+                # Re-check periodically so enabling/disabling scanning or changing
+                # its interval takes effect promptly instead of waiting for the old
+                # interval to expire.
+                while remaining > 0:
+                    settings_now = await load_settings_async()
+                    if not bool(settings_now.get("scan_enabled", True)):
+                        break
+                    try:
+                        current_minutes = max(5, min(10080, int(settings_now.get("scan_interval_minutes", minutes) or minutes)))
+                    except (TypeError, ValueError):
+                        current_minutes = minutes
+                    remaining = min(remaining, current_minutes * 60)
+                    step = min(30.0, remaining)
+                    await asyncio.sleep(step)
+                    remaining -= step
+                if bool((await load_settings_async()).get("scan_enabled", True)) and remaining <= 0:
+                    try:
+                        await api_library_scan_mode("quick")
+                    except HTTPException as exc:
+                        if exc.status_code != 409:
+                            raise
             else:
-                await asyncio.sleep(300)
+                await asyncio.sleep(30)
         except asyncio.CancelledError: return
         except Exception as exc:
             await write_app_error("scheduled_scan",str(exc)); await asyncio.sleep(300)
