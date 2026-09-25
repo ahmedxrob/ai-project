@@ -5,10 +5,6 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
-        curl \
-        ca-certificates \
-    && DENO_INSTALL=/usr/local curl -fsSL https://deno.land/install.sh | sh \
-    && /usr/local/bin/deno --version \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
