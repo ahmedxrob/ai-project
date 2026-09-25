@@ -419,3 +419,12 @@ class LibraryCatalog:
         with self._connect() as conn:
             row = conn.execute("SELECT song_id FROM library_song_aliases WHERE legacy_id=?", (sid,)).fetchone()
         return str(row[0]) if row else sid
+
+    def resolve_song_ids(self, song_ids):
+        ids=[str(value or "")[:512] for value in (song_ids or []) if str(value or "")]
+        if not ids:
+            return {}
+        with self._connect() as conn:
+            placeholders=",".join("?" for _ in ids)
+            rows=conn.execute(f"SELECT legacy_id,song_id FROM library_song_aliases WHERE legacy_id IN ({placeholders})",ids).fetchall()
+        return {str(row[0]):str(row[1]) for row in rows}
