@@ -6479,6 +6479,8 @@ function openDownloadsDrawer(){
     const drawer = document.getElementById("downloads-drawer");
     if (!drawer) return;
     drawer.hidden = false;
+    v37DownloadFilter = "active";
+    document.querySelectorAll("[data-download-filter]").forEach(b=>b.classList.toggle("active",b.dataset.downloadFilter==="active"));
     ensureGlobalPlayerVisible();
     renderDownloadsV37(latestTasks);
     loadDownloads().catch(() => {});
@@ -7210,7 +7212,31 @@ function updateDeviceOwnershipUIV37() {
 function openV37Connect() { const m=document.getElementById("connect-modal"); if(!m)return; m.hidden=false; loadV37Devices(); renderV37Devices(); }
 function closeV37Connect() { const m=document.getElementById("connect-modal"); if(m)m.hidden=true; }
 
-// Remote command helper for direct device-picker controls.
+// Download Center helpers. Keep stage mapping in one place so the drawer
+// never depends on an undefined renderer-only variable.
+function v37PipelineIndex(task) {
+    const status = String(task?.status || "").toLowerCase();
+    const step = String(task?.step || "").toLowerCase();
+    if (status === "queued") return 0;
+    if (status === "downloading") return 1;
+    if (status === "processing") {
+        if (/metadata|tag|mutagen/.test(step)) return 3;
+        if (/artwork|cover|thumbnail/.test(step)) return 4;
+        if (/library|final|adding|indexed|ready/.test(step)) return 5;
+        return 2;
+    }
+    if (status === "completed") return 6;
+    if (["error","failed","cancelled","canceled"].includes(status)) {
+        const p = Number(task?.percent);
+        if (p >= 97) return 5;
+        if (p >= 90) return 4;
+        if (p >= 75) return 3;
+        if (p >= 35) return 1;
+        return 0;
+    }
+    return 0;
+}
+
 function v37PipelineHtml(task) {
     const stages=["Queued","Downloading","Processing","Metadata","Artwork","Library"], idx=v37PipelineIndex(task);
     return `<div class="download-pipeline">${stages.map((stage,i)=>`<span class="${i<idx?"done ":""}${i===idx?"current":""}${i>idx?"pending":""}"><i></i>${stage}</span>`).join("")}</div>`;
@@ -7226,15 +7252,47 @@ function v37Eta(task) {
 }
 function v37DownloadStatus(task) {
     const st=String(task?.status||"").toLowerCase();
-    if(st==="queued") return "Queued"; if(st==="downloading") return "Downloading"; if(st==="processing") return task.step||"Processing"; if(st==="completed") return "Ready"; if(st==="cancelled"||st==="canceled") return "Cancelled"; return "Failed";
+    if(st==="queued") return "Waiting in queue";
+    if(st==="downloading") return "Downloading now";
+    if(st==="processing") return task.step||"Processing";
+    if(st==="completed") return "Ready";
+    if(st==="cancelled"||st==="canceled") return "Cancelled";
+    return "Failed";
+}
+function v37DownloadStatusKey(task) {
+    const st=String(task?.status||"").toLowerCase();
+    if(st==="queued") return "queued";
+    if(st==="downloading") return "downloading";
+    if(st==="processing") return "processing";
+    if(st==="completed") return "completed";
+    if(["error","failed","cancelled","canceled"].includes(st)) return "failed";
+    return "unknown";
 }
 function createDownloadCardV37(task, index=0) {
-    const card=document.createElement("article"); card.className="download-card v37-download-card";
-    const isHistory=Boolean(task?.history), failed=["error","failed","cancelled","canceled"].includes(String(task?.status||"").toLowerCase());
+    const card=document.createElement("article");
+    const statusKey=v37DownloadStatusKey(task);
+    const cardState=isActiveTask(task)?"live":statusKey==="failed"?"failed":statusKey==="completed"||task?.history?"history":"idle";
+    card.className=`download-card v37-download-card v37-download-${cardState} v37-download-${statusKey}`;
+    const isHistory=Boolean(task?.history), failed=statusKey==="failed";
     const title=task?.title||task?.final_name||"Unknown Track", artist=task?.artist||"Unknown Artist", album=task?.album||"";
     const progress=Math.max(0,Math.min(100,Number(task?.percent)||0));
     const cover=task?.cover||task?.thumbnail||task?.art||"static/logo.png";
-    card.innerHTML=`<div class="download-art"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="download-status-dot ${isHistory?"history":failed?"failed":"active"}"></span></div><div class="download-copy"><div class="download-topline"><strong>${escapeHtml(title)}</strong><span class="download-percent">${Math.round(progress)}%</span></div><span class="download-artist">${escapeHtml(artist)}${album?` · ${escapeHtml(album)}`:""}</span><span class="download-source">${escapeHtml(task?.url||"Local source")}</span><div class="download-progress-track"><i style="width:${progress}%"></i></div><div class="download-metrics"><span>${escapeHtml(v37DownloadStatus(task))}</span><span>${escapeHtml(task?.speed||"")}</span><span>ETA ${escapeHtml(v37Eta(task))}</span></div>${v37PipelineHtml(task)}${task?.error?`<div class="download-error-line"><i data-lucide="circle-alert"></i>${escapeHtml(String(task.error).slice(0,280))}</div>`:""}</div><div class="download-actions v37-download-actions"></div>`;
+    const speed=String(task?.speed||"").trim();
+    const eta=v37Eta(task);
+    const statusLabel=v37DownloadStatus(task);
+    const step=String(task?.step||statusLabel).trim();
+    card.innerHTML=`
+      <div class="download-art"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="download-status-dot ${failed?"failed":isHistory?"history":"active"}"></span><span class="download-art-badge">${escapeHtml(statusKey==="downloading"?"LIVE":statusKey==="queued"?"QUEUE":statusKey==="processing"?"WORK":"")}</span></div>
+      <div class="download-copy">
+        <div class="download-topline"><div class="download-title-wrap"><strong>${escapeHtml(title)}</strong><span class="download-status-pill ${escapeHtml(statusKey)}">${escapeHtml(statusLabel)}</span></div><span class="download-percent">${Math.round(progress)}%</span></div>
+        <span class="download-artist">${escapeHtml(artist)}${album?` · ${escapeHtml(album)}`:""}</span>
+        <div class="download-stage-row"><span class="download-stage-label">${escapeHtml(step)}</span><span class="download-updated">${task?.last_updated?escapeHtml(v37RelativeTime(task.last_updated)):""}</span></div>
+        <div class="download-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}" aria-label="Download progress for ${escapeHtml(title)}"><i style="width:${progress}%"></i></div>
+        <div class="download-metrics"><span><b>Progress</b> ${Math.round(progress)}%</span><span><b>Speed</b> ${escapeHtml(speed||"—")}</span><span><b>ETA</b> ${escapeHtml(eta)}</span>${task?.retry_count?`<span><b>Retry</b> ${escapeHtml(task.retry_count)}</span>`:""}</div>
+        ${v37PipelineHtml(task)}
+        ${task?.error?`<div class="download-error-line"><i data-lucide="circle-alert"></i><span>${escapeHtml(String(task.error).slice(0,280))}</span></div>`:""}
+      </div>
+      <div class="download-actions v37-download-actions"></div>`;
     const actions=card.querySelector(".v37-download-actions");
     if(failed && !isHistory){const b=document.createElement("button");b.className="save-btn compact";b.type="button";b.innerHTML=task.resume_available?'<i data-lucide="play"></i> Resume':'<i data-lucide="refresh-cw"></i> Retry';b.onclick=()=>retryTask(task.id);actions.appendChild(b);}
     if(isActiveTask(task)){const b=document.createElement("button");b.className="btn-danger compact";b.type="button";b.innerHTML='<i data-lucide="x"></i> Cancel';b.onclick=()=>cancelTask(task.id);actions.appendChild(b);}
@@ -7242,6 +7300,16 @@ function createDownloadCardV37(task, index=0) {
     if(isHistory){detail.title="View download details";}
     card.querySelector("img")?.addEventListener("error",e=>{e.currentTarget.src="static/logo.png"},{once:true});
     return card;
+}
+function v37RelativeTime(timestamp) {
+    const ms=Number(timestamp)||0; if(!ms) return "";
+    const delta=Math.max(0,Date.now()-(ms<10000000000?ms*1000:ms));
+    const sec=Math.floor(delta/1000);
+    if(sec<10) return "just now";
+    if(sec<60) return `${sec}s ago`;
+    const min=Math.floor(sec/60); if(min<60) return `${min}m ago`;
+    const hr=Math.floor(min/60); if(hr<24) return `${hr}h ago`;
+    return `${Math.floor(hr/24)}d ago`;
 }
 async function v37ShowDownloadDetails(task) {
     const modal=document.getElementById("download-detail-modal"); if(!modal)return;
@@ -7262,12 +7330,32 @@ function renderDownloadsV37(tasks){
     const list=document.getElementById("downloadsList"); if(!list)return;
     updateV37DownloadSummary();
     const filter=v37DownloadFilter;
-    const rows=filter==="history"?v37DownloadHistory.slice():filter==="queued"?tasks.filter(t=>String(t.status||"").toLowerCase()==="queued"):filter==="failed"?tasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())):tasks.filter(t=>isActiveTask(t));
-    const hint=document.getElementById("downloadsFilterHint"); if(hint)hint.textContent=filter==="active"?"Live download jobs":filter==="queued"?"Waiting to start":filter==="failed"?"Retryable failures and cancellations":"Persistent download history";
+    let rows=filter==="history"?v37DownloadHistory.slice():filter==="queued"?tasks.filter(t=>String(t.status||"").toLowerCase()==="queued"):filter==="failed"?tasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())):tasks.filter(t=>isActiveTask(t));
+    if(filter==="active") {
+        const order={downloading:0,processing:1,queued:2};
+        rows=rows.slice().sort((a,b)=>{
+            const sa=order[String(a.status||"").toLowerCase()]??9, sb=order[String(b.status||"").toLowerCase()]??9;
+            if(sa!==sb)return sa-sb;
+            return Number(a.created_at||a.last_updated||0)-Number(b.created_at||b.last_updated||0);
+        });
+    }
+    const hint=document.getElementById("downloadsFilterHint");
+    if(hint)hint.textContent=filter==="active"?"Active downloads · live progress":filter==="queued"?"Waiting to start":filter==="failed"?"Retryable failures and cancellations":"Persistent download history";
     const clear=document.getElementById("downloadsClearHistory");if(clear)clear.hidden=filter!=="history";
     list.innerHTML="";
-    if(!rows.length){list.innerHTML=`<div class="downloads-empty v37-empty"><div class="empty-icon"><i data-lucide="download-cloud"></i></div><div class="empty-title">${filter==="history"?"No download history":filter==="failed"?"No failed jobs":filter==="queued"?"Queue is clear":"No active downloads"}</div><div class="empty-text">${filter==="active"?"Start a download from Search or use Batch.":filter==="history"?"Completed and previous jobs will appear here.":"Everything is up to date."}</div></div>`;renderLocalIcons();return;}
-    const stack=document.createElement("div");stack.className="download-stack";rows.forEach((task,i)=>stack.appendChild(createDownloadCard(task,i+1)));list.appendChild(stack);renderLocalIcons();
+    if(filter==="active" && rows.length){
+        const downloading=rows.filter(t=>String(t.status||"").toLowerCase()==="downloading").length;
+        const processing=rows.filter(t=>String(t.status||"").toLowerCase()==="processing").length;
+        const queued=rows.filter(t=>String(t.status||"").toLowerCase()==="queued").length;
+        const overview=document.createElement("div"); overview.className="downloads-live-overview";
+        overview.innerHTML=`<div class="downloads-live-heading"><div><span class="downloads-live-kicker">LIVE ACTIVITY</span><strong>${downloading?`${downloading} downloading now`:`${rows.length} active job${rows.length===1?"":"s"}`}</strong></div><span class="downloads-live-pulse"><i></i>Updating automatically</span></div><div class="downloads-live-stats"><span><b>${downloading}</b><small>Downloading</small></span><span><b>${processing}</b><small>Processing</small></span><span><b>${queued}</b><small>Queued</small></span></div>`;
+        list.appendChild(overview);
+    }
+    if(!rows.length){list.innerHTML+=`<div class="downloads-empty v37-empty"><div class="empty-icon"><i data-lucide="download-cloud"></i></div><div class="empty-title">${filter==="history"?"No download history":filter==="failed"?"No failed jobs":filter==="queued"?"Queue is clear":"No active downloads"}</div><div class="empty-text">${filter==="active"?"Start a download from Search or use Batch; the live card will appear here immediately.":filter==="history"?"Completed and previous jobs will appear here.":"Everything is up to date."}</div></div>`;renderLocalIcons();return;}
+    const section=document.createElement("div"); section.className="download-stack";
+    rows.forEach((task,i)=>section.appendChild(createDownloadCard(task,i+1)));
+    list.appendChild(section);
+    renderLocalIcons();
 }
 async function v37BatchDownloads(){const modal=document.getElementById("batch-download-modal");if(modal)modal.hidden=false;}
 async function v37SubmitBatch(event){event.preventDefault();const urls=(document.getElementById("batchDownloadUrls")?.value||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!urls.length){showToast("❌ Add at least one URL");return;}if(urls.length>200){showToast("❌ Maximum 200 URLs per batch");return;}const body={urls,artist:document.getElementById("batchDownloadArtist")?.value||"",album:document.getElementById("batchDownloadAlbum")?.value||""};const btn=document.querySelector("#batchDownloadForm button[type=submit]");if(btn)btn.disabled=true;try{const r=await apiFetch("api/download/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),timeoutMs:20000});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Batch download failed");const queued=(d.results||[]).filter(x=>["ok","already_queued"].includes(x.status)).length;document.getElementById("batch-download-modal").hidden=true;document.getElementById("batchDownloadUrls").value="";showToast(`✅ ${queued} download${queued===1?"":"s"} added`);await pollTasks(true);}catch(err){showToast("❌ "+(err.message||"Batch download failed"));}finally{if(btn)btn.disabled=false;}}
