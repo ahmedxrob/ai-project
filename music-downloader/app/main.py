@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.8.0"
+SERVER_VERSION = "3.8.1"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -3980,6 +3980,8 @@ async def api_download(
             "album": task_album,
             "url": url,
             "elementId": str(payload.get("elementId", "")),
+            "thumbnail": str(payload.get("thumbnail") or "").strip()[:1000],
+            "cover": str(payload.get("thumbnail") or "").strip()[:1000],
             "status": "queued",
             "percent": 0,
             "speed": "",
