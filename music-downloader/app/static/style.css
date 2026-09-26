@@ -4438,6 +4438,7 @@ button, [role="button"], input[type="button"], input[type="submit"] { min-height
 .topbar-icon svg { width: 19px !important; height: 19px !important; }
 
 .global-player-bar.music-player {
+    display: grid !important;
     position: fixed !important;
     left: 0 !important;
     right: 0 !important;
