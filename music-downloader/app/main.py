@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.8.2"
+SERVER_VERSION = "3.8.3"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -1120,6 +1120,19 @@ def db_clear_finished_sync():
             """
         )
         conn.commit()
+
+
+def db_clear_failed_sync():
+    with db_connect() as conn:
+        conn.execute(
+            """
+            DELETE FROM tasks
+            WHERE status IN ('error', 'failed', 'cancelled', 'canceled')
+            """
+        )
+        deleted = conn.total_changes
+        conn.commit()
+    return int(deleted)
 
 
 def db_delete_task_sync(task_id):
@@ -4114,6 +4127,22 @@ async def api_retry_task(task_id: str):
         await notify_task_update(task, force_save=True)
     await TASK_QUEUE.put((task_id, queue_token))
     return {"status": "queued", "task_id": task_id}
+
+
+@app.delete("/api/tasks/clear-failed")
+async def api_clear_failed():
+    ids = [
+        task_id
+        for task_id, task in TASKS.items()
+        if str(task.get("status") or "").lower() in {"error", "failed", "cancelled", "canceled"}
+        and task_id not in ACTIVE_PROCESSES
+    ]
+    for task_id in ids:
+        TASKS.pop(task_id, None)
+        LAST_SAVED_TIME.pop(task_id, None)
+    deleted = await asyncio.to_thread(db_clear_failed_sync)
+    await manager.broadcast({"type": "tasks_changed"})
+    return {"status": "ok", "count": max(len(ids), int(deleted or 0))}
 
 
 @app.delete(
@@ -9022,6 +9051,73 @@ async def api_song_editor_import(song_id: str):
         raise HTTPException(404, "Track not found")
     await asyncio.to_thread(_mark_song_review_sync, song_id, "pending", 0.0)
     return {"status": "ok", "count": 1}
+
+
+@app.post("/api/song-editor/{song_id}/recheck")
+async def api_song_editor_recheck(song_id: str):
+    song = await find_song(song_id)
+    if not song:
+        raise HTTPException(404, "Track not found")
+
+    settings = await load_settings_async()
+    cleanup_rules = str(settings.get("title_cleanup_rules") or "")
+    candidates = []
+    seen_pairs = set()
+
+    def add_pair(title, artist):
+        title = clean_metadata_text(title, "")
+        artist = _usable_artist_hint(artist)
+        key = (_compact_identity(artist), _compact_identity(title))
+        if title and key not in seen_pairs:
+            seen_pairs.add(key)
+            return title, artist
+        return None
+
+    current = add_pair(song.get("title"), song.get("artist"))
+    if current:
+        candidates.append(current)
+
+    # Prefer the original provider/source metadata when available. This is
+    # particularly useful after a user has already renamed a track badly.
+    try:
+        existing_index = await asyncio.to_thread(_load_library_index_sync)
+        rel = str(Path(song["path"]).resolve().relative_to(DOWNLOAD_DIR.resolve()))
+        row = dict((existing_index.get("entries") or {}).get(rel) or {})
+    except Exception:
+        row = {}
+    source = add_pair(row.get("source_title"), row.get("source_artist"))
+    if source:
+        candidates.append(source)
+
+    best = None
+    # Recheck means a fresh provider lookup, so do not reuse a stale negative
+    # or positive cache entry for this exact request.
+    for title, artist in candidates:
+        cache_key = ("mb", _compact_identity(artist), _compact_identity(clean_title_with_rules(title, cleanup_rules)))
+        _METADATA_CACHE.pop(cache_key, None)
+        try:
+            match = await _musicbrainz_lookup(artist, title, cleanup_rules)
+        except Exception as exc:
+            await write_app_error("musicbrainz_recheck", str(exc), song_id)
+            continue
+        if isinstance(match, dict):
+            if best is None or float(match.get("score", 0.0)) > float(best.get("score", 0.0)):
+                best = match
+
+    if not best:
+        raise HTTPException(404, "No confident MusicBrainz match found for this track.")
+
+    return {
+        "status": "ok",
+        "source": "MusicBrainz",
+        "musicbrainz_id": best.get("id") or "",
+        "confidence": round(float(best.get("score", 0.0)) * 100, 1),
+        "metadata": {
+            "title": clean_metadata_text(best.get("title"), song.get("title") or ""),
+            "artist": _usable_artist_hint(best.get("artist")) or song.get("artist") or "",
+            "album": clean_metadata_text(best.get("album"), song.get("album") or ""),
+        },
+    }
 
 
 @app.post("/api/song-editor/{song_id}/skip")
