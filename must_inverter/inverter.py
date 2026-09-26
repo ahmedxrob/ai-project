@@ -5,7 +5,7 @@ from flask import Flask, jsonify
 import threading
 
 # ------------------ CONFIG ------------------
-REFRESH_SECONDS = 60  # fetch every 60s
+REFRESH_SECONDS = 90  # fetch every 60s
 
 # Load configuration from Home Assistant
 try:
