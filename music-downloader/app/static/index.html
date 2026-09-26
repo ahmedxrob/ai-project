@@ -11,7 +11,7 @@
   <title>
    Xrob Music
   </title>
-  <link href="static/style.css?v=3820" rel="stylesheet"/>
+  <link href="static/style.css?v=3830" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
   <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -1137,7 +1137,7 @@
    </div>
    <div class="downloads-summary" id="downloadsSummary"><span><b id="downloadsActiveCount">0</b><small>Active</small></span><span><b id="downloadsQueuedCount">0</b><small>Queued</small></span><span><b id="downloadsFailedCount">0</b><small>Failed</small></span><span><b id="downloadsHistoryCount">0</b><small>History</small></span></div>
    <div class="downloads-tabs" role="tablist" aria-label="Download filters"><button class="downloads-tab active" data-download-filter="active" role="tab" type="button">Live</button><button class="downloads-tab" data-download-filter="queued" role="tab" type="button">Queued</button><button class="downloads-tab" data-download-filter="failed" role="tab" type="button">Failed</button><button class="downloads-tab" data-download-filter="history" role="tab" type="button">History</button></div>
-   <div class="downloads-toolbar"><span id="downloadsFilterHint">Live jobs</span><button class="btn-refresh" id="downloadsClearHistory" type="button" hidden>Clear history</button></div>
+   <div class="downloads-toolbar"><span id="downloadsFilterHint">Live jobs</span><div class="downloads-toolbar-actions"><button class="btn-refresh danger-soft" id="downloadsClearFailed" type="button" hidden><i data-lucide="trash-2" aria-hidden="true"></i><span>Clear failed</span></button><button class="btn-refresh" id="downloadsClearHistory" type="button" hidden>Clear history</button></div></div>
    <div class="downloads-drawer-list downloads-list" id="downloadsList"></div>
   </aside>
   <aside aria-label="Up Next queue" class="queue-drawer overlay-panel" hidden="" id="queue-drawer">
@@ -1201,7 +1201,8 @@ https://…" required></textarea></label><div class="batch-meta-grid"><label>Art
       Album
       <input autocomplete="off" id="metadataAlbum"/>
      </label>
-     <div class="settings-actions">
+     <div class="settings-actions metadata-editor-actions">
+      <button class="btn-refresh" id="metadataRecheck" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i> Recheck MusicBrainz</button>
       <button class="save-btn" type="submit">
        Save &amp; remove from editor
       </button>
@@ -1272,7 +1273,7 @@ https://…" required></textarea></label><div class="batch-meta-grid"><label>Art
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=3820">
+  <script src="static/app.js?v=3830">
   </script>
 
 
