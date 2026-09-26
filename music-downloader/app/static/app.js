@@ -588,7 +588,7 @@ function applyAuthoritativeOwnedPlayerState(state, force = false) {
             else syncLibraryQueue(queue, state.queueIndex);
         }
         updatePlayerInfo(state.title, state.artist, state.art);
-        if (player) { player.hidden = false; player.style.display = "grid"; }
+        if (player) { player.hidden = false; ensureGlobalPlayerVisible(); }
         if (volume && Number.isFinite(Number(state.volume))) {
             volume.value = Math.max(0, Math.min(1, Number(state.volume)));
             audio.volume = Math.max(0, Math.min(1, Number(state.volume)));
@@ -904,7 +904,7 @@ function applyRemotePlayerState(state, fromServer = false) {
     }
     if (merged.dailyMix) applyRemoteDailyMixState(merged.dailyMix);
     updatePlayerInfo(merged.title, merged.artist, merged.art);
-    if (player) player.style.display = "grid";
+    ensureGlobalPlayerVisible();
     if (volume && Number.isFinite(Number(merged.volume))) volume.value = Math.max(0, Math.min(1, Number(merged.volume)));
     const shouldFollowLinkedPlayback = playerSyncMode === "linked" && playerSyncDeviceIds.includes(String(PLAYER_TAB_ID)) && Boolean(merged.src);
     if (shouldFollowLinkedPlayback && !applyingRemotePlayerCommand) syncRemoteAudioState(merged);
@@ -995,7 +995,7 @@ async function takeoverRemotePlayer(force = false) {
         }
         audio.muted = Boolean(synced.muted);
         playerTakeoverPending = true;
-        if (player) player.style.display = "grid";
+        ensureGlobalPlayerVisible();
         stopCrossfadePreload();
 
         const loaded = await new Promise(resolve => {
@@ -1126,7 +1126,7 @@ function applyRemoteCommand(message) {
             if (src) {
                 currentPlayerSource = p.source === "home" ? "home" : (p.source || currentPlayerSource || "library");
                 updatePlayerInfo(p.title, p.artist, syncResourceUrl(p.art || ""));
-                if (player) player.style.display = "grid";
+                ensureGlobalPlayerVisible();
                 const absolute = new URL(src, location.href).href;
                 const requestedTime = Math.max(0, Number(p.currentTime || 0));
                 const applyPosition = () => {
@@ -1358,6 +1358,17 @@ function cycleRepeatMode() {
    DOM INITIALIZATION
    ============================================================ */
 
+function ensureGlobalPlayerVisible() {
+    const el = player || document.getElementById("global-player-bar");
+    if (!el) return false;
+    // The player is a persistent application surface. It must never be hidden by
+    // an old [hidden] attribute or an earlier event-path mutation.
+    el.hidden = false;
+    el.removeAttribute("hidden");
+    el.style.setProperty("display", "grid", "important");
+    return true;
+}
+
 function cacheDom() {
 
     audio =
@@ -1369,6 +1380,8 @@ function cacheDom() {
         document.getElementById(
             "global-player-bar"
         );
+
+    ensureGlobalPlayerVisible();
 
     playBtn =
         document.getElementById(
@@ -1932,7 +1945,7 @@ function restorePlayerState() {
 
         audio.dataset.xrobSongId = String(state.songId || "");
         updatePlayerInfo(state.title, state.artist, state.art);
-        if (player) player.style.display = "grid";
+        ensureGlobalPlayerVisible();
         const loadGeneration = ++audioLoadGeneration;
         const expectedSource = new URL(state.src, location.href).href;
         audio.addEventListener("loadedmetadata", () => {
@@ -2493,7 +2506,7 @@ function toggleAudioStream(
 
 
     if (player) {
-        player.style.display = "grid";
+        ensureGlobalPlayerVisible();
     }
 
 
@@ -4246,7 +4259,8 @@ function renderItems(items) {
                             item.id,
                             item.artist || item.channel,
                             download,
-                            item.album || ""
+                            item.album || "",
+                            item.thumbnail || item.thumbnails?.[0]?.url || ""
                         )
                 );
 
@@ -5129,7 +5143,8 @@ async function startDownload(
     elementId,
     artist,
     button,
-    album = ""
+    album = "",
+    thumbnail = ""
 ) {
 
     if (!url) {
@@ -5170,7 +5185,8 @@ async function startDownload(
                             title,
                             elementId,
                             artist,
-                            album
+                            album,
+                            thumbnail
                         })
                 }
             );
@@ -6237,7 +6253,7 @@ async function startAppAfterAuth() {
 
     // The player is a persistent app surface, not something that only appears after playback.
     // Keep it visible at startup with its existing empty-state labels.
-    if (player) player.style.display = "grid";
+    ensureGlobalPlayerVisible();
 
     await initPlayerSync();
     bindAudioEvents();
@@ -6463,6 +6479,8 @@ function openDownloadsDrawer(){
     const drawer = document.getElementById("downloads-drawer");
     if (!drawer) return;
     drawer.hidden = false;
+    ensureGlobalPlayerVisible();
+    renderDownloadsV37(latestTasks);
     loadDownloads().catch(() => {});
     renderLocalIcons();
 }
@@ -7215,7 +7233,7 @@ function createDownloadCardV37(task, index=0) {
     const isHistory=Boolean(task?.history), failed=["error","failed","cancelled","canceled"].includes(String(task?.status||"").toLowerCase());
     const title=task?.title||task?.final_name||"Unknown Track", artist=task?.artist||"Unknown Artist", album=task?.album||"";
     const progress=Math.max(0,Math.min(100,Number(task?.percent)||0));
-    const cover=task?.cover||"static/logo.png";
+    const cover=task?.cover||task?.thumbnail||task?.art||"static/logo.png";
     card.innerHTML=`<div class="download-art"><img src="${escapeHtml(cover)}" alt="" loading="lazy"><span class="download-status-dot ${isHistory?"history":failed?"failed":"active"}"></span></div><div class="download-copy"><div class="download-topline"><strong>${escapeHtml(title)}</strong><span class="download-percent">${Math.round(progress)}%</span></div><span class="download-artist">${escapeHtml(artist)}${album?` · ${escapeHtml(album)}`:""}</span><span class="download-source">${escapeHtml(task?.url||"Local source")}</span><div class="download-progress-track"><i style="width:${progress}%"></i></div><div class="download-metrics"><span>${escapeHtml(v37DownloadStatus(task))}</span><span>${escapeHtml(task?.speed||"")}</span><span>ETA ${escapeHtml(v37Eta(task))}</span></div>${v37PipelineHtml(task)}${task?.error?`<div class="download-error-line"><i data-lucide="circle-alert"></i>${escapeHtml(String(task.error).slice(0,280))}</div>`:""}</div><div class="download-actions v37-download-actions"></div>`;
     const actions=card.querySelector(".v37-download-actions");
     if(failed && !isHistory){const b=document.createElement("button");b.className="save-btn compact";b.type="button";b.innerHTML=task.resume_available?'<i data-lucide="play"></i> Resume':'<i data-lucide="refresh-cw"></i> Retry';b.onclick=()=>retryTask(task.id);actions.appendChild(b);}
@@ -7236,16 +7254,16 @@ async function loadV37DownloadHistory(){
     try{const r=await apiFetch("api/downloads/history",{cache:"no-store",timeoutMs:10000});if(!r.ok)throw new Error("History unavailable");const d=await r.json();v37DownloadHistory=(Array.isArray(d.history)?d.history:[]).map(x=>({...x,id:x.task_id,history:true}));updateV37DownloadSummary();if(v37DownloadFilter==="history")renderDownloadsV37(latestTasks);}catch(err){console.warn("Download history:",err);}
 }
 function updateV37DownloadSummary(){
-    const active=latestTasks.filter(isActiveTask).length, queued=latestTasks.filter(t=>String(t.status||"")==="queued").length, failed=latestTasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())).length;
+    const active=latestTasks.filter(isActiveTask).length, queued=latestTasks.filter(t=>String(t.status||"").toLowerCase()==="queued").length, failed=latestTasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())).length;
     [["downloadsActiveCount",active],["downloadsQueuedCount",queued],["downloadsFailedCount",failed],["downloadsHistoryCount",v37DownloadHistory.length]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.textContent=n;});
-    const head=document.getElementById("downloadsHeadStatus");if(head)head.textContent=active?`${active} active · ${queued} queued`:`${v37DownloadHistory.length} in history`;
+    const head=document.getElementById("downloadsHeadStatus");if(head)head.textContent=active?`${active} live · ${queued} queued`:`${v37DownloadHistory.length} in history`;
 }
 function renderDownloadsV37(tasks){
     const list=document.getElementById("downloadsList"); if(!list)return;
     updateV37DownloadSummary();
     const filter=v37DownloadFilter;
-    const rows=filter==="history"?v37DownloadHistory.slice():filter==="queued"?tasks.filter(t=>String(t.status||"")==="queued"):filter==="failed"?tasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())):tasks.filter(t=>isActiveTask(t)&&String(t.status||"")!=="queued");
-    const hint=document.getElementById("downloadsFilterHint"); if(hint)hint.textContent=filter==="active"?"Currently running jobs":filter==="queued"?"Waiting to start":filter==="failed"?"Retryable failures and cancellations":"Persistent download history";
+    const rows=filter==="history"?v37DownloadHistory.slice():filter==="queued"?tasks.filter(t=>String(t.status||"").toLowerCase()==="queued"):filter==="failed"?tasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())):tasks.filter(t=>isActiveTask(t));
+    const hint=document.getElementById("downloadsFilterHint"); if(hint)hint.textContent=filter==="active"?"Live download jobs":filter==="queued"?"Waiting to start":filter==="failed"?"Retryable failures and cancellations":"Persistent download history";
     const clear=document.getElementById("downloadsClearHistory");if(clear)clear.hidden=filter!=="history";
     list.innerHTML="";
     if(!rows.length){list.innerHTML=`<div class="downloads-empty v37-empty"><div class="empty-icon"><i data-lucide="download-cloud"></i></div><div class="empty-title">${filter==="history"?"No download history":filter==="failed"?"No failed jobs":filter==="queued"?"Queue is clear":"No active downloads"}</div><div class="empty-text">${filter==="active"?"Start a download from Search or use Batch.":filter==="history"?"Completed and previous jobs will appear here.":"Everything is up to date."}</div></div>`;renderLocalIcons();return;}
@@ -7368,9 +7386,10 @@ function v373InstallCrossPlatformLifecycle(){
     window.addEventListener("online", onOnline, { passive: true });
     window.addEventListener("offline", onOffline, { passive: true });
     window.addEventListener("pageshow", onVisible, { passive: true });
+    window.addEventListener("pageshow", () => ensureGlobalPlayerVisible(), { passive: true });
     window.addEventListener("pagehide", onHidden, { passive: true });
     document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") onVisible();
+        if (document.visibilityState === "visible") { ensureGlobalPlayerVisible(); onVisible(); }
         else onHidden();
     }, { passive: true });
     window.addEventListener("beforeunload", persistOnLeave, { passive: true });
