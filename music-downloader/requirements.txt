@@ -1,5 +1,5 @@
-fastapi
-uvicorn[standard]
+fastapi==0.128.2
+uvicorn[standard]==0.48.0
 yt-dlp[default]==2026.08.19
-mutagen
-python-multipart
+mutagen==1.47.0
+python-multipart==0.0.29
