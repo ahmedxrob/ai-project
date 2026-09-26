@@ -6542,8 +6542,28 @@ function renderSongEditorTracks(query = "") {
         const card = document.createElement("article");
         card.className = "song-editor-card";
         card.dataset.songId = track.id;
-        card.innerHTML = `<img class="song-editor-art" src="${escapeHtml(track.cover || "")}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title || track.name || "Unknown Track")}</div><div class="song-editor-artist">${escapeHtml(track.artist || "Unknown Artist")} <span aria-hidden="true">•</span> ${escapeHtml(track.album || "Unknown Album")}</div><div class="song-editor-file">${escapeHtml(track.name || "")}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="square-pen" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
+        card.innerHTML = `<img class="song-editor-art" src="${escapeHtml(track.cover || "")}" alt="" loading="lazy"><div class="song-editor-info"><div class="song-editor-title">${escapeHtml(track.title || track.name || "Unknown Track")}</div><div class="song-editor-artist">${escapeHtml(track.artist || "Unknown Artist")} <span aria-hidden="true">•</span> ${escapeHtml(track.album || "Unknown Album")}</div><div class="song-editor-file">${escapeHtml(track.name || "")}</div></div><div class="song-editor-actions"><button class="btn-preview editor-edit" type="button"><i data-lucide="square-pen" aria-hidden="true"></i> Edit</button><button class="btn-secondary editor-recheck" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i> Recheck</button><button class="btn-secondary editor-skip" type="button">Skip</button></div>`;
         card.querySelector(".editor-edit").onclick = () => openMetadataEditor(track);
+        card.querySelector(".editor-recheck").onclick = async () => {
+            const button = card.querySelector(".editor-recheck");
+            if (button?.disabled) return;
+            if (button) { button.disabled = true; button.dataset.originalText = button.textContent; button.textContent = "Checking…"; }
+            try {
+                const r = await apiFetch(`api/song-editor/${encodeURIComponent(track.id)}/recheck`, {method:"POST", cache:"no-store", timeoutMs:30000});
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(d.detail || "MusicBrainz recheck failed");
+                const metadata = d.metadata || {};
+                const updated = {...track, ...metadata, metadata_source:"MusicBrainz", metadata_confidence:d.confidence};
+                songEditorTracks = songEditorTracks.map(x => String(x.id) === String(track.id) ? updated : x);
+                openMetadataEditor(updated);
+                showToast(`✅ MusicBrainz match found${d.confidence ? ` · ${d.confidence}% confidence` : ""}`);
+                renderSongEditorTracks(document.getElementById("songEditorSearch")?.value || "");
+            } catch (err) {
+                showToast("❌ " + (err.message || "MusicBrainz recheck failed"));
+            } finally {
+                if (button) { button.disabled = false; button.textContent = button.dataset.originalText || "Recheck"; }
+            }
+        };
         card.querySelector(".editor-skip").onclick = async () => {
             const r = await apiFetch(`api/song-editor/${encodeURIComponent(track.id)}/skip`, {method:"POST"});
             if (!r.ok) return showToast("❌ Could not skip track");
@@ -6558,6 +6578,38 @@ function renderSongEditorTracks(query = "") {
         list.appendChild(card);
     });
     renderLocalIcons();
+}
+
+async function recheckMetadataFromMusicBrainz(songId) {
+    const id = String(songId || document.getElementById("metadataId")?.value || "");
+    if (!id) { showToast("❌ Track identity is missing"); return false; }
+    const button = document.getElementById("metadataRecheck");
+    if (button?.disabled) return false;
+    if (button) { button.disabled = true; button.dataset.originalText = button.textContent; button.innerHTML = '<i data-lucide="loader-circle" aria-hidden="true"></i> Checking…'; renderLocalIcons(); }
+    try {
+        const r = await apiFetch(`api/song-editor/${encodeURIComponent(id)}/recheck`, {method:"POST", cache:"no-store", timeoutMs:30000});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || "MusicBrainz recheck failed");
+        const metadata = d.metadata || {};
+        ["metadataTitle", "metadataArtist", "metadataAlbum"].forEach((fieldId, idx) => {
+            const el = document.getElementById(fieldId);
+            if (el) el.value = [metadata.title, metadata.artist, metadata.album][idx] || "";
+        });
+        const updated = songEditorTracks.find(x => String(x.id) === id);
+        if (updated) {
+            songEditorTracks = songEditorTracks.map(x => String(x.id) === id ? {...x, ...metadata, metadata_source:"MusicBrainz", metadata_confidence:d.confidence} : x);
+            renderSongEditorTracks(document.getElementById("songEditorSearch")?.value || "");
+        }
+        const source = document.getElementById("metadataFileName");
+        if (source && d.confidence) source.textContent = `${updated?.name || source.textContent} · MusicBrainz ${d.confidence}%`;
+        showToast(`✅ MusicBrainz metadata refreshed${d.confidence ? ` · ${d.confidence}% confidence` : ""}`);
+        return true;
+    } catch (err) {
+        showToast("❌ " + (err.message || "MusicBrainz recheck failed"));
+        return false;
+    } finally {
+        if (button) { button.disabled = false; button.innerHTML = '<i data-lucide="refresh-cw" aria-hidden="true"></i> Recheck MusicBrainz'; renderLocalIcons(); }
+    }
 }
 
 async function loadSongEditor(){
@@ -6910,7 +6962,7 @@ function installEnhancedFeatures(){
     saveEnhancedQueue();
     renderEnhancedQueue();
 }); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
-    document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
+    document.getElementById("metadataClose")?.addEventListener("click",()=>document.getElementById("metadata-modal").hidden=true); document.getElementById("metadataRecheck")?.addEventListener("click",()=>recheckMetadataFromMusicBrainz()); document.getElementById("healthClose")?.addEventListener("click",()=>document.getElementById("health-modal").hidden=true);
     document.getElementById("metadataForm")?.addEventListener("submit",async e=>{
         e.preventDefault();
         const form=e.currentTarget;
@@ -7341,7 +7393,7 @@ function renderDownloadsV37(tasks){
     }
     const hint=document.getElementById("downloadsFilterHint");
     if(hint)hint.textContent=filter==="active"?"Active downloads · live progress":filter==="queued"?"Waiting to start":filter==="failed"?"Retryable failures and cancellations":"Persistent download history";
-    const clear=document.getElementById("downloadsClearHistory");if(clear)clear.hidden=filter!=="history";
+    const clear=document.getElementById("downloadsClearHistory");if(clear)clear.hidden=filter!=="history"; const clearFailed=document.getElementById("downloadsClearFailed"); if(clearFailed){ const failedCount=latestTasks.filter(t=>["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase())).length; clearFailed.hidden=failedCount===0; clearFailed.title=failedCount?`Clear ${failedCount} failed download${failedCount===1?"":"s"}`:"No failed downloads"; }
     list.innerHTML="";
     if(filter==="active" && rows.length){
         const downloading=rows.filter(t=>String(t.status||"").toLowerCase()==="downloading").length;
@@ -7359,6 +7411,29 @@ function renderDownloadsV37(tasks){
 }
 async function v37BatchDownloads(){const modal=document.getElementById("batch-download-modal");if(modal)modal.hidden=false;}
 async function v37SubmitBatch(event){event.preventDefault();const urls=(document.getElementById("batchDownloadUrls")?.value||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!urls.length){showToast("❌ Add at least one URL");return;}if(urls.length>200){showToast("❌ Maximum 200 URLs per batch");return;}const body={urls,artist:document.getElementById("batchDownloadArtist")?.value||"",album:document.getElementById("batchDownloadAlbum")?.value||""};const btn=document.querySelector("#batchDownloadForm button[type=submit]");if(btn)btn.disabled=true;try{const r=await apiFetch("api/download/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),timeoutMs:20000});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Batch download failed");const queued=(d.results||[]).filter(x=>["ok","already_queued"].includes(x.status)).length;document.getElementById("batch-download-modal").hidden=true;document.getElementById("batchDownloadUrls").value="";showToast(`✅ ${queued} download${queued===1?"":"s"} added`);await pollTasks(true);}catch(err){showToast("❌ "+(err.message||"Batch download failed"));}finally{if(btn)btn.disabled=false;}}
+async function clearV37Failed(){
+    const failed = latestTasks.filter(t => ["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase()));
+    if (!failed.length) { showToast("No failed downloads to clear"); return; }
+    if (!confirm(`Clear ${failed.length} failed download${failed.length===1?"":"s"}?`)) return;
+    const button = document.getElementById("downloadsClearFailed");
+    if (button) button.disabled = true;
+    try {
+        const r = await apiFetch("api/tasks/clear-failed", {method:"DELETE", cache:"no-store"});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || "Could not clear failed downloads");
+        failed.forEach(t => completedSet.delete(t.id));
+        latestTasks = latestTasks.filter(t => !["error","failed","cancelled","canceled"].includes(String(t.status||"").toLowerCase()));
+        lastTaskSignature = "";
+        renderDownloadsV37(latestTasks);
+        updateQueueCounters(latestTasks);
+        showToast(`🧹 Cleared ${d.count || failed.length} failed download${(d.count || failed.length)===1?"":"s"}`);
+    } catch (err) {
+        showToast("❌ " + (err.message || "Clear failed downloads failed"));
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
 async function clearV37History(){try{const r=await apiFetch("api/downloads/history",{method:"DELETE"});if(!r.ok)throw new Error("Could not clear history");v37DownloadHistory=[];renderDownloadsV37(latestTasks);showToast("🧹 Download history cleared");}catch(err){showToast("❌ "+(err.message||"Clear history failed"));}}
 
 async function backupV37(){try{const r=await apiFetch("api/backup",{cache:"no-store",timeoutMs:30000});if(!r.ok)throw new Error("Backup failed");const blob=await r.blob();const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`xrob-music-backup-${new Date().toISOString().replace(/[:.]/g,"-")}.zip`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);showToast("✅ Backup created");}catch(err){showToast("❌ "+(err.message||"Backup failed"));}}
@@ -7500,7 +7575,7 @@ function v37Install(){
     document.getElementById("downloadDetailClose")?.addEventListener("click",()=>document.getElementById("download-detail-modal").hidden=true);
     document.getElementById("diagnosticsClose")?.addEventListener("click",()=>document.getElementById("diagnostics-modal").hidden=true);
     document.getElementById("batchDownloadForm")?.addEventListener("submit",v37SubmitBatch);
-    document.getElementById("downloadsClearHistory")?.addEventListener("click",clearV37History);
+    document.getElementById("downloadsClearHistory")?.addEventListener("click",clearV37History); document.getElementById("downloadsClearFailed")?.addEventListener("click",clearV37Failed);
     document.querySelectorAll("[data-download-filter]").forEach(btn=>btn.addEventListener("click",()=>{v37DownloadFilter=btn.dataset.downloadFilter||"active";document.querySelectorAll("[data-download-filter]").forEach(b=>b.classList.toggle("active",b===btn));renderDownloadsV37(latestTasks);if(v37DownloadFilter==="history")loadV37DownloadHistory();}));
     document.getElementById("backupButton")?.addEventListener("click",backupV37);document.getElementById("restoreButton")?.addEventListener("click",()=>document.getElementById("restoreFile")?.click());document.getElementById("restoreFile")?.addEventListener("change",()=>{if(document.getElementById("restoreFile")?.files?.[0])restoreV37();});document.getElementById("diagnosticsButton")?.addEventListener("click",diagnosticsV37);
     document.getElementById("set_device_name")?.addEventListener("change",saveV37DeviceName);
