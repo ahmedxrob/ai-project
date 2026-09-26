@@ -40,6 +40,7 @@ let currentLibraryIndex = -1;
 let currentPage = 1;
 let currentQuery = "";
 let isLoadingMore = false;
+const SEARCH_MAX_PAGE = 20;
 let hasMoreResults = true;
 let searchRequestId = 0;
 let searchAbortController = null;
@@ -1302,10 +1303,6 @@ function beginPlaySession(id) {
     playSessionRecorded = false;
 }
 
-function resetPlaySession() {
-    playSessionTrackId = null;
-    playSessionRecorded = false;
-}
 
 function playCountThreshold() {
     const duration = Number(audio?.duration || 0);
@@ -1674,23 +1671,6 @@ function escapeHtml(value) {
 }
 
 
-function normalizeKey(value) {
-
-    let text = String(value || "").trim().toLowerCase();
-
-    // Keep search-side duplicate detection in sync with the server/catalog
-    // title normalization: strip track numbers and upload-only decorations.
-    text = text.replace(/^\s*\[?\d{1,3}\]?\s*[-–—.)_:]+\s*/i, "");
-    text = text.replace(/\s+#\d{1,4}\s*album\b.*$/i, "");
-    text = text.replace(/\s*[\(\[]\s*(?:official\s+)?(?:lyric|lyrics|music\s+video|video|mv|visualizer|audio)(?:\s+video|\s+clip)?\s*[\)\]]/gi, " ");
-    text = text.replace(/\s+(?:official\s+)?(?:music\s+)?video(?:\s+clip)?\s*$/i, "");
-    text = text.replace(/\s+mv\s*$/i, "");
-    text = text.replace(/\s+(?:lyric|lyrics)\s*(?:video|clip)?\s*$/i, "");
-    text = text.replace(/\s+prod(?:uced)?\.?\s*by\b.*$/i, "");
-    text = text.replace(/[^a-z0-9]+/g, "");
-
-    return text;
-}
 
 
 function showToast(message) {
@@ -4000,7 +3980,7 @@ async function searchMusic() {
             "Loading results..."
         );
 
-        hasMoreResults = data.length >= 20;
+        hasMoreResults = data.length >= 20 && currentPage < SEARCH_MAX_PAGE;
         renderItems(data);
 
         /*
@@ -4310,6 +4290,11 @@ async function loadMoreResults() {
 
     const nextPage =
         currentPage + 1;
+    if (nextPage > SEARCH_MAX_PAGE) {
+        hasMoreResults = false;
+        isLoadingMore = false;
+        return;
+    }
 
 
     const loader =
@@ -7208,18 +7193,6 @@ function openV37Connect() { const m=document.getElementById("connect-modal"); if
 function closeV37Connect() { const m=document.getElementById("connect-modal"); if(m)m.hidden=true; }
 
 // Remote command helper for direct device-picker controls.
-function sendPlayerCommandToTarget(targetId, command, payload={}) { const d=v37Devices.find(x=>x.tabId===targetId); if(d) return v37RemoteCommand(d,command,payload); return false; }
-
-function v37PipelineIndex(task) {
-    const s=String(task?.step||"").toLowerCase(), status=String(task?.status||"").toLowerCase();
-    if(status==="queued") return 0;
-    if(s.includes("download")) return 1;
-    if(s.includes("processing") || s.includes("audio") || s.includes("finalizing")) return 2;
-    if(s.includes("metadata")) return 3;
-    if(s.includes("artwork") || s.includes("thumbnail")) return 4;
-    if(s.includes("library") || status==="completed") return 5;
-    return status==="downloading"?1:2;
-}
 function v37PipelineHtml(task) {
     const stages=["Queued","Downloading","Processing","Metadata","Artwork","Library"], idx=v37PipelineIndex(task);
     return `<div class="download-pipeline">${stages.map((stage,i)=>`<span class="${i<idx?"done ":""}${i===idx?"current":""}${i>idx?"pending":""}"><i></i>${stage}</span>`).join("")}</div>`;
