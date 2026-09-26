@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.7.9"
+SERVER_VERSION = "3.8.0"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -133,6 +133,7 @@ AUTH_COOKIE = "xrob_session"
 AUTH_MIN_PASSWORD_LENGTH = 12
 AUTH_SESSIONS = {}
 AUTH_SESSION_IDLE_SECONDS = 7 * 24 * 60 * 60
+AUTH_SESSION_MAX = 256
 AUTH_LOGIN_ATTEMPTS = defaultdict(list)
 AUTH_LOGIN_WINDOW = 300
 AUTH_LOGIN_MAX_ATTEMPTS = 5
@@ -144,7 +145,8 @@ PREVIEW_RATE_LIMIT = (12, 60.0)  # requests / rolling window / client
 # yt-dlp search pagination is implemented as a bounded ytsearch{N} lookup.
 # Keep the externally requested page count tight so a malicious/deep scroll
 # cannot turn page=500 into a 25,000-result provider request.
-SEARCH_MAX_PAGE = 50
+SEARCH_MAX_PAGE = 20
+SEARCH_MAX_RESULTS_TOTAL = 400
 SEARCH_CACHE_TTL_SECONDS = 45.0
 SEARCH_CACHE_MAX = 128
 AUTH_BOOTSTRAP_FILE = DATA_DIR / "web_bootstrap.txt"
@@ -428,6 +430,7 @@ LIBRARY_SCAN_LOCK = asyncio.Lock()
 LIBRARY_REFRESH_LOCK = asyncio.Lock()
 RESTORE_LOCK = asyncio.Lock()
 COVER_LOCKS = {}
+COVER_LOCK_REFS = {}
 COVER_LOCKS_GUARD = asyncio.Lock()
 HISTORY_MAX_ROWS = 100000
 APP_ERRORS_MAX_ROWS = 5000
@@ -953,6 +956,11 @@ def init_db():
             platform TEXT DEFAULT '', browser TEXT DEFAULT '', capabilities_json TEXT DEFAULT '{}', last_seen_at REAL NOT NULL, created_at REAL NOT NULL,
             updated_at REAL NOT NULL
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS subsonic_now_playing (
+            client_key TEXT PRIMARY KEY, username TEXT NOT NULL, client_id TEXT DEFAULT '', song_id TEXT NOT NULL,
+            position REAL DEFAULT 0, duration REAL DEFAULT 0, updated_at REAL NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_subsonic_now_playing_updated ON subsonic_now_playing(updated_at DESC)")
         conn.execute("""CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at DESC)""")
         columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
         if "identity_key" not in columns:
@@ -2013,11 +2021,12 @@ def _update_library_index_entry_sync(path, *, title=None, artist=None, album=Non
 
     The source URL is intentionally kept separate from editable metadata so an
     edited title/artist can never make a downloaded search result look new again.
+    Returns True only after the index file is durably replaced.
     """
     try:
         path = Path(path).resolve()
         if not path.exists() or not path.is_file() or not path.is_relative_to(DOWNLOAD_DIR.resolve()):
-            return
+            return False
         rel = str(path.relative_to(DOWNLOAD_DIR))
         with LIBRARY_INDEX_WRITE_LOCK:
             current = _load_library_index_sync()
@@ -2044,8 +2053,27 @@ def _update_library_index_entry_sync(path, *, title=None, artist=None, album=Non
                 row["source_album"] = str(source_album)
             entries[rel] = row
             _save_library_index_sync(entries)
+        return True
     except Exception as exc:
         print("Warning: could not update library index row:", exc)
+        return False
+
+def _delete_library_index_entry_sync(path):
+    """Remove one deleted file from the fast library index immediately."""
+    try:
+        path = Path(path).resolve()
+        rel = str(path.relative_to(DOWNLOAD_DIR.resolve()))
+        with LIBRARY_INDEX_WRITE_LOCK:
+            current = _load_library_index_sync()
+            entries = current.get("entries", {}) if isinstance(current, dict) else {}
+            if not isinstance(entries, dict) or rel not in entries:
+                return True
+            entries.pop(rel, None)
+            _save_library_index_sync(entries)
+        return True
+    except Exception as exc:
+        print("Warning: could not remove deleted library index row:", exc)
+        return False
 
 def _fast_file_library_sync():
     files = get_audio_files_sync()
@@ -2062,7 +2090,10 @@ def _fast_file_library_sync():
 
 async def fast_library_snapshot():
     rows = await asyncio.to_thread(_fast_file_library_sync)
-    index = await asyncio.to_thread(_load_library_index_sync)
+    index, play_counts = await asyncio.gather(
+        asyncio.to_thread(_load_library_index_sync),
+        asyncio.to_thread(_play_count_map_sync),
+    )
     cached = index.get("entries", {}) if isinstance(index, dict) else {}
     files=[]
     total=0
@@ -2073,7 +2104,7 @@ async def fast_library_snapshot():
         artist = cached_row.get("artist") or "Unknown Artist"
         album = cached_row.get("album") or "Unknown Album"
         enc = urllib.parse.quote(row["path"], safe="/")
-        files.append({"name": row["path"], "title": title, "artist": artist, "album": album, "size": format_size(row["size"]), "bytes": row["size"], "duration": safe_float(cached_row.get("duration"), 0), "play_count": 0, "cover": "/api/library/cover/"+enc, "stream": "/api/library/stream/"+enc})
+        files.append({"name": row["path"], "title": title, "artist": artist, "album": album, "size": format_size(row["size"]), "bytes": row["size"], "duration": safe_float(cached_row.get("duration"), 0), "play_count": play_counts.get(make_song_id(DOWNLOAD_DIR / row["path"]), 0), "cover": "/api/library/cover/"+enc, "stream": "/api/library/stream/"+enc})
     # Cached metadata can provide artist/album counts before the full scan finishes.
     artists=set(); albums=set()
     for v in cached.values() if isinstance(cached, dict) else []:
@@ -2180,92 +2211,90 @@ async def build_library(force=False):
             except Exception:
                 return path, None, None
 
-        prepared = []
         batch_size = 256
         for start in range(0, len(files), batch_size):
             batch = files[start:start + batch_size]
-            prepared.extend(await asyncio.gather(
+            prepared = await asyncio.gather(
                 *(prepare_song_input(path) for path in batch),
                 return_exceptions=False,
-            ))
+            )
+            for path, stat, metadata in prepared:
+                if stat is None or metadata is None:
+                    continue
 
-        for path, stat, metadata in prepared:
-            if stat is None or metadata is None:
-                continue
+                song_id = make_song_id(path)
+                artist_name = clean_metadata_text(metadata.get("artist"), "Unknown Artist")
+                album_artist = clean_metadata_text(metadata.get("album_artist"), artist_name)
+                album_name = clean_metadata_text(metadata.get("album"), path.stem)
+                artist_id = make_artist_id(artist_name)
+                album_artist_id = make_artist_id(album_artist)
+                album_id = make_album_id(album_artist, album_name)
 
-            song_id = make_song_id(path)
-            artist_name = clean_metadata_text(metadata.get("artist"), "Unknown Artist")
-            album_artist = clean_metadata_text(metadata.get("album_artist"), artist_name)
-            album_name = clean_metadata_text(metadata.get("album"), path.stem)
-            artist_id = make_artist_id(artist_name)
-            album_artist_id = make_artist_id(album_artist)
-            album_id = make_album_id(album_artist, album_name)
-
-            song = {
-                "id": song_id,
-                "title": clean_metadata_text(metadata.get("title"), path.stem),
-                "artist": artist_name,
-                "artistId": artist_id,
-                "albumArtist": album_artist,
-                "albumArtistId": album_artist_id,
-                "album": album_name,
-                "albumId": album_id,
-                "genre": metadata.get("genre", ""),
-                "year": metadata.get("year", ""),
-                "track": metadata.get("track", 0),
-                "disc": metadata.get("disc", 0),
-                "duration": safe_int(metadata.get("duration"), 0),
-                "bit_rate": safe_int(metadata.get("bit_rate"), 0),
-                "bit_depth": safe_int(metadata.get("bit_depth"), 0),
-                "sample_rate": safe_int(metadata.get("sample_rate"), 0),
-                "channels": safe_int(metadata.get("channels"), 0),
-                "replaygain_track_gain": metadata.get("replaygain_track_gain"),
-                "replaygain_album_gain": metadata.get("replaygain_album_gain"),
-                "replaygain_track_peak": metadata.get("replaygain_track_peak"),
-                "replaygain_album_peak": metadata.get("replaygain_album_peak"),
-                "has_artwork": bool(metadata.get("has_artwork")),
-                "path": path,
-                "suffix": path.suffix.lower(),
-                "size": stat.st_size,
-                "created": stat.st_ctime,
-                "modified": stat.st_mtime,
-            }
-            songs.append(song)
-
-            # Track artists own the tracks. Album artists also own the album
-            # relationship so compilation/featured-artist metadata remains useful.
-            artist_roles = {
-                artist_id: artist_name,
-                album_artist_id: album_artist,
-            }
-            for current_id, current_name in artist_roles.items():
-                if current_id not in artists:
-                    artists[current_id] = {
-                        "id": current_id,
-                        "name": current_name,
-                        "albumIds": set(),
-                        "songIds": [],
-                    }
-                artists[current_id]["albumIds"].add(album_id)
-                if song_id not in artists[current_id]["songIds"]:
-                    artists[current_id]["songIds"].append(song_id)
-
-            if album_id not in albums:
-                albums[album_id] = {
-                    "id": album_id,
-                    "name": album_name,
-                    "artist": album_artist,
-                    "artistId": album_artist_id,
+                song = {
+                    "id": song_id,
+                    "title": clean_metadata_text(metadata.get("title"), path.stem),
+                    "artist": artist_name,
+                    "artistId": artist_id,
                     "albumArtist": album_artist,
-                    "year": metadata.get("year", ""),
+                    "albumArtistId": album_artist_id,
+                    "album": album_name,
+                    "albumId": album_id,
                     "genre": metadata.get("genre", ""),
-                    "songIds": [],
+                    "year": metadata.get("year", ""),
+                    "track": metadata.get("track", 0),
+                    "disc": metadata.get("disc", 0),
+                    "duration": safe_int(metadata.get("duration"), 0),
+                    "bit_rate": safe_int(metadata.get("bit_rate"), 0),
+                    "bit_depth": safe_int(metadata.get("bit_depth"), 0),
+                    "sample_rate": safe_int(metadata.get("sample_rate"), 0),
+                    "channels": safe_int(metadata.get("channels"), 0),
+                    "replaygain_track_gain": metadata.get("replaygain_track_gain"),
+                    "replaygain_album_gain": metadata.get("replaygain_album_gain"),
+                    "replaygain_track_peak": metadata.get("replaygain_track_peak"),
+                    "replaygain_album_peak": metadata.get("replaygain_album_peak"),
+                    "has_artwork": bool(metadata.get("has_artwork")),
                     "path": path,
+                    "suffix": path.suffix.lower(),
+                    "size": stat.st_size,
+                    "created": stat.st_ctime,
+                    "modified": stat.st_mtime,
                 }
-            albums[album_id]["songIds"].append(song_id)
+                songs.append(song)
 
-            if metadata.get("genre"):
-                genres[metadata["genre"]] = genres.get(metadata["genre"], 0) + 1
+                # Track artists own the tracks. Album artists also own the album
+                # relationship so compilation/featured-artist metadata remains useful.
+                artist_roles = {
+                    artist_id: artist_name,
+                    album_artist_id: album_artist,
+                }
+                for current_id, current_name in artist_roles.items():
+                    if current_id not in artists:
+                        artists[current_id] = {
+                            "id": current_id,
+                            "name": current_name,
+                            "albumIds": set(),
+                            "songIds": [],
+                        }
+                    artists[current_id]["albumIds"].add(album_id)
+                    if song_id not in artists[current_id]["songIds"]:
+                        artists[current_id]["songIds"].append(song_id)
+
+                if album_id not in albums:
+                    albums[album_id] = {
+                        "id": album_id,
+                        "name": album_name,
+                        "artist": album_artist,
+                        "artistId": album_artist_id,
+                        "albumArtist": album_artist,
+                        "year": metadata.get("year", ""),
+                        "genre": metadata.get("genre", ""),
+                        "songIds": [],
+                        "path": path,
+                    }
+                albums[album_id]["songIds"].append(song_id)
+
+                if metadata.get("genre"):
+                    genres[metadata["genre"]] = genres.get(metadata["genre"], 0) + 1
 
         def song_sort_key(song):
             disc = safe_int(song.get("disc"), 0)
@@ -2345,24 +2374,45 @@ async def _cover_lock_for(cover):
         if lock is None:
             lock = asyncio.Lock()
             COVER_LOCKS[key] = lock
-        return lock
+        COVER_LOCK_REFS[key] = COVER_LOCK_REFS.get(key, 0) + 1
+        return key, lock
+
+
+async def _release_cover_lock(key):
+    async with COVER_LOCKS_GUARD:
+        refs = max(0, int(COVER_LOCK_REFS.get(key, 0)) - 1)
+        if refs:
+            COVER_LOCK_REFS[key] = refs
+            return
+        COVER_LOCK_REFS.pop(key, None)
+        # Prune only entries with no borrowers, so a waiter that already holds
+        # the shared asyncio.Lock can never be separated from a newly-created lock.
+        if len(COVER_LOCKS) > 4096:
+            removable = [old_key for old_key in COVER_LOCKS if not COVER_LOCK_REFS.get(old_key)]
+            for old_key in removable[:1024]:
+                COVER_LOCKS.pop(old_key, None)
+                if len(COVER_LOCKS) <= 3072:
+                    break
 
 
 async def ensure_cover(path):
     cover = await asyncio.to_thread(cover_cache_path, path)
-    lock = await _cover_lock_for(cover)
-    async with lock:
-        if await asyncio.to_thread(cover.exists):
-            return cover
-        command = ["ffmpeg", "-y", "-i", str(path), "-an", "-vcodec", "mjpeg", "-vframes", "1", str(cover)]
-        try:
-            await asyncio.to_thread(
-                subprocess.run, command, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=10,
-            )
-        except Exception:
-            return None
-        return cover if await asyncio.to_thread(cover.exists) else None
+    lock_key, lock = await _cover_lock_for(cover)
+    try:
+        async with lock:
+            if await asyncio.to_thread(cover.exists):
+                return cover
+            command = ["ffmpeg", "-y", "-i", str(path), "-an", "-vcodec", "mjpeg", "-vframes", "1", str(cover)]
+            try:
+                await asyncio.to_thread(
+                    subprocess.run, command, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=10,
+                )
+            except Exception:
+                return None
+            return cover if await asyncio.to_thread(cover.exists) else None
+    finally:
+        await _release_cover_lock(lock_key)
 
 async def resolve_cover_id(item_id):
 
@@ -2705,6 +2755,43 @@ def _ensure_song_review_pending_sync(song_id):
         conn.commit()
 
 
+async def _auto_retry_download_task(task, error_message, step="Retrying automatically"):
+    """Schedule one bounded automatic retry without blocking a download worker during backoff."""
+    if not task or task.get("cancel_requested"):
+        return False
+    try:
+        settings_retry = await load_settings_async()
+        retry_limit = max(0, min(5, safe_int(settings_retry.get("download_retry_limit"), 2)))
+        auto_retry = bool(settings_retry.get("auto_retry_downloads", True))
+        retries = max(0, safe_int(task.get("retry_count"), 0))
+        if not auto_retry or retries >= retry_limit:
+            return False
+        retry_token = uuid.uuid4().hex
+        task["retry_count"] = retries + 1
+        task["queue_token"] = retry_token
+        task["status"] = "queued"
+        task["step"] = f"{step} ({retries + 1}/{retry_limit})..."
+        task["error"] = str(error_message or "Download failed")[-1200:]
+        task["last_updated"] = time.time() * 1000
+        await notify_task_update(task, force_save=True)
+        backoff = max(1, min(60, safe_int(settings_retry.get("download_retry_backoff_seconds"), 3)))
+
+        async def enqueue_after_delay():
+            await asyncio.sleep(backoff * (2 ** min(retries, 4)))
+            current = TASKS.get(str(task.get("id")))
+            if not current or current.get("cancel_requested") or current.get("status") != "queued":
+                return
+            if str(current.get("queue_token") or "") != retry_token:
+                return
+            await TASK_QUEUE.put((current["id"], retry_token))
+
+        track_background_task(enqueue_after_delay())
+        return True
+    except Exception as exc:
+        await write_app_error("download_auto_retry", str(exc), task.get("id") if task else None)
+        return False
+
+
 def _spawn_download_worker():
     task = asyncio.create_task(download_worker())
     DOWNLOAD_WORKER_TASKS.add(task)
@@ -3003,16 +3090,9 @@ async def download_worker():
                 task["error"] = (error_text[-1200:] or "yt-dlp failed.")
                 task["last_updated"] = time.time() * 1000
 
-                settings_retry = await load_settings_async()
-                retry_limit = safe_int(settings_retry.get("download_retry_limit"), 2)
-                auto_retry = bool(settings_retry.get("auto_retry_downloads", True))
-                retries = safe_int(task.get("retry_count"), 0)
                 await notify_task_update(task, force_save=True)
-                if auto_retry and retries < retry_limit and not task.get("cancel_requested"):
-                    task["status"] = "queued"; task["step"] = f"Retrying automatically ({retries + 1}/{retry_limit})..."; task["percent"] = max(0, min(89, safe_float(task.get("percent"), 0))); task["retry_count"] = retries + 1; task["queue_token"] = uuid.uuid4().hex; task["last_updated"] = time.time() * 1000
-                    await notify_task_update(task, force_save=True)
-                    await asyncio.sleep(max(1, safe_int(settings_retry.get("download_retry_backoff_seconds"), 3)) * (2 ** max(0, retries)))
-                    await TASK_QUEUE.put((task_id, task["queue_token"]))
+                task["percent"] = max(0, min(89, safe_float(task.get("percent"), 0)))
+                await _auto_retry_download_task(task, task.get("error"))
                 continue
 
             def find_downloaded_files_sync():
@@ -3041,7 +3121,7 @@ async def download_worker():
                     task,
                     force_save=True,
                 )
-
+                await _auto_retry_download_task(task, task.get("error"), "Retrying after missing output")
                 continue
 
             audio_file = possible_files[0]
@@ -3255,6 +3335,7 @@ async def download_worker():
                     force_save=True,
                 )
                 await write_app_error("download_worker", str(error), task_id)
+                await _auto_retry_download_task(task, str(error))
 
         finally:
             active = ACTIVE_PROCESSES.pop(task_id, None) or process
@@ -3468,7 +3549,9 @@ async def youtube_search(
         SEARCH_CACHE.pop(cache_key, None)
 
     start = (page - 1) * max_results + 1
-    end = min(page * max_results, SEARCH_MAX_PAGE * max_results)
+    end = min(page * max_results, SEARCH_MAX_RESULTS_TOTAL)
+    if start > end:
+        return []
     command = [
         *YT_DLP_COMMAND, "--flat-playlist", "--dump-single-json", "--skip-download", "--no-warnings",
         "--retries", "3", "--socket-timeout", "15",
@@ -4373,6 +4456,21 @@ async def api_library_intelligence():
         if re.search(r"(?:\[?\(?(?:official|lyric|lyrics|music video|video|visualizer)|\d{1,3}[-_. ])", name, re.I):
             suspicious_names.append({"id": song["id"], "name": name, "title": title, "artist": artist})
 
+    # Intelligence is a lightweight catalog analysis. Decoder-level health is
+    # intentionally kept in the dedicated /api/library/health endpoint; here we
+    # only flag tracks whose parsed duration is unavailable as obvious suspects.
+    unreadable = [
+        {
+            "id": song["id"],
+            "title": song.get("title") or song.get("path", Path("track")).stem,
+            "artist": song.get("artist") or "Unknown Artist",
+            "path": str(song["path"].relative_to(DOWNLOAD_DIR)),
+            "reason": "No usable duration metadata",
+        }
+        for song in songs
+        if safe_float(song.get("duration"), 0) <= 0
+    ]
+
     duplicate_groups_out = []
     for key, group in duplicate_groups.items():
         if len(group) < 2:
@@ -4562,8 +4660,8 @@ async def api_daily_mix(limit: int | None = None, variant: int = 0, refresh_toke
 async def api_stats():
     if LIBRARY_CACHE is None:
         snap = await fast_library_snapshot()
-        all_play_count, _ = await asyncio.to_thread(_play_totals_sync)
-        return {"tracks": len(snap["files"]), "artists": snap.get("artists_count", 0), "albums": snap.get("albums_count", 0), "total_bytes": snap["total_bytes"], "folder_size": snap["total_size"], "all_play_count": all_play_count, "played_tracks": 0, "ready": False}
+        all_play_count, distinct_played = await asyncio.to_thread(_play_totals_sync)
+        return {"tracks": len(snap["files"]), "artists": snap.get("artists_count", 0), "albums": snap.get("albums_count", 0), "total_bytes": snap["total_bytes"], "folder_size": snap["total_size"], "all_play_count": all_play_count, "played_tracks": distinct_played, "ready": False}
 
     library = await build_library()
 
@@ -4789,6 +4887,7 @@ async def api_delete_library(
         # so they are rewritten transactionally rather than relying on foreign keys.
         if deleted_song_id:
             await asyncio.to_thread(_cleanup_deleted_song_sync, deleted_song_id)
+        await asyncio.to_thread(_delete_library_index_entry_sync, path)
         METADATA_CACHE.pop(str(path), None)
         invalidate_library_cache()
 
@@ -5232,8 +5331,11 @@ async def songs_to_subsonic_async(songs):
     songs = list(songs or [])
     if not songs:
         return []
-    starred = await asyncio.to_thread(get_starred_map_sync)
-    return [song_to_subsonic(song, starred.get(song.get("id"))) for song in songs]
+    starred, play_counts = await asyncio.gather(
+        asyncio.to_thread(get_starred_map_sync),
+        asyncio.to_thread(_play_count_map_sync),
+    )
+    return [song_to_subsonic(song, starred.get(song.get("id")), play_counts.get(song.get("id"), 0)) for song in songs]
 
 
 def set_star_sync(
@@ -5278,8 +5380,14 @@ def set_star_sync(
 # ============================================================
 
 _STARRED_UNSET = object()
+_PLAY_COUNT_UNSET = object()
 
-def song_to_subsonic(song, starred_at=_STARRED_UNSET):
+def song_to_subsonic(song, starred_at=_STARRED_UNSET, play_count=_PLAY_COUNT_UNSET):
+    if play_count is _PLAY_COUNT_UNSET:
+        try:
+            play_count = _play_count_map_sync().get(song.get("id"), 0)
+        except Exception:
+            play_count = 0
 
     track_value = safe_int(
         song.get("track"),
@@ -5341,7 +5449,7 @@ def song_to_subsonic(song, starred_at=_STARRED_UNSET):
         "type": "music",
         "mediaType": "song",
         "isVideo": False,
-        "playCount": 0,
+        "playCount": max(0, safe_int(play_count, 0)),
         "comment": "",
         "sortName": song["title"],
         "musicBrainzId": "",
@@ -8191,7 +8299,9 @@ async def api_playlist_update(playlist_id:str,payload:dict=Body(...)):
 
 @app.delete("/api/playlists/{playlist_id}")
 async def api_playlist_delete(playlist_id:str):
-    await asyncio.to_thread(_playlist_delete_sync, playlist_id)
+    deleted = await asyncio.to_thread(_playlist_delete_sync, playlist_id)
+    if not deleted:
+        raise HTTPException(404, "Playlist not found")
     return {"status":"ok"}
 
 
@@ -8245,6 +8355,7 @@ async def api_library_health():
     library = await build_library()
     songs = library.get("songs", [])
     unreadable = []
+    unreadable_count = 0
     health_paths = await get_all_audio_files()
     health_semaphore = asyncio.Semaphore(4)
 
@@ -8258,8 +8369,14 @@ async def api_library_health():
             except Exception as exc:
                 return {"path": str(path.relative_to(DOWNLOAD_DIR)), "reason": str(exc)[:240]}
 
-    health_results = await asyncio.gather(*(check_health_path(path) for path in health_paths), return_exceptions=False)
-    unreadable = [item for item in health_results if item is not None]
+    batch_size = 256
+    for start in range(0, len(health_paths), batch_size):
+        batch = health_paths[start:start + batch_size]
+        for item in await asyncio.gather(*(check_health_path(path) for path in batch), return_exceptions=False):
+            if item is not None:
+                unreadable_count += 1
+                if len(unreadable) < 200:
+                    unreadable.append(item)
     bad_tags, missing_art, groups = [], [], {}
     for song in songs:
         rel = str(song["path"].relative_to(DOWNLOAD_DIR))
@@ -8291,7 +8408,7 @@ async def api_library_health():
         "missing_artwork": missing_art,
         "duplicates": duplicates,
         "counts": {
-            "unreadable": len(unreadable), "bad_tags": len(bad_tags),
+            "unreadable": unreadable_count, "bad_tags": len(bad_tags),
             "missing_artwork": len(missing_art), "duplicates": len(duplicates),
             "duplicate_files": sum(len(item["files"]) for item in duplicates),
         },
@@ -8313,18 +8430,19 @@ async def api_library_scan_mode(mode: str):
             # new/changed files. Metadata reads are performed concurrently.
             library = await build_library(force=True)
             if mode == "full":
-                cover_tasks = [ensure_cover(song["path"]) for song in library["songs"]]
-                if cover_tasks:
+                songs = list(library.get("songs") or [])
+                for batch_start in range(0, len(songs), 256):
+                    batch = songs[batch_start:batch_start + 256]
                     semaphore = asyncio.Semaphore(8)
 
-                    async def cover_one(coro):
+                    async def cover_one(path):
                         async with semaphore:
                             try:
-                                return await coro
+                                return await ensure_cover(path)
                             except Exception:
                                 return None
 
-                    await asyncio.gather(*(cover_one(c) for c in cover_tasks), return_exceptions=True)
+                    await asyncio.gather(*(cover_one(song["path"]) for song in batch if song.get("path")), return_exceptions=True)
             await persist_library_index(library)
             await asyncio.to_thread(_scan_state_sync, "ok", None, f"{len(library['songs'])} tracks scanned")
             return {"status": "ok", "mode": mode, "tracks": len(library["songs"])}
@@ -8363,6 +8481,14 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
     token = _auth_token()
     now = time.time()
     AUTH_SESSIONS[token] = {"created": now, "last_seen": now, "username": expected_user}
+    if len(AUTH_SESSIONS) > AUTH_SESSION_MAX:
+        current_token = token
+        stale_tokens = sorted(
+            ((key, value) for key, value in AUTH_SESSIONS.items() if key != current_token),
+            key=lambda item: float(item[1].get("last_seen") or item[1].get("created") or 0),
+        )
+        for old_token, _session in stale_tokens[: max(0, len(AUTH_SESSIONS) - AUTH_SESSION_MAX)]:
+            AUTH_SESSIONS.pop(old_token, None)
     response = JSONResponse({"status":"ok", "username":expected_user})
     response.set_cookie(
         AUTH_COOKIE, token, httponly=True, samesite="lax",
@@ -8521,10 +8647,24 @@ async def _api_restore_impl(file: UploadFile = File(...)):
     db_tmp = None
     safety = None
     runtime_stopped = False
+    db_replaced = False
+    old_settings_bytes = None
+    old_index_bytes = None
+    settings_existed = False
+    index_existed = False
     try:
         await asyncio.to_thread(temp.write_bytes, raw)
         def validate_zip():
             with zipfile.ZipFile(temp, "r") as z:
+                infos = z.infolist()
+                if len(infos) > 32:
+                    raise ValueError("Backup contains too many files")
+                total_uncompressed = sum(max(0, int(info.file_size)) for info in infos)
+                if total_uncompressed > 512 * 1024 * 1024:
+                    raise ValueError("Backup expands beyond the allowed 512 MB restore limit")
+                for info in infos:
+                    if int(info.file_size) > 256 * 1024 * 1024:
+                        raise ValueError(f"Backup member is too large: {info.filename}")
                 names = set(z.namelist())
                 if "tasks.db" not in names:
                     raise ValueError("Backup does not contain tasks.db")
@@ -8564,6 +8704,12 @@ async def _api_restore_impl(file: UploadFile = File(...)):
 
         await _stop_runtime_for_restore()
         runtime_stopped = True
+        settings_existed = SETTINGS_FILE.exists()
+        index_existed = LIBRARY_INDEX_FILE.exists()
+        if settings_existed:
+            old_settings_bytes = await asyncio.to_thread(SETTINGS_FILE.read_bytes)
+        if index_existed:
+            old_index_bytes = await asyncio.to_thread(LIBRARY_INDEX_FILE.read_bytes)
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
         safety = DB_FILE.with_name(f"tasks.db.before-restore-{stamp}-{uuid.uuid4().hex[:6]}")
         if DB_FILE.exists():
@@ -8572,6 +8718,7 @@ async def _api_restore_impl(file: UploadFile = File(...)):
         restore_db_tmp = DB_FILE.with_name(f".{DB_FILE.name}.restore-{uuid.uuid4().hex}.tmp")
         await asyncio.to_thread(shutil.copy2, db_tmp, restore_db_tmp)
         await asyncio.to_thread(os.replace, restore_db_tmp, DB_FILE)
+        db_replaced = True
         # Migrate/validate the restored database before exposing it to the application.
         await asyncio.to_thread(init_db)
 
@@ -8604,7 +8751,23 @@ async def _api_restore_impl(file: UploadFile = File(...)):
     finally:
         if runtime_stopped:
             try:
-                # Even after a failed replacement, keep runtime aligned with current files.
+                if db_replaced and safety and safety.exists():
+                    rollback_db = DB_FILE.with_name(f".{DB_FILE.name}.rollback-{uuid.uuid4().hex}.tmp")
+                    await asyncio.to_thread(_sqlite_backup_file, safety, rollback_db)
+                    await asyncio.to_thread(os.replace, rollback_db, DB_FILE)
+                    if settings_existed and old_settings_bytes is not None:
+                        settings_tmp = SETTINGS_FILE.with_suffix(".rollback.tmp")
+                        await asyncio.to_thread(settings_tmp.write_bytes, old_settings_bytes)
+                        await asyncio.to_thread(os.replace, settings_tmp, SETTINGS_FILE)
+                    elif not settings_existed:
+                        await asyncio.to_thread(SETTINGS_FILE.unlink, missing_ok=True)
+                    if index_existed and old_index_bytes is not None:
+                        index_tmp = LIBRARY_INDEX_FILE.with_suffix(".rollback.tmp")
+                        await asyncio.to_thread(index_tmp.write_bytes, old_index_bytes)
+                        await asyncio.to_thread(os.replace, index_tmp, LIBRARY_INDEX_FILE)
+                    elif not index_existed:
+                        await asyncio.to_thread(LIBRARY_INDEX_FILE.unlink, missing_ok=True)
+                    await asyncio.to_thread(init_db)
                 TASKS = await asyncio.to_thread(db_load_tasks_sync)
                 LIBRARY_CACHE = None; LIBRARY_CACHE_TIME = 0.0
                 await _restart_runtime_after_restore()
@@ -8772,7 +8935,7 @@ async def api_library_metadata(payload: dict = Body(...)):
     # The index is always updated, including formats that cannot safely embed
     # editable tags. This makes Search and Library agree on the user's edit.
     edited_at = time.time()
-    await asyncio.to_thread(
+    index_saved = await asyncio.to_thread(
         _update_library_index_entry_sync,
         path,
         title=title,
@@ -8782,6 +8945,8 @@ async def api_library_metadata(payload: dict = Body(...)):
         source_artist=source_artist,
         source_album=source_album,
     )
+    if not index_saved:
+        raise HTTPException(500, "Metadata was written, but the library index could not be saved. Check storage permissions and try again.")
     await asyncio.to_thread(_mark_song_review_sync, song_id, "edited", edited_at, True)
     METADATA_CACHE.pop(str(path), None)
     invalidate_library_cache()
@@ -8955,29 +9120,59 @@ async def scheduled_library_scanner():
 # SCROBBLE
 # ============================================================
 
+def _subsonic_now_playing_upsert_sync(client_key, username, client_id, song_id, position, duration):
+    with db_connect() as conn:
+        conn.execute(
+            "INSERT INTO subsonic_now_playing(client_key,username,client_id,song_id,position,duration,updated_at) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(client_key) DO UPDATE SET username=excluded.username,client_id=excluded.client_id,song_id=excluded.song_id,position=excluded.position,duration=excluded.duration,updated_at=excluded.updated_at",
+            (client_key, username, client_id, song_id, max(0.0, position), max(0.0, duration), time.time()),
+        )
+        conn.commit()
+
+
+def _subsonic_now_playing_clear_sync(client_key):
+    with db_connect() as conn:
+        conn.execute("DELETE FROM subsonic_now_playing WHERE client_key=?", (client_key,))
+        conn.commit()
+
+
+def _subsonic_now_playing_rows_sync():
+    cutoff = time.time() - 15 * 60
+    with db_connect() as conn:
+        conn.execute("DELETE FROM subsonic_now_playing WHERE updated_at < ?", (cutoff,))
+        rows = conn.execute("SELECT client_key,username,client_id,song_id,position,duration,updated_at FROM subsonic_now_playing ORDER BY updated_at DESC").fetchall()
+        conn.commit()
+    return rows
+
+
 @app.get("/rest/scrobble.view")
 @app.get("/rest/scrobble")
 async def rest_scrobble(
     request: Request,
     id: str = Query(""),
     submission: bool = Query(True),
+    time_ms: int = Query(0, alias="time"),
+    clientId: str = Query(""),
 ):
 
     error = require_auth(request)
-
     if error:
         return error
-
-    return make_subsonic_response(
-        {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-        },
-        request,
-    )
+    song = await find_song(str(id)) if id else None
+    if not song:
+        return subsonic_error(request, 70, "Song not found.")
+    username = str(request.query_params.get("u") or request.query_params.get("username") or "")[:128] or str(SUBSONIC_USER)
+    client_key = f"{username}:{str(clientId or request.query_params.get('c') or 'subsonic')[:128]}"
+    if submission:
+        duration = safe_float(song.get("duration"), 0)
+        position = max(0.0, min(duration if duration > 0 else 86_400.0, float(time_ms or 0) / 1000.0))
+        await asyncio.to_thread(save_player_history_sync, song["id"], duration, position)
+        await asyncio.to_thread(_subsonic_now_playing_clear_sync, client_key)
+    else:
+        duration = safe_float(song.get("duration"), 0)
+        position = max(0.0, min(duration if duration > 0 else 86_400.0, float(time_ms or 0) / 1000.0))
+        await asyncio.to_thread(_subsonic_now_playing_upsert_sync, client_key, username, str(clientId or "")[:128], song["id"], position, duration)
+    return make_subsonic_response({"status":"ok","version":SUBSONIC_VERSION,"serverVersion":SERVER_VERSION,"openSubsonic":True,"type":"Xrob Music"}, request)
 
 
 # ============================================================
@@ -8995,23 +9190,24 @@ async def rest_now_playing(
 ):
 
     error = require_auth(request)
-
     if error:
         return error
-
-    return make_subsonic_response(
-        {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "nowPlaying": {
-                "entry": [],
-            },
-        },
-        request,
-    )
+    library = await build_library()
+    by_id = {s["id"]: s for s in library.get("songs", [])}
+    entries = []
+    now = time.time()
+    for _client_key, username, client_id, song_id, position, duration, updated_at in await asyncio.to_thread(_subsonic_now_playing_rows_sync):
+        song = by_id.get(str(song_id))
+        if not song:
+            continue
+        item = song_to_subsonic(song)
+        item["username"] = username
+        item["playerName"] = client_id or "Xrob Music"
+        item["minutesAgo"] = max(0, int((now - float(updated_at or now)) / 60))
+        item["position"] = max(0, int(float(position or 0)))
+        item["duration"] = max(0, int(float(duration or song.get("duration") or 0)))
+        entries.append(item)
+    return make_subsonic_response({"status":"ok","version":SUBSONIC_VERSION,"serverVersion":SERVER_VERSION,"openSubsonic":True,"type":"Xrob Music","nowPlaying":{"entry":entries}}, request)
 
 
 # ============================================================
@@ -9078,6 +9274,31 @@ async def rest_similar_songs(
 # LYRICS
 # ============================================================
 
+def _extract_lyrics_sync(path):
+    if MutagenFile is None:
+        return ""
+    try:
+        audio = MutagenFile(path, easy=False)
+        if not audio or not audio.tags:
+            return ""
+        tags = audio.tags
+        if path.suffix.lower() in {".mp3", ".wav"}:
+            for key, value in tags.items():
+                if str(key).upper().startswith("USLT"):
+                    text = getattr(value, "text", None)
+                    if text:
+                        return "\n".join(str(x) for x in text if str(x).strip())
+        for key in ("lyrics", "unsyncedlyrics", "©lyr"):
+            value = tags.get(key)
+            if value:
+                if isinstance(value, list):
+                    return "\n".join(str(x) for x in value if str(x).strip())
+                return str(value)
+    except Exception:
+        return ""
+    return ""
+
+
 @app.get(
     "/rest/getLyricsBySongId.view"
 )
@@ -9090,23 +9311,15 @@ async def rest_lyrics(
 ):
 
     error = require_auth(request)
-
     if error:
         return error
-
-    return make_subsonic_response(
-        {
-            "status": "ok",
-            "version": SUBSONIC_VERSION,
-            "serverVersion": SERVER_VERSION,
-            "openSubsonic": True,
-            "type": "Xrob Music",
-            "lyricsList": {
-                "structuredLyrics": [],
-            },
-        },
-        request,
-    )
+    song = await find_song(str(id)) if id else None
+    if not song:
+        return subsonic_error(request, 70, "Song not found.")
+    text = await asyncio.to_thread(_extract_lyrics_sync, song["path"])
+    lines = [{"value": line, "start": None, "end": None} for line in text.splitlines() if line.strip()]
+    entry = {"displayArtist": song.get("artist", ""), "displayTitle": song.get("title", ""), "line": lines}
+    return make_subsonic_response({"status":"ok","version":SUBSONIC_VERSION,"serverVersion":SERVER_VERSION,"openSubsonic":True,"type":"Xrob Music","lyricsList":{"structuredLyrics":[entry] if lines else []}}, request)
 
 
 # ============================================================
