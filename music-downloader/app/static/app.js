@@ -4260,7 +4260,8 @@ function renderItems(items) {
                             item.artist || item.channel,
                             download,
                             item.album || "",
-                            item.thumbnail || item.thumbnails?.[0]?.url || ""
+                            item.thumbnail || item.thumbnails?.[0]?.url || "",
+                            Number(item.duration || 0)
                         )
                 );
 
@@ -5144,7 +5145,8 @@ async function startDownload(
     artist,
     button,
     album = "",
-    thumbnail = ""
+    thumbnail = "",
+    duration = 0
 ) {
 
     if (!url) {
@@ -5186,7 +5188,8 @@ async function startDownload(
                             elementId,
                             artist,
                             album,
-                            thumbnail
+                            thumbnail,
+                            duration
                         })
                 }
             );
