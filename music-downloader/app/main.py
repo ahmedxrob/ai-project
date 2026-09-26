@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.8.3"
+SERVER_VERSION = "3.8.4"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -2553,18 +2553,249 @@ async def _metadata_http_json(url, headers=None, timeout=12, attempts=3):
     return {}
 
 
-async def _musicbrainz_lookup(artist, title, cleanup_rules=""):
+_METADATA_AUTO_ACCEPT = 0.90
+_METADATA_WARNING_ACCEPT = 0.80
+_METADATA_DURATION_EXCELLENT = 2.0
+_METADATA_DURATION_STRONG = 5.0
+_METADATA_DURATION_ACCEPTABLE = 10.0
+_METADATA_DURATION_SUSPICIOUS = 15.0
+
+
+def _lucene_phrase(value):
+    """Escape a value before using it inside a MusicBrainz quoted phrase."""
+    text = clean_metadata_text(value, "")
+    return re.sub(r'([\\+\-!(){}\[\]^"~*?:/])', r'\\\1', text)
+
+
+def _normalize_album_for_match(value):
+    text = clean_metadata_text(value, "")
+    text = re.sub(
+        r"\s*[\(\[]\s*(?:deluxe|expanded|special|anniversary|remaster(?:ed)?|explicit|clean|bonus|edition|version)\b[^\)\]]*[\)\]]",
+        "",
+        text,
+        flags=re.I,
+    )
+    return _compact_identity(text)
+
+
+def _album_similarity(source_album, candidate_album):
+    a = _normalize_album_for_match(source_album)
+    b = _normalize_album_for_match(candidate_album)
+    if not a or not b:
+        return None
+    if a == b:
+        return 1.0
+    return _similarity(source_album, candidate_album)
+
+
+_VERSION_PATTERNS = (
+    ("radio edit", re.compile(r"\bradio\s+edit\b", re.I)),
+    ("extended mix", re.compile(r"\bextended\s+mix\b", re.I)),
+    ("club mix", re.compile(r"\bclub\s+mix\b", re.I)),
+    ("remastered", re.compile(r"\bremaster(?:ed)?\b", re.I)),
+    ("acoustic", re.compile(r"\bacoustic\b", re.I)),
+    ("instrumental", re.compile(r"\binstrumental\b", re.I)),
+    ("karaoke", re.compile(r"\bkaraoke\b", re.I)),
+    ("remix", re.compile(r"\bremix(?:ed)?\b", re.I)),
+    ("live", re.compile(r"\blive(?:\s+version|\s+performance|\s+recording)?\b", re.I)),
+    ("demo", re.compile(r"\bdemo\b", re.I)),
+    ("edit", re.compile(r"\bedit\b", re.I)),
+    ("mono", re.compile(r"\bmono\b", re.I)),
+    ("stereo", re.compile(r"\bstereo\b", re.I)),
+)
+
+
+def _version_tokens(value):
+    text = clean_metadata_text(value, "")
+    found = set()
+    for token, pattern in _VERSION_PATTERNS:
+        if pattern.search(text):
+            found.add(token)
+    if any(token in found for token in {"radio edit", "extended mix", "club mix"}):
+        found.discard("edit")
+    return found
+
+
+def _artist_similarity(a, b):
+    """Compare full artist credits without dropping featured artists."""
+    a = clean_metadata_text(a, "")
+    b = clean_metadata_text(b, "")
+    if not a or not b:
+        return 0.0
+    def canonical(value):
+        value = re.sub(r"\b(feat\.?|ft\.?|featuring)\b", " feat ", value, flags=re.I)
+        value = re.sub(r"[,&+/]+", " ", value)
+        value = re.sub(r"[^\w\s.]", " ", value, flags=re.UNICODE)
+        return re.sub(r"\s+", " ", value).strip().casefold()
+    ca, cb = canonical(a), canonical(b)
+    if ca == cb:
+        return 1.0
+    return difflib.SequenceMatcher(None, ca, cb).ratio()
+
+
+def _extract_version_info(value, cleanup_rules=""):
+    """Return a version-aware title without erasing Live/Remix/etc. identity."""
+    text = clean_title_with_rules(value, cleanup_rules)
+    versions = _version_tokens(text)
+    patterns = (
+        r"\(([^)]*(?:live|remix|acoustic|radio\s*edit|extended\s*mix|club\s*mix|remaster(?:ed)?|instrumental|karaoke|demo|edit|version|mix|mono|stereo)[^)]*)\)",
+        r"\[([^\]]*(?:live|remix|acoustic|radio\s*edit|extended\s*mix|club\s*mix|remaster(?:ed)?|instrumental|karaoke|demo|edit|version|mix|mono|stereo)[^\]]*)\]",
+    )
+    for pattern in patterns:
+        for raw in re.findall(pattern, text, flags=re.I):
+            versions.update(_version_tokens(raw))
+            text = re.sub(r"\s*[\(\[]" + re.escape(raw) + r"[\)\]]", "", text, flags=re.I)
+    suffix_patterns = (
+        r"\s+[-–—]\s*(live(?:\s+version)?|remix|acoustic|radio\s*edit|extended\s+mix|club\s+mix|remaster(?:ed)?|instrumental|karaoke|demo|edit|mono|stereo)\s*$",
+        r"\s+(live|remix|acoustic|instrumental|karaoke|demo)\s*$",
+    )
+    for pattern in suffix_patterns:
+        m = re.search(pattern, text, flags=re.I)
+        if m:
+            versions.update(_version_tokens(m.group(1)))
+            text = text[:m.start()]
+    text = re.sub(r"\s+", " ", text).strip(" ._-–—|:")
+    return {"base": text or "Unknown Track", "versions": versions}
+
+
+def _version_score(source_versions, candidate_versions):
+    source_versions = set(source_versions or set())
+    candidate_versions = set(candidate_versions or set())
+    if not source_versions and not candidate_versions:
+        return 1.0, False
+    if source_versions and candidate_versions:
+        if source_versions & candidate_versions:
+            return 1.0, False
+        # Explicitly different version: do not auto-select (Live vs Original, etc.).
+        return 0.0, True
+    # One side has explicit version information and the other doesn't. Treat as
+    # suspicious, but not an automatic hard rejection because uploads often omit it.
+    return 0.45, True
+
+
+def _duration_score(source_duration, candidate_duration):
+    source_duration = safe_float(source_duration, 0.0)
+    candidate_duration = safe_float(candidate_duration, 0.0)
+    if source_duration <= 0 or candidate_duration <= 0:
+        return None, None
+    diff = abs(source_duration - candidate_duration)
+    if diff <= _METADATA_DURATION_EXCELLENT:
+        return 1.0, diff
+    if diff <= _METADATA_DURATION_STRONG:
+        return 0.95, diff
+    if diff <= _METADATA_DURATION_ACCEPTABLE:
+        return 0.80, diff
+    if diff <= _METADATA_DURATION_SUSPICIOUS:
+        return 0.55, diff
+    return 0.10, diff
+
+
+def _candidate_core_score(source_artist, source_title, source_duration, candidate):
+    title_score = _similarity(source_title, _extract_version_info(candidate.get("title", ""))["base"])
+    artist_score = _artist_similarity(source_artist, candidate.get("artist", "")) if source_artist else 1.0
+    duration_score, duration_diff = _duration_score(source_duration, candidate.get("duration"))
+    version_score, version_mismatch = _version_score(
+        candidate.get("source_versions"), candidate.get("versions")
+    )
+
+    # Artist + title are the identity core. Duration is strong evidence when available.
+    if source_artist:
+        weights = {"title": 0.38, "artist": 0.38}
+    else:
+        weights = {"title": 0.62, "artist": 0.0}
+    if duration_score is not None:
+        weights["duration"] = 0.16
+    else:
+        # Redistribute the missing duration weight, rather than penalizing songs
+        # from sources that did not expose a duration.
+        if source_artist:
+            weights["title"] = 0.46
+            weights["artist"] = 0.46
+        else:
+            weights["title"] = 0.78
+    weights["version"] = 0.08
+
+    total = (
+        title_score * weights["title"]
+        + artist_score * weights["artist"]
+        + (duration_score or 0.0) * weights.get("duration", 0.0)
+        + version_score * weights["version"]
+    )
+
+    album_score = _album_similarity(candidate.get("source_album", ""), candidate.get("album", ""))
+    if album_score is not None:
+        # Album is validation evidence, not the primary identity key. This lets
+        # catalog evidence correct a noisy source album while still rewarding agreement.
+        if album_score >= 0.90:
+            total += 0.05
+        elif album_score >= 0.75:
+            total += 0.02
+        elif album_score < 0.45:
+            total -= 0.08
+
+    if version_mismatch:
+        total = min(total, 0.79)
+    if duration_diff is not None and duration_diff > _METADATA_DURATION_SUSPICIOUS:
+        total = min(total, 0.79)
+
+    candidate.update({
+        "title_score": round(float(title_score), 4),
+        "artist_score": round(float(artist_score), 4),
+        "duration_score": round(float(duration_score), 4) if duration_score is not None else None,
+        "duration_difference": round(float(duration_diff), 3) if duration_diff is not None else None,
+        "album_score": round(float(album_score), 4) if album_score is not None else None,
+        "version_score": round(float(version_score), 4),
+        "version_mismatch": bool(version_mismatch),
+        "score": round(max(0.0, min(1.0, float(total))), 4),
+    })
+    return candidate
+
+
+def _select_release(releases, source_album):
+    rows = [r for r in (releases or []) if clean_metadata_text(r.get("title"), "")]
+    if not rows:
+        return {}
+    if source_album:
+        scored = []
+        for r in rows:
+            album_score = _album_similarity(source_album, r.get("title")) or 0.0
+            official = 1 if str(r.get("status") or "").lower() == "official" else 0
+            scored.append((album_score, official, r))
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return scored[0][2]
+    official = [r for r in rows if str(r.get("status") or "").lower() == "official"]
+    return official[0] if official else rows[0]
+
+
+async def _musicbrainz_lookup(artist, title, cleanup_rules="", source_album="", source_duration=0, force_refresh=False):
     global _METADATA_LAST_MB_CALL
     artist = _usable_artist_hint(artist)
-    title = clean_title_with_rules(title, cleanup_rules)
-    cache_key = ("mb", _compact_identity(artist), _compact_identity(title))
-    if cache_key in _METADATA_CACHE:
+    title_info = _extract_version_info(title, cleanup_rules)
+    title = title_info["base"]
+    source_versions = title_info["versions"]
+    source_album = clean_metadata_text(source_album, "")
+    source_duration = safe_float(source_duration, 0.0)
+    cache_key = (
+        "mb-v2", _compact_identity(artist), _compact_identity(title),
+        _normalize_album_for_match(source_album), round(source_duration),
+        tuple(sorted(source_versions)),
+    )
+    if cache_key in _METADATA_CACHE and not force_refresh:
         return _METADATA_CACHE[cache_key]
     if not title:
         return None
-    queries = [f'artist:"{artist}" AND recording:"{title}"'] if artist else []
-    queries.append(f'recording:"{title}"')
-    best = None
+
+    queries = []
+    if artist and source_album:
+        queries.append(
+            f'artist:"{_lucene_phrase(artist)}" AND recording:"{_lucene_phrase(title)}" AND release:"{_lucene_phrase(source_album)}"'
+        )
+    if artist:
+        queries.append(f'artist:"{_lucene_phrase(artist)}" AND recording:"{_lucene_phrase(title)}"')
+    queries.append(f'recording:"{_lucene_phrase(title)}"')
+
+    seen_ids = set()
+    candidates = []
     async with _METADATA_LOOKUP_SEMAPHORE:
         for query in queries:
             async with _METADATA_RATE_LOCK:
@@ -2573,7 +2804,8 @@ async def _musicbrainz_lookup(artist, title, cleanup_rules=""):
                     await asyncio.sleep(wait)
                 _METADATA_LAST_MB_CALL = time.monotonic()
                 url = "https://musicbrainz.org/ws/2/recording?" + urllib.parse.urlencode({
-                    "query": query, "fmt": "json", "limit": 10, "inc": "releases+artist-credits+release-groups"
+                    "query": query, "fmt": "json", "limit": 20,
+                    "inc": "releases+artist-credits+release-groups+isrcs",
                 })
                 try:
                     data = await _metadata_http_json(url, {
@@ -2584,62 +2816,185 @@ async def _musicbrainz_lookup(artist, title, cleanup_rules=""):
                     await write_app_error("musicbrainz", str(exc))
                     continue
             for rec in data.get("recordings") or []:
+                rec_id = str(rec.get("id") or "")
+                if rec_id and rec_id in seen_ids:
+                    continue
+                if rec_id:
+                    seen_ids.add(rec_id)
                 rec_title = clean_metadata_text(rec.get("title"), "")
                 credits = rec.get("artist-credit") or []
                 rec_artist = "".join(
-                    str(item.get("name") or item.get("artist", {}).get("name") or "").strip() + str(item.get("joinphrase") or "")
+                    str(item.get("name") or item.get("artist", {}).get("name") or "").strip()
+                    + str(item.get("joinphrase") or "")
                     for item in credits
                 ).strip()
-                title_score = _similarity(title, rec_title)
-                artist_score = _similarity(artist, rec_artist) if artist else 0.0
-                score = title_score if not artist else title_score * 0.72 + artist_score * 0.28
-                releases = rec.get("releases") or []
-                release = next((r for r in releases if clean_metadata_text(r.get("title"), "")), None)
+                if not rec_title:
+                    continue
+                release = _select_release(rec.get("releases") or [], source_album)
+                release_group = rec.get("release-group") or {}
+                release_group_title = clean_metadata_text(release_group.get("title"), "")
+                release_title = clean_metadata_text(release.get("title"), "")
                 candidate = {
-                    "title": rec_title, "artist": rec_artist or artist,
-                    "album": clean_metadata_text((release or {}).get("title"), ""),
-                    "score": float(score), "source": "MusicBrainz", "id": rec.get("id"),
+                    "title": rec_title,
+                    "artist": rec_artist or artist,
+                    "album": release_group_title or release_title,
+                    "release": release_title,
+                    "release_group": release_group_title,
+                    "duration": safe_float(rec.get("length"), 0.0) / 1000.0,
+                    "source": "MusicBrainz",
+                    "id": rec_id,
+                    "release_id": release.get("id") or "",
+                    "release_group_id": release_group.get("id") or "",
+                    "first_release_date": rec.get("first-release-date") or "",
+                    "disambiguation": rec.get("disambiguation") or "",
+                    "track_number": release.get("track-count") or release.get("track-number") or "",
+                    "source_album": source_album,
+                    "source_duration": source_duration,
+                    "source_versions": source_versions,
+                    "versions": _extract_version_info(rec_title, cleanup_rules)["versions"] | _version_tokens(rec.get("disambiguation") or ""),
                 }
-                artist_ok = not artist or artist_score >= 0.55
-                title_ok = title_score >= (0.78 if artist else 0.90)
-                if artist_ok and title_ok and (best is None or candidate["score"] > best["score"]):
+                _candidate_core_score(artist, title, source_duration, candidate)
+                if candidate["artist_score"] < 0.55 or candidate["title_score"] < 0.78:
+                    continue
+                candidates.append(candidate)
+            # An excellent match from an artist+title+album query is enough to
+            # avoid spending another provider call, while weaker matches broaden search.
+            if query != queries[0] and candidates and max(c["score"] for c in candidates) >= _METADATA_AUTO_ACCEPT:
+                break
+
+    candidates.sort(key=lambda c: (float(c.get("score", 0.0)), bool(c.get("album_score") and c["album_score"] >= 0.90)), reverse=True)
+    best = candidates[0] if candidates else None
+    _cache_set_bounded(_METADATA_CACHE, cache_key, best, METADATA_CACHE_MAX)
+    return best
+
+
+async def _itunes_lookup(artist, title, cleanup_rules="", source_album="", source_duration=0, force_refresh=False):
+    artist = _usable_artist_hint(artist)
+    title_info = _extract_version_info(title, cleanup_rules)
+    title = title_info["base"]
+    source_versions = title_info["versions"]
+    source_album = clean_metadata_text(source_album, "")
+    source_duration = safe_float(source_duration, 0.0)
+    cache_key = (
+        "itunes-v2", _compact_identity(artist), _compact_identity(title),
+        _normalize_album_for_match(source_album), round(source_duration),
+        tuple(sorted(source_versions)),
+    )
+    if cache_key in _METADATA_CACHE and not force_refresh:
+        return _METADATA_CACHE[cache_key]
+    if not title:
+        return None
+
+    terms = [f"{artist} {title}".strip()]
+    if source_album:
+        terms.insert(0, f"{artist} {title} {source_album}".strip())
+
+    best = None
+    async with _METADATA_LOOKUP_SEMAPHORE:
+        for term in terms:
+            url = "https://itunes.apple.com/search?" + urllib.parse.urlencode({
+                "term": term, "media": "music", "entity": "song", "limit": 20,
+            })
+            try:
+                data = await _metadata_http_json(url, {"User-Agent": f"Xrob Music/{SERVER_VERSION}"}, timeout=10, attempts=3)
+            except Exception as exc:
+                await write_app_error("itunes", str(exc))
+                continue
+            for item in data.get("results") or []:
+                cand_title = clean_metadata_text(item.get("trackName"), "")
+                cand_artist = _usable_artist_hint(item.get("artistName"))
+                candidate = {
+                    "title": cand_title,
+                    "artist": cand_artist or artist,
+                    "album": clean_metadata_text(item.get("collectionName"), ""),
+                    "duration": safe_float(item.get("trackTimeMillis"), 0.0) / 1000.0,
+                    "source": "Apple Music catalog",
+                    "id": item.get("trackId"),
+                    "collection_id": item.get("collectionId"),
+                    "release_date": item.get("releaseDate") or "",
+                    "genre": item.get("primaryGenreName") or "",
+                    "source_album": source_album,
+                    "source_duration": source_duration,
+                    "source_versions": source_versions,
+                    "versions": _extract_version_info(cand_title, cleanup_rules)["versions"],
+                }
+                _candidate_core_score(artist, title, source_duration, candidate)
+                if candidate["artist_score"] < 0.55 or candidate["title_score"] < 0.78:
+                    continue
+                if best is None or float(candidate["score"]) > float(best["score"]):
                     best = candidate
-            if best and best["score"] >= 0.90:
+            if best and float(best.get("score", 0.0)) >= _METADATA_AUTO_ACCEPT:
                 break
     _cache_set_bounded(_METADATA_CACHE, cache_key, best, METADATA_CACHE_MAX)
     return best
 
 
-async def _itunes_lookup(artist, title, cleanup_rules=""):
-    artist = _usable_artist_hint(artist)
-    title = clean_title_with_rules(title, cleanup_rules)
-    cache_key = ("itunes", _compact_identity(artist), _compact_identity(title))
-    if cache_key in _METADATA_CACHE:
-        return _METADATA_CACHE[cache_key]
-    if not title:
+def _catalog_identity_key(candidate):
+    return (
+        _compact_identity(candidate.get("artist", "")),
+        _compact_identity(_extract_version_info(candidate.get("title", ""))["base"]),
+    )
+
+
+def _merge_catalog_evidence(musicbrainz, apple):
+    candidates = [c for c in (musicbrainz, apple) if isinstance(c, dict)]
+    if not candidates:
         return None
-    term = f"{artist} {title}".strip()
-    url = "https://itunes.apple.com/search?" + urllib.parse.urlencode({"term": term, "media": "music", "entity": "song", "limit": 10})
-    async with _METADATA_LOOKUP_SEMAPHORE:
-        try:
-            data = await _metadata_http_json(url, {"User-Agent": f"Xrob Music/{SERVER_VERSION}"}, timeout=10, attempts=3)
-        except Exception as exc:
-            await write_app_error("itunes", str(exc))
-            _cache_set_bounded(_METADATA_CACHE, cache_key, None, METADATA_CACHE_MAX)
-            return None
-    best = None
-    for item in data.get("results") or []:
-        cand_title = clean_metadata_text(item.get("trackName"), "")
-        cand_artist = _usable_artist_hint(item.get("artistName"))
-        title_score = _similarity(title, cand_title)
-        artist_score = _similarity(artist, cand_artist) if artist else 0.0
-        score = title_score if not artist else title_score * 0.72 + artist_score * 0.28
-        if (artist and artist_score < 0.55) or title_score < 0.78:
-            continue
-        candidate = {"title": cand_title, "artist": cand_artist or artist, "album": clean_metadata_text(item.get("collectionName"), ""), "score": float(score), "source": "Apple Music catalog", "id": item.get("trackId")}
-        if best is None or candidate["score"] > best["score"]:
-            best = candidate
-    _cache_set_bounded(_METADATA_CACHE, cache_key, best, METADATA_CACHE_MAX)
+    if len(candidates) == 1:
+        single = dict(candidates[0])
+        single.setdefault("musicbrainz_confirmed", single.get("source") == "MusicBrainz")
+        single.setdefault("apple_confirmed", single.get("source") == "Apple Music catalog")
+        single.setdefault("cross_source_agreement", False)
+        return single
+
+    mb, itunes = candidates
+    title_agree = _similarity(mb.get("title", ""), itunes.get("title", "")) >= 0.92
+    artist_agree = _artist_similarity(mb.get("artist", ""), itunes.get("artist", "")) >= 0.90
+    same_identity = _catalog_identity_key(mb) == _catalog_identity_key(itunes)
+    album_score = _album_similarity(mb.get("album"), itunes.get("album"))
+    duration_score, duration_diff = _duration_score(mb.get("duration"), itunes.get("duration"))
+    album_agree = album_score is None or album_score >= 0.80
+
+    if same_identity and title_agree and artist_agree:
+        ranked = sorted(candidates, key=lambda c: float(c.get("score", 0.0)), reverse=True)
+        chosen = dict(ranked[0])
+        chosen["musicbrainz_confirmed"] = True
+        chosen["apple_confirmed"] = True
+        chosen["cross_source_agreement"] = True
+        chosen["cross_source_album_agreement"] = bool(album_agree)
+        chosen["apple_title"] = itunes.get("title", "")
+        chosen["apple_artist"] = itunes.get("artist", "")
+        chosen["apple_album"] = itunes.get("album", "")
+        chosen["apple_duration"] = itunes.get("duration", 0)
+        chosen["catalog_album_score"] = album_score
+        chosen["catalog_duration_difference"] = duration_diff
+        if album_agree:
+            boost = 0.06
+            if album_score is not None and album_score >= 0.90:
+                boost += 0.02
+            if duration_score is not None and duration_score >= 0.95:
+                boost += 0.02
+            chosen["score"] = round(min(1.0, float(chosen.get("score", 0.0)) + boost), 4)
+        else:
+            # The recording identity agrees, but release/album evidence differs.
+            # Do not let a tiny provider score difference decide the album.
+            chosen["score"] = min(float(chosen.get("score", 0.0)), 0.89)
+            chosen["album_disagreement"] = True
+            chosen["album_disagreement_reason"] = "MusicBrainz and Apple identify the recording consistently but disagree on release/album."
+        return chosen
+
+    ranked = sorted(candidates, key=lambda c: float(c.get("score", 0.0)), reverse=True)
+    best, second = ranked
+    margin = float(best.get("score", 0.0)) - float(second.get("score", 0.0))
+    best = dict(best)
+    best["musicbrainz_confirmed"] = best.get("source") == "MusicBrainz"
+    best["apple_confirmed"] = best.get("source") == "Apple Music catalog"
+    best["cross_source_agreement"] = False
+    best["cross_source_margin"] = round(margin, 4)
+    if margin < 0.05:
+        best["score"] = min(float(best.get("score", 0.0)), 0.79)
+    elif float(best.get("score", 0.0)) < 0.90:
+        best["score"] = min(float(best.get("score", 0.0)), 0.89)
     return best
 
 
@@ -2660,32 +3015,115 @@ async def resolve_source_metadata(url):
         return {}
 
 
-async def resolve_download_metadata(raw_title, artist, album, settings):
+async def resolve_download_metadata(raw_title, artist, album, settings, duration=0):
+    """Resolve source metadata through staged identity matching and cross-catalog validation."""
     rules_text = settings.get("title_cleanup_rules", "")
     source = _source_metadata_from_payload({"title": raw_title, "artist": artist, "album": album})
-    title = clean_title_with_rules(source.get("title") or "Unknown Track", rules_text)
+    source_title_for_lookup = clean_title_with_rules(source.get("title") or "Unknown Track", rules_text)
+    title_info = _extract_version_info(source_title_for_lookup, rules_text)
+    title = normalize_catalog_title(title_info["base"], rules_text)
     artist = _usable_artist_hint(source.get("artist")) or "Unknown Artist"
     supplied_album = clean_metadata_text(source.get("album"), "")
-    if artist != "Unknown Artist" and " - " in title:
-        left, right = [part.strip() for part in title.split(" - ", 1)]
-        if _similarity(left, artist) >= 0.90 and right:
-            title = right
-    title = normalize_catalog_title(title, rules_text)
-    result = {"title": title, "artist": artist, "album": supplied_album or "", "confidence": 0.25, "source": "Supplied metadata", "reason": ""}
+    source_duration = safe_float(duration, 0.0)
+
+    result = {
+        "title": title,
+        "artist": artist,
+        "album": supplied_album or "",
+        "confidence": 0.25,
+        "source": "Supplied metadata",
+        "reason": "Catalog matching disabled or no safe catalog match.",
+        "confidence_band": "SOURCE",
+        "matched_fields": {},
+        "version_info": sorted(title_info["versions"]),
+    }
     mode = str(settings.get("metadata_mode") or "auto").lower()
     if mode == "off":
         return result
+
     lookup_tasks = []
     if mode in {"auto", "musicbrainz"}:
-        lookup_tasks.append(_musicbrainz_lookup(artist, title, rules_text))
+        lookup_tasks.append(_musicbrainz_lookup(artist, source_title_for_lookup, rules_text, supplied_album, source_duration))
     if mode == "auto":
-        lookup_tasks.append(_itunes_lookup(artist, title, rules_text))
-    candidates = [c for c in await asyncio.gather(*lookup_tasks, return_exceptions=True) if isinstance(c, dict) and c.get("score", 0.0) >= 0.72]
-    if candidates:
-        candidates.sort(key=lambda c: (float(c.get("score", 0.0)), c.get("source") == "MusicBrainz"), reverse=True)
-        best = candidates[0]
-        chosen_album = supplied_album or clean_metadata_text(best.get("album"), "")
-        result.update({"title": normalize_catalog_title(best.get("title") or title, rules_text), "artist": _usable_artist_hint(best.get("artist")) or artist, "album": chosen_album, "confidence": float(best.get("score", 0.0)), "source": best.get("source") or "Catalog", "reason": f"Catalog confidence {float(best.get('score', 0.0)):.2f}"})
+        lookup_tasks.append(_itunes_lookup(artist, source_title_for_lookup, rules_text, supplied_album, source_duration))
+    lookups = await asyncio.gather(*lookup_tasks, return_exceptions=True)
+    mb = lookups[0] if lookups and isinstance(lookups[0], dict) else None
+    apple = lookups[1] if len(lookups) > 1 and isinstance(lookups[1], dict) else None
+    best = _merge_catalog_evidence(mb, apple)
+    if not isinstance(best, dict):
+        return result
+
+    score = float(best.get("score", 0.0))
+    if best.get("version_mismatch"):
+        score = min(score, 0.79)
+        result.update({
+            "confidence": score,
+            "source": best.get("source") or "Catalog candidate",
+            "reason": "Catalog candidate has explicit version ambiguity/mismatch; source metadata preserved.",
+            "confidence_band": "SOURCE_PRESERVED",
+            "matched_fields": {
+                "title": best.get("title_score"),
+                "artist": best.get("artist_score"),
+                "album": best.get("album_score"),
+                "duration": best.get("duration_score"),
+                "version": best.get("version_score"),
+            },
+            "catalog_candidate": {k: best.get(k) for k in ("title", "artist", "album", "source", "id", "release_id", "release_group_id")},
+        })
+        return result
+    if score < _METADATA_WARNING_ACCEPT:
+        # 0.70-0.79 and below stay on source metadata by design.
+        result.update({
+            "confidence": score,
+            "source": best.get("source") or "Catalog candidate",
+            "reason": f"Catalog candidate below safe auto-apply threshold ({score:.2f}); source metadata preserved.",
+            "confidence_band": "SOURCE_PRESERVED",
+            "matched_fields": {
+                "title": best.get("title_score"),
+                "artist": best.get("artist_score"),
+                "album": best.get("album_score"),
+                "duration": best.get("duration_score"),
+                "version": best.get("version_score"),
+            },
+            "catalog_candidate": {k: best.get(k) for k in ("title", "artist", "album", "source", "id", "release_id", "release_group_id")},
+        })
+        return result
+
+    chosen_album = supplied_album if best.get("album_disagreement") and supplied_album else (clean_metadata_text(best.get("album"), "") or supplied_album)
+    result.update({
+        "title": normalize_catalog_title(best.get("title") or title, rules_text),
+        "artist": _usable_artist_hint(best.get("artist")) or artist,
+        "album": chosen_album,
+        "confidence": score,
+        "source": best.get("source") or "Catalog",
+        "confidence_band": "AUTO_ACCEPT" if score >= _METADATA_AUTO_ACCEPT else "ACCEPT_WITH_WARNING",
+        "matched_fields": {
+            "title": best.get("title_score"),
+            "artist": best.get("artist_score"),
+            "album": best.get("album_score"),
+            "duration": best.get("duration_score"),
+            "version": best.get("version_score"),
+        },
+        "reason": (
+            f"Title {float(best.get('title_score', 0.0)):.2f}; "
+            f"Artist {float(best.get('artist_score', 0.0)):.2f}; "
+            f"Album {float(best.get('album_score', 0.0)):.2f} "
+            if best.get("album_score") is not None else
+            f"Title {float(best.get('title_score', 0.0)):.2f}; Artist {float(best.get('artist_score', 0.0)):.2f}; "
+        ) + (
+            f"Duration {float(best.get('duration_score', 0.0)):.2f} "
+            if best.get("duration_score") is not None else "Duration unavailable "
+        ) + (
+            f"({float(best.get('duration_difference', 0.0)):.1f}s diff); "
+            if best.get("duration_difference") is not None else ""
+        ) + (
+            "MusicBrainz + Apple agree. " if best.get("cross_source_agreement") and not best.get("album_disagreement") else ""
+        ) + (
+            "Catalog albums disagree; source album preserved. " if best.get("album_disagreement") else ""
+        ) + (
+            "Version verified. " if not best.get("version_mismatch") else "Version ambiguity retained. "
+        )
+    })
     return result
 
 
@@ -3155,6 +3593,7 @@ async def download_worker():
                 task.get("artist", "Unknown Artist"),
                 task.get("album", ""),
                 settings,
+                task.get("duration", 0),
             )
             task["title"] = resolved["title"]
             task["artist"] = resolved["artist"]
@@ -3995,6 +4434,7 @@ async def api_download(
             "elementId": str(payload.get("elementId", "")),
             "thumbnail": str(payload.get("thumbnail") or "").strip()[:1000],
             "cover": str(payload.get("thumbnail") or "").strip()[:1000],
+            "duration": max(0.0, min(86_400.0, safe_float(payload.get("duration"), 0.0))),
             "status": "queued",
             "percent": 0,
             "speed": "",
@@ -9093,10 +9533,15 @@ async def api_song_editor_recheck(song_id: str):
     # Recheck means a fresh provider lookup, so do not reuse a stale negative
     # or positive cache entry for this exact request.
     for title, artist in candidates:
-        cache_key = ("mb", _compact_identity(artist), _compact_identity(clean_title_with_rules(title, cleanup_rules)))
-        _METADATA_CACHE.pop(cache_key, None)
         try:
-            match = await _musicbrainz_lookup(artist, title, cleanup_rules)
+            match = await _musicbrainz_lookup(
+                artist,
+                title,
+                cleanup_rules,
+                song.get("album") or "",
+                song.get("duration") or 0,
+                force_refresh=True,
+            )
         except Exception as exc:
             await write_app_error("musicbrainz_recheck", str(exc), song_id)
             continue
