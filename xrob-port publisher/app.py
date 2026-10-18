@@ -42,6 +42,20 @@ app = Flask(
 )
 
 
+# Allow the Home Assistant Lovelace custom card to call this add-on's API.
+# The API is already unauthenticated on the LAN; do not expose port 8055 to the Internet.
+@app.after_request
+def add_lovelace_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+@app.route("/api/<path:unused>", methods=["OPTIONS"])
+def api_preflight(unused):
+    return ("", 204)
+
+
 # =========================================================
 # Runtime state
 # =========================================================
