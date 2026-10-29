@@ -22,6 +22,7 @@ let libraryPlaybackQueue = null;
 let playerShuffle = storageGet("xrob_music_shuffle") === "true";
 let shuffleRestoreQueue = null;
 let shuffleRestoreCurrentId = null;
+let homeDisplayTracks = [];
 
 let libraryLoadedFromCache = false;
 
@@ -76,6 +77,7 @@ let crossfadeGainNode = null;
 let crossfadePrepared = null;
 let crossfadeTimer = null;
 let crossfadeActive = false;
+let crossfadeUnsupportedNotified = false;
 let playerSettings = { replaygain_enabled: true, replaygain_mode: "track", replaygain_preamp_db: 0, replaygain_prevent_clipping: true, crossfade_seconds: 0, gapless_playback: true };
 
 let savedPlayerState = {
@@ -93,6 +95,7 @@ let playSessionTrackId = null;
 let playSessionRecorded = false;
 const PLAY_COUNT_THRESHOLD_SECONDS = 60;
 const ENHANCED_QUEUE_KEY = "xrob_music_up_next_queue";
+const SHUFFLE_RESTORE_KEY = "xrob_music_shuffle_restore_queue";
 const ENHANCED_REPEAT_KEY = "xrob_music_repeat";
 /* ============================================================
    PLATFORM-SAFE STORAGE + API TRANSPORT
@@ -441,6 +444,10 @@ function syncResourceUrl(value) {
 function normalizeSyncTrack(track) {
     if (!track || typeof track !== "object") return track;
     const out = { ...track };
+    // DOM references from Recently Added cards are runtime-only and cannot be
+    // structured-cloned or JSON-persisted as part of the playback queue.
+    delete out._card;
+    delete out._row;
     if (out.stream) out.stream = syncResourceUrl(out.stream);
     if (out.cover) out.cover = syncResourceUrl(out.cover);
     return out;
@@ -451,8 +458,12 @@ function normalizeSyncQueue(queue) {
 }
 
 function setSynchronizedHomeQueue(queue, index = -1) {
+    stopCrossfadePreload();
     const normalized = normalizeSyncQueue(queue);
-    const safeIndex = normalized.length ? Math.max(0, Math.min(Number.isInteger(Number(index)) ? Number(index) : 0, normalized.length - 1)) : -1;
+    const requestedIndex = Number.isInteger(Number(index)) ? Number(index) : -1;
+    const safeIndex = normalized.length
+        ? (requestedIndex < 0 ? -1 : Math.max(0, Math.min(requestedIndex, normalized.length - 1)))
+        : -1;
     window.xrobHomeQueue = normalized;
     window.xrobHomeQueueIndex = safeIndex;
     enhancedQueue = [...normalized];
@@ -460,6 +471,14 @@ function setSynchronizedHomeQueue(queue, index = -1) {
     libraryPlaybackQueue = [...normalized];
     currentLibraryIndex = safeIndex;
     saveEnhancedQueue();
+    if (!applyingRemotePlayerCommand) {
+        if (playerSyncMode === "linked" && playerSyncDeviceIds.length > 1 && !isRemotePlayerOwner()) {
+            const sentToOwner = sendPlayerCommand("queue", { queue: normalized, queueIndex: safeIndex, source: "home" });
+            if (!sentToOwner) schedulePlayerStateBroadcast(true);
+        } else if (!isRemotePlayerOwner()) {
+            schedulePlayerStateBroadcast(true);
+        }
+    }
 }
 
 function buildPlayerSyncState(includeQueue = true) {
@@ -1116,7 +1135,7 @@ function applyRemoteCommand(message) {
         else if (message.command === "next") playNextTrack();
         else if (message.command === "previous") playPreviousTrack();
         else if (message.command === "shuffle") setShuffle(Boolean(p.enabled));
-        else if (message.command === "repeat") { const mode = String(p.mode || "off"); if (["off", "track", "queue"].includes(mode)) { playerRepeatMode = mode; storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode); applyRepeatLabel(); } }
+        else if (message.command === "repeat") { const mode = String(p.mode || "off"); if (["off", "track", "queue"].includes(mode)) { playerRepeatMode = mode; if (mode === "track") stopCrossfadePreload(); storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode); applyRepeatLabel(); } }
         else if (message.command === "volume" && Number.isFinite(Number(p.volume))) { audio.volume = Math.max(0, Math.min(1, Number(p.volume))); if (volume) volume.value = audio.volume; }
         else if (message.command === "queue") {
             if (Array.isArray(p.queue)) {
@@ -1254,7 +1273,10 @@ function currentSongId() {
 }
 
 function saveEnhancedQueue() {
-    try { storageSet(ENHANCED_QUEUE_KEY, JSON.stringify({queue: enhancedQueue, index: enhancedQueueIndex})); } catch (_) {}
+    try {
+        const safeQueue = normalizeSyncQueue(enhancedQueue).map(track => normalizeSyncTrack(track));
+        storageSet(ENHANCED_QUEUE_KEY, JSON.stringify({queue: safeQueue, index: enhancedQueueIndex}));
+    } catch (_) {}
 }
 
 function loadEnhancedQueue() {
@@ -1262,10 +1284,8 @@ function loadEnhancedQueue() {
         const v = JSON.parse(storageGet(ENHANCED_QUEUE_KEY) || "null");
         if (Array.isArray(v?.queue) && v.queue.length) {
             enhancedQueue = [...v.queue];
-            enhancedQueueIndex = Math.max(
-                0,
-                Math.min(Number.isInteger(v.index) ? v.index : 0, enhancedQueue.length - 1)
-            );
+            const savedIndex = Number.isInteger(v.index) ? v.index : -1;
+            enhancedQueueIndex = savedIndex < 0 ? -1 : Math.min(savedIndex, enhancedQueue.length - 1);
             libraryPlaybackQueue = [...enhancedQueue];
             currentLibraryIndex = enhancedQueueIndex;
         } else {
@@ -1280,6 +1300,10 @@ function loadEnhancedQueue() {
         libraryPlaybackQueue = [];
         currentLibraryIndex = -1;
     }
+    try {
+        const savedRestore = JSON.parse(storageGet(SHUFFLE_RESTORE_KEY) || "null");
+        shuffleRestoreQueue = Array.isArray(savedRestore) ? normalizeSyncQueue(savedRestore) : null;
+    } catch (_) { shuffleRestoreQueue = null; }
 }
 
 async function loadEnhancedPositions() {
@@ -1357,7 +1381,8 @@ function cycleRepeatMode() {
         return;
     }
     playerRepeatMode = next;
-    storageSet(ENHANCED_REPEAT_KEY,playerRepeatMode);
+    storageSet(ENHANCED_REPEAT_KEY, playerRepeatMode);
+    if (playerRepeatMode === "track") stopCrossfadePreload();
     applyRepeatLabel();
     schedulePlayerStateBroadcast(true);
 }
@@ -1484,10 +1509,12 @@ function getLibraryQueue() {
 }
 
 function syncLibraryQueue(queue, index) {
+    stopCrossfadePreload();
     const normalized = normalizeQueue(queue);
     enhancedQueue = normalized;
+    const requestedIndex = Number.isInteger(Number(index)) ? Number(index) : -1;
     enhancedQueueIndex = normalized.length
-        ? Math.max(0, Math.min(Number.isInteger(Number(index)) ? Number(index) : 0, normalized.length - 1))
+        ? (requestedIndex < 0 ? -1 : Math.max(0, Math.min(requestedIndex, normalized.length - 1)))
         : -1;
     libraryPlaybackQueue = [...normalized];
     currentLibraryIndex = enhancedQueueIndex;
@@ -1501,6 +1528,28 @@ function syncLibraryQueue(queue, index) {
             schedulePlayerStateBroadcast(true);
         }
     }
+}
+
+function getActivePlaybackQueue() {
+    return currentPlayerSource === "home"
+        ? normalizeQueue(Array.isArray(window.xrobHomeQueue) ? window.xrobHomeQueue : [])
+        : getLibraryQueue();
+}
+
+function getActivePlaybackQueueIndex() {
+    return currentPlayerSource === "home"
+        ? (Number.isInteger(window.xrobHomeQueueIndex) ? window.xrobHomeQueueIndex : -1)
+        : enhancedQueueIndex;
+}
+
+function syncActivePlaybackQueue(queue, index) {
+    if (currentPlayerSource === "home") {
+        setSynchronizedHomeQueue(queue, index);
+    } else {
+        syncLibraryQueue(queue, index);
+    }
+    renderEnhancedQueue();
+    updateQueueIndicators();
 }
 
 function reconcileEnhancedQueue() {
@@ -1523,17 +1572,26 @@ function addTrackToQueue(track, playNext = false) {
     if (!track) return false;
     const key = trackKey(track);
     if (!key) return false;
-    const queue = getLibraryQueue();
-    const currentIndex = currentPlayerSource === 'library' ? getQueueIndex() : -1;
+    const queue = getActivePlaybackQueue();
+    const currentIndex = getActivePlaybackQueueIndex();
     const already = queue.findIndex(item => trackKey(item) === key);
     if (already >= 0) {
-        if (playNext && currentIndex >= 0 && already !== currentIndex + 1) {
+        const shouldMove = playNext && (currentIndex >= 0 ? already !== currentIndex + 1 : already !== 0);
+        if (shouldMove) {
             const q = [...queue];
             const [item] = q.splice(already, 1);
-            const adjustedCurrent = q.findIndex(item2 => trackKey(item2) === trackKey(queue[currentIndex]));
-            q.splice(Math.max(0, adjustedCurrent + 1), 0, item);
-            syncLibraryQueue(q, q.findIndex(item2 => trackKey(item2) === trackKey(queue[currentIndex])));
-            renderEnhancedQueue();
+            if (currentIndex >= 0) {
+                const currentTrack = queue[currentIndex];
+                const adjustedCurrent = q.findIndex(item2 => trackKey(item2) === trackKey(currentTrack));
+                q.splice(Math.max(0, adjustedCurrent + 1), 0, item);
+                updateShuffleRestoreAfterEdit("move-after", item, currentTrack);
+                syncActivePlaybackQueue(q, q.findIndex(item2 => trackKey(item2) === trackKey(currentTrack)));
+            } else {
+                // With no active track, Play Next means the first queued item.
+                q.unshift(item);
+                updateShuffleRestoreAfterEdit("move-before", item, q[1] || null);
+                syncActivePlaybackQueue(q, -1);
+            }
             showToast('▶ Next in queue');
             return true;
         }
@@ -1545,17 +1603,24 @@ function addTrackToQueue(track, playNext = false) {
     if (currentIndex >= 0) {
         const insertAt = playNext ? currentIndex + 1 : q.length;
         q.splice(insertAt, 0, track);
+        updateShuffleRestoreAfterEdit(playNext ? "move-after" : "add", track, queue[currentIndex]);
         newIndex = q.findIndex(item => trackKey(item) === trackKey(queue[currentIndex]));
     } else if (q.length) {
-        // No active library track: preserve an existing persisted queue and append.
-        q.push(track);
+        // Before playback starts, Play Next belongs at the head; ordinary Add
+        // belongs at the tail. Keep the canonical unshuffled snapshot in sync.
+        if (playNext) {
+            q.unshift(track);
+            updateShuffleRestoreAfterEdit("move-before", track, q[1] || null);
+        } else {
+            q.push(track);
+            updateShuffleRestoreAfterEdit("add", track);
+        }
         newIndex = -1;
     } else {
         q = [track];
         newIndex = 0;
     }
-    syncLibraryQueue(q, newIndex);
-    renderEnhancedQueue();
+    syncActivePlaybackQueue(q, newIndex);
     showToast(playNext ? '▶ Added to Up Next' : '＋ Added to queue');
     return true;
 }
@@ -1589,6 +1654,63 @@ function shuffleQueueAfterCurrent(queue, index) {
     };
 }
 
+function restoreUnshuffledUpcoming(queue, index, originalQueue) {
+    const items = normalizeQueue(queue);
+    if (!items.length) return { queue: [], index: -1 };
+    const requestedIndex = Number.isInteger(index) ? index : -1;
+    const currentIndex = requestedIndex >= 0 && requestedIndex < items.length ? requestedIndex : -1;
+    const prefix = currentIndex >= 0 ? items.slice(0, currentIndex + 1) : [];
+    const upcoming = currentIndex >= 0 ? items.slice(currentIndex + 1) : [...items];
+    const originalOrder = new Map(normalizeQueue(originalQueue).map((track, i) => [trackKey(track), i]));
+
+    // Only reorder surviving tracks that belonged to the original queue. New
+    // tracks keep their current slots, removed tracks stay removed, and history
+    // plus the currently playing item are never restored from a stale snapshot.
+    const slots = [];
+    const originalTracks = [];
+    upcoming.forEach((track, i) => {
+        if (originalOrder.has(trackKey(track))) {
+            slots.push(i);
+            originalTracks.push(track);
+        }
+    });
+    originalTracks.sort((a, b) => originalOrder.get(trackKey(a)) - originalOrder.get(trackKey(b)));
+    slots.forEach((slot, i) => { upcoming[slot] = originalTracks[i]; });
+    return { queue: [...prefix, ...upcoming], index: currentIndex };
+}
+
+function persistShuffleRestoreQueue() {
+    try {
+        if (Array.isArray(shuffleRestoreQueue) && shuffleRestoreQueue.length) {
+            storageSet(SHUFFLE_RESTORE_KEY, JSON.stringify(normalizeSyncQueue(shuffleRestoreQueue)));
+        } else {
+            storageRemove(SHUFFLE_RESTORE_KEY);
+        }
+    } catch (_) {}
+}
+
+function updateShuffleRestoreAfterEdit(operation, track, anchorTrack = null) {
+    if (!playerShuffle || !Array.isArray(shuffleRestoreQueue) || !track) return;
+    const key = trackKey(track);
+    if (!key) return;
+    let canonical = normalizeQueue(shuffleRestoreQueue).filter(item => trackKey(item) !== key);
+    if (operation === "remove") {
+        // Removing from the live queue must also remove it from the canonical order.
+    } else if (operation === "add") {
+        canonical.push(normalizeSyncTrack(track));
+    } else if (operation === "move-after") {
+        const anchorKey = trackKey(anchorTrack);
+        const anchorIndex = canonical.findIndex(item => trackKey(item) === anchorKey);
+        canonical.splice(anchorIndex >= 0 ? anchorIndex + 1 : canonical.length, 0, normalizeSyncTrack(track));
+    } else if (operation === "move-before") {
+        const anchorKey = trackKey(anchorTrack);
+        const anchorIndex = canonical.findIndex(item => trackKey(item) === anchorKey);
+        canonical.splice(anchorIndex >= 0 ? anchorIndex : canonical.length, 0, normalizeSyncTrack(track));
+    }
+    shuffleRestoreQueue = canonical;
+    persistShuffleRestoreQueue();
+}
+
 function updateShuffleButtons() {
     const buttons = [document.getElementById("gp-shuffle-btn"), document.getElementById("libraryShuffleButton")];
     buttons.forEach(button => {
@@ -1602,31 +1724,49 @@ function setShuffle(enabled) {
     if (nextValue === playerShuffle) { updateShuffleButtons(); return; }
     if (isRemotePlayerOwner() && !applyingRemotePlayerCommand) {
         if (sendPlayerCommand("shuffle", { enabled: nextValue })) {
-            playerShuffle = nextValue; storageSet("xrob_music_shuffle", String(playerShuffle)); updateShuffleButtons(); updateRemotePlayerOptimistic({ shuffle: nextValue });
+            playerShuffle = nextValue;
+            storageSet("xrob_music_shuffle", String(playerShuffle));
+            updateShuffleButtons();
+            updateRemotePlayerOptimistic({ shuffle: nextValue });
         }
         return;
     }
-    if (currentPlayerSource === "library" && enhancedQueue.length) {
-        const currentId = currentSongId();
-        if (nextValue) {
-            shuffleRestoreQueue = [...enhancedQueue];
-            shuffleRestoreCurrentId = currentId;
-            const currentIndex = enhancedQueueIndex;
-            const current = enhancedQueue[currentIndex];
-            syncLibraryQueue([...enhancedQueue.slice(0, currentIndex), current, ...shuffledCopy(enhancedQueue.slice(currentIndex + 1))], currentIndex);
-        } else if (Array.isArray(shuffleRestoreQueue) && shuffleRestoreQueue.length) {
-            const restored = [...shuffleRestoreQueue];
-            const restoredIndex = restored.findIndex(item => (item.id || item.name) === currentId || (item.id || item.name) === shuffleRestoreCurrentId);
-            syncLibraryQueue(restored, restoredIndex >= 0 ? restoredIndex : 0);
-            shuffleRestoreQueue = null;
-            shuffleRestoreCurrentId = null;
-        }
-        renderEnhancedQueue();
+
+    // Before the first play, use the visible Home queue when the user toggles
+    // shuffle from Home; otherwise the generic queue defaults to the Library.
+    if (!currentPlayerSource && homeDisplayTracks.length && document.getElementById("tab-home")?.classList.contains("active")) {
+        currentPlayerSource = "home";
+        window.xrobHomeQueue = normalizeSyncQueue(homeDisplayTracks);
+        window.xrobHomeQueueIndex = -1;
     }
+    const queue = getActivePlaybackQueue();
+    const index = getActivePlaybackQueueIndex();
+    if (nextValue && queue.length) {
+        // Keep an editable canonical order, even when no track has started yet.
+        shuffleRestoreQueue = queue.map(track => normalizeSyncTrack(track));
+        shuffleRestoreCurrentId = index >= 0 && index < queue.length ? trackKey(queue[index]) : null;
+        const result = index >= 0 && index < queue.length
+            ? shuffleQueueAfterCurrent(queue, index)
+            : { queue: shuffledCopy(queue), index: -1 };
+        syncActivePlaybackQueue(result.queue, result.index);
+        persistShuffleRestoreQueue();
+    } else if (!nextValue) {
+        if (Array.isArray(shuffleRestoreQueue) && shuffleRestoreQueue.length) {
+            const liveQueue = getActivePlaybackQueue();
+            const liveIndex = getActivePlaybackQueueIndex();
+            const result = restoreUnshuffledUpcoming(liveQueue, liveIndex, shuffleRestoreQueue);
+            syncActivePlaybackQueue(result.queue, result.index);
+        }
+        shuffleRestoreQueue = null;
+        shuffleRestoreCurrentId = null;
+        persistShuffleRestoreQueue();
+    }
+
     playerShuffle = nextValue;
     storageSet("xrob_music_shuffle", String(playerShuffle));
     updateShuffleButtons();
     saveEnhancedQueue();
+    persistShuffleRestoreQueue();
     if (!applyingRemotePlayerCommand && !isRemotePlayerOwner()) schedulePlayerStateBroadcast(true);
 }
 
@@ -1641,14 +1781,13 @@ function shuffleLibrary() {
     if (currentPlayerSource === "library" && enhancedQueue.length) {
         const { queue, index } = getActiveLibraryQueueState();
         if (!playerShuffle) {
-            shuffleRestoreQueue = [...queue];
-            shuffleRestoreCurrentId = queue[index]?.id || queue[index]?.name || null;
+            shuffleRestoreQueue = queue.map(track => normalizeSyncTrack(track));
+            shuffleRestoreCurrentId = trackKey(queue[index]);
+            persistShuffleRestoreQueue();
         }
         const result = shuffleQueueAfterCurrent(queue, index);
-        enhancedQueue = result.queue;
-        enhancedQueueIndex = result.index;
-        libraryPlaybackQueue = [...enhancedQueue];
-        currentLibraryIndex = enhancedQueueIndex;
+        currentPlayerSource = "library";
+        syncLibraryQueue(result.queue, result.index);
         playerShuffle = true;
         storageSet("xrob_music_shuffle", "true");
         updateShuffleButtons();
@@ -2152,15 +2291,29 @@ function applyReplayGainToActiveAudio(track = activeQueueTrack(), fade = 1) {
     if (audio) audio.dataset.replayGainDb = String(currentReplayGain(track));
 }
 
-function stopCrossfadePreload() {
-    if (crossfadeAudio) { try { crossfadeAudio.pause(); } catch (_) {} }
-    if (crossfadeGainNode && audioContext) crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+function cancelCrossfadeTransition() {
     if (crossfadeTimer) { clearTimeout(crossfadeTimer); crossfadeTimer = null; }
+    if (crossfadeAudio) {
+        try { crossfadeAudio.pause(); } catch (_) {}
+        try { crossfadeAudio.currentTime = 0; } catch (_) {}
+    }
+    if (crossfadeGainNode && audioContext) {
+        try { crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime); } catch (_) {}
+    }
+    // Restore the outgoing track's ReplayGain after an interrupted fade.
+    if (replayGainNode && audioContext) {
+        try { replayGainNode.gain.setTargetAtTime(dbToLinear(currentReplayGain(activeQueueTrack())), audioContext.currentTime, 0.015); } catch (_) {}
+    }
     crossfadeActive = false;
+}
+
+function stopCrossfadePreload() {
+    cancelCrossfadeTransition();
     crossfadePrepared = null;
 }
 
 function nextQueueTrack() {
+    if (playerRepeatMode === "track") return null;
     const q = currentPlayerSource === "library" ? getLibraryQueue() : (window.xrobHomeQueue || []);
     const idx = currentPlayerSource === "library" ? enhancedQueueIndex : window.xrobHomeQueueIndex;
     if (!q.length || !Number.isInteger(Number(idx))) return null;
@@ -2173,6 +2326,7 @@ function nextQueueTrack() {
 }
 
 function prepareNextTrack() {
+    if (playerRepeatMode === "track") { stopCrossfadePreload(); return false; }
     const next = nextQueueTrack();
     if (!next?.stream || !crossfadeAudio) return false;
     const url = new URL(next.stream, location.href).href;
@@ -2190,32 +2344,51 @@ function prepareNextTrack() {
 }
 
 function maybeStartCrossfade() {
-    if (!audio || audio.paused || !playerSettings.crossfade_seconds || !crossfadeAudio || !crossfadePrepared) return false;
+    if (!audio || audio.paused || playerRepeatMode === "track" || !playerSettings.crossfade_seconds || !crossfadeAudio || !crossfadePrepared) return false;
+    if (!audioContext || !replayGainNode || !crossfadeGainNode || !crossfadeSourceNode) {
+        // Gapless/end-of-track advance remains available, but a dual-stream fade
+        // must never play two elements at full volume when gain routing failed.
+        stopCrossfadePreload();
+        if (!crossfadeUnsupportedNotified) {
+            crossfadeUnsupportedNotified = true;
+            showToast("Crossfade is unavailable in this browser; continuing without overlap.");
+        }
+        return false;
+    }
     const duration = Number(audio.duration || 0);
     const current = Number(audio.currentTime || 0);
-    const fade = Math.max(0, Math.min(Number(playerSettings.crossfade_seconds) || 0, duration / 2));
-    if (!(duration > 0 && fade > 0 && duration - current > fade + 0.02)) return false;
-    if (crossfadeTimer) return true;
+    const remaining = duration - current;
+    const fade = Math.max(0, Math.min(Number(playerSettings.crossfade_seconds) || 0, duration / 2, remaining));
+    if (!(duration > 0 && remaining > 0.02 && fade > 0)) return false;
+    if (crossfadeTimer || crossfadeActive) return true;
     const targetUrl = crossfadePrepared.url;
-    crossfadeAudio.currentTime = 0;
+    try { crossfadeAudio.currentTime = 0; } catch (_) {}
     crossfadeAudio.volume = Number.isFinite(Number(audio.volume)) ? Number(audio.volume) : 1;
-    if (crossfadeSourceNode && audioContext) crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime);
-    crossfadeAudio.play().catch(() => { crossfadeTimer = null; crossfadeActive = false; });
-    const remaining = Math.max(0, duration - current - fade);
+    if (crossfadeSourceNode && audioContext) {
+        try { crossfadeGainNode.gain.setValueAtTime(0, audioContext.currentTime); } catch (_) {}
+    }
+    crossfadeAudio.play().catch(() => cancelCrossfadeTransition());
+    // If the pause happened inside the configured fade window, start immediately
+    // with a shorter fade instead of skipping the transition entirely.
+    const beforeFade = Math.max(0, remaining - fade);
     crossfadeTimer = window.setTimeout(() => {
         crossfadeTimer = null;
+        if (!audio || audio.paused || !crossfadePrepared || crossfadePrepared.url !== targetUrl) {
+            cancelCrossfadeTransition();
+            return;
+        }
         crossfadeActive = true;
-        if (!audio || audio.paused || !crossfadePrepared || crossfadePrepared.url !== targetUrl) return;
         const start = performance.now();
         const tick = () => {
+            if (!crossfadeActive || !crossfadePrepared || crossfadePrepared.url !== targetUrl || !audio || audio.paused) return;
             const elapsed = (performance.now() - start) / 1000;
             const p = Math.max(0, Math.min(1, elapsed / fade));
             if (replayGainNode && audioContext) replayGainNode.gain.setTargetAtTime(dbToLinear(currentReplayGain(activeQueueTrack())) * (1 - p), audioContext.currentTime, 0.015);
             if (crossfadeGainNode && audioContext) crossfadeGainNode.gain.setTargetAtTime(dbToLinear(currentReplayGain(crossfadePrepared.track)) * p, audioContext.currentTime, 0.015);
-            if (p < 1 && !audio.paused) requestAnimationFrame(tick);
+            if (p < 1) requestAnimationFrame(tick);
         };
         tick();
-    }, remaining * 1000);
+    }, beforeFade * 1000);
     return true;
 }
 
@@ -2637,6 +2810,7 @@ function bindAudioEvents() {
         updateProgress
     );
 
+    audio.addEventListener("seeking", () => stopCrossfadePreload());
 
     audio.addEventListener(
         "play",
@@ -2658,6 +2832,7 @@ function bindAudioEvents() {
     audio.addEventListener(
         "pause",
         () => {
+            if (!audio?.ended) stopCrossfadePreload();
             if (!playerHandoffStoppingRemote) persistCurrentPosition(true);
             stopVisualizer();
             updatePlayingState(false);
@@ -2691,6 +2866,7 @@ function bindAudioEvents() {
             }
 
             if (typeof playerRepeatMode !== "undefined" && playerRepeatMode === "track") {
+                stopCrossfadePreload();
                 audio.currentTime = 0;
                 applyReplayGainToActiveAudio(activeQueueTrack());
                 beginPlaySession(currentSongId());
@@ -3581,8 +3757,11 @@ function renderEmpty(list, icon, title, text = "") {
 
 function playQueue(queue, index = 0, shuffle = false) {
     if (!Array.isArray(queue) || !queue.length) { showToast("No playable tracks"); return false; }
+    // Set source before syncing so player-state broadcasts never pair a Library
+    // queue with a stale Recently Added/Home source.
+    currentPlayerSource = "library";
     const requestedIndex = Math.max(0, Math.min(Number(index) || 0, queue.length - 1));
-    const originalQueue = [...queue];
+    const originalQueue = [...queue].map(track => normalizeSyncTrack(track));
     let playbackQueue = [...queue];
     let playbackIndex = requestedIndex;
     if (shuffle) {
@@ -3592,14 +3771,15 @@ function playQueue(queue, index = 0, shuffle = false) {
         playbackQueue = [...before, current, ...after];
         playbackIndex = before.length;
         shuffleRestoreQueue = originalQueue;
-        shuffleRestoreCurrentId = current?.id || current?.name || null;
+        shuffleRestoreCurrentId = trackKey(current);
+        persistShuffleRestoreQueue();
     } else {
         shuffleRestoreQueue = null;
         shuffleRestoreCurrentId = null;
+        persistShuffleRestoreQueue();
     }
-    syncLibraryQueue(playbackQueue, playbackIndex);
-    currentPlayerSource = "library";
     playerShuffle = Boolean(shuffle);
+    syncLibraryQueue(playbackQueue, playbackIndex);
     storageSet("xrob_music_shuffle", String(playerShuffle));
     updateShuffleButtons();
     renderEnhancedQueue();
@@ -5490,7 +5670,9 @@ function advanceHomeQueue(direction = 1) {
         next = direction >= 0 ? 0 : queue.length - 1;
     }
     if (direction < 0 && audio && audio.currentTime > 3) { audio.currentTime = 0; return true; }
-    playHomeTrack(next);
+    // `next` is an index into the live queue, not into the Home card list.
+    // The distinction matters after shuffle, Play Next, removal or drag-reorder.
+    playHomeTrack(next, true);
     return true;
 }
 
@@ -5530,6 +5712,7 @@ function renderRecentlyAdded(
         !Array.isArray(recent) ||
         !recent.length
     ) {
+        homeDisplayTracks = [];
 
         container.innerHTML = `
             <div class="home-empty">
@@ -5541,17 +5724,27 @@ function renderRecentlyAdded(
     }
 
 
-    window.xrobHomeQueue =
-        recent;
+    homeDisplayTracks = recent.slice();
 
-    if (
-        !Number.isInteger(
-            window.xrobHomeQueueIndex
-        )
-    ) {
-
-        window.xrobHomeQueueIndex =
-            -1;
+    if (currentPlayerSource === "home" && Array.isArray(window.xrobHomeQueue) && window.xrobHomeQueue.length) {
+        // Refresh metadata in place without resetting a queue that the user has
+        // already edited (shuffle, Play Next, remove, or manual reordering).
+        const latestByKey = new Map(homeDisplayTracks.map(track => [trackKey(track), track]));
+        const updatedQueue = window.xrobHomeQueue.map(track => {
+            const fresh = latestByKey.get(trackKey(track));
+            return fresh ? { ...track, ...fresh, _card: track._card || fresh._card } : track;
+        });
+        // Metadata refresh does not change queue order, so avoid interrupting a
+        // pending crossfade or broadcasting a redundant queue mutation.
+        window.xrobHomeQueue = updatedQueue;
+        enhancedQueue = [...updatedQueue];
+        libraryPlaybackQueue = [...updatedQueue];
+        enhancedQueueIndex = window.xrobHomeQueueIndex;
+        currentLibraryIndex = enhancedQueueIndex;
+        saveEnhancedQueue();
+    } else {
+        window.xrobHomeQueue = recent.slice();
+        if (!Number.isInteger(window.xrobHomeQueueIndex)) window.xrobHomeQueueIndex = -1;
     }
 
 
@@ -5651,13 +5844,10 @@ function renderRecentlyAdded(
             card.addEventListener(
                 "click",
                 () => {
-
-                    window.xrobHomeQueueIndex =
-                        index;
-
-                    playHomeTrack(
-                        index
-                    );
+                    // Home display indices are not queue indices after shuffle or
+                    // manual queue edits; pass the card's stable identity instead.
+                    track._card = card;
+                    playHomeTrack(index, false);
                 }
             );
 
@@ -6042,73 +6232,54 @@ function bindInfiniteScroll() {
 }
 
 
-function playHomeTrack(index) {
+function playHomeTrack(index, fromQueue = false) {
+    let queue;
+    let playbackIndex;
+    if (fromQueue) {
+        queue = Array.isArray(window.xrobHomeQueue) ? window.xrobHomeQueue : [];
+        playbackIndex = Number(index);
+        if (!Number.isInteger(playbackIndex) || playbackIndex < 0 || playbackIndex >= queue.length) return;
+        queue = normalizeSyncQueue(queue);
+    } else {
+        const display = Array.isArray(homeDisplayTracks) && homeDisplayTracks.length
+            ? homeDisplayTracks
+            : (Array.isArray(window.xrobHomeQueue) ? window.xrobHomeQueue : []);
+        if (!Number.isInteger(Number(index)) || Number(index) < 0 || Number(index) >= display.length) return;
+        const selected = display[Number(index)];
+        const selectedKey = trackKey(selected);
+        queue = normalizeSyncQueue(display);
+        playbackIndex = queue.findIndex(track => trackKey(track) === selectedKey);
+        if (playbackIndex < 0) return;
+        if (playerShuffle && queue.length > 1) {
+            shuffleRestoreQueue = queue.map(track => normalizeSyncTrack(track));
+            shuffleRestoreCurrentId = selectedKey;
+            const shuffled = shuffleQueueAfterCurrent(queue, playbackIndex);
+            queue = shuffled.queue;
+            playbackIndex = shuffled.index;
+            persistShuffleRestoreQueue();
+        } else {
+            shuffleRestoreQueue = null;
+            shuffleRestoreCurrentId = null;
+            persistShuffleRestoreQueue();
+        }
+    }
 
     currentPlayerSource = "home";
-
-    const queue =
-        window.xrobHomeQueue || [];
-
-    if (
-        index < 0 ||
-        index >= queue.length
-    ) {
-        return;
-    }
-
-    const track =
-        queue[index];
-
-    // Keep Recently Added and Up Next synchronized with one persisted queue.
-    setEnhancedQueue(queue, index);
-    renderEnhancedQueue();
-
-    const streamUrl =
-        track.stream ||
-        "";
-
+    // One commit updates the Home playback queue, Up Next drawer, saved queue and
+    // synchronized player state together.
+    syncActivePlaybackQueue(queue, playbackIndex);
+    const track = queue[playbackIndex];
+    const streamUrl = track?.stream || "";
     if (!streamUrl) {
-
-        showToast(
-            "❌ Track stream URL unavailable"
-        );
-
+        showToast("❌ Track stream URL unavailable");
         return;
     }
-
-    window.xrobHomeQueueIndex =
-        index;
-
-    const card =
-        track._card || null;
-
-    if (activePreviewBtn) {
-
-        resetPreviewButton(
-            activePreviewBtn
-        );
-    }
-
-    activePreviewBtn =
-        card;
-
-    if (card) {
-
-        card.classList.add(
-            "playing"
-        );
-    }
-
-    toggleAudioStream(
-        card ||
-            document.createElement("button"),
-        streamUrl,
-        "home",
-        track.title,
-        track.artist,
-        track.cover,
-        track.id || null
-    );
+    window.xrobHomeQueueIndex = playbackIndex;
+    const card = track._card || homeDisplayTracks.find(item => trackKey(item) === trackKey(track))?._card || null;
+    if (activePreviewBtn) resetPreviewButton(activePreviewBtn);
+    activePreviewBtn = card;
+    if (card) card.classList.add("playing");
+    toggleAudioStream(card || document.createElement("button"), streamUrl, "home", track.title, track.artist, track.cover, track.id || null);
 }
 
 async function refreshLibrary() {
@@ -6449,47 +6620,68 @@ function renderEnhancedQueue() {
     const box = document.getElementById("queueList");
     if (!box) return;
     box.innerHTML = "";
-    if (!enhancedQueue.length) {
+    const queue = getActivePlaybackQueue();
+    const queueIndex = getActivePlaybackQueueIndex();
+    if (!queue.length) {
         box.innerHTML = '<div class="queue-empty"><i data-lucide="list-music" aria-hidden="true"></i><span>Queue is empty</span></div>';
         renderLocalIcons();
         return;
     }
-    enhancedQueue.forEach((t, i) => {
+    queue.forEach((t, i) => {
+        const isCurrent = i === queueIndex;
         const row = document.createElement("div");
-        row.className = `queue-row ${i === enhancedQueueIndex ? "current" : ""}`;
+        row.className = `queue-row ${isCurrent ? "current" : ""}`;
         row.draggable = true;
         row.dataset.index = String(i);
         row.innerHTML = `<span class="queue-drag" aria-hidden="true"><i data-lucide="grip-vertical"></i></span><img src="${escapeHtml(t.cover || "")}" alt=""><div class="queue-row-info"><strong>${escapeHtml(t.title || t.name || "Unknown")}</strong><span>${escapeHtml(t.artist || "Unknown Artist")}</span></div><button class="queue-next btn-refresh" title="Play next">Next</button><button class="queue-remove icon-btn" title="Remove" aria-label="Remove track"><i data-lucide="x" aria-hidden="true"></i></button>`;
         const nextButton = row.querySelector(".queue-next");
         const removeButton = row.querySelector(".queue-remove");
-        if (i === enhancedQueueIndex) { removeButton.disabled = true; nextButton.disabled = true; }
+        if (isCurrent) { removeButton.disabled = true; nextButton.disabled = true; }
         nextButton.onclick = e => {
             e.stopPropagation();
-            if (i === enhancedQueueIndex || i === enhancedQueueIndex + 1) return;
-            const q = [...enhancedQueue]; const [item] = q.splice(i, 1);
-            const currentId = currentSongId();
-            const currentPos = q.findIndex(x => (x.id || x.name) === currentId);
-            q.splice(Math.min(currentPos + 1, q.length), 0, item);
-            syncLibraryQueue(q, q.findIndex(x => (x.id || x.name) === currentId));
-            renderEnhancedQueue();
+            const liveQueue = getActivePlaybackQueue();
+            const liveIndex = getActivePlaybackQueueIndex();
+            if (i === liveIndex || i === liveIndex + 1) return;
+            const currentId = trackKey(liveQueue[liveIndex]);
+            const q = [...liveQueue];
+            const [item] = q.splice(i, 1);
+            const currentPos = q.findIndex(x => trackKey(x) === currentId);
+            q.splice(Math.max(0, Math.min(currentPos + 1, q.length)), 0, item);
+            updateShuffleRestoreAfterEdit("move-after", item, liveQueue[liveIndex]);
+            syncActivePlaybackQueue(q, q.findIndex(x => trackKey(x) === currentId));
         };
         removeButton.onclick = e => {
             e.stopPropagation();
-            if (i === enhancedQueueIndex) return showToast("Current track stays in the queue while playing");
-            const q = [...enhancedQueue]; q.splice(i, 1);
-            const currentId = currentSongId();
-            syncLibraryQueue(q, q.findIndex(x => (x.id || x.name) === currentId));
-            renderEnhancedQueue();
+            const liveQueue = getActivePlaybackQueue();
+            const liveIndex = getActivePlaybackQueueIndex();
+            if (i === liveIndex) return showToast("Current track stays in the queue while playing");
+            const currentId = trackKey(liveQueue[liveIndex]);
+            const removedTrack = liveQueue[i];
+            const q = [...liveQueue];
+            q.splice(i, 1);
+            updateShuffleRestoreAfterEdit("remove", removedTrack);
+            const nextIndex = currentId ? q.findIndex(x => trackKey(x) === currentId) : Math.min(liveIndex, q.length - 1);
+            syncActivePlaybackQueue(q, nextIndex);
         };
-        row.addEventListener("dblclick", () => playLibraryTrack(i));
+        row.addEventListener("dblclick", () => {
+            if (currentPlayerSource === "home") playHomeTrack(i, true);
+            else playLibraryTrack(i);
+        });
         row.addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", String(i)); e.dataTransfer.effectAllowed = "move"; });
         row.addEventListener("dragover", e => e.preventDefault());
         row.addEventListener("drop", e => {
             e.preventDefault();
-            const from = Number(e.dataTransfer.getData("text/plain")); const to = Number(row.dataset.index);
+            const from = Number(e.dataTransfer.getData("text/plain"));
+            const to = Number(row.dataset.index);
             if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
-            const currentId = currentSongId(); const q = [...enhancedQueue]; const [item] = q.splice(from,1); q.splice(to,0,item);
-            syncLibraryQueue(q, q.findIndex(x => (x.id || x.name) === currentId)); renderEnhancedQueue();
+            const liveQueue = getActivePlaybackQueue();
+            const currentId = trackKey(liveQueue[getActivePlaybackQueueIndex()]);
+            const q = [...liveQueue];
+            const [item] = q.splice(from, 1);
+            q.splice(to, 0, item);
+            const following = q[to + 1] || null;
+            updateShuffleRestoreAfterEdit(following ? "move-before" : "add", item, following);
+            syncActivePlaybackQueue(q, q.findIndex(x => trackKey(x) === currentId));
         });
         box.appendChild(row);
     });
@@ -6498,14 +6690,30 @@ function renderEnhancedQueue() {
 }
 
 function setEnhancedQueue(queue, index = 0) {
-    syncLibraryQueue(queue, index);
+    // Explicitly install a Library queue, even when the previous source was Home.
+    currentPlayerSource = "library";
+    const normalized = normalizeQueue(queue);
+    if (playerShuffle && normalized.length) {
+        shuffleRestoreQueue = normalized.map(track => normalizeSyncTrack(track));
+        const start = Math.max(0, Math.min(Number(index) || 0, normalized.length - 1));
+        const result = shuffleQueueAfterCurrent(normalized, start);
+        syncLibraryQueue(result.queue, result.index);
+        persistShuffleRestoreQueue();
+    } else {
+        shuffleRestoreQueue = null;
+        shuffleRestoreCurrentId = null;
+        persistShuffleRestoreQueue();
+        syncLibraryQueue(normalized, index);
+    }
     renderEnhancedQueue();
     updateQueueIndicators();
 }
 
 function updateQueueIndicators(){
-    const total = Array.isArray(enhancedQueue) ? enhancedQueue.length : 0;
-    const nextCount = enhancedQueueIndex >= 0 ? Math.max(0, total - enhancedQueueIndex - 1) : total;
+    const queue = getActivePlaybackQueue();
+    const queueIndex = getActivePlaybackQueueIndex();
+    const total = Array.isArray(queue) ? queue.length : 0;
+    const nextCount = queueIndex >= 0 ? Math.max(0, total - queueIndex - 1) : total;
     ["topbarQueueCount","mobQueueTrackCount"].forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent=String(nextCount); });
     ["topbarQueueBtn","gp-queue-btn"].forEach(id=>{ const el=document.getElementById(id); if(el) el.setAttribute("aria-label", nextCount ? `Open queue · ${nextCount} up next` : "Open queue"); });
 }
@@ -6541,7 +6749,7 @@ function closeDownloadsDrawer(){
     if (drawer) drawer.hidden = true;
 }
 
-async function saveQueueAsPlaylist(){ if(!enhancedQueue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await apiFetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:enhancedQueue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
+async function saveQueueAsPlaylist(){ const queue=getActivePlaybackQueue(); if(!queue.length){showToast("Queue is empty");return;} const name=prompt("Playlist name", "My Queue"); if(!name)return; const r=await apiFetch("api/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,song_ids:queue.map(x=>x.id).filter(Boolean)})}); if(r.ok) showToast("✅ Playlist saved"); else showToast("❌ Could not save playlist"); }
 
 async function renderLibraryCollections(mode){
     const list=document.getElementById("libraryList"); if(!list)return;
@@ -7092,15 +7300,13 @@ function installEnhancedFeatures(){
         if (event.key === "Escape") { closeDownloadsDrawer(); closeQueueDrawer(); }
     });
     document.getElementById("queueClear")?.addEventListener("click",()=>{
-    if (currentPlayerSource === "library" && enhancedQueue.length && enhancedQueueIndex >= 0) {
-        const current = enhancedQueue[enhancedQueueIndex];
-        syncLibraryQueue(current ? [current] : [], 0);
-    } else {
-        syncLibraryQueue([], -1);
-    }
-
+    const queue = getActivePlaybackQueue();
+    const index = getActivePlaybackQueueIndex();
+    const current = index >= 0 ? queue[index] : null;
+    syncActivePlaybackQueue(current ? [current] : [], current ? 0 : -1);
     shuffleRestoreQueue = null;
     shuffleRestoreCurrentId = null;
+    persistShuffleRestoreQueue();
     saveEnhancedQueue();
     renderEnhancedQueue();
 }); document.getElementById("queueSave")?.addEventListener("click",saveQueueAsPlaylist); document.getElementById("queueRepeat")?.addEventListener("click",cycleRepeatMode);
