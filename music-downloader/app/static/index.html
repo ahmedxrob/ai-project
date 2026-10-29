@@ -11,7 +11,7 @@
   <title>
    Xrob Music
   </title>
-  <link href="static/style.css?v=3840" rel="stylesheet"/>
+  <link href="static/style.css?v=4410" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
   <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -653,7 +653,7 @@
           Settings
          </h2>
          <p>
-          Change download format and quality here. Open Advanced settings for optional controls and maintenance.
+          Set your default download format and quality. Open a category only when you need more control.
          </p>
         </div>
        </div>
@@ -719,179 +719,7 @@
          </select>
         </div>
        </div>
-       <details class="settings-advanced page-section">
-        <summary>
-         <span class="settings-advanced-title">Advanced settings</span>
-         <span class="settings-advanced-hint">Playback, library, downloads, devices, account and maintenance</span>
-        </summary>
-        <div class="settings-advanced-content">
-       <div class="settings-card page-section">
-        <div class="settings-divider">
-         Daily Mix
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
-           Daily Mix tracks
-          </div>
-          <div class="setting-desc">
-           Number of tracks generated in your Daily Mix.
-          </div>
-         </div>
-         <input id="set_daily_mix_count" min="5" max="50" step="1" style="max-width:120px" type="number" value="30"/>
-        </div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider">Playback
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">ReplayGain</div><div class="setting-desc">Normalize loudness using embedded ReplayGain track or album tags.</div></div>
-         <label class="switch"><input id="set_replaygain_enabled" type="checkbox"/><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">ReplayGain mode</div><div class="setting-desc">Choose track gain or album gain when available.</div></div>
-         <select id="set_replaygain_mode"><option value="track">Track</option><option value="album">Album</option></select>
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">Preamp</div><div class="setting-desc">Additional gain before normalization, from −12 to +12 dB.</div></div>
-         <input id="set_replaygain_preamp" max="12" min="-12" step="0.5" style="max-width:120px" type="number" value="0"/>
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">Prevent clipping</div><div class="setting-desc">Use recorded peak data to avoid excessive digital gain.</div></div>
-         <label class="switch"><input id="set_replaygain_clip" type="checkbox"/><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">Crossfade</div><div class="setting-desc">Blend the current track into the next track.</div></div>
-         <input id="set_crossfade" max="12" min="0" step="0.5" style="max-width:120px" type="number" value="0"/>
-        </div>
-        <div class="setting-row">
-         <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload the next local track to reduce transition gaps when crossfade is off.</div></div>
-         <label class="switch"><input id="set_gapless" type="checkbox"/><span class="slider"></span></label>
-        </div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider">
-         Files
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
-           Write metadata
-          </div>
-          <div class="setting-desc">
-           Store title, artist and album tags in downloaded files.
-          </div>
-         </div>
-         <label class="switch">
-          <input id="set_meta" type="checkbox"/>
-          <span class="slider">
-          </span>
-         </label>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
-           Embed artwork
-          </div>
-          <div class="setting-desc">
-           Compatibility shortcut; kept in sync with Artwork handling below.
-          </div>
-         </div>
-         <label class="switch">
-          <input id="set_thumb" type="checkbox"/>
-          <span class="slider">
-          </span>
-         </label>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
-           Artist folders
-          </div>
-          <div class="setting-desc">
-           Save downloads inside an artist folder.
-          </div>
-         </div>
-         <label class="switch">
-          <input id="set_organize" type="checkbox"/>
-          <span class="slider">
-          </span>
-         </label>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
-           Background library scan
-          </div>
-          <div class="setting-desc">
-           Periodically refresh library metadata in the background.
-          </div>
-         </div>
-         <label class="switch">
-          <input id="set_scan_enabled" type="checkbox"/>
-          <span class="slider">
-          </span>
-         </label>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
-           Metadata lookup
-          </div>
-          <div class="setting-desc">
-           Improve titles and album names with MusicBrainz and Apple catalog evidence. No AI service is used.
-          </div>
-         </div>
-         <select id="set_metadata_mode">
-          <option value="auto">Auto · catalog evidence + safe fallback</option>
-          <option value="musicbrainz">MusicBrainz only</option>
-          <option value="off">Off · use supplied metadata</option>
-         </select>
-        </div>
-        <div class="setting-row setting-row-stack">
-         <div>
-          <div class="setting-label">
-           Title cleanup rules
-          </div>
-          <div class="setting-desc">
-           Remove these labels from downloaded titles. Put one phrase per line; matching is case-insensitive. Example: <code>Visualizer</code> turns <strong>CVP (Visualizer)</strong> into <strong>CVP</strong>.
-          </div>
-         </div>
-         <textarea class="settings-textarea" id="set_title_cleanup_rules" rows="6" spellcheck="false" placeholder="Visualizer&#10;video clip&#10;Official Video"></textarea>
-        </div>
-        <div class="setting-row">
-         <div>
-          <div class="setting-label">
-           Scan interval
-          </div>
-          <div class="setting-desc">
-           Minutes between automatic quick scans (minimum 5).
-          </div>
-         </div>
-         <input id="set_scan_interval" min="5" step="5" style="max-width:120px" type="number" value="60"/>
-        </div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider"><i aria-hidden="true" data-lucide="download-cloud"></i> Downloader</div>
-        <div class="setting-row"><div><div class="setting-label">Download location</div><div class="setting-desc">Absolute folder for new downloads. Changes take effect after restarting Xrob Music.</div></div><input id="set_download_location" type="text" placeholder="/music" spellcheck="false" style="max-width:360px"/></div>
-        <div class="setting-row"><div><div class="setting-label">Concurrent downloads</div><div class="setting-desc">Maximum jobs running at the same time.</div></div><input id="set_max_concurrent" min="1" max="8" step="1" value="3" type="number" style="max-width:120px"/></div>
-        <div class="setting-row"><div><div class="setting-label">Automatic retry</div><div class="setting-desc">Retry failed jobs with backoff and resume when partial data exists.</div></div><label class="switch"><input id="set_auto_retry" type="checkbox"/><span class="slider"></span></label></div>
-        <div class="setting-row"><div><div class="setting-label">Retry limit</div><div class="setting-desc">Automatic retries per job.</div></div><input id="set_retry_limit" min="0" max="5" step="1" value="2" type="number" style="max-width:120px"/></div>
-        <div class="setting-row"><div><div class="setting-label">Retry backoff</div><div class="setting-desc">Base delay between automatic retries.</div></div><input id="set_retry_backoff" min="1" max="60" step="1" value="3" type="number" style="max-width:120px"/></div>
-        <div class="setting-row"><div><div class="setting-label">Filename format</div><div class="setting-desc">Choose how downloaded files are named.</div></div><select id="set_filename_mode"><option value="title">Title</option><option value="artist-title">Artist - Title</option><option value="artist-album-title">Artist - Album - Title</option></select></div>
-        <div class="setting-row"><div><div class="setting-label">Artwork</div><div class="setting-desc">Embed artwork, save a sidecar JPG, or skip artwork processing.</div></div><select id="set_artwork_behavior"><option value="embed">Embed in audio</option><option value="download">Save beside track</option><option value="none">Do not download</option></select></div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider"><i aria-hidden="true" data-lucide="monitor-smartphone"></i> Devices</div>
-        <div class="setting-row"><div><div class="setting-label">This device name</div><div class="setting-desc">Name shown in Connect. No pairing code is required.</div></div><input id="set_device_name" type="text" maxlength="80" style="max-width:260px" placeholder="This PC"/></div>
-        <div class="setting-row"><div><div class="setting-label">Device management</div><div class="setting-desc">See connected devices, playback state and last heartbeat.</div></div><button class="btn-refresh" id="openDevicesButton" type="button">Open device picker</button></div>
-       </div>
-       <div class="settings-card page-section">
-        <div class="settings-divider"><i aria-hidden="true" data-lucide="database"></i> Performance &amp; statistics</div>
-        <div class="setting-row"><div><div class="setting-label">Metadata/artwork cache</div><div class="setting-desc">Controls the metadata lookup cache. Artwork is primarily cached on disk and by the browser.</div></div><input id="set_cache_size" min="32" max="2048" step="32" value="256" type="number" style="max-width:120px"/> <span class="setting-inline-suffix">MB</span></div>
-        <div class="setting-row"><div><div class="setting-label">Keep listening history</div><div class="setting-desc">Older listening records are trimmed automatically.</div></div><select id="set_stats_retention"><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option><option value="730">2 years</option><option value="3650">10 years</option></select></div>
-       </div>
-       <div class="settings-card settings-info-card page-section">
+<div class="settings-card settings-info-card page-section">
         <div class="settings-divider">
          <i aria-hidden="true" data-lucide="folder-open">
          </i>
@@ -983,7 +811,7 @@
            OpenSubsonic
           </div>
           <div class="setting-desc">
-           Use the password configured in the Home Assistant add-on options. An empty password disables API access.
+           Set a non-empty Home Assistant add-on password for authenticated music access. Capability discovery remains public for OpenSubsonic compatibility.
           </div>
          </div>
          <strong id="openSubsonicStatus" aria-live="polite">
@@ -991,7 +819,187 @@
          </strong>
         </div>
        </div>
-       <div class="settings-card page-section">
+       <details class="settings-advanced page-section">
+        <summary>
+         <span class="settings-advanced-title">More settings</span>
+         <span class="settings-advanced-hint">Playback, library, downloads, devices, account and maintenance</span>
+        </summary>
+        <div class="settings-advanced-content">
+         <details class="settings-group">
+          <summary><span class="settings-group-heading"><span class="settings-group-title">Player &amp; Daily Mix</span><span class="settings-group-hint">Personalization, loudness normalization and track transitions</span></span></summary>
+          <div class="settings-group-content">
+<div class="settings-card page-section">
+        <div class="settings-divider">
+         Daily Mix
+        </div>
+        <div class="setting-row">
+         <div>
+          <div class="setting-label">
+           Daily Mix tracks
+          </div>
+          <div class="setting-desc">
+           Number of tracks generated in your Daily Mix.
+          </div>
+         </div>
+         <input id="set_daily_mix_count" min="5" max="50" step="1" style="max-width:120px" type="number" value="30"/>
+        </div>
+       </div>
+<div class="settings-card page-section">
+        <div class="settings-divider">Playback
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">ReplayGain</div><div class="setting-desc">Normalize loudness using embedded ReplayGain track or album tags.</div></div>
+         <label class="switch"><input id="set_replaygain_enabled" type="checkbox"/><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">ReplayGain mode</div><div class="setting-desc">Choose track gain or album gain when available.</div></div>
+         <select id="set_replaygain_mode"><option value="track">Track</option><option value="album">Album</option></select>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Preamp</div><div class="setting-desc">Additional gain before normalization, from −12 to +12 dB.</div></div>
+         <input id="set_replaygain_preamp" max="12" min="-12" step="0.5" style="max-width:120px" type="number" value="0"/>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Prevent clipping</div><div class="setting-desc">Use recorded peak data to avoid excessive digital gain.</div></div>
+         <label class="switch"><input id="set_replaygain_clip" type="checkbox"/><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Crossfade</div><div class="setting-desc">Blend the current track into the next track.</div></div>
+         <input id="set_crossfade" max="12" min="0" step="0.5" style="max-width:120px" type="number" value="0"/>
+        </div>
+        <div class="setting-row">
+         <div><div class="setting-label">Gapless playback</div><div class="setting-desc">Preload the next local track to reduce transition gaps when crossfade is off.</div></div>
+         <label class="switch"><input id="set_gapless" type="checkbox"/><span class="slider"></span></label>
+        </div>
+       </div>
+          </div>
+         </details>
+         <details class="settings-group">
+          <summary><span class="settings-group-heading"><span class="settings-group-title">Library &amp; metadata</span><span class="settings-group-hint">Tags, artwork, title cleanup and background scans</span></span></summary>
+          <div class="settings-group-content">
+<div class="settings-card page-section">
+        <div class="settings-divider">
+         Files
+        </div>
+        <div class="setting-row">
+         <div>
+          <div class="setting-label">
+           Write metadata
+          </div>
+          <div class="setting-desc">
+           Store title, artist and album tags in downloaded files.
+          </div>
+         </div>
+         <label class="switch">
+          <input id="set_meta" type="checkbox"/>
+          <span class="slider">
+          </span>
+         </label>
+        </div>
+        <div class="setting-row">
+         <div>
+          <div class="setting-label">
+           Artist folders
+          </div>
+          <div class="setting-desc">
+           Save downloads inside an artist folder.
+          </div>
+         </div>
+         <label class="switch">
+          <input id="set_organize" type="checkbox"/>
+          <span class="slider">
+          </span>
+         </label>
+        </div>
+        <div class="setting-row">
+         <div>
+          <div class="setting-label">
+           Background library scan
+          </div>
+          <div class="setting-desc">
+           Periodically refresh library metadata in the background.
+          </div>
+         </div>
+         <label class="switch">
+          <input id="set_scan_enabled" type="checkbox"/>
+          <span class="slider">
+          </span>
+         </label>
+        </div>
+        <div class="setting-row">
+         <div>
+          <div class="setting-label">
+           Metadata lookup
+          </div>
+          <div class="setting-desc">
+           Improve titles and album names with MusicBrainz and Apple catalog evidence. No AI service is used.
+          </div>
+         </div>
+         <select id="set_metadata_mode">
+          <option value="auto">Auto · catalog evidence + safe fallback</option>
+          <option value="musicbrainz">MusicBrainz only</option>
+          <option value="off">Off · use supplied metadata</option>
+         </select>
+        </div>
+        <div class="setting-row setting-row-stack">
+         <div>
+          <div class="setting-label">
+           Title cleanup rules
+          </div>
+          <div class="setting-desc">
+           Remove these labels from downloaded titles. Put one phrase per line; matching is case-insensitive. Example: <code>Visualizer</code> turns <strong>CVP (Visualizer)</strong> into <strong>CVP</strong>.
+          </div>
+         </div>
+         <textarea class="settings-textarea" id="set_title_cleanup_rules" rows="6" spellcheck="false" placeholder="Visualizer&#10;video clip&#10;Official Video"></textarea>
+        </div>
+        <div class="setting-row">
+         <div>
+          <div class="setting-label">
+           Scan interval
+          </div>
+          <div class="setting-desc">
+           Minutes between automatic quick scans (minimum 5).
+          </div>
+         </div>
+         <input id="set_scan_interval" min="5" step="5" style="max-width:120px" type="number" value="60"/>
+        </div>
+       </div>
+          </div>
+         </details>
+         <details class="settings-group">
+          <summary><span class="settings-group-heading"><span class="settings-group-title">Downloads &amp; performance</span><span class="settings-group-hint">Download behavior, filenames, cache and history retention</span></span></summary>
+          <div class="settings-group-content">
+<div class="settings-card page-section">
+        <div class="settings-divider"><i aria-hidden="true" data-lucide="download-cloud"></i> Downloader</div>
+        <div class="setting-row"><div><div class="setting-label">Download location</div><div class="setting-desc">Absolute folder for new downloads. Changes take effect after restarting Xrob Music.</div></div><input id="set_download_location" type="text" placeholder="/music" spellcheck="false" style="max-width:360px"/></div>
+        <div class="setting-row"><div><div class="setting-label">Concurrent downloads</div><div class="setting-desc">Maximum jobs running at the same time.</div></div><input id="set_max_concurrent" min="1" max="8" step="1" value="3" type="number" style="max-width:120px"/></div>
+        <div class="setting-row"><div><div class="setting-label">Automatic retry</div><div class="setting-desc">Retry failed jobs with backoff and resume when partial data exists.</div></div><label class="switch"><input id="set_auto_retry" type="checkbox"/><span class="slider"></span></label></div>
+        <div class="setting-row"><div><div class="setting-label">Retry limit</div><div class="setting-desc">Automatic retries per job.</div></div><input id="set_retry_limit" min="0" max="5" step="1" value="2" type="number" style="max-width:120px"/></div>
+        <div class="setting-row"><div><div class="setting-label">Retry backoff</div><div class="setting-desc">Base delay between automatic retries.</div></div><input id="set_retry_backoff" min="1" max="60" step="1" value="3" type="number" style="max-width:120px"/></div>
+        <div class="setting-row"><div><div class="setting-label">Filename format</div><div class="setting-desc">Choose how downloaded files are named.</div></div><select id="set_filename_mode"><option value="title">Title</option><option value="artist-title">Artist - Title</option><option value="artist-album-title">Artist - Album - Title</option></select></div>
+        <div class="setting-row"><div><div class="setting-label">Artwork</div><div class="setting-desc">Embed artwork, save a sidecar JPG, or skip artwork processing.</div></div><select id="set_artwork_behavior"><option value="embed">Embed in audio</option><option value="download">Save beside track</option><option value="none">Do not download</option></select></div>
+       </div>
+<div class="settings-card page-section">
+        <div class="settings-divider"><i aria-hidden="true" data-lucide="database"></i> Performance &amp; statistics</div>
+        <div class="setting-row"><div><div class="setting-label">Metadata/artwork cache</div><div class="setting-desc">Controls the metadata lookup cache. Artwork is primarily cached on disk and by the browser.</div></div><input id="set_cache_size" min="32" max="2048" step="32" value="256" type="number" style="max-width:120px"/> <span class="setting-inline-suffix">MB</span></div>
+        <div class="setting-row"><div><div class="setting-label">Keep listening history</div><div class="setting-desc">Older listening records are trimmed automatically.</div></div><select id="set_stats_retention"><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option><option value="730">2 years</option><option value="3650">10 years</option></select></div>
+       </div>
+          </div>
+         </details>
+         <details class="settings-group">
+          <summary><span class="settings-group-heading"><span class="settings-group-title">Devices</span><span class="settings-group-hint">Name this player and view connected devices</span></span></summary>
+          <div class="settings-group-content">
+<div class="settings-card page-section">
+        <div class="settings-divider"><i aria-hidden="true" data-lucide="monitor-smartphone"></i> Devices</div>
+        <div class="setting-row"><div><div class="setting-label">This device name</div><div class="setting-desc">Name shown in Connect. No pairing code is required.</div></div><input id="set_device_name" type="text" maxlength="80" style="max-width:260px" placeholder="This PC"/></div>
+        <div class="setting-row"><div><div class="setting-label">Device management</div><div class="setting-desc">See connected devices, playback state and last heartbeat.</div></div><button class="btn-refresh" id="openDevicesButton" type="button">Open device picker</button></div>
+       </div>
+          </div>
+         </details>
+         <details class="settings-group">
+          <summary><span class="settings-group-heading"><span class="settings-group-title">Account</span><span class="settings-group-hint">Change your login or sign out</span></span></summary>
+          <div class="settings-group-content">
+<div class="settings-card page-section">
         <div class="settings-divider settings-divider-account">
          <span>
           Account
@@ -1025,7 +1033,12 @@
          <input autocomplete="new-password" id="set_web_password" maxlength="256" style="max-width:260px" type="password"/>
         </div>
        </div>
-       <div class="settings-card page-section">
+          </div>
+         </details>
+         <details class="settings-group">
+          <summary><span class="settings-group-heading"><span class="settings-group-title">Maintenance</span><span class="settings-group-hint">Health checks, errors, backups and diagnostics</span></span></summary>
+          <div class="settings-group-content">
+<div class="settings-card page-section">
         <div class="settings-divider">
          Maintenance
         </div>
@@ -1059,7 +1072,10 @@
         <div class="setting-row"><div><div class="setting-label">Restore</div><div class="setting-desc">Validate a Xrob Music backup before replacing the local database and configuration.</div></div><div class="settings-inline-actions"><input id="restoreFile" type="file" accept=".zip" hidden/><button class="btn-refresh" id="restoreButton" type="button">Restore backup</button></div></div>
         <div class="setting-row"><div><div class="setting-label">Diagnostics</div><div class="setting-desc">Check SQLite integrity, storage, runtime tools and active connections.</div></div><button class="btn-refresh" id="diagnosticsButton" type="button">Run diagnostics</button></div>
         </div>
-       </div>
+          </div>
+         </details>
+        
+        </div>
        </details>
        <div class="settings-actions page-section">
         <button class="save-btn" id="settings-save" type="button">
@@ -1070,7 +1086,7 @@
         <button class="btn-refresh" id="settings-reset" type="button">
          <i aria-hidden="true" data-lucide="rotate-ccw">
          </i>
-         Reset
+         Restore defaults
         </button>
        </div>
        <div aria-live="polite" class="status-msg" id="settingsMsg">
@@ -1280,7 +1296,7 @@ https://…" required></textarea></label><div class="batch-meta-grid"><label>Art
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=3840">
+  <script src="static/app.js?v=4410">
   </script>
 
 
