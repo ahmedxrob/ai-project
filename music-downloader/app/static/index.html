@@ -11,7 +11,7 @@
   <title>
    Xrob Music
   </title>
-  <link href="static/style.css?v=4410" rel="stylesheet"/>
+  <link href="static/style.css?v=4411" rel="stylesheet"/>
   <link href="static/icon.png" rel="icon" type="image/png"/>
   <link href="static/logo.png" rel="apple-touch-icon"/>
  </head>
@@ -1068,9 +1068,34 @@
           Open error log
          </button>
         </div>
-        <div class="setting-row"><div><div class="setting-label">Backup</div><div class="setting-desc">Download a validated backup of the database, settings and library index.</div></div><button class="btn-refresh" id="backupButton" type="button"><i data-lucide="download"></i> Create backup</button></div>
+        <div class="setting-row"><div><div class="setting-label">Backup</div><div class="setting-desc">Download a validated backup of the database, settings and library index. Automatic app-data backups run daily; music files are not included.</div></div><button class="btn-refresh" id="backupButton" type="button"><i data-lucide="download"></i> Create backup</button></div>
+        <div class="setting-row"><div><div class="setting-label">Automatic backup retention</div><div class="setting-desc">Keep this many of the most recent daily app-data backups. The oldest automatic backups are removed when a new backup completes.</div></div><select id="set_backup_retention" aria-label="Number of automatic backups to retain" style="max-width:160px"><option value="1">1 backup</option><option value="2" selected>2 backups (default)</option><option value="3">3 backups</option><option value="5">5 backups</option></select></div>
+        <div class="setting-row"><div><div class="setting-label">Latest automatic backup</div><div class="setting-desc">Download the most recent daily snapshot created by the background backup worker. Retention currently keeps the latest number selected above.</div></div><button class="btn-refresh" id="autoBackupDownloadButton" type="button"><i data-lucide="download"></i> Download latest</button></div>
         <div class="setting-row"><div><div class="setting-label">Restore</div><div class="setting-desc">Validate a Xrob Music backup before replacing the local database and configuration.</div></div><div class="settings-inline-actions"><input id="restoreFile" type="file" accept=".zip" hidden/><button class="btn-refresh" id="restoreButton" type="button">Restore backup</button></div></div>
         <div class="setting-row"><div><div class="setting-label">Diagnostics</div><div class="setting-desc">Check SQLite integrity, storage, runtime tools and active connections.</div></div><button class="btn-refresh" id="diagnosticsButton" type="button">Run diagnostics</button></div>
+        <div class="settings-divider">Telegram health alerts</div>
+        <div class="setting-row"><div><div class="setting-label">Enable Telegram monitoring</div><div class="setting-desc">Send alerts when the media mount or database becomes unhealthy, report new app errors, and send a daily status summary.</div></div><label class="switch"><input id="set_telegram_enabled" type="checkbox"/><span class="slider"></span></label></div>
+        <div class="setting-row"><div><div class="setting-label">Bot token</div><div class="setting-desc">Create a bot with @BotFather. This secret is stored on the server and never sent back to the browser.</div></div><input autocomplete="new-password" id="set_telegram_bot_token" maxlength="256" placeholder="Paste bot token" style="max-width:340px" type="password"/></div>
+        <div class="setting-row"><div><div class="setting-label">Chat ID</div><div class="setting-desc">Send /start to your bot first. Enter your numeric chat ID (or a channel ID such as @channelname).</div></div><input autocomplete="off" id="set_telegram_chat_id" maxlength="128" placeholder="Telegram chat ID" style="max-width:340px" type="text"/></div>
+        <div class="setting-row"><div><div class="setting-label">Daily health report</div><div class="setting-desc">Send one daily report after 09:00 using the server's local time.</div></div><label class="switch"><input id="set_telegram_daily_report" type="checkbox" checked/><span class="slider"></span></label></div>
+        <div class="setting-row"><div><div class="setting-label">Connection status</div><div class="setting-desc" id="telegramBotStatus" aria-live="polite">Not configured</div></div><div class="settings-inline-actions"><button class="btn-refresh" id="telegramTestButton" type="button">Send test message</button><button class="btn-refresh" id="telegramClearButton" type="button">Remove bot</button></div></div>
+        <div class="settings-divider">Telegram automation overview</div>
+        <div class="setting-desc telegram-monitor-note">
+          <strong>When in-app Telegram monitoring is enabled, Xrob Music automatically:</strong>
+          <ul>
+            <li>Sends an online/startup message describing whether the database and media storage look healthy.</li>
+            <li>Alerts when the media mount is missing/not writable or the database integrity check becomes unhealthy, then sends a recovery notice when health returns.</li>
+            <li>Reports newly recorded application errors in a rate-limited digest (at most once per five minutes, with up to five error examples per message).</li>
+            <li>Sends one daily health report after 09:00 in the server's local time when “Daily health report” is enabled. It includes storage/database status, queued and active downloads, recent error count, and backup retention.</li>
+          </ul>
+          <strong>The optional external watchdog does these additional checks only when it is separately installed and running on another always-on process/host:</strong>
+          <ul>
+            <li>Checks the app health URL at a configurable interval (default 30 seconds).</li>
+            <li>Alerts after three consecutive failed health checks by default, then reports when the app becomes reachable again.</li>
+            <li>Reports storage problems exposed by the health endpoint and sends its own daily reachability/storage report.</li>
+          </ul>
+          <strong>Important:</strong> the bot is an outbound notifier and health monitor; it does not automatically repair failures or run arbitrary Telegram commands. In-app monitoring cannot alert while the app itself is stopped; the external watchdog must run independently and be configured with its own environment variables.
+        </div>
         </div>
           </div>
          </details>
@@ -1296,7 +1321,7 @@ https://…" required></textarea></label><div class="batch-meta-grid"><label>Art
   <!-- ============================================================
      SCRIPTS
      ============================================================ -->
-  <script src="static/app.js?v=4410">
+  <script src="static/app.js?v=4411">
   </script>
 
 
