@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.4.12"
+SERVER_VERSION = "4.4.13"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -86,14 +86,44 @@ app = FastAPI(
 
 @app.middleware("http")
 async def web_auth_middleware(request: Request, call_next):
+    global ACTIVE_API_REQUESTS
+    path = request.url.path
+
+    # Health and auth bootstrap/session endpoints must remain available during a
+    # restore. The restore request itself handles the RESTORE_LOCK directly.
+    restore_exempt = path in {
+        "/api/health", "/api/restore",
+        "/api/auth/status", "/api/auth/logout", "/favicon.ico",
+    }
+    tracked = (path.startswith("/api/") and not restore_exempt) or path.startswith("/rest/")
+    if tracked:
+        async with ACTIVE_API_REQUESTS_LOCK:
+            # RESTORE_LOCK also serializes backups. Only the restore fence should
+            # reject regular requests; backups must not make the UI temporarily fail.
+            if RESTORE_IN_PROGRESS:
+                if path.startswith("/rest/"):
+                    return Response("Xrob Music restore in progress; retry shortly.", status_code=503, media_type="text/plain")
+                return JSONResponse({"detail": "A database restore is in progress. Retry this request shortly."}, status_code=409)
+            ACTIVE_API_REQUESTS += 1
+            ACTIVE_API_REQUESTS_DRAINED.clear()
+        try:
+            return await _dispatch_authenticated_request(request, call_next)
+        finally:
+            async with ACTIVE_API_REQUESTS_LOCK:
+                ACTIVE_API_REQUESTS = max(0, ACTIVE_API_REQUESTS - 1)
+                if ACTIVE_API_REQUESTS == 0:
+                    ACTIVE_API_REQUESTS_DRAINED.set()
+    return await _dispatch_authenticated_request(request, call_next)
+
+
+async def _dispatch_authenticated_request(request: Request, call_next):
     path = request.url.path
     # OpenSubsonic and static assets keep their existing authentication behavior.
     if path.startswith("/rest/") or path.startswith("/static/") or path in {"/api/health", "/api/auth/login", "/api/auth/status", "/api/auth/logout", "/favicon.ico"}:
         return await call_next(request)
     if path.startswith("/api/") and not _is_authenticated(request.cookies.get(AUTH_COOKIE)):
-        return JSONResponse({"detail":"Authentication required"}, status_code=401)
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
     return await call_next(request)
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -127,6 +157,8 @@ COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
 DATA_DIR = Path(os.getenv("XROB_DATA_DIR", "/data"))
 DB_FILE = DATA_DIR / "tasks.db"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+# Serialize settings read/modify/write cycles from request handlers and background workers.
+SETTINGS_FILE_LOCK = RLock()
 AUTH_USER = os.getenv("XROB_USERNAME", "admin")
 AUTH_PASSWORD = os.getenv("XROB_PASSWORD", "")
 AUTH_COOKIE = "xrob_session"
@@ -196,29 +228,28 @@ def _stored_web_password(settings):
     return str(settings.get("web_password_hash") or settings.get("web_password") or AUTH_PASSWORD or "")
 
 def _write_settings_sync(settings):
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.{os.getpid()}.tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
+    """Atomically persist secrets/settings without sharing temp files between threads."""
+    with SETTINGS_FILE_LOCK:
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, SETTINGS_FILE)
-        try:
-            os.chmod(SETTINGS_FILE, 0o600)
-        except OSError:
-            pass
-    finally:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(settings, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, SETTINGS_FILE)
+            try:
+                os.chmod(SETTINGS_FILE, 0o600)
+            except OSError:
+                pass
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
-def _ensure_secure_web_credentials_sync():
+def _ensure_secure_web_credentials_unlocked():
     settings = load_settings()
     explicit_env = os.getenv("XROB_PASSWORD")
     if explicit_env:
@@ -247,6 +278,11 @@ def _ensure_secure_web_credentials_sync():
         settings.pop("web_password", None)
         _write_settings_sync(settings)
     return settings
+
+
+def _ensure_secure_web_credentials_sync():
+    with SETTINGS_FILE_LOCK:
+        return _ensure_secure_web_credentials_unlocked()
 
 def _current_web_credentials():
     settings = load_settings()
@@ -433,6 +469,9 @@ LIBRARY_CACHE_TTL = 10.0
 LIBRARY_CACHE_LOCK = asyncio.Lock()
 LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
 LIBRARY_INDEX_WRITE_LOCK = RLock()
+# Invalidates queued background index writes across a backup restore. A thread
+# already running in asyncio.to_thread cannot be cancelled, so it must self-fence.
+LIBRARY_INDEX_GENERATION = 0
 LIBRARY_WARMUP_TASK = None
 DOWNLOAD_WORKER_TASKS = set()
 DOWNLOAD_WORKER_SCALE_LOCK = asyncio.Lock()
@@ -450,12 +489,20 @@ SCHEDULED_SCANNER_TASK = None
 LIBRARY_SCAN_LOCK = asyncio.Lock()
 LIBRARY_REFRESH_LOCK = asyncio.Lock()
 RESTORE_LOCK = asyncio.Lock()
+# RESTORE_LOCK serializes snapshots and restores; this separate flag fences
+# requests only while persistent state is actually being replaced.
+RESTORE_IN_PROGRESS = False
+ACTIVE_API_REQUESTS_LOCK = asyncio.Lock()
+ACTIVE_API_REQUESTS_DRAINED = asyncio.Event()
+ACTIVE_API_REQUESTS_DRAINED.set()
+ACTIVE_API_REQUESTS = 0
 COVER_LOCKS = {}
 COVER_LOCK_REFS = {}
 COVER_LOCKS_GUARD = asyncio.Lock()
 HISTORY_MAX_ROWS = 100000
 APP_ERRORS_MAX_ROWS = 5000
 MAX_PLAYLIST_SONGS = 10000
+MAX_RESTORE_UPLOAD_BYTES = 64 * 1024 * 1024
 
 
 def track_background_task(coro):
@@ -814,11 +861,12 @@ def load_settings():
     return settings
 
 
-def save_settings(data: dict):
+def _save_settings_unlocked(data: dict):
     if not isinstance(data, dict):
         raise ValueError("Settings must be an object.")
 
     settings = load_settings()
+    previous_download_location = str(settings.get("download_location") or "").strip()
     allowed = {
         "audio_format", "audio_quality", "embed_thumbnail",
         "embed_metadata", "organize_by_artist", "scan_enabled",
@@ -902,13 +950,18 @@ def save_settings(data: dict):
             raise ValueError("Download location must be an absolute path.")
         if candidate.exists() and not candidate.is_dir():
             raise ValueError("Download location must be a directory.")
-        if not candidate.exists():
-            raise ValueError("Download location does not exist. Mount or create it first.")
-        location_status = storage_info_sync(probe_write=True, path_override=candidate)
-        if not location_status.get("mounted"):
-            raise ValueError("Download location is not on a detected mounted volume. Check the NAS/disk mount first.")
-        if not location_status.get("writable"):
-            raise ValueError("Download location is not writable. Check mount permissions and storage health.")
+        # If the user is saving unrelated settings while the already-configured
+        # NAS is offline, preserve the unchanged path. A newly selected path must
+        # still pass real mounted/writable checks before it is accepted.
+        location_is_unchanged = str(candidate) == previous_download_location
+        if not location_is_unchanged:
+            if not candidate.exists():
+                raise ValueError("Download location does not exist. Mount or create it first.")
+            location_status = storage_info_sync(probe_write=True, path_override=candidate)
+            if not location_status.get("mounted"):
+                raise ValueError("Download location is not on a detected mounted volume. Check the NAS/disk mount first.")
+            if not location_status.get("writable"):
+                raise ValueError("Download location is not writable. Check mount permissions and storage health.")
         settings["download_location"] = str(candidate)
     else:
         settings["download_location"] = ""
@@ -961,6 +1014,13 @@ def save_settings(data: dict):
         AUTH_SESSIONS.clear()
 
     return settings
+
+
+def save_settings(data: dict):
+    # Keep the full read/validate/write cycle atomic relative to daily-report and
+    # credential updates; locking only os.replace would still lose concurrent edits.
+    with SETTINGS_FILE_LOCK:
+        return _save_settings_unlocked(data)
 
 
 def public_settings():
@@ -2168,16 +2228,45 @@ def _load_library_index_sync():
             return {}
 
 
-def _save_library_index_sync(entries):
+def _current_library_index_generation_sync():
     with LIBRARY_INDEX_WRITE_LOCK:
-        tmp = LIBRARY_INDEX_FILE.with_suffix(".tmp")
+        return LIBRARY_INDEX_GENERATION
+
+
+def _advance_library_index_generation_sync():
+    """Fence any background index/database helper started before a restore."""
+    global LIBRARY_INDEX_GENERATION
+    with LIBRARY_INDEX_WRITE_LOCK:
+        LIBRARY_INDEX_GENERATION += 1
+        return LIBRARY_INDEX_GENERATION
+
+
+def _save_library_index_sync(entries, *, expected_generation=None):
+    with LIBRARY_INDEX_WRITE_LOCK:
+        if expected_generation is not None and expected_generation != LIBRARY_INDEX_GENERATION:
+            return False
+        tmp = LIBRARY_INDEX_FILE.with_name(f".{LIBRARY_INDEX_FILE.name}.{uuid.uuid4().hex}.tmp")
         payload = {"version": 1, "entries": entries}
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-        tmp.replace(LIBRARY_INDEX_FILE)
+        try:
+            fd = os.open(str(tmp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, LIBRARY_INDEX_FILE)
+            try:
+                os.chmod(LIBRARY_INDEX_FILE, 0o600)
+            except OSError:
+                pass
+            return True
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
-def _update_library_index_entry_sync(path, *, title=None, artist=None, album=None, source_url=None, source_title=None, source_artist=None, source_album=None):
+def _update_library_index_entry_sync(path, *, title=None, artist=None, album=None, source_url=None, source_title=None, source_artist=None, source_album=None, expected_generation=None):
     """Update one library-index row without rebuilding the complete library.
 
     The source URL is intentionally kept separate from editable metadata so an
@@ -2190,6 +2279,8 @@ def _update_library_index_entry_sync(path, *, title=None, artist=None, album=Non
             return False
         rel = str(path.relative_to(DOWNLOAD_DIR))
         with LIBRARY_INDEX_WRITE_LOCK:
+            if expected_generation is not None and expected_generation != LIBRARY_INDEX_GENERATION:
+                return False
             current = _load_library_index_sync()
             entries = current.get("entries", {}) if isinstance(current, dict) else {}
             if not isinstance(entries, dict):
@@ -2306,25 +2397,28 @@ def _build_library_index_entries_sync(library):
     return entries
 
 
-def _persist_library_index_sync(library):
+def _persist_library_index_sync(library, *, expected_generation=None):
     # Build and write under one lock so an in-flight library refresh cannot
-    # overwrite a newer metadata/source-identity update.
+    # overwrite a newer metadata/source-identity update or state restored from a backup.
     with LIBRARY_INDEX_WRITE_LOCK:
+        if expected_generation is not None and expected_generation != LIBRARY_INDEX_GENERATION:
+            return False
         entries = _build_library_index_entries_sync(library)
-        _save_library_index_sync(entries)
+        return _save_library_index_sync(entries, expected_generation=expected_generation)
 
 
-async def persist_library_index(library):
+async def persist_library_index(library, *, expected_generation=None):
     try:
-        await asyncio.to_thread(_persist_library_index_sync, library)
+        await asyncio.to_thread(_persist_library_index_sync, library, expected_generation=expected_generation)
     except Exception as exc:
         print("Warning: could not save library index:", exc)
 
 async def background_library_warmup():
     global LIBRARY_WARMUP_TASK
+    generation = await asyncio.to_thread(_current_library_index_generation_sync)
     try:
         library = await build_library(force=True)
-        await persist_library_index(library)
+        await persist_library_index(library, expected_generation=generation)
     except Exception as exc:
         print("Library warmup failed:", exc)
     finally:
@@ -3346,6 +3440,7 @@ LIBRARY_REFRESH_PENDING_PATHS = set()
 
 async def _coalesced_library_refresh_worker():
     global LIBRARY_REFRESH_TASK
+    generation = await asyncio.to_thread(_current_library_index_generation_sync)
     try:
         await asyncio.sleep(0.25)
         while LIBRARY_REFRESH_PENDING_PATHS:
@@ -3353,14 +3448,14 @@ async def _coalesced_library_refresh_worker():
             LIBRARY_REFRESH_PENDING_PATHS.clear()
             try:
                 library = await build_library(force=True)
-                await persist_library_index(library)
+                await persist_library_index(library, expected_generation=generation)
                 by_path = {Path(item.get("path")): item for item in library.get("songs", []) if item.get("path")}
                 ids = []
                 for final_path in paths:
                     song = by_path.get(final_path)
                     if song and song.get("id"):
                         ids.append(str(song["id"]))
-                        await asyncio.to_thread(_ensure_song_review_pending_sync, str(song["id"]))
+                        await asyncio.to_thread(_ensure_song_review_pending_sync, str(song["id"]), expected_generation=generation)
                 await manager.broadcast({"type": "library_updated", "songIds": ids, "count": len(paths)})
             except Exception as exc:
                 await write_app_error("library_refresh", str(exc))
@@ -3377,13 +3472,20 @@ def queue_library_refresh(final_path):
         LIBRARY_REFRESH_TASK = track_background_task(_coalesced_library_refresh_worker())
 
 
-def _ensure_song_review_pending_sync(song_id):
-    with db_connect() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
-            (str(song_id), "pending"),
-        )
-        conn.commit()
+def _ensure_song_review_pending_sync(song_id, *, expected_generation=None):
+    # The generation lock makes this DB mutation atomic relative to the restore
+    # generation bump: it either completes before restore starts replacing state
+    # or is skipped as stale.
+    with LIBRARY_INDEX_WRITE_LOCK:
+        if expected_generation is not None and expected_generation != LIBRARY_INDEX_GENERATION:
+            return False
+        with db_connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO song_review(song_id,state,actioned_at) VALUES(?,?,0)",
+                (str(song_id), "pending"),
+            )
+            conn.commit()
+        return True
 
 
 async def _auto_retry_download_task(task, error_message, step="Retrying automatically"):
@@ -3918,9 +4020,11 @@ async def download_worker():
                 task["step"] = "Ready"
                 task["error"] = ""
                 task["last_updated"] = time.time() * 1000
+                index_generation = await asyncio.to_thread(_current_library_index_generation_sync)
                 await asyncio.to_thread(
                     _update_library_index_entry_sync,
                     final_path,
+                    expected_generation=index_generation,
                     title=task.get("title") or clean_title,
                     artist=task.get("artist") or "Unknown Artist",
                     album=task.get("album") or "",
@@ -4074,15 +4178,16 @@ def _redact_monitor_message(value):
 
 
 def _mark_daily_telegram_report_sent(report_date):
-    settings = {}
-    if SETTINGS_FILE.exists():
-        try:
-            payload = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            if isinstance(payload, dict): settings.update(payload)
-        except Exception:
-            pass
-    settings["telegram_last_daily_report_date"] = str(report_date)[:10]
-    _write_settings_sync(settings)
+    with SETTINGS_FILE_LOCK:
+        settings = {}
+        if SETTINGS_FILE.exists():
+            try:
+                payload = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+                if isinstance(payload, dict): settings.update(payload)
+            except Exception:
+                pass
+        settings["telegram_last_daily_report_date"] = str(report_date)[:10]
+        _write_settings_sync(settings)
 
 
 def automatic_backup_retention(settings_override=None):
@@ -4107,6 +4212,60 @@ def _prune_automatic_backups(retention=None):
     return min(len(backups), keep)
 
 
+def _validate_automatic_backup_sync(archive_path):
+    """Validate an existing daily archive before treating it as this day's backup."""
+    db_snapshot = None
+    try:
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            infos = archive.infolist()
+            names_list = [info.filename for info in infos]
+            names = set(names_list)
+            if len(names_list) != len(names):
+                return False
+            if not {"tasks.db", "settings.json", "library_index.json", "manifest.json"}.issubset(names):
+                return False
+            if len(infos) > 32 or sum(max(0, int(info.file_size)) for info in infos) > 512 * 1024 * 1024:
+                return False
+            settings_payload = json.loads(archive.read("settings.json").decode("utf-8"))
+            index_payload = json.loads(archive.read("library_index.json").decode("utf-8"))
+            manifest_payload = json.loads(archive.read("manifest.json").decode("utf-8"))
+            if not isinstance(settings_payload, dict) or not isinstance(index_payload, (dict, list)) or not isinstance(manifest_payload, dict):
+                return False
+            # Reading the database member to EOF verifies its ZIP CRC. The temporary
+            # validation copy starts private because the archive and DB can contain
+            # account/library information.
+            fd, db_name = tempfile.mkstemp(prefix=".xrob-auto-verify-", suffix=".db", dir=str(BACKUP_DIR))
+            db_snapshot = Path(db_name)
+            with os.fdopen(fd, "wb") as target, archive.open("tasks.db", "r") as source:
+                shutil.copyfileobj(source, target)
+                target.flush()
+                os.fsync(target.fileno())
+        conn = sqlite3.connect(db_snapshot, timeout=10.0)
+        try:
+            integrity = str(conn.execute("PRAGMA integrity_check").fetchone()[0] or "")
+            tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            return integrity.lower() == "ok" and "tasks" in tables
+        finally:
+            conn.close()
+    except Exception:
+        # Treat any unreadable/corrupt or unexpected archive-validation failure as
+        # invalid so the worker can produce a fresh daily snapshot instead of
+        # silently trusting the bad file or stopping future backup attempts.
+        return False
+    finally:
+        if db_snapshot is not None:
+            try:
+                db_snapshot.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _create_private_placeholder(path):
+    """Create a unique private file before writing backups or database snapshots."""
+    fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+
+
 def _create_automatic_backup_sync():
     """Create a private, consistent daily app-data backup on the local data volume."""
     if not DB_FILE.exists():
@@ -4115,15 +4274,20 @@ def _create_automatic_backup_sync():
     settings_data = load_settings()
     retention = automatic_backup_retention(settings_data)
     today = time.strftime("%Y%m%d", time.localtime())
-    existing = sorted(BACKUP_DIR.glob(f"xrob-music-auto-{today}.zip"))
-    if existing:
+    existing = sorted(BACKUP_DIR.glob(f"xrob-music-auto-{today}.zip"), key=lambda item: item.stat().st_mtime, reverse=True)
+    valid_existing = next((item for item in existing if _validate_automatic_backup_sync(item)), None)
+    if valid_existing is not None:
         _prune_automatic_backups(retention)
-        return str(existing[-1])
+        return str(valid_existing)
+    # If today's file exists but is corrupt/incomplete, keep it in place only until
+    # the replacement archive is fully written, then atomically replace it.
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
     final_path = BACKUP_DIR / f"xrob-music-auto-{today}.zip"
     temp_path = BACKUP_DIR / f".{final_path.name}.{uuid.uuid4().hex}.tmp"
     db_snapshot = BACKUP_DIR / f".db-snapshot-{uuid.uuid4().hex}.tmp"
     try:
+        _create_private_placeholder(temp_path)
+        _create_private_placeholder(db_snapshot)
         _sqlite_backup_file(DB_FILE, db_snapshot)
         test = sqlite3.connect(db_snapshot, timeout=10.0)
         try:
@@ -4185,7 +4349,7 @@ async def telegram_health_monitor():
                 startup_notice_sent = False
                 await asyncio.sleep(TELEGRAM_MONITOR_INTERVAL_SECONDS)
                 continue
-            if RESTORE_LOCK.locked():
+            if RESTORE_IN_PROGRESS:
                 await asyncio.sleep(TELEGRAM_MONITOR_INTERVAL_SECONDS)
                 continue
 
@@ -9461,10 +9625,13 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
         raise HTTPException(401, "Invalid username or password")
     _clear_login_failures(request)
     if was_legacy_plaintext and not os.getenv("XROB_PASSWORD"):
-        settings = await load_settings_async()
-        settings["web_password_hash"] = _hash_web_password(password)
-        settings.pop("web_password", None)
-        await asyncio.to_thread(_write_settings_sync, settings)
+        def migrate_legacy_login_sync():
+            with SETTINGS_FILE_LOCK:
+                settings = load_settings()
+                settings["web_password_hash"] = _hash_web_password(password)
+                settings.pop("web_password", None)
+                _write_settings_sync(settings)
+        await asyncio.to_thread(migrate_legacy_login_sync)
     token = _auth_token()
     now = time.time()
     AUTH_SESSIONS[token] = {"created": now, "last_seen": now, "username": expected_user}
@@ -9535,6 +9702,10 @@ async def _api_backup_impl():
     db_snapshot = Path(tempfile.gettempdir()) / f"xrob-db-snapshot-{uuid.uuid4().hex}.db"
 
     def build_backup():
+        # Create secret-bearing archive and DB snapshot files with 0600 permissions
+        # before writing any bytes; chmod after writing alone leaves a brief exposure.
+        _create_private_placeholder(tmp)
+        _create_private_placeholder(db_snapshot)
         # SQLite's native backup API creates a consistent database snapshot even while
         # the application is serving concurrent reads/writes.
         source = sqlite3.connect(DB_FILE, timeout=30.0)
@@ -9572,8 +9743,9 @@ async def _api_backup_impl():
                 except Exception: pass
         return FileResponse(path, media_type="application/zip", filename=f"xrob-music-backup-{stamp}.zip", background=BackgroundTask(cleanup))
     except Exception as exc:
-        try: db_snapshot.unlink(missing_ok=True)
-        except Exception: pass
+        for candidate in (tmp, db_snapshot):
+            try: candidate.unlink(missing_ok=True)
+            except Exception: pass
         await write_app_error("backup", str(exc))
         raise HTTPException(500, f"Backup failed: {exc}")
 
@@ -9612,7 +9784,7 @@ async def api_download_latest_automatic_backup():
 
 
 async def _stop_runtime_for_restore():
-    global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, DOWNLOAD_WORKER_TASKS
+    global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, DOWNLOAD_WORKER_TASKS, LIBRARY_REFRESH_TASK
     tasks = list(DOWNLOAD_WORKER_TASKS) + list(STORAGE_WAIT_TASKS)
     for candidate in (SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK):
         if candidate is not None:
@@ -9626,6 +9798,16 @@ async def _stop_runtime_for_restore():
     STORAGE_WAIT_TASKS.clear()
     SCHEDULED_SCANNER_TASK = None
     LIBRARY_WARMUP_TASK = None
+    # Download completion may have queued a coalesced library re-index. Stop it
+    # before replacing the database and library index so it cannot write stale
+    # review/index data after the restore commits.
+    refresh_task = LIBRARY_REFRESH_TASK
+    LIBRARY_REFRESH_PENDING_PATHS.clear()
+    if refresh_task is not None and not refresh_task.done():
+        refresh_task.cancel()
+        await asyncio.gather(refresh_task, return_exceptions=True)
+    LIBRARY_REFRESH_TASK = None
+    LIBRARY_REFRESH_PENDING_PATHS.clear()
     # Remove queued jobs; the restored DB becomes the sole source of truth.
     while True:
         try:
@@ -9652,10 +9834,25 @@ async def _restart_runtime_after_restore():
 
 @app.post("/api/restore")
 async def api_restore(file: UploadFile = File(...)):
+    global RESTORE_IN_PROGRESS
     if RESTORE_LOCK.locked():
-        raise HTTPException(409, "A restore is already running")
+        raise HTTPException(409, "A backup or restore is already running")
     async with RESTORE_LOCK:
-        return await _api_restore_impl(file)
+        # Raise the request fence atomically with the active-request counter. New
+        # requests are rejected, and existing requests drain before files change.
+        async with ACTIVE_API_REQUESTS_LOCK:
+            RESTORE_IN_PROGRESS = True
+            if ACTIVE_API_REQUESTS == 0:
+                ACTIVE_API_REQUESTS_DRAINED.set()
+        try:
+            await ACTIVE_API_REQUESTS_DRAINED.wait()
+            async with LIBRARY_SCAN_LOCK:
+                return await _api_restore_impl(file)
+        finally:
+            async with ACTIVE_API_REQUESTS_LOCK:
+                RESTORE_IN_PROGRESS = False
+                if ACTIVE_API_REQUESTS == 0:
+                    ACTIVE_API_REQUESTS_DRAINED.set()
 
 
 async def _api_restore_impl(file: UploadFile = File(...)):
@@ -9669,7 +9866,7 @@ async def _api_restore_impl(file: UploadFile = File(...)):
         if not chunk:
             break
         upload_size += len(chunk)
-        if upload_size > 64 * 1024 * 1024:
+        if upload_size > MAX_RESTORE_UPLOAD_BYTES:
             raise HTTPException(413, "Backup is too large (maximum 64 MB)")
         chunks.append(chunk)
     raw = b"".join(chunks)
@@ -9746,6 +9943,10 @@ async def _api_restore_impl(file: UploadFile = File(...)):
 
         await _stop_runtime_for_restore()
         runtime_stopped = True
+        # Await and invalidate any already-dispatched background thread writes.
+        # All writers that started earlier either finish before this lock is
+        # acquired or detect the generation mismatch and no-op afterwards.
+        await asyncio.to_thread(_advance_library_index_generation_sync)
         settings_existed = SETTINGS_FILE.exists()
         index_existed = LIBRARY_INDEX_FILE.exists()
         if settings_existed:
@@ -9801,7 +10002,10 @@ async def _api_restore_impl(file: UploadFile = File(...)):
             os.replace(index_tmp, LIBRARY_INDEX_FILE)
             try: os.chmod(LIBRARY_INDEX_FILE, 0o600)
             except OSError: pass
-        await asyncio.to_thread(write_restore_state)
+        def write_restore_state_locked():
+            with SETTINGS_FILE_LOCK:
+                write_restore_state()
+        await asyncio.to_thread(write_restore_state_locked)
         await asyncio.to_thread(_ensure_secure_web_credentials_sync)
 
         TASKS = await asyncio.to_thread(db_load_tasks_sync)
@@ -9809,9 +10013,16 @@ async def _api_restore_impl(file: UploadFile = File(...)):
         PLAYER_STATE_UPDATED_AT = 0.0
         LIBRARY_CACHE = None
         LIBRARY_CACHE_TIME = 0.0
+        # Restored credentials/settings may differ from the previous install.
+        # Require every browser and failed-login throttle state to re-authenticate.
+        AUTH_SESSIONS.clear()
+        AUTH_LOGIN_ATTEMPTS.clear()
         await _restart_runtime_after_restore()
         runtime_stopped = False
         return {"status":"restored", "tasks":len(TASKS), "safety_backup":str(safety) if safety and safety.exists() else ""}
+    except HTTPException:
+        # Preserve intentional client-facing statuses such as 413 for an oversized upload.
+        raise
     except (zipfile.BadZipFile, ValueError, json.JSONDecodeError) as exc:
         await write_app_error("restore", str(exc))
         raise HTTPException(400, f"Restore rejected: {exc}")
@@ -9838,9 +10049,15 @@ async def _api_restore_impl(file: UploadFile = File(...)):
                             os.replace(settings_tmp, SETTINGS_FILE)
                             try: os.chmod(SETTINGS_FILE, 0o600)
                             except OSError: pass
-                        await asyncio.to_thread(restore_old_settings_private)
+                        def restore_old_settings_private_locked():
+                            with SETTINGS_FILE_LOCK:
+                                restore_old_settings_private()
+                        await asyncio.to_thread(restore_old_settings_private_locked)
                     elif not settings_existed:
-                        await asyncio.to_thread(SETTINGS_FILE.unlink, missing_ok=True)
+                        def remove_restored_settings_locked():
+                            with SETTINGS_FILE_LOCK:
+                                SETTINGS_FILE.unlink(missing_ok=True)
+                        await asyncio.to_thread(remove_restored_settings_locked)
                     if index_existed and old_index_bytes is not None:
                         index_tmp = LIBRARY_INDEX_FILE.with_suffix(".rollback.tmp")
                         await asyncio.to_thread(index_tmp.write_bytes, old_index_bytes)
