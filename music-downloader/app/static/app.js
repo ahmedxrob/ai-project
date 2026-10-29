@@ -216,6 +216,15 @@ async function apiFetch(input, options = {}) {
             });
             if (timeoutId) window.clearTimeout(timeoutId);
             if (detachCallerAbort) detachCallerAbort();
+            const requestedUrl = typeof target === "string" ? target : String(target?.url || "");
+            const isAuthRoute = /\/api\/auth\/(?:login|status|logout)(?:[/?#]|$)/i.test(requestedUrl);
+            const appShell = document.getElementById("app-shell");
+            if (response.status === 401 && !isAuthRoute && appShell && !appShell.hidden && !window.__xrobAuthReloading) {
+                window.__xrobAuthReloading = true;
+                const loginName = document.getElementById("set_web_username")?.value || storageGet("xrob_music_login_user") || "admin";
+                storageSet("xrob_music_login_user", String(loginName).trim().slice(0, 64));
+                window.location.reload();
+            }
             // Never hammer a rate-limited API with an automatic second request.
             // The server already returns Retry-After for callers that need it.
             if (retryable && attempt + 1 < attempts && [408, 502, 503, 504].includes(response.status)) {
@@ -6546,20 +6555,113 @@ async function renderLibraryCollections(mode){
 }
 
 async function loadPlaylistsView(){
-    const list=document.getElementById("libraryList"); if(!list)return; const r=await apiFetch("api/playlists",{cache:"no-store"}); const rows=await r.json(); list.innerHTML="";
-    const head=document.createElement("div"); head.className="catalog-detail-header"; head.innerHTML='<div><h3>Playlists</h3><p>Create manual or smart playlists.</p></div><button class="btn-preview" id="newPlaylistBtn"><i data-lucide="plus" aria-hidden="true"></i> New playlist</button>'; list.appendChild(head);
-    rows.forEach(p=>{const c=document.createElement("article");c.className="catalog-card";c.innerHTML=`<div><strong>${escapeHtml(p.name)}</strong><span>${p.kind==='smart'?'Smart':'Manual'} · ${p.song_count} tracks</span></div><div class="btn-group"><button class="btn-preview"><i data-lucide="play" aria-hidden="true"></i> Play</button><button class="btn-danger"><i data-lucide="trash-2" aria-hidden="true"></i> Delete</button></div>`;c.querySelector('.btn-preview').onclick=async()=>{const rr=await apiFetch(`api/playlists/${encodeURIComponent(p.id)}`);const full=await rr.json();setEnhancedQueue(full.tracks,0);playLibraryTrack(0);};c.querySelector('.btn-danger').onclick=async()=>{if(confirm(`Delete ${p.name}?`)){await apiFetch(`api/playlists/${encodeURIComponent(p.id)}`,{method:'DELETE'});loadPlaylistsView();}};list.appendChild(c);});
-    renderLocalIcons();
-    const newPlaylistButton = head.querySelector("#newPlaylistBtn");
-    newPlaylistButton?.addEventListener("click", async () => {
-        const name=prompt("Playlist name","New Playlist");
-        if(!name) return;
-        const kind=confirm("Make this a smart playlist?\nOK = smart, Cancel = manual") ? 'smart' : 'manual';
-        let rules={};
-        if(kind==='smart'){const genre=prompt("Genre rule (optional)","");const artist=prompt("Artist rule (optional)","");if(genre)rules.genre=genre;if(artist)rules.artist=artist;}
-        const response = await apiFetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind,rules,song_ids:[]})});
-        if (response.ok) loadPlaylistsView(); else showToast("❌ Could not create playlist");
-    });
+    const list=document.getElementById("libraryList");
+    if(!list)return;
+    try{
+        const r=await apiFetch("api/playlists",{cache:"no-store"});
+        if(!r.ok)throw new Error("Could not load playlists");
+        const rows=await r.json();
+        list.innerHTML="";
+        const head=document.createElement("div");head.className="catalog-detail-header";
+        head.innerHTML='<div><h3>Playlists</h3><p>Create, edit and organize your playlists.</p></div><button class="btn-preview" id="newPlaylistBtn"><i data-lucide="plus" aria-hidden="true"></i> New playlist</button>';
+        list.appendChild(head);
+        if(!rows.length){const empty=document.createElement("p");empty.className="empty-state";empty.textContent="No playlists yet. Create one or save your current queue.";list.appendChild(empty);}
+        rows.forEach(p=>{
+            const c=document.createElement("article");c.className="catalog-card";
+            c.innerHTML=`<div><strong>${escapeHtml(p.name)}</strong><span>${p.kind==='smart'?'Smart':'Manual'} · ${Number(p.song_count)||0} tracks</span></div><div class="btn-group"><button class="btn-preview playlist-play-btn" type="button"><i data-lucide="play" aria-hidden="true"></i> Play</button><button class="btn-refresh playlist-edit-btn" type="button"><i data-lucide="pencil" aria-hidden="true"></i> Edit</button><button class="btn-danger playlist-delete-btn" type="button"><i data-lucide="trash-2" aria-hidden="true"></i> Delete</button></div>`;
+            c.querySelector('.playlist-play-btn').onclick=async()=>{
+                try{const rr=await apiFetch(`api/playlists/${encodeURIComponent(p.id)}`);if(!rr.ok)throw new Error("Could not open playlist");const full=await rr.json();if(!full.tracks?.length){showToast("Playlist is empty");return;}setEnhancedQueue(full.tracks,0);playLibraryTrack(0);}
+                catch(err){showToast("❌ "+(err.message||"Could not play playlist"));}
+            };
+            c.querySelector('.playlist-edit-btn').onclick=()=>openPlaylistEditor(p.id);
+            c.querySelector('.playlist-delete-btn').onclick=async()=>{
+                if(!confirm(`Delete ${p.name}?`))return;
+                try{const rr=await apiFetch(`api/playlists/${encodeURIComponent(p.id)}`,{method:'DELETE'});if(!rr.ok)throw new Error("Could not delete playlist");await loadPlaylistsView();showToast("Playlist deleted");}
+                catch(err){showToast("❌ "+(err.message||"Could not delete playlist"));}
+            };
+            list.appendChild(c);
+        });
+        renderLocalIcons();
+        head.querySelector("#newPlaylistBtn")?.addEventListener("click",async()=>{
+            const name=prompt("Playlist name","New Playlist");if(!name?.trim())return;
+            const kind=confirm("Make this a smart playlist?\nOK = smart, Cancel = manual")?'smart':'manual';
+            let rules={};
+            if(kind==='smart'){
+                const genre=prompt("Genre rule (optional)","")||"";
+                const artist=prompt("Artist rule (optional)","")||"";
+                if(genre.trim())rules.genre=genre.trim();if(artist.trim())rules.artist=artist.trim();
+            }
+            try{
+                const response=await apiFetch('api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim(),kind,rules,song_ids:[]})});
+                if(!response.ok){const d=await response.json().catch(()=>({}));throw new Error(d.detail||"Could not create playlist");}
+                const created=await response.json();await openPlaylistEditor(created.id);
+            }catch(err){showToast("❌ "+(err.message||"Could not create playlist"));}
+        });
+    }catch(err){list.innerHTML='<p class="empty-state">Could not load playlists. Check your connection and try again.</p>';showToast("❌ "+(err.message||"Playlist load failed"));}
+}
+
+async function openPlaylistEditor(playlistId){
+    const list=document.getElementById("libraryList");if(!list)return;
+    list.innerHTML='<div class="catalog-detail-header"><div><h3>Playlist editor</h3><p>Loading playlist and library tracks…</p></div><button class="btn-refresh" id="playlistEditorBack" type="button">Back</button></div>';
+    list.querySelector("#playlistEditorBack")?.addEventListener("click",loadPlaylistsView);
+    try{
+        const [pr,lr]=await Promise.all([
+            apiFetch(`api/playlists/${encodeURIComponent(playlistId)}`,{cache:"no-store"}),
+            apiFetch("api/library",{cache:"no-store"})
+        ]);
+        if(!pr.ok)throw new Error("Could not load this playlist");
+        if(!lr.ok)throw new Error("Could not load the music library");
+        const playlist=await pr.json();
+        const rawLibrary=await lr.json();
+        const library=Array.isArray(rawLibrary)?rawLibrary.filter(t=>t&&t.id):[];
+        const byId=new Map(library.map(t=>[String(t.id),t]));
+        (playlist.tracks||[]).forEach(t=>{if(t?.id&&!byId.has(String(t.id)))byId.set(String(t.id),t);});
+        let selectedIds=playlist.kind==='smart'?[]:(Array.isArray(playlist.song_ids)?playlist.song_ids.map(String).filter(id=>byId.has(id)):[]);
+        const smart=playlist.kind==='smart';
+        const rules=playlist.rules&&typeof playlist.rules==='object'?playlist.rules:{};
+        list.innerHTML=`
+          <div class="catalog-detail-header"><div><h3>Edit playlist</h3><p>${smart?'Smart playlists include tracks matching their rules.':'Add, remove or reorder tracks, then save your changes.'}</p></div><button class="btn-refresh" id="playlistEditorBack" type="button">Back to playlists</button></div>
+          <div class="settings-card page-section" style="padding:16px; margin-bottom:16px">
+            <div class="setting-row"><div><div class="setting-label">Playlist name</div></div><input id="playlistEditName" type="text" maxlength="200" value="${escapeHtml(playlist.name||'')}" style="max-width:420px"/></div>
+            <div class="setting-row"><div><div class="setting-label">Description</div></div><input id="playlistEditComment" type="text" maxlength="1000" value="${escapeHtml(playlist.comment||'')}" style="max-width:420px"/></div>
+            ${smart?`<div class="setting-row"><div><div class="setting-label">Genre matches (exact)</div></div><input id="playlistRuleGenre" type="text" maxlength="120" value="${escapeHtml(rules.genre||'')}" style="max-width:300px" placeholder="Any genre"/></div><div class="setting-row"><div><div class="setting-label">Artist matches (exact)</div></div><input id="playlistRuleArtist" type="text" maxlength="160" value="${escapeHtml(rules.artist||'')}" style="max-width:300px" placeholder="Any artist"/></div><div class="setting-row"><div><div class="setting-label">Year</div></div><input id="playlistRuleYear" type="text" maxlength="4" value="${escapeHtml(rules.year||'')}" style="max-width:120px" placeholder="Any year"/></div>`:''}
+            ${smart?'':`<div class="settings-divider">Tracks <span id="playlistSelectedCount">${selectedIds.length} selected</span></div><div class="setting-desc" style="margin-bottom:10px">Search the library to add tracks. Use the arrows to change playback order.</div><input id="playlistTrackSearch" type="search" placeholder="Search title, artist or album" style="width:100%; margin-bottom:10px"/><div id="playlistTrackSearchResults" class="playlist-track-search-results"></div><div class="settings-divider" style="margin-top:16px">Selected tracks</div><div id="playlistSelectedTracks"></div>`}
+            <div class="settings-inline-actions" style="margin-top:16px"><button class="btn-preview" id="playlistEditorSave" type="button">Save playlist</button><button class="btn-refresh" id="playlistEditorCancel" type="button">Cancel</button></div><p id="playlistEditorMessage" class="setting-desc" aria-live="polite"></p>
+          </div>`;
+        list.querySelector("#playlistEditorBack")?.addEventListener("click",loadPlaylistsView);
+        list.querySelector("#playlistEditorCancel")?.addEventListener("click",loadPlaylistsView);
+        const renderSelected=()=>{
+            const target=list.querySelector("#playlistSelectedTracks");if(!target)return;
+            const count=list.querySelector("#playlistSelectedCount");if(count)count.textContent=`${selectedIds.length} selected`;
+            if(!selectedIds.length){target.innerHTML='<p class="empty-state">No tracks selected yet. Search above to add tracks.</p>';return;}
+            target.innerHTML=selectedIds.map((id,index)=>{
+                const t=byId.get(String(id))||{};const label=[t.title||t.name||'Unknown title',t.artist||'Unknown artist'].join(' — ');
+                return `<div class="catalog-card playlist-selected-track" data-track-id="${escapeHtml(id)}"><div><strong>${escapeHtml(label)}</strong><span>Track ${index+1}</span></div><div class="btn-group"><button type="button" class="btn-refresh" data-move="up" aria-label="Move track up" ${index===0?'disabled':''}>↑</button><button type="button" class="btn-refresh" data-move="down" aria-label="Move track down" ${index===selectedIds.length-1?'disabled':''}>↓</button><button type="button" class="btn-danger" data-remove-track>Remove</button></div></div>`;
+            }).join('');
+            target.querySelectorAll("[data-remove-track]").forEach(btn=>btn.addEventListener("click",()=>{const id=btn.closest("[data-track-id]")?.dataset.trackId;selectedIds=selectedIds.filter(value=>value!==id);renderSelected();renderSearch();}));
+            target.querySelectorAll("[data-move]").forEach(btn=>btn.addEventListener("click",()=>{const row=btn.closest("[data-track-id]");const id=row?.dataset.trackId;const old=selectedIds.indexOf(id);const next=old+(btn.dataset.move==='up'?-1:1);if(old<0||next<0||next>=selectedIds.length)return;[selectedIds[old],selectedIds[next]]=[selectedIds[next],selectedIds[old]];renderSelected();}));
+        };
+        const renderSearch=()=>{
+            const target=list.querySelector("#playlistTrackSearchResults");if(!target)return;
+            const q=String(list.querySelector("#playlistTrackSearch")?.value||'').trim().toLowerCase();
+            const hits=library.filter(t=>![...selectedIds].includes(String(t.id))&&[t.title,t.name,t.artist,t.album].some(value=>String(value||'').toLowerCase().includes(q))).slice(0,60);
+            if(!hits.length){target.innerHTML='<p class="setting-desc">No matching unselected tracks.</p>';return;}
+            target.innerHTML=hits.map(t=>`<div class="catalog-card" data-add-track-id="${escapeHtml(String(t.id))}"><div><strong>${escapeHtml(t.title||t.name||'Unknown title')}</strong><span>${escapeHtml(t.artist||'Unknown artist')} · ${escapeHtml(t.album||'')}</span></div><button class="btn-preview" type="button" data-add-track>Add</button></div>`).join('');
+            target.querySelectorAll("[data-add-track]").forEach(btn=>btn.addEventListener("click",()=>{const id=btn.closest("[data-add-track-id]")?.dataset.addTrackId;if(!id||selectedIds.includes(id))return;if(selectedIds.length>=10000){showToast("Playlist reached the 10,000-track limit");return;}selectedIds.push(id);renderSelected();renderSearch();}));
+        };
+        if(!smart){list.querySelector("#playlistTrackSearch")?.addEventListener("input",renderSearch);renderSelected();renderSearch();}
+        list.querySelector("#playlistEditorSave")?.addEventListener("click",async()=>{
+            const message=list.querySelector("#playlistEditorMessage");const save=list.querySelector("#playlistEditorSave");
+            const name=String(list.querySelector("#playlistEditName")?.value||'').trim();
+            if(!name){if(message)message.textContent="Enter a playlist name.";return;}
+            const payload={name,comment:String(list.querySelector("#playlistEditComment")?.value||'').trim(),kind:playlist.kind,song_ids:smart?(playlist.song_ids||[]):selectedIds};
+            if(smart){const nextRules={};const genre=String(list.querySelector("#playlistRuleGenre")?.value||'').trim();const artist=String(list.querySelector("#playlistRuleArtist")?.value||'').trim();const year=String(list.querySelector("#playlistRuleYear")?.value||'').trim();if(genre)nextRules.genre=genre;if(artist)nextRules.artist=artist;if(year)nextRules.year=year;payload.rules=nextRules;}
+            if(save)save.disabled=true;if(message)message.textContent="Saving…";
+            try{const response=await apiFetch(`api/playlists/${encodeURIComponent(playlistId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||"Could not save playlist");showToast("✅ Playlist saved");await loadPlaylistsView();}
+            catch(err){if(message)message.textContent="❌ "+(err.message||"Could not save playlist");showToast("❌ "+(err.message||"Could not save playlist"));if(save)save.disabled=false;}
+        });
+        renderLocalIcons();
+    }catch(err){list.innerHTML='<p class="empty-state">Could not open playlist editor. Return to playlists and try again.</p><button class="btn-refresh" id="playlistEditorBack" type="button">Back to playlists</button>';list.querySelector("#playlistEditorBack")?.addEventListener("click",loadPlaylistsView);showToast("❌ "+(err.message||"Playlist editor failed"));}
 }
 
 let songEditorTracks = [];
@@ -7506,15 +7608,15 @@ function applySettingsToFormV37(settings){
     setValue("set_format",settings.audio_format||"mp3");setValue("set_quality",settings.audio_quality||"320K");setValue("set_metadata_mode",settings.metadata_mode||"auto");const artworkMode=settings.artwork_behavior||((settings.embed_thumbnail!==false)?"embed":"none");setValue("set_artwork_behavior",artworkMode);setChecked("set_meta",settings.embed_metadata);setChecked("set_organize",settings.organize_by_artist);setChecked("set_scan_enabled",settings.scan_enabled!==false);setValue("set_scan_interval",settings.scan_interval_minutes||60);setValue("set_title_cleanup_rules",settings.title_cleanup_rules||"");setValue("set_daily_mix_count",Math.max(5,Math.min(50,Number(settings.daily_mix_track_count||30))));storageSet("xrob_music_daily_mix_count",String(settings.daily_mix_track_count||30));
     playerSettings={...playerSettings,replaygain_enabled:settings.replaygain_enabled!==false,replaygain_mode:settings.replaygain_mode||"track",replaygain_preamp_db:Number(settings.replaygain_preamp_db||0),replaygain_prevent_clipping:settings.replaygain_prevent_clipping!==false,crossfade_seconds:Number(settings.crossfade_seconds||0),gapless_playback:settings.gapless_playback!==false};
     setChecked("set_replaygain_enabled",playerSettings.replaygain_enabled);setValue("set_replaygain_mode",playerSettings.replaygain_mode);setValue("set_replaygain_preamp",playerSettings.replaygain_preamp_db);setChecked("set_replaygain_clip",playerSettings.replaygain_prevent_clipping);setValue("set_crossfade",playerSettings.crossfade_seconds);setChecked("set_gapless",playerSettings.gapless_playback);
-    setValue("set_download_location",settings.download_location||"");setValue("set_max_concurrent",settings.max_concurrent_downloads||3);setChecked("set_auto_retry",settings.auto_retry_downloads!==false);setValue("set_retry_limit",settings.download_retry_limit??2);setValue("set_retry_backoff",settings.download_retry_backoff_seconds||3);setValue("set_filename_mode",settings.filename_mode||"title");setValue("set_cache_size",settings.cache_size_mb||256);setValue("set_stats_retention",settings.stats_retention_days||365);setValue("set_backup_retention",[1,2,3,5].includes(Number(settings.automatic_backup_retention))?Number(settings.automatic_backup_retention):2);setValue("set_device_name",v37DeviceName());setValue("set_web_username",settings.web_username||"admin");setValue("set_web_password","");setValue("set_telegram_bot_token","");setValue("set_telegram_chat_id","");setChecked("set_telegram_enabled",settings.telegram_enabled===true);setChecked("set_telegram_daily_report",settings.telegram_daily_report!==false);const tgStatus=document.getElementById("telegramBotStatus");if(tgStatus){const creds=!!settings.telegram_bot_token_set&&!!settings.telegram_chat_id_set;tgStatus.textContent=creds?(settings.telegram_enabled?"Configured · monitoring enabled":"Credentials saved · monitoring disabled"):"Not configured · add a bot token and chat ID";tgStatus.dataset.state=creds?(settings.telegram_enabled?"success":"warning"):"error";}renderStorage(settings.storage);const subsonicStatus=document.getElementById("openSubsonicStatus");if(subsonicStatus){const enabled=settings.subsonic_password_set===true;subsonicStatus.textContent=enabled?"Enabled":"Disabled";subsonicStatus.dataset.state=enabled?"success":"error";}updateQualityState();
+    setValue("set_download_location",settings.download_location||"");setValue("set_max_concurrent",settings.max_concurrent_downloads||3);setChecked("set_auto_retry",settings.auto_retry_downloads!==false);setValue("set_retry_limit",settings.download_retry_limit??2);setValue("set_retry_backoff",settings.download_retry_backoff_seconds||3);setValue("set_filename_mode",settings.filename_mode||"title");setValue("set_cache_size",settings.metadata_cache_entries||2048);setValue("set_stats_retention",settings.stats_retention_days||365);setValue("set_backup_retention",[1,2,3,5].includes(Number(settings.automatic_backup_retention))?Number(settings.automatic_backup_retention):2);setValue("set_device_name",v37DeviceName());setValue("set_web_username",settings.web_username||"admin");setValue("set_web_password","");setValue("set_telegram_bot_token","");setValue("set_telegram_chat_id","");setChecked("set_telegram_enabled",settings.telegram_enabled===true);setChecked("set_telegram_daily_report",settings.telegram_daily_report!==false);const tgStatus=document.getElementById("telegramBotStatus");if(tgStatus){const creds=!!settings.telegram_bot_token_set&&!!settings.telegram_chat_id_set;tgStatus.textContent=creds?(settings.telegram_enabled?"Configured · monitoring enabled":"Credentials saved · monitoring disabled"):"Not configured · add a bot token and chat ID";tgStatus.dataset.state=creds?(settings.telegram_enabled?"success":"warning"):"error";}renderStorage(settings.storage);const subsonicStatus=document.getElementById("openSubsonicStatus");if(subsonicStatus){const enabled=settings.subsonic_password_set===true;subsonicStatus.textContent=enabled?"Enabled":"Disabled";subsonicStatus.dataset.state=enabled?"success":"error";}updateQualityState();
 }
 async function saveSettingsV37(){
     const gv=id=>document.getElementById(id)?.value||"",gc=id=>document.getElementById(id)?.checked??false;
     const artwork=gv("set_artwork_behavior")||"embed";
-    const data={audio_format:gv("set_format")||"mp3",audio_quality:gv("set_quality")||"320K",metadata_mode:gv("set_metadata_mode")||"auto",embed_thumbnail:artwork==="embed",embed_metadata:gc("set_meta"),organize_by_artist:gc("set_organize"),scan_enabled:gc("set_scan_enabled"),scan_interval_minutes:Math.max(5,Number(gv("set_scan_interval")||60)),title_cleanup_rules:gv("set_title_cleanup_rules"),daily_mix_track_count:Math.max(5,Math.min(50,Number(gv("set_daily_mix_count")||30))),replaygain_enabled:gc("set_replaygain_enabled"),replaygain_mode:gv("set_replaygain_mode")||"track",replaygain_preamp_db:Math.max(-12,Math.min(12,Number(gv("set_replaygain_preamp")||0))),replaygain_prevent_clipping:gc("set_replaygain_clip"),crossfade_seconds:Math.max(0,Math.min(12,Number(gv("set_crossfade")||0))),gapless_playback:gc("set_gapless"),web_username:gv("set_web_username")||"admin",download_location:gv("set_download_location").trim(),max_concurrent_downloads:Math.max(1,Math.min(8,Number(gv("set_max_concurrent")||3))),auto_retry_downloads:gc("set_auto_retry"),download_retry_limit:Math.max(0,Math.min(5,Number(gv("set_retry_limit")||2))),download_retry_backoff_seconds:Math.max(1,Math.min(60,Number(gv("set_retry_backoff")||3))),artwork_behavior:artwork,filename_mode:gv("set_filename_mode")||"title",cache_size_mb:Math.max(32,Math.min(2048,Number(gv("set_cache_size")||256))),stats_retention_days:Math.max(30,Math.min(3650,Number(gv("set_stats_retention")||365))),automatic_backup_retention:[1,2,3,5].includes(Number(gv("set_backup_retention")||2))?Number(gv("set_backup_retention")||2):2,telegram_enabled:gc("set_telegram_enabled"),telegram_daily_report:gc("set_telegram_daily_report"),...(gv("set_telegram_bot_token").trim()?{telegram_bot_token:gv("set_telegram_bot_token").trim()}:{}),...(gv("set_telegram_chat_id").trim()?{telegram_chat_id:gv("set_telegram_chat_id").trim()}:{}),...(gv("set_web_password")?{web_password:gv("set_web_password")}: {})};
-    try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Failed to save settings.");applySettingsToFormV37(d);saveV37DeviceName();if(document.getElementById("tab-home")?.classList.contains("active"))loadDailyMix();applyReplayGainToActiveAudio(activeQueueTrack());stopCrossfadePreload();showToast("✅ Settings saved");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent=data.download_location?"Settings saved. Restart Xrob Music to apply a changed download location.":"Settings saved.";loadV37Devices();}catch(err){const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="❌ "+(err.message||"Failed to save settings.");showToast("❌ "+(err.message||"Failed to save settings."));}
+    const data={audio_format:gv("set_format")||"mp3",audio_quality:gv("set_quality")||"320K",metadata_mode:gv("set_metadata_mode")||"auto",embed_thumbnail:artwork==="embed",embed_metadata:gc("set_meta"),organize_by_artist:gc("set_organize"),scan_enabled:gc("set_scan_enabled"),scan_interval_minutes:Math.max(5,Number(gv("set_scan_interval")||60)),title_cleanup_rules:gv("set_title_cleanup_rules"),daily_mix_track_count:Math.max(5,Math.min(50,Number(gv("set_daily_mix_count")||30))),replaygain_enabled:gc("set_replaygain_enabled"),replaygain_mode:gv("set_replaygain_mode")||"track",replaygain_preamp_db:Math.max(-12,Math.min(12,Number(gv("set_replaygain_preamp")||0))),replaygain_prevent_clipping:gc("set_replaygain_clip"),crossfade_seconds:Math.max(0,Math.min(12,Number(gv("set_crossfade")||0))),gapless_playback:gc("set_gapless"),web_username:gv("set_web_username")||"admin",download_location:gv("set_download_location").trim(),max_concurrent_downloads:Math.max(1,Math.min(8,Number(gv("set_max_concurrent")||3))),auto_retry_downloads:gc("set_auto_retry"),download_retry_limit:Math.max(0,Math.min(5,Number(gv("set_retry_limit")||2))),download_retry_backoff_seconds:Math.max(1,Math.min(60,Number(gv("set_retry_backoff")||3))),artwork_behavior:artwork,filename_mode:gv("set_filename_mode")||"title",metadata_cache_entries:Math.max(256,Math.min(10000,Number(gv("set_cache_size")||2048))),stats_retention_days:Math.max(30,Math.min(3650,Number(gv("set_stats_retention")||365))),automatic_backup_retention:[1,2,3,5].includes(Number(gv("set_backup_retention")||2))?Number(gv("set_backup_retention")||2):2,telegram_enabled:gc("set_telegram_enabled"),telegram_daily_report:gc("set_telegram_daily_report"),...(gv("set_telegram_bot_token").trim()?{telegram_bot_token:gv("set_telegram_bot_token").trim()}:{}),...(gv("set_telegram_chat_id").trim()?{telegram_chat_id:gv("set_telegram_chat_id").trim()}:{}),...(gv("set_web_password")?{web_password:gv("set_web_password")}: {})};
+    try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Failed to save settings.");if(d.requires_relogin){storageSet("xrob_music_login_user",String(data.web_username||"admin").trim().slice(0,64));window.location.reload();return;}applySettingsToFormV37(d);saveV37DeviceName();if(document.getElementById("tab-home")?.classList.contains("active"))loadDailyMix();applyReplayGainToActiveAudio(activeQueueTrack());stopCrossfadePreload();showToast("✅ Settings saved");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent=data.download_location?"Settings saved. Restart Xrob Music to apply a changed download location.":"Settings saved.";loadV37Devices();}catch(err){const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="❌ "+(err.message||"Failed to save settings.");showToast("❌ "+(err.message||"Failed to save settings."));}
 }
-async function resetSettingsV37(){if(!window.confirm("Restore download, player and library defaults? Your login/account will stay unchanged."))return;const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,download_location:"",max_concurrent_downloads:3,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",cache_size_mb:256,stats_retention_days:365,automatic_backup_retention:2};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToFormV37(d);if(document.getElementById("tab-home")?.classList.contains("active"))loadDailyMix();applyReplayGainToActiveAudio(activeQueueTrack());stopCrossfadePreload();showToast("↺ Defaults restored");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="Defaults restored. Your login/account was not changed.";}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
+async function resetSettingsV37(){if(!window.confirm("Restore download, player and library defaults? Your login/account will stay unchanged."))return;const defaults={audio_format:"mp3",audio_quality:"320K",metadata_mode:"auto",embed_thumbnail:true,embed_metadata:true,organize_by_artist:false,scan_enabled:true,scan_interval_minutes:60,title_cleanup_rules:"(Visualizer)\n[Visualizer]\nOfficial Video\nOfficial Music Video\nVideo Clip",daily_mix_track_count:30,replaygain_enabled:true,replaygain_mode:"track",replaygain_preamp_db:0,replaygain_prevent_clipping:true,crossfade_seconds:0,gapless_playback:true,download_location:"",max_concurrent_downloads:3,auto_retry_downloads:true,download_retry_limit:2,download_retry_backoff_seconds:3,artwork_behavior:"embed",filename_mode:"title",metadata_cache_entries:2048,stats_retention_days:365,automatic_backup_retention:2};try{const r=await apiFetch("api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(defaults)}),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Reset failed");applySettingsToFormV37(d);if(document.getElementById("tab-home")?.classList.contains("active"))loadDailyMix();applyReplayGainToActiveAudio(activeQueueTrack());stopCrossfadePreload();showToast("↺ Defaults restored");const msg=document.getElementById("settingsMsg");if(msg)msg.textContent="Defaults restored. Your login/account was not changed.";}catch(err){showToast("❌ "+(err.message||"Reset failed"));}}
 
 function v37WrapFetchers(){
     const rawPoll= pollTasks;
