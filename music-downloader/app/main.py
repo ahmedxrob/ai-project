@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.4.13"
+SERVER_VERSION = "4.4.14"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -88,6 +88,22 @@ app = FastAPI(
 async def web_auth_middleware(request: Request, call_next):
     global ACTIVE_API_REQUESTS
     path = request.url.path
+
+    # Reject obviously oversized restore requests before FastAPI parses the
+    # multipart body. The handler still enforces the exact ZIP byte limit for
+    # requests without a Content-Length header or with misleading boundaries.
+    if path == "/api/restore" and request.method == "POST":
+        content_length = request.headers.get("content-length", "").strip()
+        # Normalize leading zeroes before parsing. Any over-limit significant
+        # digit count is certainly too large; this avoids converting attacker-
+        # supplied thousands-of-digits headers into an unhandled ValueError.
+        if content_length.isdigit():
+            significant_length = content_length.lstrip("0")
+            early_limit = MAX_RESTORE_UPLOAD_BYTES + 1024 * 1024
+            if len(significant_length) > len(str(early_limit)) or (
+                significant_length and int(significant_length) > early_limit
+            ):
+                return JSONResponse({"detail": "Backup is too large (maximum 64 MB)"}, status_code=413)
 
     # Health and auth bootstrap/session endpoints must remain available during a
     # restore. The restore request itself handles the RESTORE_LOCK directly.
@@ -169,11 +185,17 @@ AUTH_SESSION_MAX = 256
 AUTH_LOGIN_ATTEMPTS = defaultdict(list)
 AUTH_LOGIN_WINDOW = 300
 AUTH_LOGIN_MAX_ATTEMPTS = 5
+AUTH_LOGIN_MAX_CLIENTS = 2048
+AUTH_LOGIN_TELEGRAM_NOTICE_INTERVAL = 300
+AUTH_LOGIN_LAST_TELEGRAM_NOTICE = {}
 # Lightweight per-client API throttling for expensive external-provider operations.
 RATE_LIMIT_STATE = defaultdict(list)
 RATE_LIMIT_LOCK = asyncio.Lock()
 SEARCH_RATE_LIMIT = (30, 60.0)   # requests / rolling window / client
 PREVIEW_RATE_LIMIT = (12, 60.0)  # requests / rolling window / client
+PREVIEW_MAX_CONCURRENT = 3
+PREVIEW_SLOT_WAIT_SECONDS = 0.05
+PREVIEW_SEMAPHORE = asyncio.Semaphore(PREVIEW_MAX_CONCURRENT)
 # yt-dlp search pagination is implemented as a bounded ytsearch{N} lookup.
 # Keep the externally requested page count tight so a malicious/deep scroll
 # cannot turn page=500 into a 25,000-result provider request.
@@ -291,19 +313,100 @@ def _current_web_credentials():
 def _auth_client_key(request: Request):
     return request.client.host if request.client else "unknown"
 
+def _prune_auth_login_state(now=None):
+    """Bound unauthenticated login state so unique source IPs cannot grow it forever."""
+    now = time.time() if now is None else float(now)
+    for key, attempts in list(AUTH_LOGIN_ATTEMPTS.items()):
+        fresh = [stamp for stamp in attempts if now - stamp < AUTH_LOGIN_WINDOW]
+        if fresh:
+            AUTH_LOGIN_ATTEMPTS[key] = fresh
+        else:
+            AUTH_LOGIN_ATTEMPTS.pop(key, None)
+    if len(AUTH_LOGIN_ATTEMPTS) > AUTH_LOGIN_MAX_CLIENTS:
+        oldest = sorted(AUTH_LOGIN_ATTEMPTS.items(), key=lambda item: item[1][-1] if item[1] else 0)
+        for key, _attempts in oldest[:len(AUTH_LOGIN_ATTEMPTS) - AUTH_LOGIN_MAX_CLIENTS]:
+            AUTH_LOGIN_ATTEMPTS.pop(key, None)
+    for key, stamp in list(AUTH_LOGIN_LAST_TELEGRAM_NOTICE.items()):
+        if now - stamp >= AUTH_LOGIN_TELEGRAM_NOTICE_INTERVAL:
+            AUTH_LOGIN_LAST_TELEGRAM_NOTICE.pop(key, None)
+    if len(AUTH_LOGIN_LAST_TELEGRAM_NOTICE) > AUTH_LOGIN_MAX_CLIENTS:
+        oldest_notices = sorted(AUTH_LOGIN_LAST_TELEGRAM_NOTICE.items(), key=lambda item: item[1])
+        for key, _stamp in oldest_notices[:len(AUTH_LOGIN_LAST_TELEGRAM_NOTICE) - AUTH_LOGIN_MAX_CLIENTS]:
+            AUTH_LOGIN_LAST_TELEGRAM_NOTICE.pop(key, None)
+
 def _login_blocked(request: Request):
     now = time.time()
+    _prune_auth_login_state(now)
     key = _auth_client_key(request)
-    attempts = [t for t in AUTH_LOGIN_ATTEMPTS.get(key, []) if now - t < AUTH_LOGIN_WINDOW]
-    AUTH_LOGIN_ATTEMPTS[key] = attempts
+    attempts = AUTH_LOGIN_ATTEMPTS.get(key, [])
     return len(attempts) >= AUTH_LOGIN_MAX_ATTEMPTS
 
 def _record_login_failure(request: Request):
+    now = time.time()
+    _prune_auth_login_state(now)
     key = _auth_client_key(request)
-    AUTH_LOGIN_ATTEMPTS[key].append(time.time())
+    # An adversarial number of unique IPs cannot exceed the bounded key count.
+    if key not in AUTH_LOGIN_ATTEMPTS and len(AUTH_LOGIN_ATTEMPTS) >= AUTH_LOGIN_MAX_CLIENTS:
+        oldest_key = min(AUTH_LOGIN_ATTEMPTS, key=lambda item: AUTH_LOGIN_ATTEMPTS[item][-1] if AUTH_LOGIN_ATTEMPTS[item] else 0)
+        AUTH_LOGIN_ATTEMPTS.pop(oldest_key, None)
+    AUTH_LOGIN_ATTEMPTS[key].append(now)
+    return len(AUTH_LOGIN_ATTEMPTS[key])
+
+def _should_send_login_failure_notice(client_key, now=None):
+    """Send at most one failure alert per source every five minutes."""
+    now = time.time() if now is None else float(now)
+    _prune_auth_login_state(now)
+    last = AUTH_LOGIN_LAST_TELEGRAM_NOTICE.get(client_key)
+    if last is not None and now - last < AUTH_LOGIN_TELEGRAM_NOTICE_INTERVAL:
+        return False
+    if len(AUTH_LOGIN_LAST_TELEGRAM_NOTICE) >= AUTH_LOGIN_MAX_CLIENTS and client_key not in AUTH_LOGIN_LAST_TELEGRAM_NOTICE:
+        oldest_key = min(AUTH_LOGIN_LAST_TELEGRAM_NOTICE, key=AUTH_LOGIN_LAST_TELEGRAM_NOTICE.get)
+        AUTH_LOGIN_LAST_TELEGRAM_NOTICE.pop(oldest_key, None)
+    AUTH_LOGIN_LAST_TELEGRAM_NOTICE[client_key] = now
+    return True
+
+async def _send_failed_login_telegram_notice(client_ip, attempted_username, failure_count):
+    """Send a security alert without ever including the submitted password."""
+    try:
+        settings_now = await load_settings_async()
+        if not settings_now.get("telegram_enabled"):
+            return
+        token = str(settings_now.get("telegram_bot_token") or "").strip()
+        chat_id = str(settings_now.get("telegram_chat_id") or "").strip()
+        if not token or not chat_id:
+            return
+        # Reserve the per-source notification window only when Telegram is
+        # actually configured and enabled. A failed login while alerts are off
+        # must not suppress the first alert after the user enables them.
+        if not _should_send_login_failure_notice(client_ip):
+            return
+        safe_user = "".join(ch for ch in str(attempted_username or "(empty)")[:64] if ord(ch) >= 32 and ord(ch) != 127) or "(empty)"
+        safe_ip = "".join(ch for ch in str(client_ip or "unknown")[:64] if ord(ch) >= 32 and ord(ch) != 127) or "unknown"
+        when = time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime())
+        message = (
+            "⚠️ Xrob Music security alert\n"
+            "Failed web login attempt\n"
+            f"Username attempted: {safe_user}\n"
+            f"Source IP: {safe_ip}\n"
+            f"Failed attempts in the last 5 minutes: {int(failure_count)}\n"
+            f"Server time: {when}\n"
+            "The submitted password was not recorded or included."
+        )
+        ok, detail = await asyncio.to_thread(_telegram_send_message_sync, token, chat_id, message)
+        if not ok:
+            # Avoid losing evidence of an alert failure, but never include the
+            # bot token, submitted password, or other secret values in logs.
+            safe_detail = str(detail or "Telegram rejected the alert").replace(token, "[redacted]")[:240]
+            await write_app_error("failed_login_telegram_alert", safe_detail)
+            print("Xrob Music: failed-login Telegram alert was not delivered.", flush=True)
+    except Exception as exc:
+        # A notification failure must never turn a rejected login into a 500.
+        print(f"Xrob Music: failed-login Telegram alert could not be sent ({type(exc).__name__}).", flush=True)
 
 def _clear_login_failures(request: Request):
-    AUTH_LOGIN_ATTEMPTS.pop(_auth_client_key(request), None)
+    key = _auth_client_key(request)
+    AUTH_LOGIN_ATTEMPTS.pop(key, None)
+    AUTH_LOGIN_LAST_TELEGRAM_NOTICE.pop(key, None)
 
 
 async def _enforce_rate_limit(request: Request, bucket: str, limit: int, window_seconds: float):
@@ -404,7 +507,7 @@ DEFAULT_SETTINGS = {
     "download_retry_limit": 2,
     "download_retry_backoff_seconds": 3,
     "artwork_behavior": "embed",
-    "cache_size_mb": 256,
+    "metadata_cache_entries": 2048,
     "filename_mode": "title",
     "stats_retention_days": 365,
     "automatic_backup_retention": 2,
@@ -758,6 +861,15 @@ def load_settings():
 
             if isinstance(data, dict):
                 settings.update(data)
+                # Version 4.4.14 changes the misleading historical MB control
+                # into an explicit entry capacity. Preserve the old effective
+                # capacity (legacy MB value * 8) when migrating existing files.
+                if "metadata_cache_entries" not in data and "cache_size_mb" in data:
+                    try:
+                        settings["metadata_cache_entries"] = int(data.get("cache_size_mb") or 256) * 8
+                    except (TypeError, ValueError):
+                        settings["metadata_cache_entries"] = 2048
+                settings.pop("cache_size_mb", None)
 
         except Exception:
             pass
@@ -831,14 +943,13 @@ def load_settings():
     if settings["artwork_behavior"] not in {"embed", "download", "none"}:
         settings["artwork_behavior"] = "embed"
     try:
-        settings["cache_size_mb"] = max(32, min(2048, int(settings.get("cache_size_mb", 256) or 256)))
+        settings["metadata_cache_entries"] = max(256, min(10000, int(settings.get("metadata_cache_entries", 2048) or 2048)))
     except (TypeError, ValueError):
-        settings["cache_size_mb"] = 256
-    # Keep the user-facing cache setting meaningful without pretending artwork is
-    # held entirely in RAM: metadata/search lookup caches scale with this value,
-    # while artwork is primarily served from disk/browser cache.
+        settings["metadata_cache_entries"] = 2048
+    # This limits the number of metadata/search cache entries, not their byte size.
     global METADATA_CACHE_MAX
-    METADATA_CACHE_MAX = max(256, min(10000, settings["cache_size_mb"] * 8))
+    METADATA_CACHE_MAX = settings["metadata_cache_entries"]
+    settings.pop("cache_size_mb", None)
     settings["filename_mode"] = str(settings.get("filename_mode") or "title").lower()
     if settings["filename_mode"] not in {"title", "artist-title", "artist-album-title"}:
         settings["filename_mode"] = "title"
@@ -865,6 +976,15 @@ def _save_settings_unlocked(data: dict):
     if not isinstance(data, dict):
         raise ValueError("Settings must be an object.")
 
+    data = dict(data)
+    # Backwards compatibility for a stale browser tab running the old UI.
+    if "metadata_cache_entries" not in data and "cache_size_mb" in data:
+        try:
+            data["metadata_cache_entries"] = int(data.get("cache_size_mb") or 256) * 8
+        except (TypeError, ValueError):
+            data["metadata_cache_entries"] = 2048
+        data.pop("cache_size_mb", None)
+
     settings = load_settings()
     previous_download_location = str(settings.get("download_location") or "").strip()
     allowed = {
@@ -874,7 +994,7 @@ def _save_settings_unlocked(data: dict):
         "replaygain_enabled", "replaygain_mode", "replaygain_preamp_db", "replaygain_prevent_clipping",
         "crossfade_seconds", "gapless_playback", "web_username", "web_password",
         "download_location", "max_concurrent_downloads", "auto_retry_downloads", "download_retry_limit",
-        "download_retry_backoff_seconds", "artwork_behavior", "cache_size_mb", "filename_mode", "stats_retention_days",
+        "download_retry_backoff_seconds", "artwork_behavior", "metadata_cache_entries", "filename_mode", "stats_retention_days",
         "automatic_backup_retention", "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_daily_report",
     }
 
@@ -982,11 +1102,12 @@ def _save_settings_unlocked(data: dict):
     if settings["artwork_behavior"] not in {"embed", "download", "none"}:
         settings["artwork_behavior"] = "embed"
     try:
-        settings["cache_size_mb"] = max(32, min(2048, int(settings.get("cache_size_mb", 256) or 256)))
+        settings["metadata_cache_entries"] = max(256, min(10000, int(settings.get("metadata_cache_entries", 2048) or 2048)))
     except (TypeError, ValueError):
-        settings["cache_size_mb"] = 256
+        settings["metadata_cache_entries"] = 2048
     global METADATA_CACHE_MAX
-    METADATA_CACHE_MAX = max(256, min(10000, settings["cache_size_mb"] * 8))
+    METADATA_CACHE_MAX = settings["metadata_cache_entries"]
+    settings.pop("cache_size_mb", None)
     settings["filename_mode"] = str(settings.get("filename_mode") or "title").lower()
     if settings["filename_mode"] not in {"title", "artist-title", "artist-album-title"}:
         settings["filename_mode"] = "title"
@@ -4445,6 +4566,8 @@ async def telegram_health_monitor():
 
 async def startup_event():
 
+    if shutil.which("deno") is None:
+        print("WARNING: Deno is not installed. YouTube extraction may fail; rebuild the image/add-on with the updated Dockerfile.", flush=True)
     await asyncio.to_thread(configure_storage)
     await asyncio.to_thread(init_db)
     await asyncio.to_thread(_ensure_secure_web_credentials_sync)
@@ -4587,6 +4710,13 @@ async def api_get_settings():
 async def api_post_settings(
     data: dict = Body(...),
 ):
+    old_settings = await load_settings_async()
+    old_username = str(old_settings.get("web_username") or AUTH_USER or "admin")
+    if "web_username" in data:
+        new_username = str(data.get("web_username") or AUTH_USER or "admin")[:64]
+    else:
+        new_username = old_username
+    account_changed = (new_username != old_username) or bool(str(data.get("web_password") or ""))
     try:
         await save_settings_async(data)
     except ValueError as exc:
@@ -4598,7 +4728,9 @@ async def api_post_settings(
         )
     except Exception as exc:
         await write_app_error("worker_scaling", str(exc))
-    return await public_settings_async()
+    result = await public_settings_async()
+    result["requires_relogin"] = account_changed
+    return result
 
 
 @app.post("/api/telegram/test")
@@ -4889,56 +5021,50 @@ async def api_preview(
     request: Request,
     url: str = Query(...),
 ):
-
     await _enforce_rate_limit(request, "preview", *PREVIEW_RATE_LIMIT)
     url = validate_media_url(url)
 
     try:
-        process = await asyncio.create_subprocess_exec(
-            *YT_DLP_COMMAND,
-            "-g",
-            "-f",
-            "ba/bestaudio/b",
-            url,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed.",
-        ) from exc
+        await asyncio.wait_for(PREVIEW_SEMAPHORE.acquire(), timeout=PREVIEW_SLOT_WAIT_SECONDS)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(503, "Preview capacity is busy. Stop another preview and try again.", headers={"Retry-After": "5"}) from exc
 
-    stdout, stderr = await communicate_with_timeout(process, PREVIEW_LOOKUP_TIMEOUT_SECONDS, "Preview lookup")
+    slot_owned = True
+    lookup_process = None
+    ffmpeg_process = None
+    try:
+        try:
+            lookup_process = await asyncio.create_subprocess_exec(
+                *YT_DLP_COMMAND,
+                "-g",
+                "-f",
+                "ba/bestaudio/b",
+                url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="yt-dlp is not installed in the Xrob Music container. Rebuild the add-on so requirements.txt is installed.",
+            ) from exc
 
-    if (
-        process.returncode != 0
-        or not stdout
-    ):
+        try:
+            stdout, stderr = await communicate_with_timeout(lookup_process, PREVIEW_LOOKUP_TIMEOUT_SECONDS, "Preview lookup")
+        except RuntimeError as exc:
+            raise HTTPException(504, "Preview lookup timed out. Please try again.") from exc
 
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                stderr.decode(
-                    "utf-8",
-                    errors="ignore",
-                )[-1000:]
-                or "Preview unavailable."
-            ),
-        )
+        if lookup_process.returncode != 0 or not stdout:
+            detail = stderr.decode("utf-8", errors="ignore")[-1000:] or "Preview unavailable."
+            raise HTTPException(502, detail)
 
-    direct_url = (
-        stdout.decode(
-            "utf-8",
-            errors="ignore",
-        )
-        .strip()
-        .splitlines()[0]
-    )
+        direct_url = stdout.decode("utf-8", errors="ignore").strip().splitlines()[0]
+        if not direct_url:
+            raise HTTPException(502, "Preview provider returned an empty media URL.")
 
-    ffmpeg = (
-        await asyncio.create_subprocess_exec(
-            "ffmpeg",
+        ffmpeg_process = await asyncio.create_subprocess_exec(
+            FFMPEG_COMMAND[0],
+            "-nostdin",
             "-i",
             direct_url,
             "-t",
@@ -4951,47 +5077,86 @@ async def api_preview(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-    )
 
-    async def generator():
-        started = time.monotonic()
-        try:
-            while True:
-                if time.monotonic() - started > PREVIEW_STREAM_TIMEOUT_SECONDS:
-                    raise RuntimeError("Preview stream timed out")
-                chunk = await asyncio.wait_for(ffmpeg.stdout.read(64 * 1024), timeout=15)
-                if not chunk:
-                    break
-                yield chunk
-        except (asyncio.TimeoutError, RuntimeError):
+        cleanup_started = False
+
+        async def cleanup_preview():
+            # Both the generator and Starlette's response background task may
+            # request cleanup. Make it idempotent so a slot is released exactly once.
+            nonlocal cleanup_started
+            if cleanup_started:
+                return
+            cleanup_started = True
             try:
-                if ffmpeg.returncode is None:
-                    ffmpeg.kill()
-            except Exception:
-                pass
-        finally:
+                for process in (ffmpeg_process, lookup_process):
+                    try:
+                        if process is not None and process.returncode is None:
+                            process.kill()
+                    except ProcessLookupError:
+                        pass
+                    except Exception:
+                        pass
+                for process in (ffmpeg_process, lookup_process):
+                    try:
+                        if process is not None:
+                            await asyncio.wait_for(process.wait(), timeout=5)
+                    except Exception:
+                        pass
+            finally:
+                # Release even if the client/server cancels cleanup while a
+                # child process is being reaped; both children were signalled first.
+                PREVIEW_SEMAPHORE.release()
 
-            if ffmpeg.returncode is None:
+        async def generator():
+            started = time.monotonic()
+            try:
+                while True:
+                    if time.monotonic() - started > PREVIEW_STREAM_TIMEOUT_SECONDS:
+                        break
+                    try:
+                        chunk = await asyncio.wait_for(ffmpeg_process.stdout.read(64 * 1024), timeout=15)
+                    except asyncio.TimeoutError:
+                        break
+                    if not chunk:
+                        break
+                    yield chunk
+            except asyncio.CancelledError:
+                # Browser disconnected or server is shutting down; subprocesses
+                # must not survive the HTTP stream.
+                raise
+            finally:
+                await cleanup_preview()
 
+        response = StreamingResponse(
+            generator(),
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-cache"},
+            # Also release resources if the response body is never iterated.
+            background=BackgroundTask(cleanup_preview),
+        )
+        slot_owned = False  # the streaming generator now owns the slot
+        return response
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Preview could not be started ({type(exc).__name__}).") from exc
+    finally:
+        if slot_owned:
+            for process in (ffmpeg_process, lookup_process):
                 try:
-                    ffmpeg.kill()
+                    if process is not None and process.returncode is None:
+                        process.kill()
                 except ProcessLookupError:
                     pass
                 except Exception:
                     pass
-            try:
-                await ffmpeg.wait()
-            except Exception:
-                pass
-
-    return StreamingResponse(
-        generator(),
-        media_type="audio/mpeg",
-        headers={
-            "Cache-Control": "no-cache",
-            "Access-Control-Allow-Origin": "*",
-        },
-    )
+            for process in (ffmpeg_process, lookup_process):
+                try:
+                    if process is not None:
+                        await asyncio.wait_for(process.wait(), timeout=5)
+                except Exception:
+                    pass
+            PREVIEW_SEMAPHORE.release()
 
 
 # ============================================================
@@ -8645,6 +8810,198 @@ async def rest_playlist(
 
 
 
+
+# OpenSubsonic playlist write operations. The list of song IDs is validated
+# against the current library before anything is persisted, and the number of
+# entries remains bounded by the same limit as the web playlist editor.
+def _subsonic_playlist_song_ids(request, parameter="songId"):
+    raw_ids = request.query_params.getlist(parameter)
+    if len(raw_ids) > MAX_PLAYLIST_SONGS:
+        return None, subsonic_error(request, 10, "Too many songId parameters.")
+    return [str(song_id)[:512] for song_id in raw_ids], None
+
+
+async def _validated_subsonic_song_ids(request, raw_ids):
+    if not raw_ids:
+        return [], None
+    library = await build_library()
+    available = {str(song.get("id")) for song in library.get("songs", []) if song.get("id")}
+    missing = [song_id for song_id in raw_ids if song_id not in available]
+    if missing:
+        return [], subsonic_error(request, 70, "One or more songs were not found in the library.")
+    return raw_ids, None
+
+
+def _subsonic_ok(request):
+    return make_subsonic_response({
+        "status": "ok", "version": SUBSONIC_VERSION,
+        "serverVersion": SERVER_VERSION, "openSubsonic": True,
+        "type": "Xrob Music",
+    }, request)
+
+
+async def _subsonic_playlist_result(request, playlist_id):
+    """Return the created/updated playlist in createPlaylist's modern response."""
+    playlist = await asyncio.to_thread(playlist_sync, playlist_id)
+    if not playlist:
+        return subsonic_error(request, 70, "Playlist not found.")
+    ids = safe_song_ids(playlist.get("song_ids", "[]"))
+    library = await build_library()
+    song_map = {str(song.get("id")): song for song in library.get("songs", []) if song.get("id")}
+    playlist_songs = [song_map[song_id] for song_id in ids if song_id in song_map]
+    entries = await songs_to_subsonic_async(playlist_songs)
+    payload = {
+        "status": "ok", "version": SUBSONIC_VERSION,
+        "serverVersion": SERVER_VERSION, "openSubsonic": True,
+        "type": "Xrob Music",
+        "playlist": {
+            "id": playlist["id"], "name": playlist["name"],
+            "comment": playlist.get("comment") or "", "owner": playlist.get("owner") or "admin",
+            "public": bool(playlist.get("public")), "songCount": len(entries),
+            "entry": entries,
+        },
+    }
+    return make_subsonic_response(payload, request)
+
+
+@app.get("/rest/createPlaylist.view")
+@app.get("/rest/createPlaylist")
+async def rest_create_playlist(request: Request):
+    error = require_auth(request)
+    if error:
+        return error
+    playlist_id = str(request.query_params.get("playlistId") or "").strip()[:128]
+    name_param = request.query_params.get("playlistName")
+    if name_param is None:
+        name_param = request.query_params.get("name")
+    playlist_name = clean_metadata_text(name_param, "") if name_param is not None else ""
+    comment_param = request.query_params.get("comment")
+    raw_ids, error = _subsonic_playlist_song_ids(request)
+    if error:
+        return error
+    if not playlist_id and not str(name_param or "").strip():
+        return subsonic_error(request, 10, "Required parameter playlistName is missing.")
+    validated_ids, error = await _validated_subsonic_song_ids(request, raw_ids)
+    if error:
+        return error
+
+    if playlist_id:
+        current = await asyncio.to_thread(playlist_sync, playlist_id)
+        if not current:
+            return subsonic_error(request, 70, "Playlist not found.")
+        ids = safe_song_ids(current.get("song_ids", "[]"))
+        if len(ids) + len(validated_ids) > MAX_PLAYLIST_SONGS:
+            return subsonic_error(request, 10, "Playlist exceeds the maximum number of tracks.")
+        ids.extend(validated_ids)
+        try:
+            rules = json.loads(current.get("rules") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            rules = {}
+        name = playlist_name or str(current.get("name") or "Playlist")
+        comment = str(comment_param if comment_param is not None else current.get("comment") or "")[:1000]
+        kind = str(current.get("kind") or "manual")
+        if validated_ids and kind == "smart":
+            kind, rules = "manual", {}
+        updated = await asyncio.to_thread(_playlist_update_sync, (
+            name[:160], comment, json.dumps(ids, ensure_ascii=False, separators=(",", ":")),
+            time.time(), kind, json.dumps(rules, ensure_ascii=False),
+            bool(current.get("public")), playlist_id,
+        ))
+        if not updated:
+            return subsonic_error(request, 70, "Playlist not found.")
+        return await _subsonic_playlist_result(request, playlist_id)
+
+    if not playlist_name:
+        return subsonic_error(request, 10, "Playlist name is required.")
+    if len(validated_ids) > MAX_PLAYLIST_SONGS:
+        return subsonic_error(request, 10, "Playlist exceeds the maximum number of tracks.")
+    comment = str(comment_param or "")[:1000]
+    public_raw = str(request.query_params.get("public", "false")).lower()
+    is_public = public_raw in {"1", "true", "yes"}
+    now = time.time()
+    new_id = "playlist-" + uuid.uuid4().hex[:16]
+    await asyncio.to_thread(_playlist_create_sync, (
+        new_id, playlist_name[:160], comment, "admin", int(is_public),
+        json.dumps(validated_ids, ensure_ascii=False, separators=(",", ":")),
+        now, now, "manual", "{}",
+    ))
+    return await _subsonic_playlist_result(request, new_id)
+
+
+@app.get("/rest/updatePlaylist.view")
+@app.get("/rest/updatePlaylist")
+async def rest_update_playlist(request: Request):
+    error = require_auth(request)
+    if error:
+        return error
+    playlist_id = str(request.query_params.get("playlistId") or "").strip()[:128]
+    if not playlist_id:
+        return subsonic_error(request, 10, "Required parameter playlistId is missing.")
+    current = await asyncio.to_thread(playlist_sync, playlist_id)
+    if not current:
+        return subsonic_error(request, 70, "Playlist not found.")
+    raw_ids, error = _subsonic_playlist_song_ids(request, "songIdToAdd")
+    if error:
+        return error
+    new_ids, error = await _validated_subsonic_song_ids(request, raw_ids)
+    if error:
+        return error
+    ids = safe_song_ids(current.get("song_ids", "[]"))
+    indices = request.query_params.getlist("songIndexToRemove")
+    if len(indices) > MAX_PLAYLIST_SONGS:
+        return subsonic_error(request, 10, "Too many songIndexToRemove parameters.")
+    try:
+        remove_indices = sorted({int(value) for value in indices}, reverse=True)
+    except (TypeError, ValueError):
+        return subsonic_error(request, 10, "songIndexToRemove must contain zero-based integer indexes.")
+    if any(index < 0 or index >= len(ids) for index in remove_indices):
+        return subsonic_error(request, 10, "songIndexToRemove is outside the playlist range.")
+    for index in remove_indices:
+        ids.pop(index)
+    if len(ids) + len(new_ids) > MAX_PLAYLIST_SONGS:
+        return subsonic_error(request, 10, "Playlist exceeds the maximum number of tracks.")
+    ids.extend(new_ids)
+    name_param = request.query_params.get("playlistName")
+    if name_param is None:
+        name_param = request.query_params.get("name")
+    name = clean_metadata_text(name_param, str(current.get("name") or "Playlist")) if name_param is not None else str(current.get("name") or "Playlist")
+    comment = str(request.query_params.get("comment", current.get("comment") or ""))[:1000]
+    public = bool(current.get("public"))
+    if "public" in request.query_params:
+        public = str(request.query_params.get("public") or "").lower() in {"1", "true", "yes"}
+    try:
+        rules = json.loads(current.get("rules") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        rules = {}
+    kind = str(current.get("kind") or "manual")
+    if (new_ids or remove_indices) and kind == "smart":
+        kind, rules = "manual", {}
+    updated = await asyncio.to_thread(_playlist_update_sync, (
+        name[:160], comment, json.dumps(ids, ensure_ascii=False, separators=(",", ":")),
+        time.time(), kind, json.dumps(rules, ensure_ascii=False),
+        public, playlist_id,
+    ))
+    if not updated:
+        return subsonic_error(request, 70, "Playlist not found.")
+    return _subsonic_ok(request)
+
+
+@app.get("/rest/deletePlaylist.view")
+@app.get("/rest/deletePlaylist")
+async def rest_delete_playlist(request: Request):
+    error = require_auth(request)
+    if error:
+        return error
+    playlist_id = str(request.query_params.get("id") or "").strip()[:128]
+    if not playlist_id:
+        return subsonic_error(request, 10, "Required parameter id is missing.")
+    deleted = await asyncio.to_thread(_playlist_delete_sync, playlist_id)
+    if not deleted:
+        return subsonic_error(request, 70, "Playlist not found.")
+    return _subsonic_ok(request)
+
+
+
 # ============================================================
 # PLAYER / PLAYLIST / HEALTH API
 # ============================================================
@@ -8741,15 +9098,22 @@ def _playlist_update_sync(values):
         row = conn.execute("SELECT * FROM playlists WHERE id=?", (values[-1],)).fetchone()
         if not row:
             return False
-        conn.execute("UPDATE playlists SET name=?,comment=?,song_ids=?,updated_at=?,kind=?,rules=? WHERE id=?", values)
+        if len(values) == 8:
+            name, comment, song_ids, updated_at, kind, rules, public, playlist_id = values
+            conn.execute("UPDATE playlists SET name=?,comment=?,song_ids=?,updated_at=?,kind=?,rules=?,public=? WHERE id=?", (name, comment, song_ids, updated_at, kind, rules, int(bool(public)), playlist_id))
+        else:
+            conn.execute("UPDATE playlists SET name=?,comment=?,song_ids=?,updated_at=?,kind=?,rules=? WHERE id=?", values)
         conn.commit()
         return True
 
 
 def _playlist_delete_sync(playlist_id):
     with db_connect() as conn:
-        conn.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
+        cursor = conn.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
         conn.commit()
+        # Return the actual outcome so the API cannot report 404 after a
+        # successful deletion (sqlite rowcount is 0 for a missing ID).
+        return cursor.rowcount > 0
 
 
 def _daily_mix_db_sync(cutoff_24h, now=None):
@@ -9621,7 +9985,11 @@ async def api_auth_login(request: Request, payload: dict = Body(...)):
 
     expected_user, password_ok, was_legacy_plaintext = await asyncio.to_thread(verify_login_sync)
     if not secrets.compare_digest(user, expected_user) or not password_ok:
-        _record_login_failure(request)
+        failure_count = _record_login_failure(request)
+        client_key = _auth_client_key(request)
+        # Let the task check the current Telegram settings before reserving the
+        # alert window. Failed login remains a 401 even if Telegram is offline.
+        track_background_task(_send_failed_login_telegram_notice(client_key, user, failure_count))
         raise HTTPException(401, "Invalid username or password")
     _clear_login_failures(request)
     if was_legacy_plaintext and not os.getenv("XROB_PASSWORD"):
@@ -9682,7 +10050,7 @@ async def api_diagnostics():
         return checks
     checks = await asyncio.to_thread(check_sync)
     tools = {}
-    for name, command in (("python", [sys.executable, "--version"]), ("ffmpeg", [FFMPEG_COMMAND[0], "-version"]), ("yt_dlp", [*YT_DLP_COMMAND, "--version"])):
+    for name, command in (("python", [sys.executable, "--version"]), ("ffmpeg", [FFMPEG_COMMAND[0], "-version"]), ("deno", ["deno", "--version"]), ("yt_dlp", [*YT_DLP_COMMAND, "--version"])):
         try:
             proc = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
@@ -9859,17 +10227,6 @@ async def _api_restore_impl(file: UploadFile = File(...)):
     global TASKS, LIBRARY_CACHE, LIBRARY_CACHE_TIME, PLAYER_STATE, PLAYER_STATE_UPDATED_AT
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(400, "A .zip Xrob Music backup is required")
-    chunks = []
-    upload_size = 0
-    while True:
-        chunk = await file.read(1024 * 1024)
-        if not chunk:
-            break
-        upload_size += len(chunk)
-        if upload_size > MAX_RESTORE_UPLOAD_BYTES:
-            raise HTTPException(413, "Backup is too large (maximum 64 MB)")
-        chunks.append(chunk)
-    raw = b"".join(chunks)
     temp = Path(tempfile.gettempdir()) / f"xrob-restore-{uuid.uuid4().hex}.zip"
     db_tmp = None
     safety = None
@@ -9880,13 +10237,22 @@ async def _api_restore_impl(file: UploadFile = File(...)):
     settings_existed = False
     index_existed = False
     try:
-        def write_private_restore_archive():
-            fd = os.open(str(temp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(raw)
-                handle.flush()
-                os.fsync(handle.fileno())
-        await asyncio.to_thread(write_private_restore_archive)
+        # UploadFile already spools multipart data to disk. Copy it to a private
+        # archive incrementally and enforce the exact ZIP byte limit without
+        # buffering a second 64 MB copy in application memory.
+        fd = os.open(str(temp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        upload_size = 0
+        with os.fdopen(fd, "wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                upload_size += len(chunk)
+                if upload_size > MAX_RESTORE_UPLOAD_BYTES:
+                    raise HTTPException(413, "Backup is too large (maximum 64 MB)")
+                await asyncio.to_thread(handle.write, chunk)
+            await asyncio.to_thread(handle.flush)
+            await asyncio.to_thread(os.fsync, handle.fileno())
         def validate_zip():
             with zipfile.ZipFile(temp, "r") as z:
                 infos = z.infolist()
