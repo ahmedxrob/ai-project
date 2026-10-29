@@ -5323,3 +5323,41 @@ button svg, [role="button"] svg { flex: 0 0 auto; }
   .download-status-pill { width: max-content; }
   .download-metrics { gap: 6px !important; }
 }
+
+
+/* Compact Settings: common options stay visible; advanced controls remain available on demand. */
+.settings-advanced {
+    margin-top: 14px;
+    padding: 16px 18px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--bg-surface);
+    min-width: 0;
+}
+.settings-advanced > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    cursor: pointer;
+    list-style: none;
+    color: var(--text-primary);
+    font-weight: 800;
+}
+.settings-advanced > summary::-webkit-details-marker { display: none; }
+.settings-advanced > summary::after {
+    content: "+";
+    margin-left: auto;
+    color: var(--accent);
+    font-size: 20px;
+    line-height: 1;
+}
+.settings-advanced[open] > summary::after { content: "−"; }
+.settings-advanced-title { font-size: 13px; }
+.settings-advanced-hint { color: var(--text-secondary); font-size: 11px; font-weight: 500; }
+.settings-advanced-content { margin-top: 12px; }
+.settings-advanced-content > .settings-card { margin-top: 12px; }
+.settings-advanced-content > .settings-card:first-child { margin-top: 0; }
+#openSubsonicStatus[data-state="success"] { color: var(--accent); }
+#openSubsonicStatus[data-state="error"] { color: var(--text-secondary); }
