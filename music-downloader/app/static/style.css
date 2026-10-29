@@ -5432,3 +5432,11 @@ button svg, [role="button"] svg { flex: 0 0 auto; }
   .settings-group > summary { padding: 12px; }
   .settings-group-content { padding: 0 8px 8px; }
 }
+
+
+/* Telegram health-monitor settings */
+.telegram-monitor-note { margin: 10px 0 4px; line-height: 1.5; color: var(--text-secondary, #a7a7a7); }
+#telegramBotStatus[data-state="success"] { color: var(--success, #43c77a); }
+#telegramBotStatus[data-state="warning"] { color: var(--warning, #e6ae52); }
+#telegramBotStatus[data-state="error"] { color: var(--danger, #ef6666); }
+#telegramTestButton:disabled, #telegramClearButton:disabled { opacity: .65; cursor: wait; }
