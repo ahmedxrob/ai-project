@@ -79,7 +79,8 @@ def main():
     failures = int(state.get("consecutive_failures") or 0)
     was_down = bool(state.get("down", False))
     started_notice = False
-    last_daily_attempt_monotonic = 0.0
+    # Make the first due report attempt immediate, including after a machine reboot.
+    last_daily_attempt_monotonic = float("-inf")
     while True:
         now = datetime.now()
         success = False
