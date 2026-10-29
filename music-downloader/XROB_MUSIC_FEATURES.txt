@@ -1,8 +1,8 @@
-XROB MUSIC 2.9.3
+XROB MUSIC 4.4.13
 CURRENT FEATURES + PRODUCT ROADMAP
 
 ============================================================
-CURRENT 2.9.3 UPDATE
+CURRENT 4.4.13 AUDIT HARDENING + RETENTION + TELEGRAM MONITORING UPDATE
 ============================================================
 - Spotify/Apple Music-inspired top navigation with Xrob logo identity.
 - Search and Settings live in the top utility controls instead of the primary navigation row.
@@ -15,6 +15,12 @@ CURRENT 2.9.3 UPDATE
 - Browser tab favicon / app icon uses the Xrob icon asset.
 - Play-count threshold is 60 seconds; short tracks retain the existing proportional short-track rule.
 - Global player, queue controls, repeat, shuffle and persisted playback state remain enabled.
+- OpenSubsonic authentication fails closed when the add-on password is empty or whitespace-only; ping now checks credentials, while capability discovery remains public as required by protocol.
+- Settings redesigned into compact, collapsible categories; Library status stays visible near the top, and duplicate artwork toggles are removed while legacy settings remain supported.
+- Settings save/reset immediately refresh active ReplayGain/crossfade state and Daily Mix; restore defaults confirms first and does not change the login/account.
+- Standard-library regression tests cover empty-password rejection and valid/invalid OpenSubsonic authentication paths.
+- Home Assistant port documentation uses host/LAN port 8100 and internal container port 8099. Default NAS path is `/media/xrob_music` to match the configured mount name.
+- Python package requirements are unpinned so image builds install current releases; verify compatibility before deploying updates.
 
 ============================================================
 CURRENT VERIFIED FEATURE SET
@@ -231,3 +237,29 @@ REFERENCES USED FOR THE ROADMAP
 - YouTube Music official help: Samples, Ask Music, Smart Downloads, offline playback, background play and audio-only mode.
 - TIDAL official support: FLAC as the supported stereo lossless path and Dolby Atmos for immersive audio.
 - Qobuz official help: Hi-Res FLAC, editorial recommendations, offline listening and broad download formats.
+
+
+4.4.11 RELIABILITY / MONITORING ADDITIONS
+- Storage mount detection uses Linux mount information plus a real write probe before media scans and writes.
+- The app can start in degraded mode when media storage is missing, keeping Settings and diagnostics available while blocking media writes.
+- Downloads remain queued while storage is unavailable and are re-queued when the volume recovers.
+- SQLite uses FULL synchronous durability; a daily integrity-checked app-data backup is saved locally. Current release retention is configurable in Settings: 1, 2 (default), 3, or 5 backups.
+- Telegram health monitoring supports storage/database transition alerts, aggregated error alerts, a test message, and daily status summaries. Bot tokens are server-side write-only settings.
+- A separate optional app/telegram_watchdog.py monitors app reachability and can notify on process/container outage; it must run outside the Xrob Music process.
+- Added regression tests for storage validation, playback-preserving library refresh, metadata edits, task persistence, Telegram secret redaction/settings persistence, bounded artwork uploads, valid restore and corrupt-restore rejection.
+- Manual and automatic backups serialize against restore; restore cancels storage-waiting download tasks so they cannot enqueue during database replacement.
+- Artwork uploads validate file signatures, use bounded reads, and protect embedded tag edits when media storage is unavailable.
+- Settings can download the most recent automatic backup; automatic backups are stored on the app data volume, not the music NAS.
+
+
+4.4.12 FOLLOW-UP
+- Configurable automatic app-data backup retention in Settings: 1, 2 (default), 3, or 5 daily snapshots. Retention cleanup runs even when the current day's backup already exists.
+- The optional external watchdog is located at app/telegram_watchdog.py alongside app/main.py. It must still run as a separate process/host to detect a stopped app.
+- Settings documents the in-app Telegram automations, report schedule, rate-limiting, and what requires the independent watchdog.
+
+
+4.4.13 audit hardening:
+- Settings read/modify/write is serialized and uses unique private temporary files.
+- Existing storage paths can be retained while the media volume is offline so unrelated settings and Telegram configuration can still be saved; changing to a new path still requires mount/write validation.
+- Restore temporarily fences API/OpenSubsonic requests, drains already-running requests, coordinates with scans, and cancels coalesced library re-index work before replacing persistent state. Regular API traffic remains available during a backup.
+- Oversized restore requests keep their intended HTTP 413 status. Existing daily archives are validated before reuse and corrupt backups are replaced; manual and automatic backup files are private from the moment they are created.
