@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.4.10"
+SERVER_VERSION = "4.4.12"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -203,7 +203,15 @@ def _write_settings_sync(settings):
             json.dump(settings, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
         os.replace(tmp, SETTINGS_FILE)
+        try:
+            os.chmod(SETTINGS_FILE, 0o600)
+        except OSError:
+            pass
     finally:
         try:
             tmp.unlink(missing_ok=True)
@@ -363,6 +371,12 @@ DEFAULT_SETTINGS = {
     "cache_size_mb": 256,
     "filename_mode": "title",
     "stats_retention_days": 365,
+    "automatic_backup_retention": 2,
+    "telegram_enabled": False,
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+    "telegram_daily_report": True,
+    "telegram_last_daily_report_date": "",
     "subsonic_user": "admin",
     "subsonic_password": "",
     "web_username": os.getenv("XROB_USERNAME", "admin"),
@@ -422,6 +436,13 @@ LIBRARY_INDEX_WRITE_LOCK = RLock()
 LIBRARY_WARMUP_TASK = None
 DOWNLOAD_WORKER_TASKS = set()
 DOWNLOAD_WORKER_SCALE_LOCK = asyncio.Lock()
+TELEGRAM_MONITOR_TASK = None
+AUTOMATIC_BACKUP_TASK = None
+STORAGE_WAIT_TASKS = set()
+TELEGRAM_LAST_ERROR_NOTICE = {}
+TELEGRAM_MONITOR_INTERVAL_SECONDS = 60
+AUTOMATIC_BACKUP_RETENTION = 2
+AUTOMATIC_BACKUP_RETENTION_CHOICES = (1, 2, 3, 5)
 DOWNLOAD_WORKER_RETIRE_REQUESTS = 0
 DOWNLOAD_WORKER_STOP_SENTINEL = "__xrob_music_stop_worker__"
 BACKGROUND_TASKS = set()
@@ -501,7 +522,11 @@ def migrate_legacy_db(source: Path, destination: Path):
 
 
 def configure_storage():
-    """Apply the configured library path and prepare its local metadata cache."""
+    """Load storage configuration without masking a missing mount.
+
+    The web app and health monitor must still start when the media mount is down;
+    every write/scan path checks storage readiness immediately before operating.
+    """
     global DOWNLOAD_DIR, COVER_CACHE_DIR, SETTINGS_FILE, DB_FILE, LIBRARY_INDEX_FILE
 
     addon = load_addon_options()
@@ -516,64 +541,137 @@ def configure_storage():
             persisted_location = ""
     requested_location = persisted_location or configured or os.getenv("DOWNLOAD_DIR", DEFAULT_LIBRARY_PATH)
     path = Path(requested_location).expanduser()
-
     if not path.is_absolute():
         raise RuntimeError("music_path must be an absolute path")
 
     DOWNLOAD_DIR = path
     COVER_CACHE_DIR = DOWNLOAD_DIR / ".covers"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    # SQLite databases should never live on the NAS/SMB mount. Network
-    # filesystem locking is unreliable and can prevent the application from
-    # starting with "database is locked". Keep the DB and settings on the
-    # add-on's persistent local /data volume.
     legacy_db = DOWNLOAD_DIR / "tasks.db"
     legacy_settings = DOWNLOAD_DIR / ".settings.json"
     SETTINGS_FILE = DATA_DIR / "settings.json"
     LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
     DB_FILE = DATA_DIR / "tasks.db"
 
-    if not DB_FILE.exists() and legacy_db.exists():
+    initial_storage_info = storage_info_sync()
+    if initial_storage_info.get("mounted") and not DB_FILE.exists() and legacy_db.exists():
         migrate_legacy_db(legacy_db, DB_FILE)
-
-    if not SETTINGS_FILE.exists() and legacy_settings.exists():
+    if initial_storage_info.get("mounted") and not SETTINGS_FILE.exists() and legacy_settings.exists():
         try:
             shutil.copy2(legacy_settings, SETTINGS_FILE)
+            try: os.chmod(SETTINGS_FILE, 0o600)
+            except OSError: pass
         except OSError as exc:
             print(f"Warning: could not migrate legacy settings: {exc}")
 
-    # Do not silently create a missing explicitly configured NAS mount. That
-    # would make a disconnected NAS look like an empty local library.
-    explicit_path = bool(configured or persisted_location)
-    if explicit_path and not DOWNLOAD_DIR.exists():
-        raise RuntimeError(
-            f"Configured music_path/download location does not exist or is not mounted: {DOWNLOAD_DIR}"
-        )
+    info = storage_info_sync()
+    if not info.get("exists"):
+        print(f"WARNING: configured music storage is unavailable: {DOWNLOAD_DIR}. The app will start in degraded mode.")
+    elif not info.get("mounted"):
+        print(f"WARNING: {DOWNLOAD_DIR} exists but is not beneath a detected mounted volume. Media operations are blocked.")
+    else:
+        try:
+            COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            print(f"WARNING: cannot prepare cover cache on media storage: {exc}")
 
-    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def _mount_records(mountinfo_text=None):
+    """Return decoded Linux mount points from /proc/self/mountinfo."""
+    if mountinfo_text is None:
+        try:
+            mountinfo_text = Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            mountinfo_text = ""
+    records = []
+    for line in str(mountinfo_text).splitlines():
+        fields = line.split()
+        if len(fields) < 10 or "-" not in fields:
+            continue
+        try:
+            separator = fields.index("-")
+            mount_point = fields[4]
+            source = fields[separator + 2] if len(fields) > separator + 2 else ""
+            for escaped, decoded in (("\\040", " "), ("\\011", "\t"), ("\\134", "\\")):
+                mount_point = mount_point.replace(escaped, decoded)
+            records.append((Path(mount_point), source))
+        except (ValueError, IndexError):
+            continue
+    return records
 
 
+def _mount_for_path(path, mountinfo_text=None):
+    """Find the deepest real mount that contains path; '/' alone is not storage."""
+    candidate = Path(os.path.abspath(str(path)))
+    matches = []
+    for mount_point, source in _mount_records(mountinfo_text):
+        mp = Path(os.path.abspath(str(mount_point)))
+        if str(mp) == "/":
+            continue
+        try:
+            if candidate == mp or mp in candidate.parents:
+                matches.append((len(str(mp)), mp, source))
+        except Exception:
+            continue
+    if not matches:
+        return None, ""
+    _, mount_point, source = max(matches, key=lambda item: item[0])
+    # In Home Assistant add-ons, /media is commonly just a bind-mounted host
+    # directory. It does not prove that a named NAS mount like /media/xrob_music
+    # is connected; require the named child mount to be present in that case.
+    if str(mount_point) == "/media" and candidate != Path("/media"):
+        return None, ""
+    return str(mount_point), str(source)
 
-def storage_info_sync():
-    path = DOWNLOAD_DIR
+
+def _write_probe(path):
+    """Prove the path accepts a real create/write/fsync/delete cycle."""
+    probe = None
+    try:
+        name = f".xrob-storage-probe-{os.getpid()}-{uuid.uuid4().hex}"
+        probe = Path(path) / name
+        fd = os.open(str(probe), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.write(fd, b"xrob-storage-check")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        probe.unlink()
+        return True, ""
+    except Exception as exc:
+        if probe is not None:
+            try: probe.unlink(missing_ok=True)
+            except OSError: pass
+        return False, str(exc)[:240]
+
+
+def storage_info_sync(probe_write=False, path_override=None):
+    path = Path(path_override).expanduser() if path_override is not None else DOWNLOAD_DIR
     exists = path.exists() and path.is_dir()
-    writable = False
+    mount_point, mount_source = _mount_for_path(path)
+    mounted = bool(mount_point) and exists
+    writable = bool(mounted and os.access(path, os.W_OK | os.X_OK))
+    write_error = ""
+    if writable and probe_write:
+        writable, write_error = _write_probe(path)
     total = free = used = 0
-    if exists:
-        writable = os.access(path, os.W_OK)
+    if mounted:
         try:
             usage = shutil.disk_usage(path)
             total, free = usage.total, usage.free
             used = total - free
-        except OSError:
-            pass
+        except OSError as exc:
+            mounted = False
+            write_error = str(exc)[:240]
+            writable = False
     return {
         "path": str(path),
         "exists": exists,
         "writable": writable,
-        "mounted": exists,
+        "mounted": mounted,
+        "mount_point": mount_point,
+        "mount_source": mount_source,
+        "error": write_error,
         "total_bytes": total,
         "used_bytes": used,
         "free_bytes": free,
@@ -581,6 +679,16 @@ def storage_info_sync():
         "used": format_size(used),
         "free": format_size(free),
     }
+
+
+def ensure_storage_ready(action="media operation", probe_write=True, path_override=None):
+    info = storage_info_sync(probe_write=probe_write, path_override=path_override)
+    if not info.get("mounted"):
+        raise HTTPException(503, f"Media storage is not mounted or is unavailable; {action} was blocked. Configured path: {info.get('path')}.")
+    if not info.get("writable"):
+        detail = info.get("error") or "The mounted media storage is read-only or failed the write check."
+        raise HTTPException(503, f"Media storage is not writable; {action} was blocked. {detail}")
+    return info
 
 
 def invalidate_library_cache():
@@ -691,6 +799,16 @@ def load_settings():
         settings["stats_retention_days"] = max(30, min(3650, int(settings.get("stats_retention_days", 365) or 365)))
     except (TypeError, ValueError):
         settings["stats_retention_days"] = 365
+    try:
+        backup_retention = int(settings.get("automatic_backup_retention", 2))
+    except (TypeError, ValueError):
+        backup_retention = 2
+    settings["automatic_backup_retention"] = backup_retention if backup_retention in AUTOMATIC_BACKUP_RETENTION_CHOICES else 2
+    settings["telegram_enabled"] = bool(settings.get("telegram_enabled", False))
+    settings["telegram_bot_token"] = str(settings.get("telegram_bot_token") or "").strip()[:256]
+    settings["telegram_chat_id"] = str(settings.get("telegram_chat_id") or "").strip()[:128]
+    settings["telegram_daily_report"] = bool(settings.get("telegram_daily_report", True))
+    settings["telegram_last_daily_report_date"] = str(settings.get("telegram_last_daily_report_date") or "")[:10]
     settings.pop("max_results", None)
 
     return settings
@@ -709,12 +827,23 @@ def save_settings(data: dict):
         "crossfade_seconds", "gapless_playback", "web_username", "web_password",
         "download_location", "max_concurrent_downloads", "auto_retry_downloads", "download_retry_limit",
         "download_retry_backoff_seconds", "artwork_behavior", "cache_size_mb", "filename_mode", "stats_retention_days",
+        "automatic_backup_retention", "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_daily_report",
     }
 
     old_user = str(settings.get("web_username") or "")
     for key in allowed & data.keys():
-        if key not in {"web_password"}:
+        if key not in {"web_password", "telegram_bot_token", "telegram_chat_id"}:
             settings[key] = data[key]
+    # Secret fields are write-only in the UI: blank means retain the saved value.
+    if "telegram_bot_token" in data and str(data.get("telegram_bot_token") or "").strip():
+        settings["telegram_bot_token"] = str(data.get("telegram_bot_token")).strip()[:256]
+    if "telegram_chat_id" in data and str(data.get("telegram_chat_id") or "").strip():
+        chat_id = str(data.get("telegram_chat_id")).strip()[:128]
+        if any(ch.isspace() for ch in chat_id):
+            raise ValueError("Telegram chat ID must not contain whitespace.")
+        settings["telegram_chat_id"] = chat_id
+    settings["telegram_enabled"] = bool(settings.get("telegram_enabled", False))
+    settings["telegram_daily_report"] = bool(settings.get("telegram_daily_report", True))
 
     if "web_password" in data and str(data.get("web_password") or ""):
         new_password = str(data.get("web_password") or "")
@@ -775,6 +904,11 @@ def save_settings(data: dict):
             raise ValueError("Download location must be a directory.")
         if not candidate.exists():
             raise ValueError("Download location does not exist. Mount or create it first.")
+        location_status = storage_info_sync(probe_write=True, path_override=candidate)
+        if not location_status.get("mounted"):
+            raise ValueError("Download location is not on a detected mounted volume. Check the NAS/disk mount first.")
+        if not location_status.get("writable"):
+            raise ValueError("Download location is not writable. Check mount permissions and storage health.")
         settings["download_location"] = str(candidate)
     else:
         settings["download_location"] = ""
@@ -807,6 +941,11 @@ def save_settings(data: dict):
         settings["stats_retention_days"] = max(30, min(3650, int(settings.get("stats_retention_days", 365) or 365)))
     except (TypeError, ValueError):
         settings["stats_retention_days"] = 365
+    try:
+        backup_retention = int(settings.get("automatic_backup_retention", 2))
+    except (TypeError, ValueError):
+        backup_retention = 2
+    settings["automatic_backup_retention"] = backup_retention if backup_retention in AUTOMATIC_BACKUP_RETENTION_CHOICES else 2
     settings["web_username"] = str(settings.get("web_username") or os.getenv("XROB_USERNAME", "admin"))[:64]
     # Keep a verifier, never persist web passwords in plaintext.
     if settings.get("web_password") and not settings.get("web_password_hash"):
@@ -835,6 +974,10 @@ def public_settings():
     settings.pop("subsonic_user", None)
     settings.pop("subsonic_password", None)
     settings["web_password_set"] = bool(settings.get("web_password_hash") or settings.get("web_password") or AUTH_PASSWORD)
+    settings["telegram_bot_token_set"] = bool(str(settings.get("telegram_bot_token") or "").strip())
+    settings["telegram_chat_id_set"] = bool(str(settings.get("telegram_chat_id") or "").strip())
+    settings.pop("telegram_bot_token", None)
+    settings.pop("telegram_chat_id", None)
     settings["web_username"] = str(settings.get("web_username") or "admin")
     settings.pop("web_password", None)
     # Password verifiers are server credentials and must never be returned to the browser.
@@ -872,7 +1015,7 @@ def db_connect():
     try:
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA synchronous = FULL")
         conn.execute("PRAGMA temp_store = MEMORY")
         conn.execute("PRAGMA cache_size = -4096")
         conn.execute("PRAGMA wal_autocheckpoint = 1000")
@@ -2194,6 +2337,12 @@ async def background_library_warmup():
 async def build_library(force=False):
     global LIBRARY_CACHE, LIBRARY_CACHE_TIME
 
+    storage = await asyncio.to_thread(storage_info_sync)
+    if not storage.get("mounted") or not storage.get("exists"):
+        if LIBRARY_CACHE is not None:
+            return LIBRARY_CACHE
+        raise RuntimeError(f"Media storage is unavailable at {DOWNLOAD_DIR}; library scan was skipped.")
+
     now = time.monotonic()
     if not force and LIBRARY_CACHE is not None and now - LIBRARY_CACHE_TIME < LIBRARY_CACHE_TTL:
         return LIBRARY_CACHE
@@ -3166,6 +3315,32 @@ def _set_task_cancelled(task):
     task["last_updated"] = time.time() * 1000
 
 
+async def _wait_for_storage_then_requeue(task_id, queue_token):
+    """Keep a queued download durable while the configured media volume is offline."""
+    try:
+        while True:
+            await asyncio.sleep(60)
+            task = TASKS.get(task_id)
+            if not task or _task_cancelled(task) or task.get("status") != "queued":
+                return
+            if str(task.get("queue_token") or "") != str(queue_token or ""):
+                return
+            try:
+                status = await asyncio.to_thread(storage_info_sync, True)
+            except Exception:
+                status = {"mounted": False, "writable": False}
+            if status.get("mounted") and status.get("writable"):
+                task["step"] = "Storage recovered — queued for download"
+                task["last_updated"] = time.time() * 1000
+                await notify_task_update(task, force_save=True)
+                await TASK_QUEUE.put((task_id, queue_token))
+                return
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        await write_app_error("storage_wait", str(exc), task_id)
+
+
 LIBRARY_REFRESH_TASK = None
 LIBRARY_REFRESH_PENDING_PATHS = set()
 
@@ -3312,6 +3487,18 @@ async def download_worker():
                     force_save=True,
                 )
 
+                continue
+
+            storage_status = await asyncio.to_thread(storage_info_sync, True)
+            if not storage_status.get("mounted") or not storage_status.get("writable"):
+                task["status"] = "queued"
+                task["step"] = "Waiting for media storage to be mounted and writable"
+                task["error"] = ""
+                task["last_updated"] = time.time() * 1000
+                await notify_task_update(task, force_save=True)
+                waiter = track_background_task(_wait_for_storage_then_requeue(task_id, task.get("queue_token")))
+                STORAGE_WAIT_TASKS.add(waiter)
+                waiter.add_done_callback(STORAGE_WAIT_TASKS.discard)
                 continue
 
             settings = await load_settings_async()
@@ -3809,6 +3996,286 @@ async def download_worker():
 
 
 # ============================================================
+# TELEGRAM HEALTH MONITOR + AUTOMATIC BACKUPS
+# ============================================================
+
+BACKUP_DIR = DATA_DIR / "backups"
+
+
+def _telegram_send_message_sync(token, chat_id, message, timeout=10):
+    """Send a Telegram Bot API text message; never log or return the bot token."""
+    token = str(token or "").strip()
+    chat_id = str(chat_id or "").strip()
+    if not token or not chat_id:
+        return False, "Telegram bot token and chat ID are required."
+    if len(token) > 256 or len(chat_id) > 128 or any(ch.isspace() for ch in chat_id):
+        return False, "Telegram credentials have an invalid format."
+    endpoint = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({"chat_id": chat_id, "text": str(message or "")[:3900], "disable_web_page_preview": True}).encode("utf-8")
+    request = urllib.request.Request(endpoint, data=payload, headers={"Content-Type": "application/json", "User-Agent": f"Xrob-Music/{SERVER_VERSION}"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=max(3, min(20, int(timeout)))) as response:
+            body = json.loads(response.read(256 * 1024).decode("utf-8", errors="replace"))
+        if response.status == 200 and body.get("ok") is True:
+            return True, "Message sent."
+        description = str(body.get("description") or "Telegram rejected the message")[:240]
+        return False, description
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read(64 * 1024).decode("utf-8", errors="replace"))
+            reason = str(body.get("description") or f"Telegram HTTP {exc.code}")[:240]
+        except Exception:
+            reason = f"Telegram HTTP {exc.code}"
+        return False, reason
+    except Exception as exc:
+        # urllib exceptions may echo the request URL, which contains the bot token.
+        reason = str(exc).replace(token, "[redacted]")
+        return False, reason[:240]
+
+
+async def telegram_send_message(message, force=False):
+    settings = await load_settings_async()
+    if not force and not settings.get("telegram_enabled"):
+        return False, "Telegram monitoring is disabled."
+    token = settings.get("telegram_bot_token")
+    chat_id = settings.get("telegram_chat_id")
+    if not token or not chat_id:
+        return False, "Configure the Telegram bot token and chat ID in Settings first."
+    return await asyncio.to_thread(_telegram_send_message_sync, token, chat_id, message)
+
+
+def _monitor_database_snapshot_sync():
+    with db_connect() as conn:
+        integrity = str(conn.execute("PRAGMA integrity_check").fetchone()[0] or "")
+        max_error_id = int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM app_errors").fetchone()[0] or 0)
+        errors_24h = int(conn.execute("SELECT COUNT(*) FROM app_errors WHERE created_at >= ?", (time.time() - 86400,)).fetchone()[0] or 0)
+        recent_errors = conn.execute("SELECT id,created_at,source,message,task_id FROM app_errors WHERE created_at >= ? ORDER BY id DESC LIMIT 5", (time.time() - 86400,)).fetchall()
+    return {"ok": integrity.lower() == "ok", "integrity": integrity[:200], "max_error_id": max_error_id, "errors_24h": errors_24h, "recent_errors": [dict(row) for row in recent_errors]}
+
+
+def _monitor_database_counters_sync():
+    with db_connect() as conn:
+        max_error_id = int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM app_errors").fetchone()[0] or 0)
+        errors_24h = int(conn.execute("SELECT COUNT(*) FROM app_errors WHERE created_at >= ?", (time.time() - 86400,)).fetchone()[0] or 0)
+    return {"max_error_id": max_error_id, "errors_24h": errors_24h}
+
+
+def _monitor_new_errors_sync(last_error_id, limit=8):
+    with db_connect() as conn:
+        rows = conn.execute("SELECT id,created_at,source,message,task_id FROM app_errors WHERE id>? ORDER BY id ASC LIMIT ?", (int(last_error_id), max(1, min(20, int(limit))))).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _redact_monitor_message(value):
+    text_value = str(value or "")
+    text_value = re.sub(r"https?://\S+", "[URL redacted]", text_value, flags=re.I)
+    text_value = re.sub(r"(?i)(token|password|secret|authorization)(\s*[:=]\s*)[^\s,;]+", r"\1\2[redacted]", text_value)
+    return text_value[:500]
+
+
+def _mark_daily_telegram_report_sent(report_date):
+    settings = {}
+    if SETTINGS_FILE.exists():
+        try:
+            payload = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(payload, dict): settings.update(payload)
+        except Exception:
+            pass
+    settings["telegram_last_daily_report_date"] = str(report_date)[:10]
+    _write_settings_sync(settings)
+
+
+def automatic_backup_retention(settings_override=None):
+    """Return the validated user-selected automatic backup count (1, 2, 3 or 5)."""
+    source = settings_override if isinstance(settings_override, dict) else load_settings()
+    try:
+        value = int(source.get("automatic_backup_retention", AUTOMATIC_BACKUP_RETENTION))
+    except (TypeError, ValueError):
+        value = 2
+    return value if value in AUTOMATIC_BACKUP_RETENTION_CHOICES else 2
+
+
+def _prune_automatic_backups(retention=None):
+    """Keep only the selected number of most recent automatic backup archives."""
+    keep = automatic_backup_retention() if retention is None else automatic_backup_retention({"automatic_backup_retention": retention})
+    backups = sorted(BACKUP_DIR.glob("xrob-music-auto-*.zip"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for old in backups[keep:]:
+        try:
+            old.unlink()
+        except OSError as exc:
+            print(f"Could not remove expired automatic backup {old.name}: {type(exc).__name__}", flush=True)
+    return min(len(backups), keep)
+
+
+def _create_automatic_backup_sync():
+    """Create a private, consistent daily app-data backup on the local data volume."""
+    if not DB_FILE.exists():
+        return ""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    settings_data = load_settings()
+    retention = automatic_backup_retention(settings_data)
+    today = time.strftime("%Y%m%d", time.localtime())
+    existing = sorted(BACKUP_DIR.glob(f"xrob-music-auto-{today}.zip"))
+    if existing:
+        _prune_automatic_backups(retention)
+        return str(existing[-1])
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    final_path = BACKUP_DIR / f"xrob-music-auto-{today}.zip"
+    temp_path = BACKUP_DIR / f".{final_path.name}.{uuid.uuid4().hex}.tmp"
+    db_snapshot = BACKUP_DIR / f".db-snapshot-{uuid.uuid4().hex}.tmp"
+    try:
+        _sqlite_backup_file(DB_FILE, db_snapshot)
+        test = sqlite3.connect(db_snapshot, timeout=10.0)
+        try:
+            integrity = str(test.execute("PRAGMA integrity_check").fetchone()[0] or "")
+            if integrity.lower() != "ok":
+                raise RuntimeError(f"Automatic backup database integrity check failed: {integrity}")
+        finally:
+            test.close()
+        with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(db_snapshot, "tasks.db")
+            archive.writestr("settings.json", json.dumps(settings_data, ensure_ascii=False, indent=2))
+            if LIBRARY_INDEX_FILE.exists():
+                archive.write(LIBRARY_INDEX_FILE, "library_index.json")
+            else:
+                archive.writestr("library_index.json", json.dumps({"version": 1, "entries": {}}, indent=2))
+            archive.writestr("manifest.json", json.dumps({"server_version": SERVER_VERSION, "created_at": time.time(), "database_schema": DB_SCHEMA_VERSION, "automatic": True}, indent=2))
+        try: os.chmod(temp_path, 0o600)
+        except OSError: pass
+        os.replace(temp_path, final_path)
+        try: os.chmod(final_path, 0o600)
+        except OSError: pass
+        _prune_automatic_backups(retention)
+        return str(final_path)
+    finally:
+        for item in (temp_path, db_snapshot):
+            try: item.unlink(missing_ok=True)
+            except OSError: pass
+
+
+async def automatic_backup_worker():
+    while True:
+        try:
+            async with RESTORE_LOCK:
+                await asyncio.to_thread(_create_automatic_backup_sync)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            await write_app_error("automatic_backup", _redact_monitor_message(exc))
+        await asyncio.sleep(3600)
+
+
+async def telegram_health_monitor():
+    """Send transition alerts, error digests and one daily status report."""
+    previous_health = None
+    last_error_id = None
+    last_error_digest_at = 0.0
+    last_storage_probe = 0.0
+    last_database_integrity_probe = 0.0
+    cached_database = {"ok": True, "integrity": "not checked yet", "max_error_id": 0, "errors_24h": 0, "recent_errors": []}
+    startup_notice_sent = False
+    while True:
+        try:
+            settings = await load_settings_async()
+            token = str(settings.get("telegram_bot_token") or "").strip()
+            chat_id = str(settings.get("telegram_chat_id") or "").strip()
+            enabled = bool(settings.get("telegram_enabled") and token and chat_id)
+            if not enabled:
+                previous_health = None
+                startup_notice_sent = False
+                await asyncio.sleep(TELEGRAM_MONITOR_INTERVAL_SECONDS)
+                continue
+            if RESTORE_LOCK.locked():
+                await asyncio.sleep(TELEGRAM_MONITOR_INTERVAL_SECONDS)
+                continue
+
+            now_monotonic = time.monotonic()
+            probe_write = now_monotonic - last_storage_probe >= 300
+            if probe_write:
+                last_storage_probe = now_monotonic
+            storage = await asyncio.to_thread(storage_info_sync, probe_write)
+            try:
+                if now_monotonic - last_database_integrity_probe >= 300:
+                    cached_database = await asyncio.to_thread(_monitor_database_snapshot_sync)
+                    last_database_integrity_probe = now_monotonic
+                else:
+                    cached_database.update(await asyncio.to_thread(_monitor_database_counters_sync))
+                database = dict(cached_database)
+            except Exception as exc:
+                database = {**cached_database, "ok": False, "integrity": _redact_monitor_message(exc), "max_error_id": last_error_id or 0, "errors_24h": 0, "recent_errors": []}
+
+            issues = []
+            if not storage.get("mounted"):
+                issues.append(f"Media storage is NOT mounted/available: {DOWNLOAD_DIR}")
+            elif not storage.get("writable"):
+                issues.append(f"Media storage is mounted but NOT writable: {DOWNLOAD_DIR}. {storage.get('error') or ''}".strip())
+            if not database.get("ok"):
+                issues.append(f"Database integrity check failed: {database.get('integrity') or 'unavailable'}")
+            current_health = "degraded" if issues else "healthy"
+
+            if not startup_notice_sent:
+                message = "🟢 Xrob Music monitoring is online.\n" + ("Current problems:\n• " + "\n• ".join(issues) if issues else "✅ App process, database and media storage checks look healthy.")
+                sent, _detail = await asyncio.to_thread(_telegram_send_message_sync, token, chat_id, message)
+                startup_notice_sent = bool(sent)
+                if sent:
+                    previous_health = current_health
+            elif previous_health != current_health:
+                if current_health == "degraded":
+                    message = "🚨 Xrob Music health alert\n" + "\n".join(f"• {item}" for item in issues) + "\nDownloads and scans will be blocked until storage/database health is restored."
+                else:
+                    message = "✅ Xrob Music recovered.\nMedia storage and database checks are healthy again."
+                sent, _detail = await asyncio.to_thread(_telegram_send_message_sync, token, chat_id, message)
+                if sent:
+                    previous_health = current_health
+            else:
+                previous_health = current_health
+
+            latest_error_id = int(database.get("max_error_id") or 0)
+            if last_error_id is None:
+                last_error_id = latest_error_id
+            elif latest_error_id > last_error_id and time.monotonic() - last_error_digest_at >= 300:
+                new_errors = await asyncio.to_thread(_monitor_new_errors_sync, last_error_id, 8)
+                # Do not flood the user with repeated scan failures while the volume is already down.
+                reportable = [item for item in new_errors if not (not storage.get("mounted") and str(item.get("source") or "") in {"scheduled_scan", "library_scan"})]
+                if not reportable:
+                    last_error_id = new_errors[-1]["id"] if new_errors else latest_error_id
+                else:
+                    lines = ["⚠️ Xrob Music reported new errors:"]
+                    for item in reportable[:5]:
+                        source = _redact_monitor_message(item.get("source") or "app")
+                        message_text = _redact_monitor_message(item.get("message") or "Unknown error")
+                        task_id = str(item.get("task_id") or "")
+                        lines.append(f"• {source}{' [' + task_id + ']' if task_id else ''}: {message_text}")
+                    if len(new_errors) > 5:
+                        lines.append(f"…and {len(new_errors)-5} additional error(s). Open Settings → Maintenance → Error log for details.")
+                    sent, _detail = await asyncio.to_thread(_telegram_send_message_sync, token, chat_id, "\n".join(lines))
+                    if sent:
+                        last_error_digest_at = time.monotonic()
+                        last_error_id = new_errors[-1]["id"] if new_errors else latest_error_id
+
+            today = time.strftime("%Y-%m-%d", time.localtime())
+            local_hour = time.localtime().tm_hour
+            if settings.get("telegram_daily_report", True) and local_hour >= 9 and settings.get("telegram_last_daily_report_date") != today:
+                if issues:
+                    status_line = "Issues detected:\n" + "\n".join(f"• {item}" for item in issues)
+                else:
+                    status_line = "✅ Everything is working normally: app is running, database integrity is OK, and media storage is mounted and writable."
+                queued = sum(1 for item in TASKS.values() if item.get("status") == "queued")
+                running = sum(1 for item in TASKS.values() if item.get("status") in {"downloading", "processing"})
+                retention = automatic_backup_retention(settings)
+                message = f"📊 Xrob Music daily health report — {today}\n{status_line}\nDownloads: {running} active, {queued} queued\nApp errors in last 24 hours: {int(database.get('errors_24h') or 0)}\nAutomatic backups: {BACKUP_DIR} (keeps up to {retention}, configured in Settings)."
+                sent, _detail = await asyncio.to_thread(_telegram_send_message_sync, token, chat_id, message)
+                if sent:
+                    await asyncio.to_thread(_mark_daily_telegram_report_sent, today)
+            await asyncio.sleep(TELEGRAM_MONITOR_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            print("Xrob Music health monitor cycle failed:", _redact_monitor_message(exc))
+            await asyncio.sleep(TELEGRAM_MONITOR_INTERVAL_SECONDS)
+
+
+# ============================================================
 # STARTUP
 # ============================================================
 
@@ -3874,7 +4341,16 @@ async def startup_event():
             "status"
         ) == "queued":
 
+            if not task.get("queue_token"):
+                task["queue_token"] = uuid.uuid4().hex
+                await db_save_task(task, force=True)
             await TASK_QUEUE.put((task["id"], task["queue_token"]))
+
+    global TELEGRAM_MONITOR_TASK, AUTOMATIC_BACKUP_TASK
+    if TELEGRAM_MONITOR_TASK is None or TELEGRAM_MONITOR_TASK.done():
+        TELEGRAM_MONITOR_TASK = track_background_task(telegram_health_monitor())
+    if AUTOMATIC_BACKUP_TASK is None or AUTOMATIC_BACKUP_TASK.done():
+        AUTOMATIC_BACKUP_TASK = track_background_task(automatic_backup_worker())
 
 
 # ============================================================
@@ -3928,11 +4404,13 @@ async def home():
 
 @app.get("/api/health")
 async def api_health():
+    storage = await asyncio.to_thread(storage_info_sync)
     return {
         "status": "ok",
         "server": "Xrob Music",
         "version": SERVER_VERSION,
         "openSubsonic": True,
+        "storage": {"mounted": bool(storage.get("mounted")), "writable": bool(storage.get("writable"))},
     }
 
 
@@ -3957,6 +4435,31 @@ async def api_post_settings(
     except Exception as exc:
         await write_app_error("worker_scaling", str(exc))
     return await public_settings_async()
+
+
+@app.post("/api/telegram/test")
+async def api_telegram_test():
+    settings_now = await load_settings_async()
+    token = str(settings_now.get("telegram_bot_token") or "").strip()
+    chat_id = str(settings_now.get("telegram_chat_id") or "").strip()
+    if not token or not chat_id:
+        raise HTTPException(400, "Save the Telegram bot token and chat ID in Settings first.")
+    message = f"✅ Xrob Music Telegram test successful.\nVersion: {SERVER_VERSION}\nThe bot can send notifications to this chat."
+    ok, detail = await asyncio.to_thread(_telegram_send_message_sync, token, chat_id, message)
+    if not ok:
+        await write_app_error("telegram_test", detail)
+        raise HTTPException(502, f"Telegram test failed: {detail}")
+    return {"status": "ok", "message": "Telegram test message sent."}
+
+@app.post("/api/telegram/clear")
+async def api_telegram_clear():
+    settings_now = await asyncio.to_thread(load_settings)
+    settings_now["telegram_bot_token"] = ""
+    settings_now["telegram_chat_id"] = ""
+    settings_now["telegram_enabled"] = False
+    settings_now["telegram_daily_report"] = False
+    await asyncio.to_thread(_write_settings_sync, settings_now)
+    return {"status": "ok", "message": "Telegram credentials removed."}
 
 
 # ============================================================
@@ -4385,6 +4888,7 @@ async def api_download(
     payload: dict = Body(...),
 ):
 
+    await asyncio.to_thread(ensure_storage_ready, "starting a download", True)
     url = validate_media_url(payload.get("url"))
 
     settings = await load_settings_async()
@@ -5344,6 +5848,7 @@ async def api_delete_library(
     filename: str,
 ):
 
+    await asyncio.to_thread(ensure_storage_ready, "deleting a library track", True)
     path = await resolve_file(filename)
     deleted_song_id = make_song_id(path)
 
@@ -8900,6 +9405,7 @@ async def api_library_health():
 async def api_library_scan_mode(mode: str):
     if mode not in {"quick", "full"}:
         raise HTTPException(400, "mode must be quick or full")
+    await asyncio.to_thread(ensure_storage_ready, "scanning the library", True)
     if LIBRARY_SCAN_LOCK.locked():
         raise HTTPException(409, "A library scan is already running")
 
@@ -9002,8 +9508,8 @@ async def api_diagnostics():
         except Exception as exc:
             checks["database"] = {"ok": False, "integrity": str(exc), "foreign_keys": False}
         try:
-            usage = shutil.disk_usage(DOWNLOAD_DIR)
-            checks["storage"] = {"ok": DOWNLOAD_DIR.exists() and os.access(DOWNLOAD_DIR, os.W_OK), "path": str(DOWNLOAD_DIR), "free_bytes": usage.free, "total_bytes": usage.total}
+            storage_status = storage_info_sync(probe_write=True)
+            checks["storage"] = {"ok": bool(storage_status.get("mounted") and storage_status.get("writable")), **storage_status}
         except Exception as exc:
             checks["storage"] = {"ok": False, "path": str(DOWNLOAD_DIR), "error": str(exc)}
         return checks
@@ -9021,8 +9527,7 @@ async def api_diagnostics():
     checks["runtime"] = {"server_version": SERVER_VERSION, "tasks": len(TASKS), "active_processes": len(ACTIVE_PROCESSES), "websocket_connections": len(manager.connections) if hasattr(manager, "connections") else 0}
     return checks
 
-@app.get("/api/backup")
-async def api_backup():
+async def _api_backup_impl():
     await asyncio.to_thread(init_db)
     settings = await asyncio.to_thread(load_settings)
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
@@ -9059,6 +9564,8 @@ async def api_backup():
 
     try:
         path = await asyncio.to_thread(build_backup)
+        try: await asyncio.to_thread(os.chmod, path, 0o600)
+        except OSError: pass
         def cleanup():
             for candidate in (path, db_snapshot):
                 try: candidate.unlink(missing_ok=True)
@@ -9071,9 +9578,42 @@ async def api_backup():
         raise HTTPException(500, f"Backup failed: {exc}")
 
 
+@app.get("/api/backup")
+async def api_backup():
+    if RESTORE_LOCK.locked():
+        raise HTTPException(409, "A restore or backup is already running; retry when it finishes")
+    async with RESTORE_LOCK:
+        return await _api_backup_impl()
+
+
+@app.get("/api/backups/automatic")
+async def api_list_automatic_backups():
+    def list_sync():
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        retention = automatic_backup_retention()
+        files = sorted(BACKUP_DIR.glob("xrob-music-auto-*.zip"), key=lambda item: item.stat().st_mtime, reverse=True)
+        return [{"filename": item.name, "size_bytes": item.stat().st_size, "modified_at": item.stat().st_mtime} for item in files[:retention]]
+    try:
+        items = await asyncio.to_thread(list_sync)
+    except OSError as exc:
+        raise HTTPException(500, f"Could not list automatic backups: {exc}") from exc
+    return {"backups": items, "retention": automatic_backup_retention(), "retention_choices": list(AUTOMATIC_BACKUP_RETENTION_CHOICES)}
+
+
+@app.get("/api/backups/automatic/latest")
+async def api_download_latest_automatic_backup():
+    def find_latest():
+        files = sorted(BACKUP_DIR.glob("xrob-music-auto-*.zip"), key=lambda item: item.stat().st_mtime, reverse=True) if BACKUP_DIR.exists() else []
+        return files[0] if files else None
+    latest = await asyncio.to_thread(find_latest)
+    if not latest or not latest.is_file():
+        raise HTTPException(404, "No automatic backup is available yet. The first backup is created after app startup.")
+    return FileResponse(latest, media_type="application/zip", filename=latest.name)
+
+
 async def _stop_runtime_for_restore():
     global SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK, DOWNLOAD_WORKER_TASKS
-    tasks = list(DOWNLOAD_WORKER_TASKS)
+    tasks = list(DOWNLOAD_WORKER_TASKS) + list(STORAGE_WAIT_TASKS)
     for candidate in (SCHEDULED_SCANNER_TASK, LIBRARY_WARMUP_TASK):
         if candidate is not None:
             tasks.append(candidate)
@@ -9083,6 +9623,7 @@ async def _stop_runtime_for_restore():
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     DOWNLOAD_WORKER_TASKS.clear()
+    STORAGE_WAIT_TASKS.clear()
     SCHEDULED_SCANNER_TASK = None
     LIBRARY_WARMUP_TASK = None
     # Remove queued jobs; the restored DB becomes the sole source of truth.
@@ -9121,9 +9662,17 @@ async def _api_restore_impl(file: UploadFile = File(...)):
     global TASKS, LIBRARY_CACHE, LIBRARY_CACHE_TIME, PLAYER_STATE, PLAYER_STATE_UPDATED_AT
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(400, "A .zip Xrob Music backup is required")
-    raw = await file.read()
-    if len(raw) > 64 * 1024 * 1024:
-        raise HTTPException(413, "Backup is too large")
+    chunks = []
+    upload_size = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        upload_size += len(chunk)
+        if upload_size > 64 * 1024 * 1024:
+            raise HTTPException(413, "Backup is too large (maximum 64 MB)")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
     temp = Path(tempfile.gettempdir()) / f"xrob-restore-{uuid.uuid4().hex}.zip"
     db_tmp = None
     safety = None
@@ -9134,7 +9683,13 @@ async def _api_restore_impl(file: UploadFile = File(...)):
     settings_existed = False
     index_existed = False
     try:
-        await asyncio.to_thread(temp.write_bytes, raw)
+        def write_private_restore_archive():
+            fd = os.open(str(temp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(raw)
+                handle.flush()
+                os.fsync(handle.fileno())
+        await asyncio.to_thread(write_private_restore_archive)
         def validate_zip():
             with zipfile.ZipFile(temp, "r") as z:
                 infos = z.infolist()
@@ -9146,7 +9701,10 @@ async def _api_restore_impl(file: UploadFile = File(...)):
                 for info in infos:
                     if int(info.file_size) > 256 * 1024 * 1024:
                         raise ValueError(f"Backup member is too large: {info.filename}")
-                names = set(z.namelist())
+                member_names = z.namelist()
+                names = set(member_names)
+                if len(names) != len(member_names):
+                    raise ValueError("Backup contains duplicate ZIP member names")
                 if "tasks.db" not in names:
                     raise ValueError("Backup does not contain tasks.db")
                 if any(name.startswith("/") or ".." in Path(name).parts for name in names):
@@ -9160,6 +9718,9 @@ async def _api_restore_impl(file: UploadFile = File(...)):
                     ok = str(test.execute("PRAGMA integrity_check").fetchone()[0] or "")
                     if ok.lower() != "ok":
                         raise ValueError(f"Database integrity check failed: {ok}")
+                    table_names = {str(row[0]) for row in test.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                    if "tasks" not in table_names:
+                        raise ValueError("Backup database is missing the required tasks table")
                     test.execute("PRAGMA user_version")
                 finally:
                     test.close()
@@ -9207,11 +9768,39 @@ async def _api_restore_impl(file: UploadFile = File(...)):
         def write_restore_state():
             SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
             settings_tmp = SETTINGS_FILE.with_suffix(".restore.tmp")
-            settings_tmp.write_bytes(settings_bytes)
-            os.replace(settings_tmp, SETTINGS_FILE)
             index_tmp = LIBRARY_INDEX_FILE.with_suffix(".restore.tmp")
-            index_tmp.write_bytes(index_bytes)
+            # Backup settings may contain Telegram credentials. Create them with
+            # restrictive permissions from the outset, then atomically replace.
+            fd = os.open(str(settings_tmp), os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+            try: os.fchmod(fd, 0o600)
+            except OSError: pass
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(settings_bytes)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except Exception:
+                try: os.close(fd)
+                except OSError: pass
+                raise
+            os.replace(settings_tmp, SETTINGS_FILE)
+            try: os.chmod(SETTINGS_FILE, 0o600)
+            except OSError: pass
+            fd = os.open(str(index_tmp), os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+            try: os.fchmod(fd, 0o600)
+            except OSError: pass
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(index_bytes)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except Exception:
+                try: os.close(fd)
+                except OSError: pass
+                raise
             os.replace(index_tmp, LIBRARY_INDEX_FILE)
+            try: os.chmod(LIBRARY_INDEX_FILE, 0o600)
+            except OSError: pass
         await asyncio.to_thread(write_restore_state)
         await asyncio.to_thread(_ensure_secure_web_credentials_sync)
 
@@ -9238,8 +9827,18 @@ async def _api_restore_impl(file: UploadFile = File(...)):
                     await asyncio.to_thread(os.replace, rollback_db, DB_FILE)
                     if settings_existed and old_settings_bytes is not None:
                         settings_tmp = SETTINGS_FILE.with_suffix(".rollback.tmp")
-                        await asyncio.to_thread(settings_tmp.write_bytes, old_settings_bytes)
-                        await asyncio.to_thread(os.replace, settings_tmp, SETTINGS_FILE)
+                        def restore_old_settings_private():
+                            fd = os.open(str(settings_tmp), os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+                            try: os.fchmod(fd, 0o600)
+                            except OSError: pass
+                            with os.fdopen(fd, "wb") as handle:
+                                handle.write(old_settings_bytes)
+                                handle.flush()
+                                os.fsync(handle.fileno())
+                            os.replace(settings_tmp, SETTINGS_FILE)
+                            try: os.chmod(SETTINGS_FILE, 0o600)
+                            except OSError: pass
+                        await asyncio.to_thread(restore_old_settings_private)
                     elif not settings_existed:
                         await asyncio.to_thread(SETTINGS_FILE.unlink, missing_ok=True)
                     if index_existed and old_index_bytes is not None:
@@ -9374,6 +9973,7 @@ def _write_library_metadata_sync(path, title, artist, album):
 
 @app.post("/api/library/metadata")
 async def api_library_metadata(payload: dict = Body(...)):
+    await asyncio.to_thread(ensure_storage_ready, "editing track metadata", True)
     song_id = str(payload.get("id") or "")
     song = await find_song(song_id)
     if not song:
@@ -9589,44 +10189,93 @@ async def api_artist_artwork(artist_id: str):
     if not row: raise HTTPException(404, "Artist artwork not found")
     return Response(content=row[0], media_type=row[1])
 
+async def _read_upload_limited(upload: UploadFile, max_bytes: int) -> bytes:
+    """Read an upload incrementally and abort as soon as its size limit is exceeded."""
+    limit = max(1, int(max_bytes))
+    chunks = []
+    total = 0
+    while True:
+        chunk = await upload.read(min(1024 * 1024, limit + 1 - total))
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(413, f"Upload exceeds the {limit // (1024 * 1024)} MB limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _image_signature_matches(data: bytes, mime: str) -> bool:
+    if mime == "image/jpeg":
+        return data.startswith(b"\xff\xd8\xff")
+    if mime == "image/png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == "image/webp":
+        return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    return False
+
+
 @app.post("/api/library/artist-artwork/{artist_id}")
 async def api_artist_artwork_upload(artist_id: str, upload: UploadFile = File(...)):
-    data = await upload.read()
-    if not data or len(data) > 15 * 1024 * 1024: raise HTTPException(400, "Invalid artwork")
+    data = await _read_upload_limited(upload, 15 * 1024 * 1024)
     mime = upload.content_type or "image/jpeg"
-    if mime not in {"image/jpeg","image/png","image/webp"}: raise HTTPException(400, "Use JPEG, PNG or WebP artwork")
+    if mime not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(400, "Use JPEG, PNG or WebP artwork")
+    if not data or not _image_signature_matches(data, mime):
+        raise HTTPException(400, "The uploaded file does not match its declared image type")
     await asyncio.to_thread(_artist_artwork_save_sync, artist_id, data, mime)
     invalidate_library_cache()
-    return {"status":"ok","artist_id":artist_id}
+    return {"status": "ok", "artist_id": artist_id}
+
 
 @app.post("/api/library/artwork/{song_id}")
-async def api_library_artwork(song_id:str, upload:UploadFile=File(...)):
-    song=await find_song(song_id)
-    if not song: raise HTTPException(404,"Track not found")
-    data=await upload.read()
-    if not data or len(data)>15*1024*1024: raise HTTPException(400,"Invalid artwork")
-    mime=upload.content_type or "image/jpeg"
-    if mime not in {"image/jpeg", "image/png", "image/webp"}: raise HTTPException(400,"Use JPEG, PNG or WebP artwork")
-    if MutagenFile is None: raise HTTPException(500,"Metadata library unavailable")
+async def api_library_artwork(song_id: str, upload: UploadFile = File(...)):
+    await asyncio.to_thread(ensure_storage_ready, "updating embedded artwork", True)
+    song = await find_song(song_id)
+    if not song:
+        raise HTTPException(404, "Track not found")
+    data = await _read_upload_limited(upload, 15 * 1024 * 1024)
+    mime = upload.content_type or "image/jpeg"
+    if mime not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(400, "Use JPEG, PNG or WebP artwork")
+    if not data or not _image_signature_matches(data, mime):
+        raise HTTPException(400, "The uploaded file does not match its declared image type")
+    if MutagenFile is None:
+        raise HTTPException(500, "Metadata library unavailable")
+
     def write_art():
-        audio=MutagenFile(song["path"], easy=False)
-        ext=song["path"].suffix.lower()
-        if ext==".mp3":
-            if audio.tags is None: audio.add_tags()
+        audio = MutagenFile(song["path"], easy=False)
+        ext = song["path"].suffix.lower()
+        if ext == ".mp3":
+            if audio.tags is None:
+                audio.add_tags()
             audio.tags.delall("APIC")
-            audio.tags.add(APIC(mime=mime,type=3,desc="Cover",data=data))
-        elif ext==".flac" and Picture:
-            pic=Picture(); pic.type=3; pic.mime=mime; pic.data=data; audio.clear_pictures(); audio.add_picture(pic); audio.save()
+            audio.tags.add(APIC(mime=mime, type=3, desc="Cover", data=data))
+        elif ext == ".flac" and Picture:
+            pic = Picture()
+            pic.type = 3
+            pic.mime = mime
+            pic.data = data
+            audio.clear_pictures()
+            audio.add_picture(pic)
+            audio.save()
             return
-        elif ext in {".m4a",".mp4"}:
+        elif ext in {".m4a", ".mp4"}:
+            if mime == "image/webp":
+                raise RuntimeError("M4A/MP4 embedded artwork supports JPEG or PNG, not WebP")
             from mutagen.mp4 import MP4Cover
-            audio["covr"]=[MP4Cover(data,imageformat=MP4Cover.FORMAT_PNG if "png" in mime else MP4Cover.FORMAT_JPEG)]
+            audio["covr"] = [MP4Cover(data, imageformat=MP4Cover.FORMAT_PNG if mime == "image/png" else MP4Cover.FORMAT_JPEG)]
         else:
             raise RuntimeError("Embedded artwork is not supported for this format")
         audio.save()
-    try: await asyncio.to_thread(write_art)
-    except Exception as exc: await write_app_error("artwork",str(exc)); raise HTTPException(500,f"Artwork update failed: {exc}")
-    invalidate_library_cache(); return {"status":"ok"}
+
+    try:
+        await asyncio.to_thread(write_art)
+    except Exception as exc:
+        await write_app_error("artwork", str(exc))
+        raise HTTPException(500, f"Artwork update failed: {exc}")
+    invalidate_library_cache()
+    return {"status": "ok", "song_id": song_id}
 
 
 async def scheduled_library_scanner():
