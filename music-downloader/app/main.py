@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.4.14"
+SERVER_VERSION = "4.4.15"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -570,6 +570,9 @@ LIBRARY_CACHE = None
 LIBRARY_CACHE_TIME = 0.0
 LIBRARY_CACHE_TTL = 10.0
 LIBRARY_CACHE_LOCK = asyncio.Lock()
+SEARCH_INDEX_VALIDATE_LOCK = asyncio.Lock()
+SEARCH_INDEX_VALIDATED_AT = 0.0
+SEARCH_INDEX_VALIDATE_INTERVAL_SECONDS = 20.0
 LIBRARY_INDEX_FILE = DATA_DIR / "library_index.json"
 LIBRARY_INDEX_WRITE_LOCK = RLock()
 # Invalidates queued background index writes across a backup restore. A thread
@@ -2011,14 +2014,76 @@ def normalize_identity_text(value, title=False):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def normalize_artist_identity(value):
+    """Normalize artist identity independent of spacing, case, accents or punctuation.
+
+    Display names are kept separately; this compact key is the canonical identity
+    used by library grouping, artist IDs and duplicate matching. YouTube channel
+    suffixes such as ``- Topic`` and ``VEVO`` are removed so provider metadata does
+    not create a second artist beside the same tagged library artist.
+    """
+    normalized = normalize_identity_text(value)
+    # These are channel/distribution labels, not artist-name tokens. Only strip
+    # them at the end: removing them in the middle could merge unrelated artists.
+    normalized = re.sub(r"(?:\s+(?:topic|vevo|official))+$", "", normalized)
+    return re.sub(r"\s+", "", normalized)
+
+
+_GENERIC_ARTIST_IDENTITIES = {
+    "unknownartist", "unknown", "variousartists", "youtube", "youtubemusic",
+    "music", "vevo", "topic",
+}
+_GENERIC_TITLE_IDENTITIES = {"unknowntrack", "unknown", ""}
+
+
+def is_generic_artist(value):
+    """Return True for missing/provider-generic artist labels, not real artists."""
+    identity = normalize_artist_identity(value)
+    return not identity or identity in _GENERIC_ARTIST_IDENTITIES
+
+
+def _title_identity(value):
+    return normalize_identity_text(value, title=True)
+
+
+def _is_compatible_duration(left, right):
+    left = safe_float(left, 0)
+    right = safe_float(right, 0)
+    if left <= 0 or right <= 0:
+        return True
+    return abs(left - right) <= max(15.0, max(left, right) * 0.15)
+
+
+def _unambiguous_title_match(candidates, target_duration=0):
+    """Choose a title-only match only when it cannot collapse different artists.
+
+    Candidates are ``(relative_path, artist, duration)`` tuples. When duration is
+    known it narrows same-title candidates; when multiple real artists remain, the
+    match is deliberately rejected to avoid hiding a different song in Search.
+    """
+    unique = {}
+    for rel, artist, duration in candidates or []:
+        if rel and rel not in unique:
+            unique[rel] = (rel, artist or "Unknown Artist", duration or 0)
+    rows = list(unique.values())
+    if not rows:
+        return None
+    if safe_float(target_duration, 0) > 0:
+        duration_rows = [row for row in rows if _is_compatible_duration(target_duration, row[2])]
+        if duration_rows:
+            rows = duration_rows
+    artist_ids = {normalize_artist_identity(row[1]) for row in rows if not is_generic_artist(row[1])}
+    if len(artist_ids) > 1:
+        return None
+    return rows[0][0]
+
+
 def normalize_duplicate_key(value, artist=None):
     """Return a stable artist+title key; empty when identity is too weak to trust."""
     if artist is not None:
-        artist_key = normalize_identity_text(artist)
-        title_key = normalize_identity_text(value, title=True)
-        generic_artists = {"unknown artist", "unknown", "various artists"}
-        generic_titles = {"unknown track", "unknown", ""}
-        if not artist_key or artist_key in generic_artists or not title_key or title_key in generic_titles:
+        artist_key = normalize_artist_identity(artist)
+        title_key = _title_identity(value)
+        if is_generic_artist(artist) or not title_key or title_key in _GENERIC_TITLE_IDENTITIES:
             return ""
         return f"{artist_key}\x00{title_key}"
     text = str(value or "")
@@ -2297,21 +2362,17 @@ def make_song_id(path):
     return f"song-{digest}"
 
 
-def make_artist_id(name):
-    name = clean_metadata_text(
-        name,
-        "Unknown Artist",
-    )
+def make_legacy_artist_id(name):
+    """Return the pre-4.4.15 artist ID for artwork migration/fallback only."""
+    name = clean_metadata_text(name, "Unknown Artist")
     name = re.sub(r"\s+", " ", name).strip()
+    return "artist-" + hashlib.sha1(name.casefold().encode("utf-8")).hexdigest()[:20]
 
-    # Artist identity is case-insensitive so differently cased metadata
-    # such as "Cheb Akil" and "cheb akil" resolves to one artist.
-    identity_name = name.casefold()
 
-    digest = hashlib.sha1(
-        identity_name.encode("utf-8")
-    ).hexdigest()[:20]
-
+def make_artist_id(name):
+    """Stable canonical artist ID; spacing/case/accent aliases share one ID."""
+    identity_name = normalize_artist_identity(clean_metadata_text(name, "Unknown Artist"))
+    digest = hashlib.sha1(identity_name.encode("utf-8")).hexdigest()[:20]
     return f"artist-{digest}"
 
 
@@ -2481,9 +2542,12 @@ async def fast_library_snapshot():
     # Cached metadata can provide artist/album counts before the full scan finishes.
     artists=set(); albums=set()
     for v in cached.values() if isinstance(cached, dict) else []:
-        if v.get("artist"): artists.add(str(v["artist"]).strip().lower())
+        artist_name = str(v.get("artist") or "Unknown Artist")
+        album_name = str(v.get("album") or "Unknown Album")
+        if v.get("artist"):
+            artists.add(normalize_artist_identity(artist_name))
         if v.get("album"):
-            albums.add((str(v.get("artist") or "Unknown Artist").strip().lower(), str(v["album"]).strip().lower()))
+            albums.add((normalize_artist_identity(artist_name), normalize_identity_text(album_name)))
     return {"files": files, "total_size": format_size(total), "total_bytes": total, "artists_count": len(artists), "albums_count": len(albums), "ready": False, "storage": await asyncio.to_thread(storage_info_sync)}
 
 def _build_library_index_entries_sync(library):
@@ -2533,6 +2597,70 @@ async def persist_library_index(library, *, expected_generation=None):
         await asyncio.to_thread(_persist_library_index_sync, library, expected_generation=expected_generation)
     except Exception as exc:
         print("Warning: could not save library index:", exc)
+
+def _library_index_matches_disk_sync():
+    """Return True when the sidecar index covers the current audio files, False when stale, or None when storage is unavailable."""
+    try:
+        storage = storage_info_sync()
+        if not storage.get("mounted") or not storage.get("exists"):
+            return None
+        files = get_audio_files_sync()
+        loaded = _load_library_index_sync()
+        entries = loaded.get("entries", {}) if isinstance(loaded, dict) else {}
+        if not isinstance(entries, dict):
+            entries = {}
+        expected = {}
+        for path in files:
+            try:
+                stat = path.stat()
+                expected[str(path.relative_to(DOWNLOAD_DIR))] = (stat.st_mtime_ns, stat.st_size)
+            except (OSError, ValueError):
+                continue
+        if set(expected) != set(entries):
+            return False
+        for rel, stamp in expected.items():
+            row = entries.get(rel)
+            if not isinstance(row, dict):
+                return False
+            # A sidecar can have current file stamps but still lack the metadata
+            # fields used to mark downloads on Search. Treat that as stale too.
+            if not str(row.get("title") or "").strip() or not str(row.get("artist") or "").strip():
+                return False
+            try:
+                if (int(row.get("mtime_ns", -1)), int(row.get("size", -1))) != stamp:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
+    except Exception:
+        return None
+
+
+async def ensure_search_library_index():
+    """Repair stale/missing index data before decorating search results.
+
+    A short validation cache avoids a full directory walk on every infinite-scroll
+    page; downloads also update the sidecar index as soon as the file is finalized.
+    """
+    global SEARCH_INDEX_VALIDATED_AT
+    now = time.monotonic()
+    if now - SEARCH_INDEX_VALIDATED_AT < SEARCH_INDEX_VALIDATE_INTERVAL_SECONDS:
+        return
+    async with SEARCH_INDEX_VALIDATE_LOCK:
+        now = time.monotonic()
+        if now - SEARCH_INDEX_VALIDATED_AT < SEARCH_INDEX_VALIDATE_INTERVAL_SECONDS:
+            return
+        is_current = await asyncio.to_thread(_library_index_matches_disk_sync)
+        if is_current is False:
+            try:
+                library = await build_library(force=True)
+                await persist_library_index(library)
+            except Exception as exc:
+                # Search should continue to work if storage is temporarily down;
+                # the next validation retries instead of poisoning the index.
+                await write_app_error("search_library_index_repair", str(exc))
+        SEARCH_INDEX_VALIDATED_AT = time.monotonic()
+
 
 async def background_library_warmup():
     global LIBRARY_WARMUP_TASK
@@ -2584,7 +2712,10 @@ async def build_library(force=False):
                 stat = await asyncio.to_thread(path.stat)
                 rel = str(path.relative_to(DOWNLOAD_DIR))
                 cached_disk = disk_entries.get(rel) if isinstance(disk_entries, dict) else None
-                if cached_disk and int(cached_disk.get("mtime_ns", -1)) == int(stat.st_mtime_ns) and int(cached_disk.get("size", -1)) == int(stat.st_size):
+                if (cached_disk and int(cached_disk.get("mtime_ns", -1)) == int(stat.st_mtime_ns)
+                        and int(cached_disk.get("size", -1)) == int(stat.st_size)
+                        and str(cached_disk.get("title") or "").strip()
+                        and str(cached_disk.get("artist") or "").strip()):
                     metadata = dict(cached_disk)
                 else:
                     async with metadata_semaphore:
@@ -2643,40 +2774,79 @@ async def build_library(force=False):
                 }
                 songs.append(song)
 
-                # Track artists own the tracks. Album artists also own the album
-                # relationship so compilation/featured-artist metadata remains useful.
-                artist_roles = {
-                    artist_id: artist_name,
-                    album_artist_id: album_artist,
-                }
-                for current_id, current_name in artist_roles.items():
-                    if current_id not in artists:
-                        artists[current_id] = {
-                            "id": current_id,
-                            "name": current_name,
-                            "albumIds": set(),
-                            "songIds": [],
-                        }
-                    artists[current_id]["albumIds"].add(album_id)
-                    if song_id not in artists[current_id]["songIds"]:
-                        artists[current_id]["songIds"].append(song_id)
-
-                if album_id not in albums:
-                    albums[album_id] = {
-                        "id": album_id,
-                        "name": album_name,
-                        "artist": album_artist,
-                        "artistId": album_artist_id,
-                        "albumArtist": album_artist,
-                        "year": metadata.get("year", ""),
-                        "genre": metadata.get("genre", ""),
-                        "songIds": [],
-                        "path": path,
-                    }
-                albums[album_id]["songIds"].append(song_id)
-
                 if metadata.get("genre"):
                     genres[metadata["genre"]] = genres.get(metadata["genre"], 0) + 1
+
+        # Merge artist metadata aliases before building cards and album groups.
+        # Prefer the most readable spelling (spaces and mixed case) while keeping
+        # make_artist_id's legacy format so existing artist artwork IDs remain valid.
+        all_artist_names = []
+        for song in songs:
+            all_artist_names.extend([
+                clean_metadata_text(song.get("artist"), "Unknown Artist"),
+                clean_metadata_text(song.get("albumArtist"), song.get("artist") or "Unknown Artist"),
+            ])
+
+        display_by_identity = {}
+        legacy_artist_ids_by_identity = defaultdict(set)
+        def artist_display_rank(name):
+            spaces = len(re.findall(r"\s+", str(name).strip()))
+            mixed_case = any(ch.islower() for ch in str(name)) and any(ch.isupper() for ch in str(name))
+            return (spaces, int(mixed_case), -len(str(name)))
+
+        for name in all_artist_names:
+            identity = normalize_artist_identity(name)
+            if not identity:
+                continue
+            legacy_artist_ids_by_identity[identity].add(make_legacy_artist_id(name))
+            current = display_by_identity.get(identity)
+            if current is None or artist_display_rank(name) > artist_display_rank(current):
+                display_by_identity[identity] = name
+
+        artists = {}
+        albums = {}
+        for song in songs:
+            artist_identity = normalize_artist_identity(song.get("artist"))
+            album_artist_identity = normalize_artist_identity(song.get("albumArtist") or song.get("artist"))
+            song["artist"] = display_by_identity.get(artist_identity, song.get("artist") or "Unknown Artist")
+            song["albumArtist"] = display_by_identity.get(album_artist_identity, song.get("albumArtist") or song["artist"])
+            song["artistId"] = make_artist_id(song["artist"])
+            song["albumArtistId"] = make_artist_id(song["albumArtist"])
+            song["albumId"] = make_album_id(song["albumArtist"], song["album"])
+            song_id = song["id"]
+            album_id = song["albumId"]
+
+            for current_id, current_name in {
+                song["artistId"]: song["artist"],
+                song["albumArtistId"]: song["albumArtist"],
+            }.items():
+                if current_id not in artists:
+                    artists[current_id] = {
+                        "id": current_id,
+                        "name": current_name,
+                        # Kept internally for fetching artwork uploaded before
+                        # canonical artist IDs were introduced in 4.4.15.
+                        "legacyIds": set(legacy_artist_ids_by_identity.get(normalize_artist_identity(current_name), set())),
+                        "albumIds": set(),
+                        "songIds": [],
+                    }
+                artists[current_id]["albumIds"].add(album_id)
+                if song_id not in artists[current_id]["songIds"]:
+                    artists[current_id]["songIds"].append(song_id)
+
+            if album_id not in albums:
+                albums[album_id] = {
+                    "id": album_id,
+                    "name": song["album"],
+                    "artist": song["albumArtist"],
+                    "artistId": song["albumArtistId"],
+                    "albumArtist": song["albumArtist"],
+                    "year": song.get("year", ""),
+                    "genre": song.get("genre", ""),
+                    "songIds": [],
+                    "path": song["path"],
+                }
+            albums[album_id]["songIds"].append(song_id)
 
         def song_sort_key(song):
             disc = safe_int(song.get("disc"), 0)
@@ -2688,6 +2858,7 @@ async def build_library(force=False):
         for artist in artists.values():
             artist["albumIds"] = sorted(artist["albumIds"], key=lambda aid: albums[aid]["name"].lower())
             artist["songIds"] = sorted(artist["songIds"], key=lambda sid: song_sort_key(song_by_id[sid]))
+            artist["legacyIds"] = sorted(artist.get("legacyIds", set()))
         for album in albums.values():
             album["songIds"] = sorted(album["songIds"], key=lambda sid: song_sort_key(song_by_id[sid]))
 
@@ -4858,19 +5029,38 @@ def _search_duplicate_state_sync(items, tasks):
     by_identity = {}
     by_source_identity = {}
     by_source_url = {}
+    by_title = {}
+    by_source_title = {}
     for rel, cached in entries.items() if isinstance(entries, dict) else []:
         cached = cached if isinstance(cached, dict) else {}
-        title = cached.get("title") or Path(str(rel)).stem
+        rel = str(rel)
+        # Ignore stale or escaping sidecar entries; the disk is the authority.
+        try:
+            indexed_path = (DOWNLOAD_DIR / rel).resolve()
+            if not indexed_path.is_relative_to(DOWNLOAD_DIR.resolve()) or not indexed_path.is_file():
+                continue
+        except (OSError, RuntimeError, ValueError):
+            continue
+        title = cached.get("title") or Path(rel).stem
         artist = cached.get("artist") or "Unknown Artist"
+        duration = safe_float(cached.get("duration"), 0)
         key = normalize_duplicate_key(title, artist)
         if key:
-            by_identity.setdefault(key, []).append(str(rel))
-        source_key = normalize_duplicate_key(cached.get("source_title"), cached.get("source_artist"))
+            by_identity.setdefault(key, []).append(rel)
+        title_key = _title_identity(title)
+        if title_key and title_key not in _GENERIC_TITLE_IDENTITIES:
+            by_title.setdefault(title_key, []).append((rel, artist, duration))
+        source_title = cached.get("source_title")
+        source_artist = cached.get("source_artist") or "Unknown Artist"
+        source_key = normalize_duplicate_key(source_title, source_artist)
         if source_key:
-            by_source_identity.setdefault(source_key, []).append(str(rel))
+            by_source_identity.setdefault(source_key, []).append(rel)
+        source_title_key = _title_identity(source_title)
+        if source_title_key and source_title_key not in _GENERIC_TITLE_IDENTITIES:
+            by_source_title.setdefault(source_title_key, []).append((rel, source_artist, duration))
         source_url = str(cached.get("source_url") or "").strip()
         if source_url:
-            by_source_url.setdefault(source_url, []).append(str(rel))
+            by_source_url.setdefault(source_url, []).append(rel)
 
     active_by_url = set()
     active_by_identity = set()
@@ -4886,6 +5076,10 @@ def _search_duplicate_state_sync(items, tasks):
         if key:
             active_by_identity.add(key)
 
+    def first_match(mapping, key):
+        matches = mapping.get(key, []) if key else []
+        return matches[0] if matches else None
+
     def unique(mapping, key):
         matches = mapping.get(key, []) if key else []
         return matches[0] if len(matches) == 1 else None
@@ -4893,13 +5087,25 @@ def _search_duplicate_state_sync(items, tasks):
     decorated = []
     for item in items or []:
         row = dict(item)
-        row_url = str(row.get("url") or "")
-        identity = normalize_duplicate_key(row.get("title", ""), row.get("artist", ""))
-        matched_rel = unique(by_source_url, row_url)
+        row_url = str(row.get("url") or "").strip()
+        title = row.get("title", "")
+        artist = row.get("artist", "")
+        identity = normalize_duplicate_key(title, artist)
+        title_key = _title_identity(title)
+        matched_rel = first_match(by_source_url, row_url)
         if not matched_rel:
-            matched_rel = unique(by_identity, identity)
+            matched_rel = first_match(by_identity, identity)
         if not matched_rel:
+            # Keep source-title matching conservative when the provider supplied
+            # a real artist: two different uploads can share a title.
             matched_rel = unique(by_source_identity, identity)
+        if not matched_rel and title_key and is_generic_artist(artist):
+            # yt-dlp often reports a channel/unknown artist while the downloaded
+            # file has proper embedded tags. A unique same-title recording should
+            # still show as downloaded. Never collapse same-title songs by two
+            # different known artists; duration can resolve a genuine ambiguity.
+            candidates = [*by_title.get(title_key, []), *by_source_title.get(title_key, [])]
+            matched_rel = _unambiguous_title_match(candidates, row.get("duration"))
         matched = entries.get(matched_rel) if matched_rel and isinstance(entries, dict) else None
         if isinstance(matched, dict):
             row["library_path"] = matched_rel
@@ -4910,7 +5116,6 @@ def _search_duplicate_state_sync(items, tasks):
         row["already_queued"] = bool((row_url and row_url in active_by_url) or (identity and identity in active_by_identity))
         decorated.append(row)
     return decorated
-
 
 @app.get("/api/search")
 async def api_search(
@@ -4947,6 +5152,11 @@ async def api_search(
     except Exception as exc:
         await write_app_error("youtube_search", str(exc))
         raise HTTPException(status_code=502, detail="YouTube search failed. Please try again.") from exc
+
+    # The UI's "In Library" badge depends on a persisted metadata sidecar. Repair
+    # stale/missing coverage first so external file additions and startup races do
+    # not make downloaded songs appear downloadable again.
+    await ensure_search_library_index()
 
     # Preserve stable ordering while preventing a duplicated video from ever
     # appearing twice when yt-dlp/provider pagination changes between requests.
@@ -5177,6 +5387,8 @@ def find_existing_track_fast_sync(title, artist, source_url=None):
         entries = index.get("entries", {}) if isinstance(index, dict) else {}
         current_matches = []
         source_matches = []
+        title_matches = []
+        target_title_key = _title_identity(title)
         for rel, cached in entries.items():
             if not isinstance(cached, dict):
                 cached = {}
@@ -5188,21 +5400,30 @@ def find_existing_track_fast_sync(title, artist, source_url=None):
             if normalized_source_url and cached_source_url and cached_source_url == normalized_source_url:
                 return str(rel)
 
-            if target_key:
-                current_key = normalize_duplicate_key(
-                    cached.get("title") or Path(str(rel)).stem,
-                    cached.get("artist") or "Unknown Artist",
-                )
-                if current_key == target_key:
-                    current_matches.append(str(rel))
-                source_key = normalize_duplicate_key(cached.get("source_title"), cached.get("source_artist"))
-                if source_key == target_key:
-                    source_matches.append(str(rel))
+            current_title = cached.get("title") or Path(str(rel)).stem
+            current_artist = cached.get("artist") or "Unknown Artist"
+            current_key = normalize_duplicate_key(current_title, current_artist)
+            if target_key and current_key == target_key:
+                current_matches.append(str(rel))
+            source_key = normalize_duplicate_key(cached.get("source_title"), cached.get("source_artist"))
+            if target_key and source_key == target_key:
+                source_matches.append(str(rel))
+            if target_title_key:
+                if _title_identity(current_title) == target_title_key:
+                    title_matches.append((str(rel), current_artist, cached.get("duration", 0)))
+                if _title_identity(cached.get("source_title")) == target_title_key:
+                    title_matches.append((str(rel), cached.get("source_artist") or current_artist, cached.get("duration", 0)))
 
-        if len(current_matches) == 1:
+        if current_matches:
+            # Exact editable title+artist identity still means downloaded even
+            # when the library already contains duplicate copies of that track.
             return current_matches[0]
         if len(source_matches) == 1:
             return source_matches[0]
+        if is_generic_artist(artist):
+            fallback = _unambiguous_title_match(title_matches)
+            if fallback:
+                return fallback
     except Exception:
         pass
     return None
@@ -10769,6 +10990,17 @@ async def api_song_editor_skip(song_id:str):
 @app.get("/api/library/artist-artwork/{artist_id}")
 async def api_artist_artwork(artist_id: str):
     row = await asyncio.to_thread(_artist_artwork_get_sync, artist_id)
+    if not row:
+        # Artist IDs are now canonical across whitespace/case variants. Fall back
+        # to artwork saved under the prior legacy ID and migrate it lazily.
+        artist = await find_artist(artist_id)
+        for legacy_id in (artist or {}).get("legacyIds", []):
+            if legacy_id == artist_id:
+                continue
+            row = await asyncio.to_thread(_artist_artwork_get_sync, legacy_id)
+            if row:
+                await asyncio.to_thread(_artist_artwork_save_sync, artist_id, row[0], row[1])
+                break
     if not row: raise HTTPException(404, "Artist artwork not found")
     return Response(content=row[0], media_type=row[1])
 
