@@ -5361,3 +5361,74 @@ button svg, [role="button"] svg { flex: 0 0 auto; }
 .settings-advanced-content > .settings-card:first-child { margin-top: 0; }
 #openSubsonicStatus[data-state="success"] { color: var(--accent); }
 #openSubsonicStatus[data-state="error"] { color: var(--text-secondary); }
+
+/* Settings redesign: concise, collapsible categories with clear touch targets. */
+.settings-advanced-content {
+  display: grid;
+  gap: 10px;
+}
+.settings-advanced-content > .settings-info-card {
+  margin-top: 0;
+}
+.settings-group {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elevated, var(--bg-surface));
+}
+.settings-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 13px 15px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-primary);
+}
+.settings-group > summary::-webkit-details-marker { display: none; }
+.settings-group > summary::after {
+  content: "+";
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+}
+.settings-group[open] > summary::after { content: "−"; }
+.settings-group-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.settings-group-title {
+  font-size: 12px;
+  font-weight: 800;
+}
+.settings-group-hint {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+.settings-group-content {
+  display: grid;
+  gap: 10px;
+  padding: 0 10px 10px;
+}
+.settings-group-content > .settings-card {
+  margin: 0;
+  border-radius: 11px;
+}
+.settings-group-content .settings-divider {
+  margin-top: 0;
+}
+@media (max-width: 540px) {
+  .settings-advanced { padding: 12px; }
+  .settings-advanced > summary { align-items: flex-start; }
+  .settings-advanced-hint { flex: 1 1 100%; }
+  .settings-group > summary { padding: 12px; }
+  .settings-group-content { padding: 0 8px 8px; }
+}
