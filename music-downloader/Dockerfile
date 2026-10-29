@@ -2,13 +2,19 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# yt-dlp needs a modern JavaScript runtime for reliable YouTube extraction.
+# Deno's official installer supports the project's amd64/aarch64 architectures.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
         ffmpeg \
+        unzip \
+    && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
+    && deno --version \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
