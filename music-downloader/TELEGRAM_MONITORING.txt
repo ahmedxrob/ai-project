@@ -1,6 +1,6 @@
 # Xrob Music Telegram monitoring
 
-Xrob Music 4.4.12 includes in-app Telegram notifications plus an optional independent watchdog.
+Xrob Music 4.4.14 includes in-app Telegram notifications plus an optional independent watchdog.
 
 ## Configure in Xrob Music
 
@@ -17,15 +17,16 @@ The token is stored in the server-side settings file with restrictive file permi
 - Media volume disappears, is not mounted, or fails a real write probe.
 - Database integrity check fails.
 - New app errors (aggregated and rate-limited to avoid floods).
+- Failed web login attempts. Security notifications are limited to one per source IP every five minutes and never include submitted passwords.
 - A recovery transition when storage/database checks become healthy again.
 - One daily health summary after 09:00 in the server's local time.
 - A test message from Settings.
 
-The app also creates one automatic app-data backup per day under `/data/backups`, checks its SQLite integrity, and keeps the number selected in Settings → Maintenance → Automatic backup retention. Choices are 1, 2 (default), 3, or 5 backups. When the retention value changes, expired snapshots are pruned the next time the automatic backup worker runs, even if today’s backup already exists. This backup includes the app database/settings/library index, **not the actual music files**. Continue to back up the NAS/music files separately.
+The app also creates one automatic app-data backup per day under `/data/backups`, checks its SQLite integrity, and keeps the number selected in Settings → Maintenance → Automatic backup retention. Choices are 1, 2 (default), 3, or 5 backups. When the retention value changes, expired snapshots are pruned the next time the automatic backup worker runs, even if today’s backup already exists. Existing daily archives are validated before reuse; a corrupt archive is replaced with a new integrity-checked snapshot. This backup includes the app database/settings/library index, **not the actual music files**. Continue to back up the NAS/music files separately.
 
 ## Important limitation: alerting when the whole app is down
 
-An in-app worker cannot send a message while its own process or container is stopped. To detect a stopped/crashed Xrob Music add-on, run `app/telegram_watchdog.py` as a separate, always-on process (ideally on another machine or an independent Home Assistant add-on). Configure the watchdog with the same bot token/chat ID and the externally reachable health URL. It alerts after three failed checks by default, reports recovery, watches the health endpoint's mount status, and sends a daily report.
+An in-app worker cannot send a message while its own process or container is stopped. To detect a stopped/crashed Xrob Music add-on, run `app/telegram_watchdog.py` as a separate, always-on process (ideally on another machine or an independent Home Assistant add-on). Configure the watchdog with the same bot token/chat ID and the externally reachable health URL. It alerts after three failed checks by default, reports recovery, watches the health endpoint's mount status, and sends a daily report. If the device reboots after the report time, it attempts that day's report immediately rather than waiting an extra hour of uptime.
 
 Required environment variables:
 
