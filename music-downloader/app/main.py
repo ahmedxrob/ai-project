@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "4.4.9"
+SERVER_VERSION = "4.4.10"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -116,7 +116,7 @@ app.mount(
 
 DEFAULT_LIBRARY_PATH = os.getenv(
     "DOWNLOAD_DIR",
-    "/media/xrob-music",
+    "/media/xrob_music",
 )
 
 # The library path can be changed by the Home Assistant add-on through
@@ -6093,6 +6093,9 @@ def artist_to_subsonic(
 async def rest_ping(
     request: Request,
 ):
+    error = require_auth(request)
+    if error:
+        return error
 
     return make_subsonic_response(
         {
