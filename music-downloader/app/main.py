@@ -56,7 +56,7 @@ from starlette.background import BackgroundTask
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-SERVER_VERSION = "3.8.4"
+SERVER_VERSION = "4.4.9"
 
 @asynccontextmanager
 async def app_lifespan(_app):
@@ -826,6 +826,11 @@ def save_settings(data: dict):
 
 def public_settings():
     settings = dict(load_settings())
+    # Expose only whether OpenSubsonic has been configured, never the secret itself.
+    # An empty/whitespace-only password disables the OpenSubsonic API.
+    settings["subsonic_password_set"] = bool(
+        str(settings.get("subsonic_password") or "").strip()
+    )
     # Subsonic credentials are add-on/server configuration, not web UI settings.
     settings.pop("subsonic_user", None)
     settings.pop("subsonic_password", None)
@@ -3923,7 +3928,6 @@ async def home():
 
 @app.get("/api/health")
 async def api_health():
-
     return {
         "status": "ok",
         "server": "Xrob Music",
@@ -5403,9 +5407,12 @@ def validate_subsonic_auth(
     request: Request,
 ):
 
-    username, password = (
-        subsonic_credentials()
-    )
+    username, password = subsonic_credentials()
+
+    # Fail closed: an unset or whitespace-only password must never authenticate,
+    # including via the legacy plaintext, enc:, or MD5-token compatibility paths.
+    if not username.strip() or not password.strip():
+        return False
 
     supplied_user = request.query_params.get(
         "u",
