@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
 CREATE TABLE IF NOT EXISTS routine_logs (id INTEGER PRIMARY KEY, routine_id INTEGER NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS notification_log (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, item_id INTEGER NOT NULL, reminder_date TEXT NOT NULL, UNIQUE(kind,item_id,reminder_date));
 CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS telegram_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 '''
 
 def connect():
@@ -102,13 +103,13 @@ async def lifespan(app):
         print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
     yield
 
-app = FastAPI(title='XROB Assistant API', version='0.1.12', lifespan=lifespan)
+app = FastAPI(title='XROB Assistant API', version='0.1.13', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
 def home(): return FileResponse(WWW/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.12','database':'connected'}
+def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.13','database':'connected'}
 
 @app.get('/api/{resource}')
 def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
@@ -165,6 +166,11 @@ def auto_complete_weight_routines(completed_on: date) -> None:
             c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?', (day, next_due, routine['id']))
 
 def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
+    """Send the normal reminder on its due day; optional late reminders start next day.
+
+    Overdue routines remain due until completed. If a late time is configured,
+    a follow-up is sent at that time on each subsequent day, independent of interval_days.
+    """
     today = now.date()
     current_hm = now.strftime('%H:%M')
     reminders: list[tuple[str, int, str, str]] = []
@@ -180,11 +186,15 @@ def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
             routine_time = validate_clock_time(routine.get('routine_time'), 'Routine time')
             late_time = validate_clock_time(routine.get('routine_late_time'), 'Routine late reminder time')
             name = routine['name']
-            if routine_time and current_hm >= routine_time and (not late_time or current_hm < late_time):
-                reminders.append(('routine-time', routine['id'], today.isoformat(), f"It's time for your routine: {name} (scheduled for {routine_time}). Mark it Done in XROB Assistant when completed."))
-            if late_time and current_hm >= late_time:
+            if due == today:
+                # The regular reminder is on the scheduled day. The late reminder
+                # is deliberately deferred until the following day.
+                if routine_time and current_hm >= routine_time:
+                    reminders.append(('routine-time', routine['id'], today.isoformat(), f"It's time for your routine: {name} (scheduled for {routine_time}). Mark it Done in XROB Assistant when completed."))
+            elif late_time and current_hm >= late_time:
                 scheduled = f' It was scheduled for {routine_time}.' if routine_time else ''
-                reminders.append(('routine-late', routine['id'], today.isoformat(), f"You haven't checked off {name} yet.{scheduled} This is your late reminder ({late_time}). Please complete it in XROB Assistant."))
+                days_late = (today - due).days
+                reminders.append(('routine-late', routine['id'], today.isoformat(), f"You still haven't checked off {name}.{scheduled} It was due {days_late} day{'s' if days_late != 1 else ''} ago. This follow-up reminder ({late_time}) will repeat daily until completed."))
         except Exception as exc:
             print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
     return reminders
@@ -330,6 +340,7 @@ def summary():
     days_to_next_bill = (date.fromisoformat(next_bill['due_date']) - date.today()).days if next_bill else None
     return {
       'events_today':len(rows('SELECT id FROM events WHERE substr(start_at,1,10)=?',(today,))),
+      'routines_due_today':one('SELECT COUNT(*) n FROM routines WHERE next_due=?',(today,))['n'],
       'open_tasks':one("SELECT COUNT(*) n FROM tasks WHERE status!='done'")['n'],
       'latest_weight':one('SELECT kg,date FROM weights ORDER BY date DESC,id DESC LIMIT 1'),
       'unpaid_bills':one("SELECT COUNT(*) n FROM bills WHERE status!='paid'")['n'],
@@ -343,7 +354,7 @@ def summary():
 @app.get('/api/ha/state')
 def ha_state():
     s=summary()
-    return {'weight_kg':s['latest_weight']['kg'] if s['latest_weight'] else None,'unpaid_bills':s['unpaid_bills'],'unpaid_total_mad':s['unpaid_total_mad'],'expiring_documents':s['expiring_documents'],'open_tasks':s['open_tasks'],'events_today':s['events_today'],'next_routine':s['next_routine']['name'] if s['next_routine'] else None}
+    return {'weight_kg':s['latest_weight']['kg'] if s['latest_weight'] else None,'unpaid_bills':s['unpaid_bills'],'unpaid_total_mad':s['unpaid_total_mad'],'expiring_documents':s['expiring_documents'],'open_tasks':s['open_tasks'],'events_today':s['events_today'],'routines_due_today':s['routines_due_today'],'next_routine':s['next_routine']['name'] if s['next_routine'] else None}
 
 async def reminder_loop():
     """Send due reminders once at their scheduled task time or once daily for date-only items."""
@@ -383,39 +394,73 @@ async def reminder_loop():
             await asyncio.sleep(15)
 
 async def telegram_poll():
-    """Simple Telegram assistant with quick-reply buttons and friendly plain-text commands."""
+    """Telegram bot with a compact menu, command shortcuts and persistent update offset."""
     import httpx
-    offset = 0
     keyboard = {
         'keyboard': [
             [{'text': '📅 Today'}, {'text': '✅ Tasks'}],
-            [{'text': '💳 Bills'}, {'text': '🔁 Routines'}],
+            [{'text': '🔁 Routines'}, {'text': '💳 Bills'}],
             [{'text': '📆 Next 7 days'}, {'text': '❔ Help'}]
         ],
         'resize_keyboard': True,
-        'is_persistent': True
+        'is_persistent': True,
+        'input_field_placeholder': 'Ask XROB or type: done Shower'
     }
+    commands = [
+        {'command': 'today', 'description': 'Show today’s schedule'},
+        {'command': 'tasks', 'description': 'List open tasks'},
+        {'command': 'routines', 'description': 'Show due and upcoming routines'},
+        {'command': 'bills', 'description': 'Show unpaid bills'},
+        {'command': 'week', 'description': 'Show the next 7 days'},
+        {'command': 'done', 'description': 'Complete a routine: /done Shower'},
+        {'command': 'weight', 'description': 'Log weight: /weight 89.5'},
+        {'command': 'help', 'description': 'Show bot help'}
+    ]
+    saved_offset = one("SELECT value FROM telegram_state WHERE key='update_offset'")
+    try:
+        offset = int(saved_offset['value']) if saved_offset else 0
+    except (TypeError, ValueError):
+        offset = 0
     async with httpx.AsyncClient(timeout=40) as client:
+        try:
+            await client.post(f'https://api.telegram.org/bot{TOKEN}/setMyCommands', json={'commands': commands})
+        except Exception as exc:
+            print(f'Telegram command-menu setup warning: {exc}', flush=True)
         while True:
             try:
-                r = await client.get(f'https://api.telegram.org/bot{TOKEN}/getUpdates', params={'timeout': 30, 'offset': offset})
-                data = r.json()
-                for upd in data.get('result', []):
-                    offset = upd['update_id'] + 1
-                    msg = upd.get('message', {})
-                    chat = str(msg.get('chat', {}).get('id', ''))
-                    message_text = (msg.get('text') or '').strip()
-                    if not message_text:
+                response = await client.get(
+                    f'https://api.telegram.org/bot{TOKEN}/getUpdates',
+                    params={'timeout': 30, 'offset': offset, 'allowed_updates': json.dumps(['message'])}
+                )
+                response.raise_for_status()
+                data = response.json()
+                if not data.get('ok'):
+                    raise RuntimeError(data.get('description', 'Telegram getUpdates failed'))
+                for update in data.get('result', []):
+                    offset = int(update['update_id']) + 1
+                    message = update.get('message', {})
+                    chat = str(message.get('chat', {}).get('id', ''))
+                    message_text = (message.get('text') or '').strip()
+                    if not message_text or chat != ALLOWED_CHAT:
+                        with connect() as c:
+                            c.execute("INSERT INTO telegram_state(key,value) VALUES('update_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(offset),))
                         continue
-                    if ALLOWED_CHAT and chat != ALLOWED_CHAT:
-                        continue
-                    reply = await telegram_command(message_text)
-                    payload = {'chat_id': chat, 'text': reply}
-                    if message_text.lower() in ('/start', 'start', '/help', 'help', '❔ help'):
-                        payload['reply_markup'] = keyboard
-                    await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json=payload)
-            except Exception as e:
-                print(f'Telegram polling error: {e}', flush=True)
+                    try:
+                        reply = await telegram_command(message_text)
+                    except Exception as exc:
+                        print(f'Telegram command failed for update {update["update_id"]}: {exc}', flush=True)
+                        reply = 'Sorry, I could not complete that request. Please try again or send /help.'
+                    # Persist after applying the command but before replying. If Telegram's
+                    # sendMessage endpoint is temporarily unavailable, an action is not replayed.
+                    with connect() as c:
+                        c.execute("INSERT INTO telegram_state(key,value) VALUES('update_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(offset),))
+                    sent = await client.post(
+                        f'https://api.telegram.org/bot{TOKEN}/sendMessage',
+                        json={'chat_id': chat, 'text': reply, 'reply_markup': keyboard, 'disable_web_page_preview': True}
+                    )
+                    sent.raise_for_status()
+            except Exception as exc:
+                print(f'Telegram polling error: {exc}', flush=True)
                 await asyncio.sleep(5)
 
 def _telegram_parse_date(value: str | None) -> date | None:
@@ -468,7 +513,7 @@ async def telegram_command(text: str) -> str:
     low = raw.lower().strip()
     today = date.today()
     if low in ('/start', 'start', '/help', 'help', '❔ help', 'hi', 'hello'):
-        return ('Hi! I’m XROB Assistant.\n\nUse the buttons below, or just type: today, tasks, bills, routines, or next 7 days.\n\nTo schedule a reminder, send: remind me to workout tomorrow at 18:00\nTo log weight, send: weight 89,5\nTo add a task, send: task Buy groceries tomorrow\n\nI understand these simple requests locally; no AI or cloud assistant is used.')
+        return ('Hi! I’m XROB Assistant.\n\nQuick buttons: Today, Tasks, Routines, Bills and Next 7 days.\n\nUseful messages:\n• done Shower — mark a routine complete\n• task Workout tomorrow at 18:00 — create a reminder\n• weight 89.5 — log today’s weight\n• help — show examples\n\nI handle these actions locally; no AI or cloud service is needed.')
     if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
         s = summary()
         events = rows('SELECT title,start_at FROM events WHERE substr(start_at,1,10)=? ORDER BY start_at', (today.isoformat(),))
@@ -491,10 +536,23 @@ async def telegram_command(text: str) -> str:
     if low in ('💳 bills', '/bills', 'bills', 'my bills', 'unpaid bills'):
         bs = rows("SELECT name,amount_mad,due_date FROM bills WHERE status!='paid' ORDER BY due_date LIMIT 20")
         return 'Your unpaid bills:\n' + '\n'.join(f"• {b['name']}: {b['amount_mad']:.2f} MAD · due {datetime.strptime(b['due_date'],'%Y-%m-%d').strftime('%d/%m/%y')}" for b in bs) if bs else 'No unpaid bills. Everything is clear!'
-    if low in ('🔁 routines', '🧴 personal care', 'care', 'personal care', '/care', 'routines', 'my routines'):
-        routines = rows('SELECT name,next_due,interval_days,routine_time,routine_late_time FROM routines ORDER BY next_due LIMIT 20')
-        return 'Upcoming routines:\n' + '\n'.join(f"• {r['name']} — {datetime.strptime(r['next_due'],'%Y-%m-%d').strftime('%d/%m/%y') if r.get('next_due') else 'not scheduled'} at {r.get('routine_time') or 'no set time'} (late alert {r.get('routine_late_time') or 'off'}, every {r['interval_days']} days)" for r in routines) if routines else 'No routines set up yet.'
-    if low in ('📆 next 7 days', 'next', 'next 7 days', 'agenda', 'week', 'this week'):
+    if low in ('🔁 routines', '🧴 personal care', 'care', 'personal care', '/care', 'routines', 'my routines', '/routines'):
+        routines = rows("SELECT id,name,next_due,interval_days,routine_time,routine_late_time FROM routines ORDER BY CASE WHEN next_due<=? THEN 0 ELSE 1 END,next_due,COALESCE(routine_time,'23:59') LIMIT 20", (today.isoformat(),))
+        if not routines:
+            return 'No routines set up yet. Add one in XROB Assistant.'
+        lines = []
+        for routine in routines:
+            due = date.fromisoformat(routine['next_due']) if routine.get('next_due') else None
+            if due == today:
+                due_label = 'DUE TODAY'
+            elif due and due < today:
+                due_label = f'OVERDUE {(today-due).days}d'
+            else:
+                due_label = due.strftime('%d/%m/%y') if due else 'not scheduled'
+            late = f" · follow-up {routine['routine_late_time']} next day" if routine.get('routine_late_time') else ''
+            lines.append(f"• {routine['name']} — {due_label} · {routine.get('routine_time') or 'no time'}{late} · every {routine['interval_days']}d")
+        return 'Routines — send “done NAME” when finished:\n' + '\n'.join(lines)
+    if low in ('📆 next 7 days', '/week', 'week', 'next', 'next 7 days', 'agenda', 'this week'):
         end = (today + timedelta(days=7)).isoformat()
         items = []
         for e in rows('SELECT title,start_at FROM events WHERE substr(start_at,1,10)>=? AND substr(start_at,1,10)<=?', (today.isoformat(), end)):
@@ -534,6 +592,42 @@ async def telegram_command(text: str) -> str:
             return f'Event added: {title} on {datetime.strptime(due_day,"%Y-%m-%d").strftime("%d/%m/%y")} at {due_time}.'
         except Exception:
             return 'To add an event, send: /event Dentist|17/11/26 10:00'
+    done_name = None
+    done_command = re.match(r'(?i)^/done(?:@[a-z0-9_]+)?(?:\s+(.+))?$', raw)
+    if low in ('done', 'complete routine', 'mark routine done') or (done_command and not done_command.group(1)):
+        due_now = rows("SELECT name FROM routines WHERE next_due<=? ORDER BY COALESCE(routine_time,'23:59')", (today.isoformat(),))
+        names = ', '.join(r['name'] for r in due_now) or 'none due today'
+        return f"To check off a routine, send: done Shower\nDue or overdue routines: {names}"
+    if done_command and done_command.group(1):
+        done_name = done_command.group(1).strip()
+    elif low.startswith('done ') or low.startswith('complete '):
+        done_name = re.sub(r'^(?:done|complete)\s+', '', raw, flags=re.I).strip()
+    else:
+        mark_match = re.match(r'(?i)^mark\s+(.+?)\s+(?:as\s+)?done$', raw)
+        if mark_match:
+            done_name = mark_match.group(1).strip()
+        else:
+            did_match = re.match(r'(?i)^(?:i did|i completed|finished)\s+(.+)$', raw)
+            if did_match:
+                done_name = did_match.group(1).strip()
+    if done_name:
+        wanted = re.sub(r'[^a-z0-9]+', ' ', done_name.lower()).strip()
+        wanted = re.sub(r'^(?:the|my)\s+', '', wanted)
+        wanted = re.sub(r'\s+routine$', '', wanted)
+        if wanted in ('my nails', 'nails', 'nail care routine'):
+            wanted = 'nail'
+        all_routines = rows('SELECT * FROM routines')
+        exact = [r for r in all_routines if re.sub(r'[^a-z0-9]+', ' ', r['name'].lower()).strip() == wanted]
+        matches = exact or [r for r in all_routines if wanted in re.sub(r'[^a-z0-9]+', ' ', r['name'].lower()).strip()]
+        if not matches:
+            available = ', '.join(r['name'] for r in all_routines) or 'none configured'
+            return f"I couldn't find '{done_name}'. Your routines: {available}. Try: done Shower"
+        if len(matches) > 1:
+            return 'I found more than one match. Please use the full routine name: ' + ', '.join(r['name'] for r in matches)
+        updated = complete_routine(matches[0]['id'])
+        next_due = datetime.strptime(updated['next_due'], '%Y-%m-%d').strftime('%d/%m/%y')
+        return f"✅ {updated['name']} marked done. Next due: {next_due} (every {updated['interval_days']} days)."
+
     if low in ('/naildone', 'naildone', 'nails done', 'i did my nails'):
         r = one("SELECT id FROM routines WHERE lower(name) LIKE '%nail%' LIMIT 1")
         if not r: return 'I could not find a nail-care routine. Add it in Routines first.'
@@ -555,8 +649,9 @@ async def telegram_command(text: str) -> str:
             return f"Task added: '{title}'. Add a date and time whenever you want a reminder."
         except ValueError as exc:
             return str(exc)
-    return ('I can help with your schedule. Try today, tasks, bills, routines, next 7 days, '
-            'weight 89,5, or remind me to workout tomorrow at 18:00. Send /help for the quick menu.')
+    return ('I can help with your schedule. Try Today, Tasks, Routines, Bills, or Next 7 days. '
+            'To finish a routine, send: done Shower. To add a reminder: task Workout tomorrow at 18:00. '
+            'To log weight: weight 89.5. Send /help for examples.')
 
 if __name__ == '__main__':
     import uvicorn
