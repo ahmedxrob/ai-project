@@ -1,7 +1,7 @@
 {
   "domain": "xrob_assistant",
-  "name": "Xrob Music",
-  "version": "0.1.6",
+  "name": "XROB Assistant",
+  "version": "0.1.7",
   "documentation": "https://github.com/ahmedxrob/ai-project/tree/main/xrob-assistant",
   "requirements": [],
   "codeowners": [],
