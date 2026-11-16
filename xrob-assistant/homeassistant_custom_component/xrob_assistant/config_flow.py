@@ -11,5 +11,5 @@ class XrobLifeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             url = user_input[CONF_URL].rstrip('/')
             await self.async_set_unique_id(url)
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(title="Xrob Music", data={CONF_URL:url})
+            return self.async_create_entry(title="XROB Assistant", data={CONF_URL:url})
         return self.async_show_form(step_id="user", data_schema=vol.Schema({vol.Required(CONF_URL, default=DEFAULT_URL): str}), errors=errors)
