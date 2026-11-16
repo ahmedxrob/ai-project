@@ -14,3 +14,47 @@ main{max-width:none;width:calc(100% - 238px);padding:28px clamp(18px,2.2vw,42px)
 .weight-graph-panel{margin-top:2px}.weight-chart-scroll{width:100%;overflow-x:auto;padding:4px 0}.weight-chart{display:block;width:100%;min-width:560px;height:auto;overflow:visible}.weight-grid-line{stroke:#36393c;stroke-width:1;stroke-dasharray:3 5}.weight-axis-label{fill:var(--muted);font-size:12px}.weight-area{fill:url(#weight-area)}.weight-line{fill:none;stroke:var(--green);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.weight-point{fill:var(--green);stroke:#102817;stroke-width:2}.weight-chart-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-top:4px}.weight-chart-meta b{color:var(--green)}.weight-history-scroll{max-height:390px;overflow-y:auto;padding-right:6px;overscroll-behavior:contain}.weight-history-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 9px;border-bottom:1px solid #2b2d30;font-size:13px}.weight-history-row:first-child{border-top:1px solid #2b2d30}.weight-history-row span{color:var(--muted)}.weight-history-row b{color:var(--green);font-variant-numeric:tabular-nums}.weight-history-scroll::-webkit-scrollbar{width:8px}.weight-history-scroll::-webkit-scrollbar-track{background:#111315;border-radius:8px}.weight-history-scroll::-webkit-scrollbar-thumb{background:#414448;border-radius:8px}.weight-history-scroll{scrollbar-color:#414448 #111315;scrollbar-width:thin}
 @media(max-width:900px){main{width:calc(100% - 70px);padding:24px 20px 64px}}
 @media(max-width:620px){main{width:calc(100% - 70px);padding:18px 12px 56px}.weight-chart{min-width:500px}.weight-history-scroll{max-height:320px}}
+
+/* XROB Assistant 0.1.9 — wider activity views, consistent histories and weight comparison */
+.activity-section{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;width:100%;margin:18px 0}
+.activity-panel{width:100%;min-width:0;padding:clamp(16px,2vw,24px)}
+.heatmap-scroll{width:100%;overflow:hidden}
+.heatmap-months,.heatmap-grid{grid-template-columns:repeat(var(--weeks),minmax(0,1fr));column-gap:clamp(2px,.35vw,5px);width:100%}
+.heatmap-grid{grid-template-rows:repeat(7,clamp(12px,1.2vw,18px));row-gap:clamp(2px,.35vw,5px)}
+.heat-cell{width:100%;height:100%;min-width:0;min-height:0;border-radius:4px}
+.heatmap-months{grid-template-rows:18px;font-size:clamp(10px,.8vw,12px)}
+.heatmap-footer{font-size:11px}
+.history-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;margin:18px 0}
+.history-card{display:flex;flex-direction:column;min-width:0;min-height:0;height:450px;max-height:none;margin:0}
+.history-card>.panel-head{min-height:28px;align-items:flex-start}
+.history-list{flex:1;min-width:0;min-height:120px;max-height:none;overflow-y:auto;overflow-x:hidden;padding-right:5px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#414448 #111315}
+.history-list::-webkit-scrollbar{width:8px}
+.history-list::-webkit-scrollbar-track{background:#111315;border-radius:8px}
+.history-list::-webkit-scrollbar-thumb{background:#414448;border-radius:8px}
+.history-entry{display:flex;justify-content:space-between;align-items:center;gap:10px;min-width:0;padding:12px 4px;border-bottom:1px solid #2b2d30;font-size:13px}
+.history-entry-main{display:flex;flex:1;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere}
+.history-entry-main b{font-size:13px;font-weight:650;color:var(--text)}
+.history-entry-main small,.history-entry-side small{font-size:11px;color:var(--muted);line-height:1.4;overflow-wrap:anywhere}
+.history-entry-side{display:flex;flex:0 0 auto;align-items:flex-end;flex-direction:column;gap:6px;max-width:44%;text-align:right;min-width:0}
+.history-entry-side strong{color:var(--green);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.history-entry-side .mini-btn{max-width:100%}
+.weight-chart-wrap{position:relative;width:100%}
+.weight-point{cursor:crosshair;outline:none;transition:r .12s ease}
+.weight-point:hover,.weight-point:focus{r:8;stroke:#d7ffe2;stroke-width:3}
+.weight-chart-tooltip{position:absolute;z-index:3;display:flex;flex-direction:column;gap:3px;min-width:112px;padding:8px 11px;border:1px solid #3e8652;border-radius:9px;background:#111a14;color:var(--text);box-shadow:0 8px 24px #0009;pointer-events:none;font-size:12px;white-space:nowrap}
+.weight-chart-tooltip[hidden]{display:none}
+.weight-chart-tooltip b{color:var(--green);font-size:14px}
+.weight-chart-tooltip span{color:var(--muted);font-size:11px}
+.weekly-average-panel{margin-top:16px;min-width:0}
+.weekly-average-summary{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:4px 0 12px;color:var(--muted);font-size:12px}
+.weekly-average-summary b{color:var(--green)}
+.weekly-average-scroll{width:100%;overflow-x:auto;overflow-y:hidden;padding:6px 2px 4px;scrollbar-width:thin;scrollbar-color:#414448 #111315}
+.weekly-average-chart{display:flex;align-items:stretch;gap:8px;width:max-content;min-width:100%;height:225px;padding:0 4px}
+.week-average-column{position:relative;display:grid;grid-template-rows:22px 1fr 18px;gap:4px;flex:0 0 43px;min-width:43px;text-align:center}
+.week-average-value{color:var(--green);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.week-average-track{display:flex;align-items:flex-end;justify-content:center;height:100%;border-bottom:1px solid #42464a;background:linear-gradient(to top,transparent 0%,#ffffff04 100%)}
+.week-average-track i{display:block;width:62%;min-height:8px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,#42eb7b,#208a47);box-shadow:0 0 12px #2ed35f20}
+.week-average-column small{font-size:9px;color:var(--muted);white-space:nowrap}
+.weekly-average-help{margin:8px 0 0;font-size:11px}
+@media(max-width:1100px){.history-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.history-card:first-child{grid-column:1/-1}}
+@media(max-width:700px){.history-grid{grid-template-columns:minmax(0,1fr)}.history-card:first-child{grid-column:auto}.history-card{height:390px}.history-list{max-height:none}.heatmap-grid{grid-template-rows:repeat(7,clamp(11px,2.8vw,15px))}.heatmap-months{font-size:9px}.weight-chart-tooltip{font-size:11px}.week-average-column{flex-basis:40px;min-width:40px}}
