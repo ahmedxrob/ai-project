@@ -77,13 +77,13 @@ async def lifespan(app):
         print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
     yield
 
-app = FastAPI(title='XROB Assistant API', version='0.1.8', lifespan=lifespan)
+app = FastAPI(title='XROB Assistant API', version='0.1.9', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
 def home(): return FileResponse(WWW/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.8','database':'connected'}
+def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.9','database':'connected'}
 
 @app.get('/api/{resource}')
 def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
@@ -175,6 +175,28 @@ def complete_routine(routine_id:int):
     with connect() as c:
         c.execute('INSERT INTO routine_logs(routine_id,completed_at) VALUES(?,?)',(routine_id,today.isoformat()))
         c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?',(today.isoformat(),nxt,routine_id))
+    return one('SELECT * FROM routines WHERE id=?',(routine_id,))
+
+@app.patch('/api/routines/{routine_id}/last-record')
+def edit_routine_last_record(routine_id: int, payload: Payload):
+    r=one('SELECT * FROM routines WHERE id=?',(routine_id,))
+    if not r: raise HTTPException(404,'Routine not found')
+    raw=payload.data.get('completed_at')
+    try:
+        completed=date.fromisoformat(str(raw)).isoformat()
+    except (TypeError,ValueError):
+        raise HTTPException(400,'Enter a valid completion date (YYYY-MM-DD).')
+    interval=max(1,int(r['interval_days'] or 1))
+    with connect() as c:
+        latest=c.execute('SELECT id FROM routine_logs WHERE routine_id=? ORDER BY completed_at DESC,id DESC LIMIT 1',(routine_id,)).fetchone()
+        if latest:
+            c.execute('UPDATE routine_logs SET completed_at=? WHERE id=?',(completed,latest['id']))
+        else:
+            c.execute('INSERT INTO routine_logs(routine_id,completed_at) VALUES(?,?)',(routine_id,completed))
+        latest_after=c.execute('SELECT MAX(completed_at) AS completed_at FROM routine_logs WHERE routine_id=?',(routine_id,)).fetchone()['completed_at']
+        latest_after=latest_after or completed
+        next_due=(date.fromisoformat(latest_after)+timedelta(days=interval)).isoformat()
+        c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?',(latest_after,next_due,routine_id))
     return one('SELECT * FROM routines WHERE id=?',(routine_id,))
 
 @app.post('/api/bills/{bill_id}/pay')
