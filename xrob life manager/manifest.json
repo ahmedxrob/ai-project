@@ -1,0 +1,10 @@
+{
+  "domain": "xrob_life_manager",
+  "name": "XROB Life Manager",
+  "version": "0.1.0",
+  "documentation": "https://github.com/ahmedxrob/xrob-life-manager",
+  "requirements": [],
+  "codeowners": [],
+  "config_flow": true,
+  "iot_class": "local_polling"
+}
