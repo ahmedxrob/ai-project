@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS exercises (id INTEGER PRIMARY KEY, workout_id INTEGER
 CREATE TABLE IF NOT EXISTS treadmill (id INTEGER PRIMARY KEY, date TEXT NOT NULL, duration_min REAL DEFAULT 0, distance_km REAL DEFAULT 0, speed_kmh REAL DEFAULT 0, incline REAL DEFAULT 0, calories_kcal REAL DEFAULT 0, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS bills (id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_mad REAL DEFAULT 0, due_date TEXT NOT NULL, recurrence TEXT DEFAULT 'none', reminder_days INTEGER DEFAULT 3, status TEXT DEFAULT 'unpaid', paid_at TEXT, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, name TEXT NOT NULL, expiry_date TEXT NOT NULL, reminder_days INTEGER DEFAULT 30, reference TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', routine_time TEXT DEFAULT '10:00', routine_late_time TEXT DEFAULT '12:00', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', routine_time TEXT DEFAULT '10:00', routine_late_time TEXT DEFAULT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS routine_logs (id INTEGER PRIMARY KEY, routine_id INTEGER NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS notification_log (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, item_id INTEGER NOT NULL, reminder_date TEXT NOT NULL, UNIQUE(kind,item_id,reminder_date));
 CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -49,19 +49,26 @@ def init_db():
         if 'routine_time' not in routine_columns:
             c.execute("ALTER TABLE routines ADD COLUMN routine_time TEXT DEFAULT '10:00'")
         if 'routine_late_time' not in routine_columns:
-            c.execute("ALTER TABLE routines ADD COLUMN routine_late_time TEXT DEFAULT '12:00'")
+            c.execute("ALTER TABLE routines ADD COLUMN routine_late_time TEXT DEFAULT NULL")
+        # In 0.1.11, 12:00 was automatically populated for every routine.
+        # Convert those generated defaults to NULL so late reminders are opt-in.
+        # Preserve any other time that the user may have deliberately selected.
+        late_opt_in_migration = c.execute("SELECT 1 FROM app_migrations WHERE name='routine_late_reminder_optional_v1'").fetchone()
+        if not late_opt_in_migration:
+            c.execute("UPDATE routines SET routine_late_time=NULL WHERE routine_late_time='12:00'")
+            c.execute("INSERT INTO app_migrations(name) VALUES('routine_late_reminder_optional_v1')")
         # Starter routines are inserted only once.
         if c.execute('SELECT COUNT(*) FROM routines').fetchone()[0] == 0:
             today = date.today().isoformat()
             for name, days, cat in [('Nail care',15,'personal care'),('Haircut',30,'personal care'),('Shower',1,'hygiene')]:
-                c.execute('INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,?,?,?,?,?,?)', (name,days,None,today,cat,'10:00','12:00'))
+                c.execute('INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,?,?,?,?,?,?)', (name,days,None,today,cat,'10:00',None))
         # Add a daily Weight check once during this upgrade so the scheduled/late
         # reminder flow works immediately; users can later edit or delete it.
         weight_seed = c.execute("SELECT 1 FROM app_migrations WHERE name='seed_weight_check_routine_v1'").fetchone()
         if not weight_seed:
             has_weight = c.execute("SELECT 1 FROM routines WHERE lower(name) LIKE '%weight%' OR lower(name) LIKE '%weigh%' LIMIT 1").fetchone()
             if not has_weight:
-                c.execute("INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,1,NULL,?,'health','10:00','12:00')", ('Weight check', date.today().isoformat()))
+                c.execute("INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,1,NULL,?,'health','10:00',NULL)", ('Weight check', date.today().isoformat()))
             c.execute("INSERT INTO app_migrations(name) VALUES('seed_weight_check_routine_v1')")
 
 def rows(sql, params=()):
@@ -95,13 +102,13 @@ async def lifespan(app):
         print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
     yield
 
-app = FastAPI(title='XROB Assistant API', version='0.1.11', lifespan=lifespan)
+app = FastAPI(title='XROB Assistant API', version='0.1.12', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
 def home(): return FileResponse(WWW/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.11','database':'connected'}
+def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.12','database':'connected'}
 
 @app.get('/api/{resource}')
 def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
@@ -136,7 +143,7 @@ def validate_routine_schedule(data: dict[str, Any], existing: dict[str, Any] | N
     if 'routine_late_time' in data:
         data['routine_late_time'] = validate_clock_time(data.get('routine_late_time'), 'Routine late reminder time')
     routine_time = data.get('routine_time', existing.get('routine_time') or '10:00')
-    late_time = data.get('routine_late_time', existing.get('routine_late_time') or '12:00')
+    late_time = data.get('routine_late_time', existing.get('routine_late_time'))
     if routine_time and late_time and late_time <= routine_time:
         raise HTTPException(400, 'Late reminder time must be later than the routine time.')
 
@@ -191,7 +198,7 @@ def create_resource(resource: str, payload: Payload):
         validate_task_schedule(data)
     if resource == 'routines':
         data.setdefault('routine_time', '10:00')
-        data.setdefault('routine_late_time', '12:00')
+        data.setdefault('routine_late_time', None)
         data.setdefault('next_due', date.today().isoformat())
         validate_routine_schedule(data)
     if resource == 'treadmill':
