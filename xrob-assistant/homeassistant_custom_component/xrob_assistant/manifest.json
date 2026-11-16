@@ -1,7 +1,7 @@
 {
   "domain": "xrob_assistant",
   "name": "XROB Assistant",
-  "version": "0.1.7",
+  "version": "0.1.11",
   "documentation": "https://github.com/ahmedxrob/ai-project/tree/main/xrob-assistant",
   "requirements": [],
   "codeowners": [],
