@@ -26,9 +26,10 @@ CREATE TABLE IF NOT EXISTS exercises (id INTEGER PRIMARY KEY, workout_id INTEGER
 CREATE TABLE IF NOT EXISTS treadmill (id INTEGER PRIMARY KEY, date TEXT NOT NULL, duration_min REAL DEFAULT 0, distance_km REAL DEFAULT 0, speed_kmh REAL DEFAULT 0, incline REAL DEFAULT 0, calories_kcal REAL DEFAULT 0, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS bills (id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_mad REAL DEFAULT 0, due_date TEXT NOT NULL, recurrence TEXT DEFAULT 'none', reminder_days INTEGER DEFAULT 3, status TEXT DEFAULT 'unpaid', paid_at TEXT, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, name TEXT NOT NULL, expiry_date TEXT NOT NULL, reminder_days INTEGER DEFAULT 30, reference TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', routine_time TEXT DEFAULT '10:00', routine_late_time TEXT DEFAULT '12:00', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS routine_logs (id INTEGER PRIMARY KEY, routine_id INTEGER NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS notification_log (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, item_id INTEGER NOT NULL, reminder_date TEXT NOT NULL, UNIQUE(kind,item_id,reminder_date));
+CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
 '''
 
 def connect():
@@ -44,11 +45,24 @@ def init_db():
         task_columns = {r['name'] for r in c.execute('PRAGMA table_info(tasks)').fetchall()}
         if 'due_time' not in task_columns:
             c.execute('ALTER TABLE tasks ADD COLUMN due_time TEXT')
+        routine_columns = {r['name'] for r in c.execute('PRAGMA table_info(routines)').fetchall()}
+        if 'routine_time' not in routine_columns:
+            c.execute("ALTER TABLE routines ADD COLUMN routine_time TEXT DEFAULT '10:00'")
+        if 'routine_late_time' not in routine_columns:
+            c.execute("ALTER TABLE routines ADD COLUMN routine_late_time TEXT DEFAULT '12:00'")
         # Starter routines are inserted only once.
         if c.execute('SELECT COUNT(*) FROM routines').fetchone()[0] == 0:
             today = date.today().isoformat()
             for name, days, cat in [('Nail care',15,'personal care'),('Haircut',30,'personal care'),('Shower',1,'hygiene')]:
-                c.execute('INSERT INTO routines(name,interval_days,last_done,next_due,category) VALUES(?,?,?,?,?)', (name,days,None,today,cat))
+                c.execute('INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,?,?,?,?,?,?)', (name,days,None,today,cat,'10:00','12:00'))
+        # Add a daily Weight check once during this upgrade so the scheduled/late
+        # reminder flow works immediately; users can later edit or delete it.
+        weight_seed = c.execute("SELECT 1 FROM app_migrations WHERE name='seed_weight_check_routine_v1'").fetchone()
+        if not weight_seed:
+            has_weight = c.execute("SELECT 1 FROM routines WHERE lower(name) LIKE '%weight%' OR lower(name) LIKE '%weigh%' LIMIT 1").fetchone()
+            if not has_weight:
+                c.execute("INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,1,NULL,?,'health','10:00','12:00')", ('Weight check', date.today().isoformat()))
+            c.execute("INSERT INTO app_migrations(name) VALUES('seed_weight_check_routine_v1')")
 
 def rows(sql, params=()):
     with connect() as c: return [dict(r) for r in c.execute(sql, params).fetchall()]
@@ -68,7 +82,7 @@ TABLES = {
  'treadmill': ('treadmill', ['date','duration_min','distance_km','speed_kmh','incline','calories_kcal','notes']),
  'bills': ('bills', ['name','amount_mad','due_date','recurrence','reminder_days','status','paid_at','notes']),
  'documents': ('documents', ['name','expiry_date','reminder_days','reference','notes']),
- 'routines': ('routines', ['name','interval_days','last_done','next_due','category','notes']),
+ 'routines': ('routines', ['name','interval_days','last_done','next_due','category','notes','routine_time','routine_late_time']),
 }
 
 @asynccontextmanager
@@ -81,13 +95,13 @@ async def lifespan(app):
         print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
     yield
 
-app = FastAPI(title='XROB Assistant API', version='0.1.10', lifespan=lifespan)
+app = FastAPI(title='XROB Assistant API', version='0.1.11', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
 def home(): return FileResponse(WWW/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.10','database':'connected'}
+def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.11','database':'connected'}
 
 @app.get('/api/{resource}')
 def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
@@ -96,17 +110,77 @@ def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
     table,_=TABLES[resource]
     return rows(f'SELECT * FROM {table} ORDER BY id DESC LIMIT ?', (limit,))
 
-def validate_task_schedule(data: dict[str, Any]) -> None:
+def validate_clock_time(value: Any, label: str) -> str | None:
+    value = str(value or '').strip()
+    if not value:
+        return None
+    if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', value):
+        raise HTTPException(400, f'{label} must use 24-hour HH:MM time (00:00–23:59).')
+    return value
+
+def validate_task_schedule(data: dict[str, Any], existing: dict[str, Any] | None = None) -> None:
+    existing = existing or {}
     if 'due_time' in data:
         value = str(data.get('due_time') or '').strip()
         if value:
-            if not data.get('due_date'):
+            if not data.get('due_date', existing.get('due_date')):
                 raise HTTPException(400, 'Choose a due date before setting a reminder time.')
-            if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', value):
-                raise HTTPException(400, 'Reminder time must use HH:MM (24-hour time).')
-            data['due_time'] = value
+            data['due_time'] = validate_clock_time(value, 'Task reminder time')
         else:
             data['due_time'] = None
+
+def validate_routine_schedule(data: dict[str, Any], existing: dict[str, Any] | None = None) -> None:
+    existing = existing or {}
+    if 'routine_time' in data:
+        data['routine_time'] = validate_clock_time(data.get('routine_time'), 'Routine time')
+    if 'routine_late_time' in data:
+        data['routine_late_time'] = validate_clock_time(data.get('routine_late_time'), 'Routine late reminder time')
+    routine_time = data.get('routine_time', existing.get('routine_time') or '10:00')
+    late_time = data.get('routine_late_time', existing.get('routine_late_time') or '12:00')
+    if routine_time and late_time and late_time <= routine_time:
+        raise HTTPException(400, 'Late reminder time must be later than the routine time.')
+
+def is_weight_routine(routine: dict[str, Any]) -> bool:
+    name = str(routine.get('name') or '').lower()
+    return 'weight' in name or 'weigh' in name
+
+def auto_complete_weight_routines(completed_on: date) -> None:
+    day = completed_on.isoformat()
+    for routine in rows('SELECT * FROM routines'):
+        if not is_weight_routine(routine):
+            continue
+        interval = max(1, int(routine.get('interval_days') or 1))
+        next_due = (completed_on + timedelta(days=interval)).isoformat()
+        with connect() as c:
+            already_logged = c.execute('SELECT id FROM routine_logs WHERE routine_id=? AND completed_at=? LIMIT 1', (routine['id'], day)).fetchone()
+            if not already_logged:
+                c.execute('INSERT INTO routine_logs(routine_id,completed_at) VALUES(?,?)', (routine['id'], day))
+            c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?', (day, next_due, routine['id']))
+
+def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
+    today = now.date()
+    current_hm = now.strftime('%H:%M')
+    reminders: list[tuple[str, int, str, str]] = []
+    for routine in rows('SELECT * FROM routines WHERE next_due IS NOT NULL'):
+        try:
+            due = date.fromisoformat(routine['next_due'])
+            if due > today:
+                continue
+            # A weight log itself satisfies a Weight/Weigh-in routine.
+            if is_weight_routine(routine) and one('SELECT id FROM weights WHERE date=? LIMIT 1', (today.isoformat(),)):
+                auto_complete_weight_routines(today)
+                continue
+            routine_time = validate_clock_time(routine.get('routine_time'), 'Routine time')
+            late_time = validate_clock_time(routine.get('routine_late_time'), 'Routine late reminder time')
+            name = routine['name']
+            if routine_time and current_hm >= routine_time and (not late_time or current_hm < late_time):
+                reminders.append(('routine-time', routine['id'], today.isoformat(), f"It's time for your routine: {name} (scheduled for {routine_time}). Mark it Done in XROB Assistant when completed."))
+            if late_time and current_hm >= late_time:
+                scheduled = f' It was scheduled for {routine_time}.' if routine_time else ''
+                reminders.append(('routine-late', routine['id'], today.isoformat(), f"You haven't checked off {name} yet.{scheduled} This is your late reminder ({late_time}). Please complete it in XROB Assistant."))
+        except Exception as exc:
+            print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
+    return reminders
 
 @app.post('/api/{resource}')
 def create_resource(resource: str, payload: Payload):
@@ -115,6 +189,11 @@ def create_resource(resource: str, payload: Payload):
     data={k:v for k,v in payload.data.items() if k in allowed}
     if resource == 'tasks':
         validate_task_schedule(data)
+    if resource == 'routines':
+        data.setdefault('routine_time', '10:00')
+        data.setdefault('routine_late_time', '12:00')
+        data.setdefault('next_due', date.today().isoformat())
+        validate_routine_schedule(data)
     if resource == 'treadmill':
         try:
             duration = float(data.get('duration_min', 0))
@@ -145,6 +224,8 @@ def create_resource(resource: str, payload: Payload):
                 raise HTTPException(409, f'Weight already recorded for {pretty} ({float(existing["kg"]):.2f} kg). No new entry was added.')
         cur=c.execute(f"INSERT INTO {table} ({','.join(keys)}) VALUES ({marks})", [data[k] for k in keys])
         new_id=cur.lastrowid
+    if resource == 'weights' and weight_day == date.today():
+        auto_complete_weight_routines(weight_day)
     return one(f'SELECT * FROM {table} WHERE id=?',(new_id,))
 
 @app.patch('/api/{resource}/{item_id}')
@@ -152,7 +233,15 @@ def update_resource(resource: str, item_id: int, payload: Payload):
     if resource not in TABLES: raise HTTPException(404,'Unknown resource')
     table,allowed=TABLES[resource]; data={k:v for k,v in payload.data.items() if k in allowed}
     if resource == 'tasks':
-        validate_task_schedule(data)
+        existing_task = one('SELECT * FROM tasks WHERE id=?',(item_id,))
+        if not existing_task:
+            raise HTTPException(404, 'Task not found')
+        validate_task_schedule(data, existing_task)
+    if resource == 'routines':
+        existing_routine = one('SELECT * FROM routines WHERE id=?',(item_id,))
+        if not existing_routine:
+            raise HTTPException(404, 'Routine not found')
+        validate_routine_schedule(data, existing_routine)
     if not data: raise HTTPException(400,'No valid fields supplied')
     if resource == 'routines' and 'interval_days' in data:
         try:
@@ -230,12 +319,15 @@ def pay_bill(bill_id:int):
 @app.get('/api/summary')
 def summary():
     today=date.today().isoformat()
+    next_bill = one("SELECT name,due_date,amount_mad FROM bills WHERE status!='paid' ORDER BY CASE WHEN due_date>=? THEN 0 ELSE 1 END, CASE WHEN due_date>=? THEN due_date END ASC, CASE WHEN due_date<? THEN due_date END DESC, id ASC LIMIT 1", (today, today, today))
+    days_to_next_bill = (date.fromisoformat(next_bill['due_date']) - date.today()).days if next_bill else None
     return {
       'events_today':len(rows('SELECT id FROM events WHERE substr(start_at,1,10)=?',(today,))),
       'open_tasks':one("SELECT COUNT(*) n FROM tasks WHERE status!='done'")['n'],
       'latest_weight':one('SELECT kg,date FROM weights ORDER BY date DESC,id DESC LIMIT 1'),
       'unpaid_bills':one("SELECT COUNT(*) n FROM bills WHERE status!='paid'")['n'],
       'unpaid_total_mad':one("SELECT COALESCE(SUM(amount_mad),0) n FROM bills WHERE status!='paid'")['n'],
+      'upcoming_bill':({**next_bill, 'days_left': days_to_next_bill} if next_bill else None),
       'expiring_documents':len(rows('SELECT id FROM documents WHERE expiry_date<=?',((date.today()+timedelta(days=30)).isoformat(),))),
       'next_routine':one('SELECT * FROM routines ORDER BY next_due LIMIT 1'),
       'recent_treadmill':one('SELECT * FROM treadmill ORDER BY date DESC,id DESC LIMIT 1')
@@ -272,13 +364,7 @@ async def reminder_loop():
                             reminders.append(('task', t['id'], today.isoformat(), f"Task due: {t['title']} (due {due_day.strftime('%d/%m/%y')})"))
                     except Exception:
                         continue
-                for r in rows('SELECT * FROM routines WHERE next_due IS NOT NULL'):
-                    try:
-                        due = date.fromisoformat(r['next_due'])
-                        if due <= today:
-                            reminders.append(('routine', r['id'], today.isoformat(), f"Personal care reminder: {r['name']} is due"))
-                    except Exception:
-                        continue
+                reminders.extend(build_routine_reminders(now))
                 for kind, item_id, reminder_date, message in reminders:
                     with connect() as c:
                         cur = c.execute('INSERT OR IGNORE INTO notification_log(kind,item_id,reminder_date) VALUES(?,?,?)', (kind, item_id, reminder_date))
@@ -296,7 +382,7 @@ async def telegram_poll():
     keyboard = {
         'keyboard': [
             [{'text': '📅 Today'}, {'text': '✅ Tasks'}],
-            [{'text': '💳 Bills'}, {'text': '🧴 Personal care'}],
+            [{'text': '💳 Bills'}, {'text': '🔁 Routines'}],
             [{'text': '📆 Next 7 days'}, {'text': '❔ Help'}]
         ],
         'resize_keyboard': True,
@@ -347,6 +433,8 @@ def _telegram_task_payload(text: str) -> tuple[str, str | None, str | None]:
     body = text.strip()
     body = re.sub(r'^(?:/task|task|add task|remind me to|please remind me to|remind me|i want to|schedule)\s*', '', body, flags=re.I)
     body = body.replace('|', ' ')
+    if re.search(r'\b(?:AM|PM)\b', body, flags=re.I):
+        raise ValueError('Please use 24-hour time without AM/PM, for example 18:00.')
     time_match = re.search(r'(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)', body)
     due_time = f'{int(time_match.group(1)):02d}:{time_match.group(2)}' if time_match else None
     if time_match:
@@ -373,7 +461,7 @@ async def telegram_command(text: str) -> str:
     low = raw.lower().strip()
     today = date.today()
     if low in ('/start', 'start', '/help', 'help', '❔ help', 'hi', 'hello'):
-        return ('Hi! I’m XROB Assistant.\n\nUse the buttons below, or just type: today, tasks, bills, personal care, or next 7 days.\n\nTo schedule a reminder, send: remind me to workout tomorrow at 18:00\nTo log weight, send: weight 89,5\nTo add a task, send: task Buy groceries tomorrow\n\nI understand these simple requests locally; no AI or cloud assistant is used.')
+        return ('Hi! I’m XROB Assistant.\n\nUse the buttons below, or just type: today, tasks, bills, routines, or next 7 days.\n\nTo schedule a reminder, send: remind me to workout tomorrow at 18:00\nTo log weight, send: weight 89,5\nTo add a task, send: task Buy groceries tomorrow\n\nI understand these simple requests locally; no AI or cloud assistant is used.')
     if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
         s = summary()
         events = rows('SELECT title,start_at FROM events WHERE substr(start_at,1,10)=? ORDER BY start_at', (today.isoformat(),))
@@ -387,7 +475,7 @@ async def telegram_command(text: str) -> str:
         lines += [f"⏰ {t['due_time'] or 'Any time'} · {t['title']}" for t in tasks]
         if gym: lines += ['🏋️ Gym: ' + ', '.join(g['name'] + (f" ({g['duration_min']} min)" if g.get('duration_min') else '') for g in gym)]
         if bills_today: lines += [f"💳 Bill due: {b['name']} · {b['amount_mad']:.2f} MAD" for b in bills_today]
-        if care_today: lines += ['🧴 Personal care due: ' + ', '.join(r['name'] for r in care_today)]
+        if care_today: lines += ['🔁 Routines due: ' + ', '.join(r['name'] for r in care_today)]
         if not events and not tasks and not tread and not gym and not bills_today and not care_today: lines.append('Nothing scheduled yet. Enjoy the day!')
         return '\n'.join(lines)
     if low in ('✅ tasks', '/tasks', 'tasks', 'my tasks', 'show tasks', 'list tasks', 'to do', 'todo'):
@@ -396,9 +484,9 @@ async def telegram_command(text: str) -> str:
     if low in ('💳 bills', '/bills', 'bills', 'my bills', 'unpaid bills'):
         bs = rows("SELECT name,amount_mad,due_date FROM bills WHERE status!='paid' ORDER BY due_date LIMIT 20")
         return 'Your unpaid bills:\n' + '\n'.join(f"• {b['name']}: {b['amount_mad']:.2f} MAD · due {datetime.strptime(b['due_date'],'%Y-%m-%d').strftime('%d/%m/%y')}" for b in bs) if bs else 'No unpaid bills. Everything is clear!'
-    if low in ('🧴 personal care', 'care', 'personal care', '/care', 'routines', 'my routines'):
-        routines = rows('SELECT name,next_due,interval_days FROM routines ORDER BY next_due LIMIT 20')
-        return 'Upcoming personal care:\n' + '\n'.join(f"• {r['name']} — {datetime.strptime(r['next_due'],'%Y-%m-%d').strftime('%d/%m/%y') if r.get('next_due') else 'not scheduled'} (every {r['interval_days']} days)" for r in routines) if routines else 'No personal-care routines set up yet.'
+    if low in ('🔁 routines', '🧴 personal care', 'care', 'personal care', '/care', 'routines', 'my routines'):
+        routines = rows('SELECT name,next_due,interval_days,routine_time,routine_late_time FROM routines ORDER BY next_due LIMIT 20')
+        return 'Upcoming routines:\n' + '\n'.join(f"• {r['name']} — {datetime.strptime(r['next_due'],'%Y-%m-%d').strftime('%d/%m/%y') if r.get('next_due') else 'not scheduled'} at {r.get('routine_time') or 'no set time'} (late alert {r.get('routine_late_time') or 'off'}, every {r['interval_days']} days)" for r in routines) if routines else 'No routines set up yet.'
     if low in ('📆 next 7 days', 'next', 'next 7 days', 'agenda', 'week', 'this week'):
         end = (today + timedelta(days=7)).isoformat()
         items = []
@@ -409,8 +497,9 @@ async def telegram_command(text: str) -> str:
             items.append((when, f"⏰ {datetime.strptime(t['due_date'],'%Y-%m-%d').strftime('%d/%m')} {t.get('due_time') or ''} · {t['title']}"))
         for b in rows("SELECT name,due_date FROM bills WHERE status!='paid' AND due_date>=? AND due_date<=?", (today.isoformat(), end)):
             items.append((b['due_date']+'T23:59', f"💳 {datetime.strptime(b['due_date'],'%Y-%m-%d').strftime('%d/%m')} · {b['name']}"))
-        for r in rows('SELECT name,next_due FROM routines WHERE next_due>=? AND next_due<=?', (today.isoformat(), end)):
-            items.append((r['next_due']+'T08:00', f"🧴 {datetime.strptime(r['next_due'],'%Y-%m-%d').strftime('%d/%m')} · {r['name']}"))
+        for r in rows('SELECT name,next_due,routine_time FROM routines WHERE next_due>=? AND next_due<=?', (today.isoformat(), end)):
+            routine_hm = r.get('routine_time') or '23:59'
+            items.append((r['next_due']+'T'+routine_hm, f"🔁 {datetime.strptime(r['next_due'],'%Y-%m-%d').strftime('%d/%m')} {routine_hm} · {r['name']}"))
         items.sort(key=lambda x:x[0])
         return 'Next 7 days:\n' + '\n'.join(x[1] for x in items) if items else 'Nothing scheduled in the next 7 days.'
     if low.startswith('/weight ') or low.startswith('weight '):
@@ -425,6 +514,7 @@ async def telegram_command(text: str) -> str:
             if existing:
                 return f"You already recorded {float(existing['kg']):.2f} kg today. I did not add a duplicate. Edit today's weight in the app if it needs correction."
             c.execute('INSERT INTO weights(date,kg) VALUES(?,?)', (today.isoformat(), kg))
+        auto_complete_weight_routines(today)
         return f'Weight saved: {kg:.2f} kg for {today.strftime("%d/%m/%y")}.'
     if low.startswith('/event '):
         try:
@@ -439,9 +529,9 @@ async def telegram_command(text: str) -> str:
             return 'To add an event, send: /event Dentist|17/11/26 10:00'
     if low in ('/naildone', 'naildone', 'nails done', 'i did my nails'):
         r = one("SELECT id FROM routines WHERE lower(name) LIKE '%nail%' LIMIT 1")
-        if not r: return 'I could not find a nail-care routine. Add it in Personal care first.'
+        if not r: return 'I could not find a nail-care routine. Add it in Routines first.'
         complete_routine(r['id'])
-        return 'Nail care marked as done. I updated the next reminder date.'
+        return 'Nail routine marked as done. I updated the next reminder date.'
     task_request = (low.startswith('/task ') or low.startswith('task ') or low.startswith('add task ') or
                     low.startswith('remind me to ') or low.startswith('please remind me to ') or
                     low.startswith('i want to ') or low.startswith('schedule '))
@@ -458,7 +548,7 @@ async def telegram_command(text: str) -> str:
             return f"Task added: '{title}'. Add a date and time whenever you want a reminder."
         except ValueError as exc:
             return str(exc)
-    return ('I can help with your schedule. Try today, tasks, bills, personal care, next 7 days, '
+    return ('I can help with your schedule. Try today, tasks, bills, routines, next 7 days, '
             'weight 89,5, or remind me to workout tomorrow at 18:00. Send /help for the quick menu.')
 
 if __name__ == '__main__':
