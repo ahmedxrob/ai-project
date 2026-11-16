@@ -1,7 +1,8 @@
 name: XROB Assistant
 description: Self-hosted personal dashboard for calendar, fitness, bills, documents and routines
-version: 0.1.3
+version: 0.1.4
 slug: xrob_assistant
+init: false
 startup: services
 boot: auto
 arch:
