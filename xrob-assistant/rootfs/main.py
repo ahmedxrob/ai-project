@@ -77,7 +77,7 @@ async def lifespan(app):
         print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
     yield
 
-app = FastAPI(title='XROB Assistant API', version='0.1.3', lifespan=lifespan)
+app = FastAPI(title='XROB Assistant API', version='0.1.5', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -97,6 +97,17 @@ def create_resource(resource: str, payload: Payload):
     if resource not in TABLES: raise HTTPException(404,'Unknown resource')
     table, allowed=TABLES[resource]
     data={k:v for k,v in payload.data.items() if k in allowed}
+    if resource == 'treadmill':
+        try:
+            duration = float(data.get('duration_min', 0))
+            if duration <= 0: raise ValueError()
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Enter a valid treadmill duration.')
+        latest = one('SELECT kg FROM weights ORDER BY date DESC,id DESC LIMIT 1')
+        body_weight = float(latest['kg']) if latest else 70.0
+        data.update({'speed_kmh': 5.0, 'incline': 0.0,
+                     'distance_km': round(5.0 * duration / 60.0, 2),
+                     'calories_kcal': round(3.5 * 3.5 * body_weight / 200.0 * duration)})
     if not data: raise HTTPException(400,'No valid fields supplied')
     if resource in ('events','tasks','workouts','bills','documents','routines') and not data.get('title' if resource in ('events','tasks') else 'name'):
         raise HTTPException(400,'A title/name is required')
@@ -260,4 +271,4 @@ async def telegram_command(text:str)->str:
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(app, host='0.0.0.0', port=8090)
+    uvicorn.run(app, host='0.0.0.0', port=8099)
