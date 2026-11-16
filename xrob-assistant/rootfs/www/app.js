@@ -17,7 +17,8 @@ function empty(s='Nothing here yet. Add your first record to get started.'){retu
 function item(title,sub='',tag='',actions=''){return `<div class="row-item"><div class="row-main"><b>${esc(title)}</b><small>${esc(sub)}</small></div>${tag?`<span class="tag">${esc(tag)}</span>`:''}${actions?`<div class="action-group">${actions}</div>`:''}</div>`}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function stat(label,value,hint=''){return `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div><div class="hint">${hint}</div></div>`}
-function weightLatest(weights){return [...weights].sort((a,b)=>(b.date||'').localeCompare(a.date||'')||b.id-a.id)[0]}
+function uniqueWeightsPerDay(weights){const byDay=new Map();for(const w of [...weights].sort((a,b)=>Number(a.id)-Number(b.id)))byDay.set(w.date,w);return [...byDay.values()].sort((a,b)=>a.date.localeCompare(b.date)||Number(a.id)-Number(b.id))}
+function weightLatest(weights){return uniqueWeightsPerDay(weights).slice(-1)[0]}
 function estimateCalories(duration,weights){const latest=weightLatest(weights);const kg=latest?Number(latest.kg):70;return Math.round((3.5*3.5*kg/200)*Number(duration||0))}
 function updateTreadmillPreview(){const d=Number($('#treadmill-form [name="duration_min"]')?.value||0);const el=$('#treadmill-calorie-preview');if(!el)return;const kg=weightLatest(cache.weights||[]);if(d>0){el.textContent=`${estimateCalories(d,cache.weights||[])} kcal`;el.title=kg?`Estimate based on ${formatKg(kg.kg)} kg`: 'Estimate uses a 70 kg default because no weight is saved yet.'}else el.textContent='— kcal'}
 function dayDate(d){return isoDate(d)}
@@ -27,13 +28,34 @@ function renderFitnessStats(treadmills,workouts,weights){
  const thisMonth=all.filter(x=>(x.date||'').slice(0,7)===today.slice(0,7)).length;
  const activeWeeks=new Set(all.map(x=>weekStartISO(x.date)));
  let streak=0,week=new Date(weekStartISO(today)+'T12:00:00');while(activeWeeks.has(isoDate(week))&&streak<520){streak++;week.setDate(week.getDate()-7)}
- const cutoff=new Date();cutoff.setDate(cutoff.getDate()-30);const cutoffISO=isoDate(cutoff);
- const within30=[...weights].filter(x=>x.date>=cutoffISO&&x.date<=today).sort((a,b)=>a.date.localeCompare(b.date));
- let weightDelta='—';if(within30.length>=2){const delta=Number(within30[within30.length-1].kg)-Number(within30[0].kg);weightDelta=`${delta>0?'+':''}${formatKg(delta)} kg`}else if(within30.length===1)weightDelta='1 entry';
+ const thisWeek=weekStartISO(today);
+ const thisWeekWeights=uniqueWeightsPerDay(weights).filter(x=>x.date>=thisWeek&&x.date<=today);
+ const weeklyAverage=thisWeekWeights.length?thisWeekWeights.reduce((sum,x)=>sum+Number(x.kg),0)/thisWeekWeights.length:null;
  const start=new Date();start.setDate(start.getDate()-83);const startISO=isoDate(start);
  const treadmillMins=treadmills.filter(x=>x.date>=startISO&&x.date<=today).reduce((a,x)=>a+Number(x.duration_min||0),0);
  const gymCount=workouts.filter(x=>x.date>=startISO&&x.date<=today).length;
- $('#fitness-stats').innerHTML=stat('Workouts',all.length,'Treadmill + gym')+stat('This month',thisMonth,'Sessions')+stat('Week streak',streak,'Consecutive active weeks')+stat('Weight 30d',weightDelta,'Change in recorded weight')+stat('Treadmill avg / week',`${Math.round(treadmillMins/12)} min`,'Last 12 weeks')+stat('Gym avg / week',`${(gymCount/12).toFixed(1)}`,'Sessions · last 12 weeks');
+ $('#fitness-stats').innerHTML=stat('Workouts',all.length,'Treadmill + gym')+stat('This month',thisMonth,'Sessions')+stat('Week streak',streak,'Consecutive active weeks')+stat('This week avg weight',weeklyAverage===null?'—':`${formatKg(weeklyAverage)} kg`,`${thisWeekWeights.length} weight ${thisWeekWeights.length===1?'entry':'entries'} this week`)+stat('Treadmill avg / week',`${Math.round(treadmillMins/12)} min`,'Last 12 weeks')+stat('Gym avg / week',`${(gymCount/12).toFixed(1)}`,'Sessions · last 12 weeks');
+}
+function renderWeightHistory(weights){
+ const sorted=uniqueWeightsPerDay(weights);
+ $('#weight-history-count').textContent=`${sorted.length} entries`;
+ $('#weight-history').innerHTML=sorted.map(w=>`<div class="weight-history-row"><span>${formatDate(w.date)}</span><b>${formatKg(w.kg)} kg</b></div>`).join('')||empty('No weight records yet.');
+}
+function renderWeightGraph(weights){
+ const host=$('#weight-graph');if(!host)return;
+ const sorted=uniqueWeightsPerDay(weights);
+ if(!sorted.length){host.innerHTML=empty('Record your weight to see your progress graph.');return}
+ const W=960,H=280,L=62,R=28,T=22,B=48,plotW=W-L-R,plotH=H-T-B;
+ const vals=sorted.map(x=>Number(x.kg)).filter(Number.isFinite);let min=Math.min(...vals),max=Math.max(...vals);
+ if(min===max){min-=0.5;max+=0.5}else{const pad=Math.max((max-min)*0.12,0.25);min-=pad;max+=pad}
+ const xAt=i=>sorted.length===1?L+plotW/2:L+(i/(sorted.length-1))*plotW;
+ const yAt=v=>T+((max-v)/(max-min))*plotH;
+ const grid=Array.from({length:5},(_,i)=>{const value=min+(max-min)*i/4,y=yAt(value);return `<line class="weight-grid-line" x1="${L}" y1="${y}" x2="${W-R}" y2="${y}"/><text class="weight-axis-label" x="${L-10}" y="${y+4}" text-anchor="end">${value.toFixed(1)}</text>`}).join('');
+ const points=sorted.map((r,i)=>`${xAt(i)},${yAt(Number(r.kg))}`).join(' ');
+ const dots=sorted.map((r,i)=>`<circle class="weight-point" cx="${xAt(i)}" cy="${yAt(Number(r.kg))}" r="4.5"><title>${formatDate(r.date)} · ${formatKg(r.kg)} kg</title></circle>`).join('');
+ const tickCount=Math.min(6,sorted.length),ticks=Array.from({length:tickCount},(_,i)=>{const ix=tickCount===1?0:Math.round(i*(sorted.length-1)/(tickCount-1));return `<text class="weight-axis-label" x="${xAt(ix)}" y="${H-15}" text-anchor="middle">${formatDate(sorted[ix].date)}</text>`}).join('');
+ const latest=sorted[sorted.length-1];
+ host.innerHTML=`<div class="weight-chart-scroll"><svg class="weight-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight progress graph, ${sorted.length} records, latest ${formatKg(latest.kg)} kilograms"><defs><linearGradient id="weight-area" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="var(--green)" stop-opacity=".24"/><stop offset="100%" stop-color="var(--green)" stop-opacity="0"/></linearGradient></defs>${grid}<polygon class="weight-area" points="${L},${T+plotH} ${points} ${W-R},${T+plotH}"/><polyline class="weight-line" points="${points}"/>${dots}${ticks}</svg></div><div class="weight-chart-meta"><span>First: ${formatKg(sorted[0].kg)} kg · ${formatDate(sorted[0].date)}</span><b>Latest: ${formatKg(latest.kg)} kg</b></div>`;
 }
 function renderHeatmap(id,records,kind){
  const host=$(id);if(!host)return;const values={};for(const r of records){const key=r.date;if(!key)continue;values[key]=(values[key]||0)+(kind==='minutes'?Number(r.duration_min||0):1)}
@@ -47,7 +69,7 @@ function renderHeatmap(id,records,kind){
  host.innerHTML=`<div class="heatmap-scroll"><div class="heatmap-months" style="--weeks:${weeks}">${monthHtml}</div><div class="heatmap-grid" style="--weeks:${weeks}">${cells}</div></div><div class="heatmap-footer"><span>${kind==='minutes'?`${Math.round(total)} minutes trained`:`${total} gym sessions`} · ${period.length} entries in view</span><span class="heat-legend">Less <i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i> More</span></div>`;
 }
 async function refresh(){try{
- let [sum,events,tasks,weights,treadmills,workouts,workout_plan,bills,docs,routines]=await Promise.all(['summary','events','tasks','weights','treadmill','workouts','workout_plan','bills','documents','routines'].map(x=>api(x)));
+ let [sum,events,tasks,weights,treadmills,workouts,workout_plan,bills,docs,routines]=await Promise.all(['summary','events','tasks','weights?limit=10000','treadmill','workouts','workout_plan','bills','documents','routines'].map(x=>api(x)));
  cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,documents:docs,routines};$('#api-status').textContent='API connected';
  $('#stats').innerHTML=stat('Events today',sum.events_today,'Calendar')+stat('Open tasks',sum.open_tasks,'To do')+stat('Latest weight',sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'—','Fitness log')+stat('Unpaid bills',sum.unpaid_bills,money(sum.unpaid_total_mad));
  $('#upcoming').innerHTML=events.filter(e=>e.start_at>=today).sort((a,b)=>a.start_at.localeCompare(b.start_at)).slice(0,5).map(e=>item(e.title,formatDateTime(e.start_at)+(e.end_at?' – '+formatDateTime(e.end_at):''),e.category)).join('')||empty('No upcoming events.');
@@ -56,7 +78,7 @@ async function refresh(){try{
  $('#routine-snapshot').innerHTML=routines.slice(0,4).map(r=>item(r.name,'Next: '+(r.next_due?formatDate(r.next_due):'Not scheduled'),r.interval_days+' day interval',`<button class="mini-btn" data-complete="${r.id}">Done</button>`)).join('')||empty();
  $('#events-list').innerHTML=[...events].sort((a,b)=>a.start_at.localeCompare(b.start_at)).map(e=>item(e.title,formatDateTime(e.start_at)+(e.end_at?' – '+formatDateTime(e.end_at):''),e.category,`<button class="mini-btn" data-delete="events:${e.id}">Delete</button>`)).join('')||empty();renderCalendar(events);
  $('#tasks-list').innerHTML=tasks.map(t=>item(t.title,(t.due_date?formatDate(t.due_date):'No due date')+' · '+t.category,t.status==='done'?'Completed':t.priority,t.status!=='done'?`<button class="mini-btn" data-taskdone="${t.id}">Complete</button>`:`<button class="mini-btn" data-delete="tasks:${t.id}">Delete</button>`)).join('')||empty();
- $('#weight-history').innerHTML=[...weights].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,12).map(w=>item(formatKg(w.kg)+' kg',formatDate(w.date),'Weight')).join('')||empty();
+ renderWeightHistory(weights);renderWeightGraph(weights);
  $('#treadmill-history').innerHTML=treadmills.slice(0,10).map(t=>item(`${Number(t.duration_min)} min · ${Number(t.distance_km).toFixed(2)} km`,`${formatDate(t.date)} · ${t.calories_kcal} kcal`,(t.speed_kmh||5)+' km/h')).join('')||empty();
  $('#workout-history').innerHTML=workouts.slice(0,20).map(w=>item(w.name,formatDate(w.date)+(w.notes?' · '+w.notes:''),'Gym',`<button class="mini-btn" data-delete="workouts:${w.id}">Delete</button>`)).join('')||empty();
  renderFitnessStats(treadmills,workouts,weights);renderHeatmap('#treadmill-activity',treadmills,'minutes');renderHeatmap('#gym-activity',workouts,'count');updateTreadmillPreview();
