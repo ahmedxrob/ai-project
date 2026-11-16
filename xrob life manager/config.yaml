@@ -1,0 +1,23 @@
+name: XROB Life Manager
+description: Self-hosted personal dashboard for calendar, fitness, bills, documents and routines
+version: 0.1.0
+slug: xrob_life_manager
+startup: services
+boot: auto
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+  - i386
+host_network: true
+map:
+  - addon_config:rw
+options:
+  telegram_bot_token: ""
+  telegram_allowed_chat_id: ""
+  timezone: Africa/Casablanca
+schema:
+  telegram_bot_token: str
+  telegram_allowed_chat_id: str
+  timezone: str
