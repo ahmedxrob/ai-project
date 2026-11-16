@@ -14,7 +14,7 @@ SERVICE_COMPLETE_ROUTINE = "complete_routine"
 async def _post(hass: HomeAssistant, path: str, data: dict):
     entries = hass.config_entries.async_entries(DOMAIN)
     if not entries:
-        raise HomeAssistantError("Xrob Music is not configured")
+        raise HomeAssistantError("XROB Assistant is not configured")
     url = entries[0].data[CONF_URL].rstrip("/")
     try:
         async with aiohttp.ClientSession() as session:
@@ -22,7 +22,7 @@ async def _post(hass: HomeAssistant, path: str, data: dict):
                 response.raise_for_status()
                 return await response.json()
     except Exception as err:
-        raise HomeAssistantError(f"Xrob Music API request failed: {err}") from err
+        raise HomeAssistantError(f"XROB Assistant API request failed: {err}") from err
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry.data
@@ -33,7 +33,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await _post(hass, "/api/weights", {"date": call.data.get("date", dt_util.now().date().isoformat()), "kg": call.data["kg"], "notes": call.data.get("notes", "")})
         async def complete_routine(call: ServiceCall):
             entries = hass.config_entries.async_entries(DOMAIN)
-            if not entries: raise HomeAssistantError("Xrob Music is not configured")
+            if not entries: raise HomeAssistantError("XROB Assistant is not configured")
             url = entries[0].data[CONF_URL].rstrip("/")
             async with aiohttp.ClientSession() as session:
                 async with session.post(f"{url}/api/routines/{call.data['routine_id']}/complete", timeout=10) as response:
