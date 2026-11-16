@@ -77,16 +77,16 @@ async def lifespan(app):
         print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
     yield
 
-app = FastAPI(title='Xrob Music API', version='0.1.6', lifespan=lifespan)
+app = FastAPI(title='XROB Assistant API', version='0.1.8', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
 def home(): return FileResponse(WWW/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','app':'Xrob Music','version':'0.1.6','database':'connected'}
+def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.8','database':'connected'}
 
 @app.get('/api/{resource}')
-def list_resource(resource: str, limit: int = Query(250, ge=1, le=1000)):
+def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
     if resource == 'summary': return summary()
     if resource not in TABLES: raise HTTPException(404,'Unknown resource')
     table,_=TABLES[resource]
@@ -113,6 +113,18 @@ def create_resource(resource: str, payload: Payload):
         raise HTTPException(400,'A title/name is required')
     keys=list(data); marks=','.join('?' for _ in keys)
     with connect() as c:
+        if resource == 'weights':
+            try:
+                weight_day = date.fromisoformat(str(data.get('date', '')))
+            except (TypeError, ValueError):
+                raise HTTPException(400, 'Enter a valid weight date (YYYY-MM-DD).')
+            # Acquire the SQLite write lock before checking so two near-simultaneous
+            # submissions cannot create two records for the same calendar day.
+            c.execute('BEGIN IMMEDIATE')
+            existing = c.execute('SELECT kg FROM weights WHERE date=? ORDER BY id DESC LIMIT 1', (weight_day.isoformat(),)).fetchone()
+            if existing:
+                pretty = weight_day.strftime('%d/%m/%Y')
+                raise HTTPException(409, f'Weight already recorded for {pretty} ({float(existing["kg"]):.2f} kg). No new entry was added.')
         cur=c.execute(f"INSERT INTO {table} ({','.join(keys)}) VALUES ({marks})", [data[k] for k in keys])
         new_id=cur.lastrowid
     return one(f'SELECT * FROM {table} WHERE id=?',(new_id,))
@@ -220,7 +232,7 @@ async def reminder_loop():
                         cur=c.execute('INSERT OR IGNORE INTO notification_log(kind,item_id,reminder_date) VALUES(?,?,?)',(kind,item_id,day))
                         should_send=cur.rowcount>0
                     if should_send:
-                        await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage',json={'chat_id':ALLOWED_CHAT,'text':'🔔 Xrob Music\n'+message})
+                        await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage',json={'chat_id':ALLOWED_CHAT,'text':'🔔 XROB Assistant\n'+message})
             except Exception as e:
                 print(f'Reminder scheduler error: {e}',flush=True)
             await asyncio.sleep(60)
@@ -247,7 +259,7 @@ async def telegram_poll():
 async def telegram_command(text:str)->str:
     low=text.lower()
     if low in ('/start','/help','help'):
-        return ('Xrob Music commands:\n/today – today summary\n/tasks – open tasks\n/bills – unpaid bills\n/weight 89.5 – record weight\n/event Meeting|2026-11-17 10:00 – add event\n/task Buy groceries – add task\n/naildone – complete nail care\n\nYou can also send: weight 89.5')
+        return ('XROB Assistant commands:\n/today – today summary\n/tasks – open tasks\n/bills – unpaid bills\n/weight 89.5 – record weight\n/event Meeting|2026-11-17 10:00 – add event\n/task Buy groceries – add task\n/naildone – complete nail care\n\nYou can also send: weight 89.5')
     if low.startswith('/weight ') or low.startswith('weight '):
         try: kg=float(text.split()[-1])
         except: return 'Please send a number, e.g. /weight 89.5'
@@ -280,4 +292,4 @@ async def telegram_command(text:str)->str:
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(app, host='0.0.0.0', port=8099)
+    uvicorn.run(app, host='0.0.0.0', port=8090)
