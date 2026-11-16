@@ -1,6 +1,7 @@
 {
-  "name": "Xrob Music",
-  "short_name": "Xrob",
+  "name": "XROB Assistant",
+  "short_name": "XROB",
+  "description": "Self-hosted personal assistant and scheduler for calendar, tasks, routines and fitness.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#050607",
