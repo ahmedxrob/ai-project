@@ -59,7 +59,7 @@ TABLES = {
  'events': ('events', ['title','start_at','end_at','category','notes']),
  'tasks': ('tasks', ['title','due_date','priority','status','category','notes']),
  'weights': ('weights', ['date','kg','notes']),
- 'workouts': ('workouts', ['date','name','duration_min','notes']),
+ 'workouts': ('workouts', ['date','name','notes']),
  'workout_plan': ('workout_plan', ['weekday','name','notes']),
  'treadmill': ('treadmill', ['date','duration_min','distance_km','speed_kmh','incline','calories_kcal','notes']),
  'bills': ('bills', ['name','amount_mad','due_date','recurrence','reminder_days','status','paid_at','notes']),
@@ -77,13 +77,13 @@ async def lifespan(app):
         print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
     yield
 
-app = FastAPI(title='XROB Assistant API', version='0.1.5', lifespan=lifespan)
+app = FastAPI(title='Xrob Music API', version='0.1.6', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
 def home(): return FileResponse(WWW/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.3','database':'connected'}
+def health(): return {'status':'ok','app':'Xrob Music','version':'0.1.6','database':'connected'}
 
 @app.get('/api/{resource}')
 def list_resource(resource: str, limit: int = Query(250, ge=1, le=1000)):
@@ -122,6 +122,15 @@ def update_resource(resource: str, item_id: int, payload: Payload):
     if resource not in TABLES: raise HTTPException(404,'Unknown resource')
     table,allowed=TABLES[resource]; data={k:v for k,v in payload.data.items() if k in allowed}
     if not data: raise HTTPException(400,'No valid fields supplied')
+    if resource == 'routines' and 'interval_days' in data:
+        try:
+            interval=max(1,int(data['interval_days']))
+        except (TypeError,ValueError):
+            raise HTTPException(400,'Repeat interval must be a positive number of days.')
+        existing=one('SELECT last_done FROM routines WHERE id=?',(item_id,))
+        reference=date.fromisoformat(existing['last_done']) if existing and existing.get('last_done') else date.today()
+        data['interval_days']=interval
+        data['next_due']=(reference+timedelta(days=interval)).isoformat()
     with connect() as c:
         cur=c.execute(f"UPDATE {table} SET {','.join(k+'=?' for k in data)} WHERE id=?", [*data.values(),item_id])
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
@@ -211,7 +220,7 @@ async def reminder_loop():
                         cur=c.execute('INSERT OR IGNORE INTO notification_log(kind,item_id,reminder_date) VALUES(?,?,?)',(kind,item_id,day))
                         should_send=cur.rowcount>0
                     if should_send:
-                        await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage',json={'chat_id':ALLOWED_CHAT,'text':'🔔 XROB Assistant\n'+message})
+                        await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage',json={'chat_id':ALLOWED_CHAT,'text':'🔔 Xrob Music\n'+message})
             except Exception as e:
                 print(f'Reminder scheduler error: {e}',flush=True)
             await asyncio.sleep(60)
@@ -238,7 +247,7 @@ async def telegram_poll():
 async def telegram_command(text:str)->str:
     low=text.lower()
     if low in ('/start','/help','help'):
-        return ('XROB Assistant commands:\n/today – today summary\n/tasks – open tasks\n/bills – unpaid bills\n/weight 89.5 – record weight\n/event Meeting|2026-11-17 10:00 – add event\n/task Buy groceries – add task\n/naildone – complete nail care\n\nYou can also send: weight 89.5')
+        return ('Xrob Music commands:\n/today – today summary\n/tasks – open tasks\n/bills – unpaid bills\n/weight 89.5 – record weight\n/event Meeting|2026-11-17 10:00 – add event\n/task Buy groceries – add task\n/naildone – complete nail care\n\nYou can also send: weight 89.5')
     if low.startswith('/weight ') or low.startswith('weight '):
         try: kg=float(text.split()[-1])
         except: return 'Please send a number, e.g. /weight 89.5'
