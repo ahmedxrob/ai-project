@@ -1,0 +1,2 @@
+build_from:
+  amd64: ghcr.io/home-assistant/base-python:3.14-alpine3.24

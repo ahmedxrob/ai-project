@@ -1,0 +1,22 @@
+name: XROB Assistant
+description: Self-hosted personal dashboard for calendar, fitness, bills, documents and routines
+version: 0.1.3
+slug: xrob_assistant
+startup: services
+boot: auto
+arch:
+  - amd64
+ports:
+  8090/tcp: 8090
+ports_description:
+  8090/tcp: XROB Assistant web dashboard and local API
+map:
+  - addon_config:rw
+options:
+  telegram_bot_token: ""
+  telegram_allowed_chat_id: ""
+  timezone: Africa/Casablanca
+schema:
+  telegram_bot_token: str
+  telegram_allowed_chat_id: str
+  timezone: str
