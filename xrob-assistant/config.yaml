@@ -1,6 +1,6 @@
-name: Xrob Music
-description: Self-hosted Xrob Music and personal dashboard for calendar, fitness, bills, documents and routines
-version: 0.1.6
+name: XROB Assistant
+description: Self-hosted personal scheduler and assistant for calendar, tasks, fitness, bills, documents and routines
+version: 0.1.8
 slug: xrob_assistant
 init: false
 startup: services
@@ -8,9 +8,9 @@ boot: auto
 arch:
   - amd64
 ports:
-  8099/tcp: 8099
+  8090/tcp: 8090
 ports_description:
-  8099/tcp: Xrob Music web dashboard and local API
+  8090/tcp: XROB Assistant web dashboard and local API
 map:
   - addon_config:rw
 options:
@@ -22,6 +22,6 @@ schema:
   telegram_allowed_chat_id: str
   timezone: str
 
-webui: "http://[HOST]:[PORT:8099]"
-panel_icon: mdi:music
-panel_title: Xrob Music
+webui: "http://[HOST]:[PORT:8090]"
+panel_icon: mdi:calendar-clock
+panel_title: XROB Assistant
