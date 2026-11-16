@@ -15,7 +15,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             async with session.get(url + '/api/ha/state', timeout=10) as response:
                 response.raise_for_status()
                 return await response.json()
-    coordinator = DataUpdateCoordinator(hass, logging.getLogger(__name__), name="Xrob Music", update_method=fetch, update_interval=SCAN_INTERVAL)
+    coordinator = DataUpdateCoordinator(hass, logging.getLogger(__name__), name="XROB Assistant", update_method=fetch, update_interval=SCAN_INTERVAL)
     await coordinator.async_config_entry_first_refresh()
     async_add_entities([XrobSensor(coordinator, entry, key, name, unit) for key,name,unit in [
         ('weight_kg','Weight',UnitOfMass.KILOGRAM),('unpaid_bills','Unpaid bills',None),('unpaid_total_mad','Unpaid bills total','MAD'),('expiring_documents','Expiring documents',None),('open_tasks','Open tasks',None),('events_today','Events today',None),('next_routine','Next personal care routine',None)
