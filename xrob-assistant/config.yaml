@@ -1,6 +1,6 @@
 name: XROB Assistant
 description: Self-hosted scheduler and assistant for calendar, timed tasks, fitness, bills and routines
-version: 0.1.13
+version: 0.1.14
 slug: xrob_assistant
 init: false
 startup: services
