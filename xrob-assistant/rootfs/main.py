@@ -71,6 +71,15 @@ def init_db():
             if not has_weight:
                 c.execute("INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,1,NULL,?,'health','10:00',NULL)", ('Weight check', date.today().isoformat()))
             c.execute("INSERT INTO app_migrations(name) VALUES('seed_weight_check_routine_v1')")
+        # Add a daily Treadmill check only once, unless the user already has a
+        # routine whose name identifies treadmill activity. Logging a treadmill
+        # session will automatically check this routine for that session's date.
+        treadmill_seed = c.execute("SELECT 1 FROM app_migrations WHERE name='seed_treadmill_check_routine_v1'").fetchone()
+        if not treadmill_seed:
+            has_treadmill = c.execute("SELECT 1 FROM routines WHERE lower(name) LIKE '%treadmill%' LIMIT 1").fetchone()
+            if not has_treadmill:
+                c.execute("INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,1,NULL,?,'fitness','10:00',NULL)", ('Treadmill check', date.today().isoformat()))
+            c.execute("INSERT INTO app_migrations(name) VALUES('seed_treadmill_check_routine_v1')")
 
 def rows(sql, params=()):
     with connect() as c: return [dict(r) for r in c.execute(sql, params).fetchall()]
@@ -103,13 +112,13 @@ async def lifespan(app):
         print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
     yield
 
-app = FastAPI(title='XROB Assistant API', version='0.1.13', lifespan=lifespan)
+app = FastAPI(title='XROB Assistant API', version='0.1.14', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
 def home(): return FileResponse(WWW/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.13','database':'connected'}
+def health(): return {'status':'ok','app':'XROB Assistant','version':'0.1.14','database':'connected'}
 
 @app.get('/api/{resource}')
 def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
@@ -152,18 +161,42 @@ def is_weight_routine(routine: dict[str, Any]) -> bool:
     name = str(routine.get('name') or '').lower()
     return 'weight' in name or 'weigh' in name
 
-def auto_complete_weight_routines(completed_on: date) -> None:
+def is_treadmill_routine(routine: dict[str, Any]) -> bool:
+    name = str(routine.get('name') or '').lower()
+    return 'treadmill' in name
+
+def auto_complete_matching_routines(completed_on: date, matcher) -> int:
+    """Check matching routines when the corresponding activity is logged.
+
+    A log is stored against the activity's date. Backdated entries are retained
+    without moving a routine's current schedule backwards. Same-day duplicate
+    activity logs never create duplicate routine completion records.
+    """
     day = completed_on.isoformat()
+    completed_count = 0
     for routine in rows('SELECT * FROM routines'):
-        if not is_weight_routine(routine):
+        if not matcher(routine):
             continue
         interval = max(1, int(routine.get('interval_days') or 1))
         next_due = (completed_on + timedelta(days=interval)).isoformat()
         with connect() as c:
-            already_logged = c.execute('SELECT id FROM routine_logs WHERE routine_id=? AND completed_at=? LIMIT 1', (routine['id'], day)).fetchone()
-            if not already_logged:
-                c.execute('INSERT INTO routine_logs(routine_id,completed_at) VALUES(?,?)', (routine['id'], day))
-            c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?', (day, next_due, routine['id']))
+            c.execute(
+                'INSERT INTO routine_logs(routine_id,completed_at) SELECT ?,? WHERE NOT EXISTS '
+                '(SELECT 1 FROM routine_logs WHERE routine_id=? AND completed_at=?)',
+                (routine['id'], day, routine['id'], day)
+            )
+            current = c.execute('SELECT last_done FROM routines WHERE id=?', (routine['id'],)).fetchone()
+            current_last = current['last_done'] if current else None
+            if not current_last or day >= current_last:
+                c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?', (day, next_due, routine['id']))
+            completed_count += 1
+    return completed_count
+
+def auto_complete_weight_routines(completed_on: date) -> int:
+    return auto_complete_matching_routines(completed_on, is_weight_routine)
+
+def auto_complete_treadmill_routines(completed_on: date) -> int:
+    return auto_complete_matching_routines(completed_on, is_treadmill_routine)
 
 def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
     """Send the normal reminder on its due day; optional late reminders start next day.
@@ -211,15 +244,17 @@ def create_resource(resource: str, payload: Payload):
         data.setdefault('routine_late_time', None)
         data.setdefault('next_due', date.today().isoformat())
         validate_routine_schedule(data)
+    treadmill_day = None
     if resource == 'treadmill':
         try:
+            treadmill_day = date.fromisoformat(str(data.get('date', '')))
             duration = float(data.get('duration_min', 0))
             if duration <= 0: raise ValueError()
         except (TypeError, ValueError):
-            raise HTTPException(400, 'Enter a valid treadmill duration.')
+            raise HTTPException(400, 'Enter a valid treadmill date and duration.')
         latest = one('SELECT kg FROM weights ORDER BY date DESC,id DESC LIMIT 1')
         body_weight = float(latest['kg']) if latest else 70.0
-        data.update({'speed_kmh': 5.0, 'incline': 0.0,
+        data.update({'date': treadmill_day.isoformat(), 'speed_kmh': 5.0, 'incline': 0.0,
                      'distance_km': round(5.0 * duration / 60.0, 2),
                      'calories_kcal': round(3.5 * 3.5 * body_weight / 200.0 * duration)})
     if not data: raise HTTPException(400,'No valid fields supplied')
@@ -241,8 +276,10 @@ def create_resource(resource: str, payload: Payload):
                 raise HTTPException(409, f'Weight already recorded for {pretty} ({float(existing["kg"]):.2f} kg). No new entry was added.')
         cur=c.execute(f"INSERT INTO {table} ({','.join(keys)}) VALUES ({marks})", [data[k] for k in keys])
         new_id=cur.lastrowid
-    if resource == 'weights' and weight_day == date.today():
+    if resource == 'weights':
         auto_complete_weight_routines(weight_day)
+    elif resource == 'treadmill':
+        auto_complete_treadmill_routines(treadmill_day)
     return one(f'SELECT * FROM {table} WHERE id=?',(new_id,))
 
 @app.patch('/api/{resource}/{item_id}')
