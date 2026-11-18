@@ -185,3 +185,70 @@ main{max-width:none;width:calc(100% - 238px);padding:28px clamp(18px,2.2vw,42px)
 @media(max-width:700px){.shopping-add-form{display:grid;grid-template-columns:1fr auto}.shopping-add-form button{grid-column:auto}.meal-plan-row{gap:8px}.meal-plan-date{width:76px;flex-basis:76px}.meal-plan-row .mini-btn{font-size:10px;padding:5px 7px}.recipe-card{padding:13px}.meal-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.meal-tab{padding:9px 5px;font-size:11px}}
 
 .cal-event.meal{background:#453c24;color:#f5e3b6}.calendar-detail-dot.meal{background:#e2b767}
+
+
+/* XROB Assistant 0.4.2 — automatic meal routines and Planner shopping list */
+.meal-page-hero{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:24px 28px;margin:0 0 18px;border:1px solid #245238;border-radius:18px;background:radial-gradient(ellipse at 82% 15%,#214b32 0%,#17281f 42%,#121b17 100%);overflow:hidden}
+.meal-page-hero h3{font-size:21px;margin:6px 0;color:#effff3}
+.meal-page-hero p{max-width:680px;margin:0;color:#b7cabb;font-size:13px}
+.meal-hero-mark{font-size:48px;filter:drop-shadow(0 5px 16px #0007)}
+.meal-overview-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 18px}
+.meal-overview-stat{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid #2b3830;border-radius:12px;background:linear-gradient(145deg,#18221c,#141a17);min-width:0}
+.meal-overview-stat span{color:var(--muted);font-size:11px}
+.meal-overview-stat b{font-size:20px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meal-collection-panel{padding:20px}
+.recipe-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+.recipe-card{padding:18px;background:linear-gradient(150deg,#1b2820,#171d1a 72%);border:1px solid #2e4435;box-shadow:0 8px 22px #0002;transition:transform .16s ease,border-color .16s ease}
+.recipe-card:hover{transform:translateY(-2px);border-color:#477955}
+.recipe-card-top{gap:8px;flex-wrap:wrap}
+.meal-routine-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:20px;background:#1b3b28;color:#a5edb7;font-size:10px;font-weight:700}
+.recipe-plates{color:#b9c6bc;font-size:10px}
+.recipe-card-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin:3px 0}
+.recipe-card h3{font-size:18px;overflow-wrap:anywhere}
+.meal-kcal{flex:0 0 auto;color:#f3cb83;font-size:11px;font-weight:650}
+.recipe-ingredients{display:grid;gap:8px;margin-top:4px}
+.recipe-ingredients>b{font-size:10px;color:#9eafa3;text-transform:uppercase;letter-spacing:.7px}
+.ingredient-chip-list{display:flex;flex-wrap:wrap;gap:6px}
+.ingredient-chip{border:1px solid #304136;background:#1a251e;color:#d1dfd5;border-radius:7px;padding:4px 8px;font-size:10px;overflow-wrap:anywhere}
+.recipe-next-line{display:flex;align-items:center;gap:7px;color:#aebbb2;font-size:11px;padding-top:10px;border-top:1px solid #2b3830;margin-top:7px}
+.recipe-next-line b{color:#e4f4e8}
+.recipe-next-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px #2ed35f70}
+.recipe-next-dot.muted-dot{background:#68766b;box-shadow:none}
+.recipe-card-actions{padding-top:8px}
+.danger-btn:hover{border-color:#a34b54;color:#ff9aa2}
+.meal-empty-state{grid-column:1/-1;display:grid;justify-items:center;text-align:center;padding:36px 18px;gap:9px;border:1px dashed #3b5342;border-radius:14px;background:#151e18}
+.meal-empty-icon{font-size:35px}
+.meal-empty-state h3{font-size:17px}
+.meal-empty-state p{max-width:420px;color:var(--muted);font-size:12px;margin:0 0 5px}
+.planner-shopping-panel{margin-top:18px;padding:20px;border-color:#304234;background:linear-gradient(145deg,#19231d,#151b18)}
+.planner-shopping-panel .panel-head{align-items:flex-start}
+.planner-shopping-panel .secondary{white-space:nowrap}
+.shopping-summary{margin:10px 0 16px}
+.shopping-progress-copy{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px;margin-bottom:8px}
+.shopping-progress-copy b{font-size:12px;color:#eaf5ed}
+.shopping-progress-track{height:7px;border-radius:20px;background:#29332c;overflow:hidden}
+.shopping-progress-track span{display:block;height:100%;border-radius:20px;background:linear-gradient(90deg,#28a84e,#65e08a);transition:width .2s ease}
+.planner-shopping-panel .shopping-add-form{padding:8px 0 15px;border-bottom:1px solid #303b32}
+.planner-shopping-panel .shopping-add-form input{background:#101711;border-color:#36463a}
+.shopping-list{gap:16px;margin-top:14px}
+.shopping-group{display:grid;gap:4px}
+.shopping-group-title{display:flex;align-items:center;gap:8px;margin-bottom:4px;color:#bfcec2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.65px}
+.shopping-group-title b{margin-left:auto;color:#8f9f93;font-size:10px}
+.shopping-group-dot{width:8px;height:8px;background:#63d88a;border-radius:50%}
+.shopping-group-dot.bought{background:#7a8790}
+.shopping-row{gap:12px;padding:10px 8px;border:1px solid transparent;border-radius:9px;border-bottom-color:#2c3730;background:#111914;transition:background .15s ease,border-color .15s ease}
+.shopping-row:hover{background:#18231b;border-color:#314337}
+.shopping-row label{font-size:13px}
+.shopping-row input{width:17px;height:17px;accent-color:var(--green);flex:0 0 auto}
+.shopping-row.is-checked{opacity:.72}
+.shopping-row.is-checked label span{text-decoration:line-through;color:#819187}
+.shopping-delete{border:0;background:transparent;font-size:16px;color:#77847c}
+.shopping-footer{display:flex;justify-content:flex-end;margin-top:12px}
+.shopping-empty{display:grid;justify-items:center;text-align:center;gap:6px;padding:24px 14px;color:var(--muted)}
+.shopping-empty>span{font-size:29px}
+.shopping-empty b{font-size:13px;color:#dce8df}
+.shopping-empty small{font-size:11px;max-width:340px}
+.modal[data-lock-backdrop="true"]{cursor:default}
+.modal[data-lock-backdrop="true"] .modal-card{box-shadow:0 24px 80px #000b;border-color:#426c4c}
+@media(max-width:850px){.recipe-grid{grid-template-columns:1fr}.meal-page-hero{padding:20px}.planner-shopping-panel .panel-head{flex-direction:column;align-items:stretch}.planner-shopping-panel .secondary{align-self:flex-start}}
+@media(max-width:620px){.meal-overview-strip{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.meal-overview-stat{padding:11px 9px}.meal-overview-stat b{font-size:16px}.meal-page-hero{padding:17px}.meal-page-hero h3{font-size:18px}.meal-hero-mark{font-size:35px}.planner-shopping-panel{padding:15px}.planner-shopping-panel .shopping-add-form{grid-template-columns:1fr}.planner-shopping-panel .shopping-add-form button{width:100%}.shopping-progress-copy{font-size:10px}}
