@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS recipes (
  prep_min INTEGER DEFAULT 0, cook_min INTEGER DEFAULT 0, servings REAL DEFAULT 2, difficulty TEXT DEFAULT 'easy',
  ingredients_json TEXT NOT NULL DEFAULT '[]', instructions TEXT DEFAULT '', dietary_tags TEXT DEFAULT '',
  calories_kcal REAL, protein_g REAL, carbs_g REAL, fat_g REAL, source_url TEXT DEFAULT '', notes TEXT DEFAULT '',
- favorite INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+ favorite INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, eating_interval_days INTEGER NOT NULL DEFAULT 1, batch_plates INTEGER NOT NULL DEFAULT 7,
+ created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_recipes_meal_type ON recipes(meal_type);
 CREATE TABLE IF NOT EXISTS meal_plans (
@@ -51,6 +52,18 @@ CREATE TABLE IF NOT EXISTS shopping_items (
  category TEXT DEFAULT 'Other', checked INTEGER DEFAULT 0, source TEXT DEFAULT 'manual', created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_shopping_checked ON shopping_items(checked, category, name);
+CREATE TABLE IF NOT EXISTS meal_batches (
+ id INTEGER PRIMARY KEY, recipe_id INTEGER NOT NULL, start_date TEXT NOT NULL, plates_total INTEGER NOT NULL, plates_scheduled INTEGER NOT NULL DEFAULT 0,
+ eating_interval_days INTEGER NOT NULL DEFAULT 1, last_scheduled_date TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_meal_batches_active ON meal_batches(recipe_id, plates_scheduled, plates_total);
+CREATE TABLE IF NOT EXISTS daily_meals (
+ id INTEGER PRIMARY KEY, plan_date TEXT NOT NULL UNIQUE, recipe_id INTEGER NOT NULL, batch_id INTEGER, status TEXT NOT NULL DEFAULT 'pending',
+ notified_date TEXT, confirmed_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE RESTRICT, FOREIGN KEY(batch_id) REFERENCES meal_batches(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_meals_date ON daily_meals(plan_date, status);
 CREATE TRIGGER IF NOT EXISTS weights_no_duplicate_date_insert BEFORE INSERT ON weights WHEN EXISTS (SELECT 1 FROM weights WHERE date=NEW.date) BEGIN SELECT RAISE(ABORT, 'weight date already exists'); END;
 CREATE TRIGGER IF NOT EXISTS weights_no_duplicate_date_update BEFORE UPDATE OF date ON weights WHEN EXISTS (SELECT 1 FROM weights WHERE date=NEW.date AND id!=NEW.id) BEGIN SELECT RAISE(ABORT, 'weight date already exists'); END;
 '''
@@ -75,6 +88,27 @@ def init_db():
     with connect() as c:
         c.executescript(SCHEMA)
         # Add the optional task time column to databases created by earlier versions.
+        recipe_columns = {r['name'] for r in c.execute('PRAGMA table_info(recipes)').fetchall()}
+        if 'eating_interval_days' not in recipe_columns:
+            c.execute('ALTER TABLE recipes ADD COLUMN eating_interval_days INTEGER NOT NULL DEFAULT 1')
+        if 'batch_plates' not in recipe_columns:
+            c.execute('ALTER TABLE recipes ADD COLUMN batch_plates INTEGER NOT NULL DEFAULT 7')
+        # Meal Manager 0.4.0 adds a single-plate-per-day schedule. The older
+        # meal_plans table is retained so historical 0.3.0 data is not lost.
+        c.execute('''CREATE TABLE IF NOT EXISTS meal_batches (
+            id INTEGER PRIMARY KEY, recipe_id INTEGER NOT NULL, start_date TEXT NOT NULL,
+            plates_total INTEGER NOT NULL, plates_scheduled INTEGER NOT NULL DEFAULT 0,
+            eating_interval_days INTEGER NOT NULL DEFAULT 1, last_scheduled_date TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE CASCADE)''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_meal_batches_active ON meal_batches(recipe_id, plates_scheduled, plates_total)')
+        c.execute('''CREATE TABLE IF NOT EXISTS daily_meals (
+            id INTEGER PRIMARY KEY, plan_date TEXT NOT NULL UNIQUE, recipe_id INTEGER NOT NULL, batch_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'pending', notified_date TEXT, confirmed_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE RESTRICT,
+            FOREIGN KEY(batch_id) REFERENCES meal_batches(id) ON DELETE SET NULL)''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_daily_meals_date ON daily_meals(plan_date, status)')
         task_columns = {r['name'] for r in c.execute('PRAGMA table_info(tasks)').fetchall()}
         if 'due_time' not in task_columns:
             c.execute('ALTER TABLE tasks ADD COLUMN due_time TEXT')
@@ -135,9 +169,10 @@ TABLES = {
  'bills': ('bills', ['name','amount_mad','due_date','recurrence','reminder_days','status','paid_at','notes']),
  'documents': ('documents', ['name','expiry_date','reminder_days','reference','notes']),
  'routines': ('routines', ['name','interval_days','last_done','next_due','category','notes','routine_time','routine_late_time']),
- 'recipes': ('recipes', ['name','meal_type','cuisine','prep_min','cook_min','servings','difficulty','ingredients_json','instructions','dietary_tags','calories_kcal','protein_g','carbs_g','fat_g','source_url','notes','favorite','rating']),
+ 'recipes': ('recipes', ['name','calories_kcal','ingredients_json','eating_interval_days','batch_plates']),
  'meal_plans': ('meal_plans', ['plan_date','meal_type','recipe_id','servings','notes']),
- 'shopping_items': ('shopping_items', ['name','quantity','unit','category','checked','source']),
+ 'daily_meals': ('daily_meals', ['plan_date','recipe_id','batch_id','status','notified_date','confirmed_at']),
+ 'shopping_items': ('shopping_items', ['name','checked','source']),
 }
 
 @asynccontextmanager
@@ -156,7 +191,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.3.0', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.0', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -165,7 +200,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.3.0','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.0','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -178,13 +213,19 @@ def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
         return rows('''SELECT mp.*, r.name AS recipe_name, r.meal_type AS recipe_category, r.prep_min, r.cook_min
                        FROM meal_plans mp LEFT JOIN recipes r ON r.id=mp.recipe_id
                        ORDER BY mp.plan_date, CASE mp.meal_type WHEN 'breakfast' THEN 1 WHEN 'lunch' THEN 2 WHEN 'dinner' THEN 3 ELSE 4 END, mp.id LIMIT ?''', (limit,))
+    if resource == 'daily_meals':
+        return rows('''SELECT dm.*, r.name AS recipe_name, r.calories_kcal, r.ingredients_json,
+                              r.eating_interval_days, r.batch_plates
+                       FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                       ORDER BY dm.plan_date, dm.id LIMIT ?''', (limit,))
     if resource == 'recipes':
-        result = rows('SELECT * FROM recipes ORDER BY favorite DESC, name COLLATE NOCASE LIMIT ?', (limit,))
+        result = rows('''SELECT id,name,calories_kcal,eating_interval_days,batch_plates,ingredients_json,created_at
+                        FROM recipes ORDER BY name COLLATE NOCASE LIMIT ?''', (limit,))
         for item in result:
-            item['ingredients'] = _decode_ingredients(item.pop('ingredients_json', '[]'))
+            item['ingredients'] = _recipe_ingredient_names(item.pop('ingredients_json', '[]'))
         return result
     if resource == 'shopping_items':
-        return rows('SELECT * FROM shopping_items ORDER BY checked, category COLLATE NOCASE, name COLLATE NOCASE, id DESC LIMIT ?', (limit,))
+        return rows('SELECT id,name,checked,source FROM shopping_items ORDER BY checked, name COLLATE NOCASE, id DESC LIMIT ?', (limit,))
     return rows(f'SELECT * FROM {table} ORDER BY id DESC LIMIT ?', (limit,))
 
 MEAL_TYPES = ('breakfast', 'lunch', 'dinner', 'snack')
@@ -222,6 +263,28 @@ def _decode_ingredients(raw: Any) -> list[dict]:
     except (TypeError, ValueError):
         return []
     return value if isinstance(value, list) else []
+
+def _clean_ingredient_name(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get('name', '')
+    text = str(value or '').strip().lstrip('-•').strip()
+    if not text:
+        return ''
+    try:
+        parsed = _parse_ingredient_line(text)
+        text = parsed.get('name', text) if parsed else text
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return re.sub(r'\s+', ' ', text).strip(' ,;')[:120]
+
+
+def _recipe_ingredient_names(raw: Any) -> list[str]:
+    names = []
+    for item in _decode_ingredients(raw):
+        name = _clean_ingredient_name(item)
+        if name and _ingredient_key(name) not in {_ingredient_key(x) for x in names}:
+            names.append(name)
+    return names
 
 
 def _parse_quantity(value: str) -> float:
@@ -379,53 +442,132 @@ def apply_meal_suggestions(payload: Payload):
     return {'saved': len(clean)}
 
 
+def _generate_daily_meals(days: int, start: date) -> dict:
+    if not 1 <= int(days) <= 90:
+        raise ValueError('Choose between 1 and 90 days.')
+    if start < date.today():
+        raise ValueError('The meal plan cannot start in the past. Choose today or a future date.')
+    created = []
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        recipes = c.execute('SELECT id,eating_interval_days,batch_plates FROM recipes ORDER BY name COLLATE NOCASE').fetchall()
+        if not recipes:
+            return {'created': 0, 'meals': [], 'message': 'Add at least one meal first.'}
+        for recipe in recipes:
+            recipe_id = int(recipe['id'])
+            active = c.execute('SELECT 1 FROM meal_batches WHERE recipe_id=? AND plates_scheduled<plates_total LIMIT 1', (recipe_id,)).fetchone()
+            pending = c.execute("SELECT 1 FROM daily_meals WHERE recipe_id=? AND status='pending' LIMIT 1", (recipe_id,)).fetchone()
+            if not active and not pending:
+                c.execute('INSERT INTO meal_batches(recipe_id,start_date,plates_total,eating_interval_days) VALUES(?,?,?,?)',
+                          (recipe_id, start.isoformat(), int(recipe['batch_plates'] or 1), int(recipe['eating_interval_days'] or 1)))
+        for offset in range(int(days)):
+            day_iso = (start + timedelta(days=offset)).isoformat()
+            if c.execute('SELECT 1 FROM daily_meals WHERE plan_date=?', (day_iso,)).fetchone():
+                continue
+            eligible = c.execute('''SELECT b.*,r.name AS recipe_name,r.calories_kcal
+                                    FROM meal_batches b JOIN recipes r ON r.id=b.recipe_id
+                                    WHERE b.plates_scheduled<b.plates_total
+                                      AND (b.last_scheduled_date IS NULL OR date(b.last_scheduled_date, '+' || b.eating_interval_days || ' day')<=?)
+                                    ORDER BY COALESCE(b.last_scheduled_date,'0001-01-01'), b.plates_scheduled, b.id''', (day_iso,)).fetchall()
+            if not eligible:
+                continue
+            batch = eligible[0]
+            cur = c.execute("INSERT INTO daily_meals(plan_date,recipe_id,batch_id,status) VALUES(?,?,?,'pending')",
+                            (day_iso, int(batch['recipe_id']), int(batch['id'])))
+            c.execute('UPDATE meal_batches SET plates_scheduled=plates_scheduled+1,last_scheduled_date=? WHERE id=?', (day_iso, int(batch['id'])))
+            created.append({'id': int(cur.lastrowid), 'plan_date': day_iso, 'recipe_id': int(batch['recipe_id']),
+                            'recipe_name': batch['recipe_name'], 'calories_kcal': batch['calories_kcal'], 'status': 'pending'})
+        meals = [dict(r) for r in c.execute('''SELECT dm.*,r.name AS recipe_name,r.calories_kcal,r.ingredients_json
+                                               FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                                               WHERE dm.plan_date BETWEEN ? AND ? ORDER BY dm.plan_date''',
+                                            (start.isoformat(), (start+timedelta(days=days-1)).isoformat())).fetchall()]
+    for meal in meals:
+        meal['ingredients'] = _recipe_ingredient_names(meal.pop('ingredients_json', '[]'))
+    return {'created': len(created), 'meals': meals, 'message': f'{len(created)} daily plate(s) planned.'}
+
+
+def _confirm_daily_meal(meal_id: int, eaten: bool) -> dict:
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        meal = c.execute('SELECT * FROM daily_meals WHERE id=?', (meal_id,)).fetchone()
+        if not meal:
+            raise ValueError('Meal not found.')
+        if meal['status'] != 'pending':
+            return {**dict(meal), 'shift_days': 0}
+        if eaten:
+            c.execute("UPDATE daily_meals SET status='eaten',confirmed_at=?,notified_date=? WHERE id=?",
+                      (datetime.now().isoformat(timespec='seconds'), date.today().isoformat(), meal_id))
+        else:
+            old_day = date.fromisoformat(meal['plan_date'])
+            destination = max(old_day + timedelta(days=1), date.today() + timedelta(days=1))
+            delta = (destination - old_day).days
+            later = c.execute('SELECT id,plan_date,batch_id FROM daily_meals WHERE plan_date>? ORDER BY plan_date DESC,id DESC',
+                              (old_day.isoformat(),)).fetchall()
+            shifted_batches = {int(row['batch_id']) for row in later if row['batch_id'] is not None}
+            if meal['batch_id'] is not None:
+                shifted_batches.add(int(meal['batch_id']))
+            for row in later:
+                shifted = date.fromisoformat(row['plan_date']) + timedelta(days=delta)
+                c.execute('UPDATE daily_meals SET plan_date=?,notified_date=NULL WHERE id=?', (shifted.isoformat(), int(row['id'])))
+            c.execute('UPDATE daily_meals SET plan_date=?,notified_date=NULL WHERE id=?', (destination.isoformat(), meal_id))
+            for batch_id in shifted_batches:
+                c.execute('''UPDATE meal_batches SET last_scheduled_date=date(last_scheduled_date, '+' || ? || ' day')
+                             WHERE id=? AND last_scheduled_date>=?''', (delta, batch_id, old_day.isoformat()))
+        updated = c.execute('SELECT * FROM daily_meals WHERE id=?', (meal_id,)).fetchone()
+        return {**dict(updated), 'shift_days': 0 if eaten else delta}
+
+
+@app.post('/api/daily-meals/generate')
+def generate_daily_meals(payload: Payload):
+    data = payload.data
+    try:
+        days_raw = data.get('days', 7)
+        days = int(days_raw)
+        if float(days_raw) != days:
+            raise ValueError('Choose a whole number of days.')
+        start = date.fromisoformat(str(data.get('start_date') or date.today().isoformat()))
+        return _generate_daily_meals(days, start)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc) or 'Enter a valid meal planning range.')
+
+
+@app.post('/api/daily-meals/{meal_id}/confirm')
+def confirm_daily_meal(meal_id: int, payload: Payload):
+    decision = str(payload.data.get('decision') or '').lower()
+    if decision not in ('yes', 'no', 'eaten', 'not_today'):
+        raise HTTPException(400, 'Decision must be yes or no.')
+    try:
+        return _confirm_daily_meal(meal_id, decision in ('yes', 'eaten'))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
 @app.post('/api/meals/shopping-list')
 def add_meal_ingredients_to_shopping(payload: Payload):
     data = payload.data
-    try:
-        start = date.fromisoformat(str(data.get('start_date') or date.today().isoformat()))
-        end = date.fromisoformat(str(data.get('end_date') or start.isoformat()))
-        if end < start or (end - start).days > 90: raise ValueError()
-    except (TypeError, ValueError):
+    start = validate_date_field(data.get('start_date') or date.today().isoformat(), 'Start date')
+    end = validate_date_field(data.get('end_date') or (date.today()+timedelta(days=30)).isoformat(), 'End date')
+    if not start or not end or end < start or (date.fromisoformat(end)-date.fromisoformat(start)).days > 89:
         raise HTTPException(400, 'Choose a valid shopping-list date range (maximum 90 days).')
-    meal_rows = rows('''SELECT mp.meal_type, mp.servings AS planned_servings, r.servings AS recipe_servings, r.ingredients_json, r.name AS recipe_name
-                        FROM meal_plans mp JOIN recipes r ON r.id=mp.recipe_id WHERE mp.plan_date BETWEEN ? AND ?''', (start.isoformat(), end.isoformat()))
-    if not meal_rows:
-        raise HTTPException(400, 'No planned recipes found in that date range.')
-    aggregate: dict[tuple[str, str], dict] = {}
+    meal_rows = rows('''SELECT r.ingredients_json FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                        WHERE dm.plan_date BETWEEN ? AND ?''', (start, end))
+    names = {}
     for meal in meal_rows:
-        base = float(meal.get('recipe_servings') or 2)
-        multiplier = float(meal.get('planned_servings') or base) / max(base, 0.25)
-        for ingredient in _decode_ingredients(meal.get('ingredients_json')):
-            parsed = ingredient if isinstance(ingredient, dict) and ingredient.get('name') else _parse_ingredient_line(str(ingredient))
-            if not parsed: continue
-            quantity, unit = _normalize_unit(float(parsed.get('quantity') or 1) * multiplier, str(parsed.get('unit') or ''))
-            name = str(parsed.get('name')).strip()
-            if not name: continue
-            key = (_ingredient_key(name), unit)
-            if key not in aggregate:
-                aggregate[key] = {'name': name, 'quantity': 0.0, 'unit': unit, 'category': _ingredient_category(name, parsed.get('category') or 'Other')}
-            aggregate[key]['quantity'] += quantity
+        for name in _recipe_ingredient_names(meal.get('ingredients_json')):
+            names.setdefault(_ingredient_key(name), name)
+    if not names:
+        raise HTTPException(400, 'No ingredients found in the planned meals for this date range.')
     added = 0
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        # Rebuild the unchecked meal-plan portion instead of blindly appending it.
-        # This makes repeated taps idempotent and keeps purchased quantities intact.
-        bought = c.execute('SELECT name,quantity,unit FROM shopping_items WHERE checked=1 AND source=?', ('meal plan',)).fetchall()
-        bought_totals: dict[tuple[str, str], float] = {}
-        for row in bought:
-            key = (_ingredient_key(row['name']), row['unit'] or '')
-            bought_totals[key] = bought_totals.get(key, 0.0) + float(row['quantity'] or 0)
-        c.execute('DELETE FROM shopping_items WHERE checked=0 AND source=?', ('meal plan',))
-        for item in aggregate.values():
-            key = (_ingredient_key(item['name']), item['unit'])
-            remaining = max(0.0, float(item['quantity']) - bought_totals.get(key, 0.0))
-            if remaining <= 0.0005:
+        existing = {_ingredient_key(r['name']) for r in c.execute('SELECT name FROM shopping_items WHERE checked=0').fetchall()}
+        for key, name in names.items():
+            if key in existing:
                 continue
-            c.execute('INSERT INTO shopping_items(name,quantity,unit,category,source) VALUES(?,?,?,?,?)',
-                      (item['name'], round(remaining, 3), item['unit'], item['category'], 'meal plan'))
+            c.execute("INSERT INTO shopping_items(name,quantity,unit,category,checked,source) VALUES(?,1,'','',0,'meal plan')", (name,))
+            existing.add(key)
             added += 1
-    return {'items_processed': len(aggregate), 'new_items': added, 'meals': len(meal_rows), 'idempotent': True}
+    return {'items_processed': len(names), 'new_items': added, 'meals': len(meal_rows), 'idempotent': True}
 
 
 def validate_clock_time(value: Any, label: str) -> str | None:
@@ -621,50 +763,51 @@ def create_resource(resource: str, payload: Payload):
                      'calories_kcal': round(3.5 * 3.5 * body_weight / 200.0 * duration)})
     if resource == 'recipes':
         name = str(data.get('name') or '').strip()
-        if not name: raise HTTPException(400, 'Recipe name is required.')
+        if not name:
+            raise HTTPException(400, 'Meal name is required.')
         data['name'] = name[:160]
-        data.setdefault('meal_type', 'any')
-        if data['meal_type'] not in ('any','all',*MEAL_TYPES): raise HTTPException(400, 'Choose a valid recipe category.')
-        for field in ('prep_min','cook_min'):
+        raw_kcal = data.get('calories_kcal')
+        if raw_kcal in ('', None):
+            data['calories_kcal'] = None
+        else:
             try:
-                val = int(data.get(field) or 0)
-                if val < 0 or val > 1440: raise ValueError()
-                data[field] = val
-            except (TypeError, ValueError): raise HTTPException(400, f'{field.replace("_", " ").title()} must be between 0 and 1440 minutes.')
+                kcal = float(raw_kcal)
+                if not math.isfinite(kcal) or not 0 <= kcal <= 10000:
+                    raise ValueError()
+                data['calories_kcal'] = kcal
+            except (TypeError, ValueError):
+                raise HTTPException(400, 'Calories per plate must be between 0 and 10000 kcal.')
         try:
-            servings = float(data.get('servings') or 2)
-            if not 0.25 <= servings <= 100: raise ValueError()
-            data['servings'] = servings
+            interval_raw = float(data.get('eating_interval_days', 1))
+            interval = int(interval_raw)
+            plates_raw = float(data.get('batch_plates', 7))
+            plates = int(plates_raw)
+            if interval_raw != interval or not 1 <= interval <= 90:
+                raise ValueError()
+            if plates_raw != plates or not 1 <= plates <= 100:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Eating interval must be 1–90 whole days and batch plates must be 1–100.')
+        data['eating_interval_days'] = interval
+        data['batch_plates'] = plates
+        try:
             raw_ingredients = data.get('ingredients_json', '[]')
             ingredients = json.loads(raw_ingredients) if isinstance(raw_ingredients, str) else raw_ingredients
-            if not isinstance(ingredients, list): raise ValueError()
-            clean_ingredients = []
+            if not isinstance(ingredients, list):
+                raise ValueError()
+            clean = []
+            seen = set()
             for ingredient in ingredients:
-                if isinstance(ingredient, str): ingredient = _parse_ingredient_line(ingredient)
-                if not isinstance(ingredient, dict) or not str(ingredient.get('name') or '').strip(): continue
-                quantity = float(ingredient.get('quantity') or 1)
-                if quantity <= 0 or not math.isfinite(quantity): raise ValueError()
-                clean_ingredients.append({'name': str(ingredient['name']).strip()[:120], 'quantity': round(quantity,3), 'unit': str(ingredient.get('unit') or '')[:24], 'category': _ingredient_category(str(ingredient['name']), str(ingredient.get('category') or 'Other'))[:60]})
-            data['ingredients_json'] = json.dumps(clean_ingredients, ensure_ascii=False)
-        except (TypeError, ValueError, json.JSONDecodeError): raise HTTPException(400, 'Enter valid servings and ingredients.')
-        data.setdefault('difficulty','easy'); data.setdefault('instructions',''); data.setdefault('dietary_tags',''); data.setdefault('favorite',0); data.setdefault('rating',0)
-        if data.get('difficulty') not in ('easy','medium','hard'): raise HTTPException(400, 'Choose easy, medium or hard difficulty.')
-        try:
-            data['rating'] = int(data.get('rating') or 0)
-            if not 0 <= data['rating'] <= 5: raise ValueError()
-        except (TypeError, ValueError): raise HTTPException(400, 'Recipe rating must be between 0 and 5.')
-        source_url = str(data.get('source_url') or '').strip()
-        if source_url and (urlparse(source_url).scheme not in ('http','https') or not urlparse(source_url).netloc): raise HTTPException(400, 'Recipe source URL must start with http:// or https://.')
-        data['source_url'] = source_url
-        data['favorite'] = 1 if str(data['favorite']).lower() in ('1','true','yes','on') else 0
-        for field in ('calories_kcal','protein_g','carbs_g','fat_g'):
-            if data.get(field) in ('', None): data[field] = None
-            elif field in data:
-                try:
-                    val = float(data[field])
-                    if val < 0 or not math.isfinite(val): raise ValueError()
-                    data[field] = val
-                except (TypeError, ValueError): raise HTTPException(400, f'{field} must be a non-negative number.')
+                name_part = _clean_ingredient_name(ingredient)
+                key = _ingredient_key(name_part)
+                if name_part and key not in seen:
+                    clean.append(name_part)
+                    seen.add(key)
+            if not clean:
+                raise ValueError()
+            data['ingredients_json'] = json.dumps(clean, ensure_ascii=False)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(400, 'Add at least one valid ingredient name.')
     if resource == 'meal_plans':
         data['plan_date'] = validate_date_field(data.get('plan_date'), 'Meal date')
         if not data.get('plan_date'): raise HTTPException(400, 'Meal date is required.')
@@ -677,13 +820,10 @@ def create_resource(resource: str, payload: Payload):
         except (TypeError, ValueError): raise HTTPException(400, 'Choose a saved recipe and a valid serving count.')
     if resource == 'shopping_items':
         data['name'] = str(data.get('name') or '').strip()[:160]
-        if not data['name']: raise HTTPException(400, 'Shopping item name is required.')
-        try:
-            quantity = float(data.get('quantity',1))
-            if quantity <= 0 or not math.isfinite(quantity): raise ValueError()
-            data['quantity'] = round(quantity,3)
-        except (TypeError, ValueError): raise HTTPException(400, 'Shopping quantity must be a positive number.')
-        data['checked'] = 1 if str(data.get('checked',0)).lower() in ('1','true','yes','on') else 0
+        if not data['name']:
+            raise HTTPException(400, 'Shopping item name is required.')
+        data['checked'] = 1 if str(data.get('checked', 0)).lower() in ('1','true','yes','on') else 0
+        data.setdefault('source', 'manual')
     if not data: raise HTTPException(400,'No valid fields supplied')
     if resource in ('events','tasks','workouts','bills','documents','routines','workout_plan') and not data.get('title' if resource in ('events','tasks') else 'name'):
         raise HTTPException(400,'A title/name is required')
@@ -729,7 +869,8 @@ def create_resource(resource: str, payload: Payload):
         auto_complete_treadmill_routines(treadmill_day)
     result = one(f'SELECT * FROM {table} WHERE id=?',(new_id,))
     if resource == 'recipes' and result:
-        result['ingredients'] = _decode_ingredients(result.pop('ingredients_json', '[]'))
+        result = {k: result.get(k) for k in ('id','name','calories_kcal','eating_interval_days','batch_plates','created_at')}
+        result['ingredients'] = _recipe_ingredient_names(one('SELECT ingredients_json FROM recipes WHERE id=?',(new_id,))['ingredients_json'])
     return result
 
 @app.patch('/api/{resource}/{item_id}')
@@ -787,56 +928,53 @@ def update_resource(resource: str, item_id: int, payload: Payload):
         validate_routine_schedule(data, existing_routine)
     if resource == 'recipes':
         existing_recipe = one('SELECT * FROM recipes WHERE id=?', (item_id,))
-        if not existing_recipe: raise HTTPException(404, 'Recipe not found')
+        if not existing_recipe:
+            raise HTTPException(404, 'Meal not found.')
         if 'name' in data:
             data['name'] = str(data['name'] or '').strip()[:160]
-            if not data['name']: raise HTTPException(400, 'Recipe name is required.')
-        if 'meal_type' in data and data['meal_type'] not in ('any','all',*MEAL_TYPES): raise HTTPException(400, 'Choose a valid recipe category.')
-        for field in ('prep_min','cook_min'):
+            if not data['name']:
+                raise HTTPException(400, 'Meal name is required.')
+        if 'calories_kcal' in data:
+            raw_kcal = data['calories_kcal']
+            if raw_kcal in ('', None):
+                data['calories_kcal'] = None
+            else:
+                try:
+                    kcal = float(raw_kcal)
+                    if not math.isfinite(kcal) or not 0 <= kcal <= 10000:
+                        raise ValueError()
+                    data['calories_kcal'] = kcal
+                except (TypeError, ValueError):
+                    raise HTTPException(400, 'Calories per plate must be between 0 and 10000 kcal.')
+        for field, default, low, high in (('eating_interval_days', 1, 1, 90), ('batch_plates', 7, 1, 100)):
             if field in data:
                 try:
-                    value = int(data[field] or 0)
-                    if value < 0 or value > 1440: raise ValueError()
+                    raw_value = float(data[field])
+                    value = int(raw_value)
+                    if raw_value != value or not low <= value <= high:
+                        raise ValueError()
                     data[field] = value
-                except (TypeError, ValueError): raise HTTPException(400, f'{field.replace("_", " ").title()} must be between 0 and 1440 minutes.')
-        if 'servings' in data:
-            try:
-                data['servings'] = float(data['servings'])
-                if not 0.25 <= data['servings'] <= 100: raise ValueError()
-            except (TypeError, ValueError): raise HTTPException(400, 'Servings must be between 0.25 and 100.')
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f'{field.replace("_", " ").title()} must be a whole number from {low} to {high}.')
         if 'ingredients_json' in data:
             try:
-                ingredients = json.loads(data['ingredients_json']) if isinstance(data['ingredients_json'], str) else data['ingredients_json']
-                if not isinstance(ingredients, list): raise ValueError()
+                raw_ingredients = data['ingredients_json']
+                ingredients = json.loads(raw_ingredients) if isinstance(raw_ingredients, str) else raw_ingredients
+                if not isinstance(ingredients, list):
+                    raise ValueError()
                 clean = []
+                seen = set()
                 for ingredient in ingredients:
-                    if isinstance(ingredient, str): ingredient = _parse_ingredient_line(ingredient)
-                    if not isinstance(ingredient, dict) or not str(ingredient.get('name') or '').strip(): continue
-                    qty = float(ingredient.get('quantity') or 1)
-                    if qty <= 0 or not math.isfinite(qty): raise ValueError()
-                    clean.append({'name': str(ingredient['name']).strip()[:120], 'quantity': round(qty,3), 'unit': str(ingredient.get('unit') or '')[:24], 'category': _ingredient_category(str(ingredient['name']), str(ingredient.get('category') or 'Other'))[:60]})
+                    name_part = _clean_ingredient_name(ingredient)
+                    key = _ingredient_key(name_part)
+                    if name_part and key not in seen:
+                        clean.append(name_part)
+                        seen.add(key)
+                if not clean:
+                    raise ValueError()
                 data['ingredients_json'] = json.dumps(clean, ensure_ascii=False)
-            except (TypeError, ValueError, json.JSONDecodeError): raise HTTPException(400, 'Enter valid recipe ingredients.')
-        if 'favorite' in data: data['favorite'] = 1 if str(data['favorite']).lower() in ('1','true','yes','on') else 0
-        if 'difficulty' in data and data['difficulty'] not in ('easy','medium','hard'): raise HTTPException(400, 'Choose easy, medium or hard difficulty.')
-        if 'rating' in data:
-            try:
-                data['rating'] = int(data['rating'])
-                if not 0 <= data['rating'] <= 5: raise ValueError()
-            except (TypeError, ValueError): raise HTTPException(400, 'Recipe rating must be between 0 and 5.')
-        if 'source_url' in data:
-            data['source_url'] = str(data['source_url'] or '').strip()
-            if data['source_url'] and (urlparse(data['source_url']).scheme not in ('http','https') or not urlparse(data['source_url']).netloc): raise HTTPException(400, 'Recipe source URL must start with http:// or https://.')
-        for field in ('calories_kcal','protein_g','carbs_g','fat_g'):
-            if field in data:
-                if data[field] in ('', None): data[field] = None
-                else:
-                    try:
-                        value = float(data[field])
-                        if value < 0 or not math.isfinite(value): raise ValueError()
-                        data[field] = value
-                    except (TypeError, ValueError): raise HTTPException(400, f'{field} must be a non-negative number.')
-        data['updated_at'] = datetime.now().isoformat(timespec='seconds')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raise HTTPException(400, 'Add at least one valid ingredient name.')
     if resource == 'meal_plans':
         if 'plan_date' in data: data['plan_date'] = validate_date_field(data['plan_date'], 'Meal date')
         if 'meal_type' in data and data['meal_type'] not in MEAL_TYPES: raise HTTPException(400, 'Choose breakfast, lunch, dinner or snack.')
@@ -853,14 +991,10 @@ def update_resource(resource: str, item_id: int, payload: Payload):
     if resource == 'shopping_items':
         if 'name' in data:
             data['name'] = str(data['name'] or '').strip()[:160]
-            if not data['name']: raise HTTPException(400, 'Shopping item name is required.')
-        if 'quantity' in data:
-            try:
-                data['quantity'] = float(data['quantity'])
-                if data['quantity'] <= 0 or not math.isfinite(data['quantity']): raise ValueError()
-                data['quantity'] = round(data['quantity'],3)
-            except (TypeError, ValueError): raise HTTPException(400, 'Shopping quantity must be a positive number.')
-        if 'checked' in data: data['checked'] = 1 if str(data['checked']).lower() in ('1','true','yes','on') else 0
+            if not data['name']:
+                raise HTTPException(400, 'Shopping item name is required.')
+        if 'checked' in data:
+            data['checked'] = 1 if str(data['checked']).lower() in ('1','true','yes','on') else 0
     if not data: raise HTTPException(400,'No valid fields supplied')
     if resource == 'treadmill' and ('duration_min' in data or 'date' in data):
         existing_tread = one('SELECT * FROM treadmill WHERE id=?', (item_id,))
@@ -888,7 +1022,9 @@ def update_resource(resource: str, item_id: int, payload: Payload):
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
     result = one(f'SELECT * FROM {table} WHERE id=?',(item_id,))
     if resource == 'recipes' and result:
-        result['ingredients'] = _decode_ingredients(result.pop('ingredients_json', '[]'))
+        result = {k: result.get(k) for k in ('id','name','calories_kcal','eating_interval_days','batch_plates','created_at')}
+        ingredients_row = one('SELECT ingredients_json FROM recipes WHERE id=?',(item_id,))
+        result['ingredients'] = _recipe_ingredient_names(ingredients_row['ingredients_json'] if ingredients_row else '[]')
     return result
 
 @app.delete('/api/{resource}/{item_id}')
@@ -896,11 +1032,26 @@ def delete_resource(resource: str, item_id: int):
     if resource not in TABLES: raise HTTPException(404,'Unknown resource')
     table,_=TABLES[resource]
     if resource == 'recipes':
-        planned = one('SELECT COUNT(*) AS n FROM meal_plans WHERE recipe_id=?', (item_id,))
+        planned = one('SELECT COUNT(*) AS n FROM daily_meals WHERE recipe_id=?', (item_id,))
         if planned and planned['n']:
-            raise HTTPException(409, 'This recipe is used in your meal plan. Remove its planned meals before deleting the recipe.')
+            raise HTTPException(409, 'This meal has scheduled plates. Remove those planned days before deleting it.')
     with connect() as c:
-        cur=c.execute(f'DELETE FROM {table} WHERE id=?',(item_id,))
+        if resource == 'daily_meals':
+            meal = c.execute('SELECT batch_id,status FROM daily_meals WHERE id=?', (item_id,)).fetchone()
+            if not meal:
+                raise HTTPException(404, 'Record not found')
+            cur = c.execute('DELETE FROM daily_meals WHERE id=?', (item_id,))
+            # Removing an unconfirmed plate returns it to the cooking batch.
+            # Recompute the latest scheduled date so the planner can refill the
+            # next valid day without losing a plate from the batch.
+            if meal['status'] == 'pending' and meal['batch_id'] is not None:
+                batch_id = int(meal['batch_id'])
+                c.execute('''UPDATE meal_batches
+                             SET plates_scheduled=MAX(0,plates_scheduled-1),
+                                 last_scheduled_date=(SELECT MAX(plan_date) FROM daily_meals WHERE batch_id=?)
+                             WHERE id=?''', (batch_id, batch_id))
+        else:
+            cur=c.execute(f'DELETE FROM {table} WHERE id=?',(item_id,))
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
         reminder_kinds={'tasks':['task','task-time'],'bills':['bill'],'routines':['routine-time','routine-late']}
         for kind in reminder_kinds.get(resource,[]):
@@ -1022,7 +1173,9 @@ def summary():
       'upcoming_bill':({**next_bill, 'days_left': days_to_next_bill} if next_bill else None),
       'expiring_documents':count_expiring_documents(),
       'next_routine':one('SELECT * FROM routines ORDER BY next_due LIMIT 1'),
-      'recent_treadmill':one('SELECT * FROM treadmill ORDER BY date DESC,id DESC LIMIT 1')
+      'recent_treadmill':one('SELECT * FROM treadmill ORDER BY date DESC,id DESC LIMIT 1'),
+      'today_meal':one('''SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal
+                         FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=? LIMIT 1''',(today,))
     }
 
 @app.get('/api/ha/state')
@@ -1056,6 +1209,22 @@ async def reminder_loop():
                             reminders.append(('task', t['id'], today.isoformat(), f"📌 TASK OVERDUE\n{t['title']}\nDue: {due_day.strftime('%d/%m/%y')}\nWhen finished, reply: task done {t['title']}"))
                     except Exception:
                         continue
+                # Ask for one daily meal confirmation. A missed confirmation is
+                # re-sent once on the next day until the user answers.
+                pending_meal = one('''SELECT dm.id,dm.plan_date,r.name AS recipe_name,r.calories_kcal
+                                     FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                                     WHERE dm.status='pending' AND dm.plan_date<=?
+                                     ORDER BY dm.plan_date,dm.id LIMIT 1''', (today.isoformat(),))
+                if pending_meal and pending_meal.get('notified_date') != today.isoformat():
+                    meal_day = date.fromisoformat(pending_meal['plan_date'])
+                    kcal = f" · {float(pending_meal['calories_kcal']):g} kcal/plate" if pending_meal.get('calories_kcal') is not None else ''
+                    message = (f"🍽 MEAL CHECK-IN\n{pending_meal['recipe_name']}{kcal}\n"
+                               f"Planned for {meal_day.strftime('%A %d/%m/%y')}. Did you eat it?\n"
+                               "Reply YES to confirm, or NO to move this and all following meals one day later.")
+                    sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
+                    sent.raise_for_status()
+                    with connect() as c:
+                        c.execute("UPDATE daily_meals SET notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(pending_meal['id'])))
                 reminders.extend(build_routine_reminders(now))
                 for kind, item_id, reminder_date, message in reminders:
                     already_sent = one('SELECT id FROM notification_log WHERE kind=? AND item_id=? AND reminder_date=?', (kind, item_id, reminder_date))
@@ -1077,7 +1246,8 @@ async def telegram_poll():
             [{'text': '📅 Today'}, {'text': '✅ Tasks'}],
             [{'text': '🔁 Routines'}, {'text': '💳 Bills'}],
             [{'text': '🏃 Fitness'}, {'text': '🗓 Week'}],
-            [{'text': '🍽 Today meals'}, {'text': '🗓 Meal plan'}],
+            [{'text': '🍽 Today plate'}, {'text': '🗓 Meal plan'}],
+            [{'text': '✅ Ate it'}, {'text': '⏭ Not today'}],
             [{'text': '🛒 Shopping list'}, {'text': '➕ Add grocery'}],
             [{'text': '➕ Add recipe'}],
             [{'text': '⚖️ Add weight'}, {'text': '🏃 Add treadmill'}],
@@ -1101,7 +1271,9 @@ async def telegram_poll():
         {'command': 'paid', 'description': 'Mark a bill paid'},
         {'command': 'meals', 'description': 'Show today’s meals'},
         {'command': 'mealplan', 'description': 'Show the next 7 days of meals'},
-        {'command': 'suggestmeals', 'description': 'Suggest and save a meal plan, e.g. /suggestmeals 3'},
+        {'command': 'suggestmeals', 'description': 'Plan daily plates, e.g. /suggestmeals 7'},
+        {'command': 'yes', 'description': 'Confirm you ate today’s plate'},
+        {'command': 'no', 'description': 'Move today’s plate and later meals'},
         {'command': 'shopping', 'description': 'Show shopping list'},
         {'command': 'addrecipe', 'description': 'Add a recipe with a guided flow'},
         {'command': 'additem', 'description': 'Add a shopping item'},
@@ -1253,56 +1425,57 @@ def _telegram_set_flow(flow: str, step: str, data: dict | None = None) -> None:
 
 
 def _telegram_save_recipe(data: dict) -> int:
+    ingredients = []
+    for raw in data.get('ingredients', []):
+        name = _clean_ingredient_name(raw)
+        if name and _ingredient_key(name) not in {_ingredient_key(x) for x in ingredients}:
+            ingredients.append(name)
+    if not ingredients:
+        raise ValueError('Add at least one ingredient.')
     with connect() as c:
-        cur = c.execute('''INSERT INTO recipes(name,meal_type,prep_min,cook_min,servings,ingredients_json,instructions,dietary_tags,difficulty)
-                           VALUES(?,?,?,?,?,?,?,?,?)''',
-                        (data['name'], data.get('meal_type','any'), int(data.get('prep_min',0)), int(data.get('cook_min',0)),
-                         float(data.get('servings',2)), json.dumps(data.get('ingredients',[]), ensure_ascii=False),
-                         data.get('instructions',''), data.get('dietary_tags',''), 'easy'))
+        cur = c.execute('''INSERT INTO recipes(name,calories_kcal,ingredients_json,eating_interval_days,batch_plates)
+                           VALUES(?,?,?,?,?)''',
+                        (data['name'], data.get('calories_kcal'), json.dumps(ingredients, ensure_ascii=False),
+                         int(data.get('eating_interval_days', 1)), int(data.get('batch_plates', 7))))
         return int(cur.lastrowid)
 
 
 def _telegram_save_shopping_item(line: str) -> str:
-    ingredient = _parse_ingredient_line(line)
-    if not ingredient:
-        raise ValueError('Enter an item name, for example 2 kg rice.')
-    quantity, unit = _normalize_unit(float(ingredient['quantity']), ingredient['unit'])
+    name = _clean_ingredient_name(line)
+    if not name:
+        raise ValueError('Enter an item name.')
     with connect() as c:
-        c.execute('INSERT INTO shopping_items(name,quantity,unit,category,source) VALUES(?,?,?,?,?)',
-                  (ingredient['name'], round(quantity,3), unit, ingredient.get('category') or 'Other', 'Telegram'))
-    amount = f"{quantity:g} {unit} ".strip()
-    return f"✅ Added to shopping list · {amount} {ingredient['name']}".strip()
+        existing = c.execute('SELECT id,name FROM shopping_items WHERE lower(trim(name))=lower(trim(?)) AND checked=0 LIMIT 1', (name,)).fetchone()
+        if existing:
+            return f"ℹ️ Already on your shopping list · {existing['name']}"
+        c.execute("INSERT INTO shopping_items(name,quantity,unit,category,source) VALUES(?,1,'','','Telegram')", (name,))
+    return f"✅ Added to shopping list · {name}"
 
 
 def _telegram_meal_text(start: date, days: int) -> str:
     end = start + timedelta(days=days-1)
-    meals = rows('''SELECT mp.plan_date,mp.meal_type,mp.servings,r.name AS recipe_name
-                    FROM meal_plans mp LEFT JOIN recipes r ON r.id=mp.recipe_id
-                    WHERE mp.plan_date BETWEEN ? AND ?
-                    ORDER BY mp.plan_date,CASE mp.meal_type WHEN 'breakfast' THEN 1 WHEN 'lunch' THEN 2 WHEN 'dinner' THEN 3 ELSE 4 END''',
+    meals = rows('''SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal
+                    FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                    WHERE dm.plan_date BETWEEN ? AND ? ORDER BY dm.plan_date''',
                  (start.isoformat(), end.isoformat()))
     if not meals:
-        return '🍽 No meals planned for this period yet. Use /suggestmeals 3 to create a plan from your saved recipes.'
+        return '🍽 No plates are planned for this period. Use /suggestmeals 7 to build a plan from your saved meals.'
     labels = []
-    last_day = None
     for meal in meals:
-        if meal['plan_date'] != last_day:
-            last_day = meal['plan_date']
-            labels.append('\n' + _telegram_date_label(last_day, True))
-        labels.append(f"• {meal['meal_type'].title()}: {meal['recipe_name'] or 'Recipe removed'} · {float(meal['servings']):g} servings")
-    return '🍽 MEAL PLAN\n' + '\n'.join(labels).strip()
+        status = '✅ Eaten' if meal['status'] == 'eaten' else '⏳ Waiting for confirmation'
+        kcal = f" · {float(meal['calories_kcal']):g} kcal/plate" if meal.get('calories_kcal') is not None else ''
+        labels.append(f"{_telegram_date_label(meal['plan_date'], True)}\n• {meal['recipe_name']}{kcal}\n  {status}")
+    return '🍽 DAILY PLATES\n\n' + '\n\n'.join(labels)
 
 
 def _telegram_shopping_text() -> str:
-    items = rows('SELECT id,name,quantity,unit,checked FROM shopping_items ORDER BY checked,category COLLATE NOCASE,name COLLATE NOCASE LIMIT 35')
+    items = rows('SELECT id,name,checked FROM shopping_items ORDER BY checked,name COLLATE NOCASE LIMIT 60')
     if not items:
-        return '🛒 Your shopping list is empty. Use Add grocery or generate it from your meal plan.'
+        return '🛒 Your shopping list is empty. Use /additem to add an item.'
     pending = [x for x in items if not int(x['checked'])]
     bought = [x for x in items if int(x['checked'])]
     lines = [f'🛒 SHOPPING LIST · {len(pending)} to buy']
-    for item in pending:
-        amount = f"{float(item['quantity'] or 1):g} {item.get('unit') or ''}".strip()
-        lines.append(f"□ {amount} {item['name']} · bought with: bought {item['name']}")
+    lines.extend(f"□ {item['name']} · bought {item['name']}" for item in pending)
     if bought:
         lines.append(f'\n✅ Purchased: {len(bought)}')
         lines.extend(f"✓ {x['name']}" for x in bought[:8])
@@ -1375,7 +1548,7 @@ async def telegram_command(text: str) -> str:
     if low in ('/cancel', 'cancel', 'stop'):
         _telegram_set_state(None)
         return 'Cancelled. Nothing was saved.'
-    meal_menu_commands = ('🍽 today meals','today meals','meals','/meals','🗓 meal plan','meal plan','/mealplan','🛒 shopping list','shopping list','shopping','/shopping','➕ add recipe','add recipe','/addrecipe','➕ add grocery','add grocery','/additem')
+    meal_menu_commands = ('🍽 today plate','🍽 today meals','today plate','today meals','meals','/meals','🗓 meal plan','meal plan','/mealplan','✅ ate it','ate it','i ate it','⏭ not today','not today','yes','y','/yes','/eaten','no','n','/no','/skip','🛒 shopping list','shopping list','shopping','/shopping','➕ add recipe','add recipe','/addrecipe','➕ add grocery','add grocery','/additem')
     meal_interrupt_prefixes = ('bought ', 'got ', 'suggest meals', 'plan meals', '/bought', '/suggestmeals', 'add item ', 'add grocery ')
     flow_interrupted = low in meal_menu_commands or low.startswith(('/', 'weight ', 'treadmill ', 'task ', 'paid ', 'done ', *meal_interrupt_prefixes))
     if flow_state and flow_state.get('flow') == 'recipe' and not flow_interrupted:
@@ -1384,52 +1557,39 @@ async def telegram_command(text: str) -> str:
         answer = raw.strip()
         try:
             if step == 'name':
-                if len(answer) < 2 or len(answer) > 160: raise ValueError('Enter a recipe name between 2 and 160 characters.')
+                if len(answer) < 2 or len(answer) > 160: raise ValueError('Enter a meal name between 2 and 160 characters.')
                 data['name'] = answer
-                _telegram_set_flow('recipe', 'meal_type', data)
-                return 'Which meal is it for? Reply breakfast, lunch, dinner, snack or any.'
-            if step == 'meal_type':
-                value = answer.lower()
-                if value not in ('breakfast','lunch','dinner','snack','any'): raise ValueError('Reply breakfast, lunch, dinner, snack or any.')
-                data['meal_type'] = value
-                _telegram_set_flow('recipe', 'prep', data)
-                return 'How many preparation minutes? Send a number, or 0.'
-            if step == 'prep':
+                _telegram_set_flow('recipe', 'calories', data)
+                return 'How many kcal are in one plate? Send a number, or type skip.'
+            if step == 'calories':
+                data['calories_kcal'] = None if answer.lower() in ('skip','-','none') else float(answer.replace(',', '.'))
+                if data['calories_kcal'] is not None and not 0 <= data['calories_kcal'] <= 10000: raise ValueError()
+                _telegram_set_flow('recipe', 'interval', data)
+                return 'How often do you eat this meal? Send the number of days, for example 1, 2 or 3.'
+            if step == 'interval':
                 value = int(answer)
-                if not 0 <= value <= 1440: raise ValueError()
-                data['prep_min'] = value
-                _telegram_set_flow('recipe', 'cook', data)
-                return 'How many cooking minutes? Send a number, or 0.'
-            if step == 'cook':
+                if not 1 <= value <= 90: raise ValueError()
+                data['eating_interval_days'] = value
+                _telegram_set_flow('recipe', 'plates', data)
+                return 'How many plates do you cook in one batch? Send a number from 1 to 100.'
+            if step == 'plates':
                 value = int(answer)
-                if not 0 <= value <= 1440: raise ValueError()
-                data['cook_min'] = value
-                _telegram_set_flow('recipe', 'servings', data)
-                return 'How many servings does the recipe make? Example: 2.'
-            if step == 'servings':
-                value = float(answer.replace(',', '.'))
-                if not 0.25 <= value <= 100: raise ValueError()
-                data['servings'] = value
+                if not 1 <= value <= 100: raise ValueError()
+                data['batch_plates'] = value
                 _telegram_set_flow('recipe', 'ingredients', data)
-                return 'Send ingredients separated by semicolons. Example: 200 g chicken; 1 onion; 2 tbsp olive oil.'
+                return 'List the ingredients, separated by commas or new lines. Example: chicken, onions, tomatoes, olive oil.'
             if step == 'ingredients':
-                parts = [x.strip() for x in re.split(r'[;\n]+', answer) if x.strip()]
-                ingredients = [_parse_ingredient_line(x) for x in parts]
-                if not ingredients: raise ValueError('Add at least one ingredient.')
-                data['ingredients'] = ingredients
-                _telegram_set_flow('recipe', 'instructions', data)
-                return 'Send the cooking instructions, or type skip.'
-            if step == 'instructions':
-                data['instructions'] = '' if answer.lower() in ('skip','-','none') else answer[:4000]
-                _telegram_set_flow('recipe', 'tags', data)
-                return 'Any dietary tags? Example: vegetarian, high-protein. Type skip if none.'
-            if step == 'tags':
-                data['dietary_tags'] = '' if answer.lower() in ('skip','-','none') else answer[:300]
+                parts = [_clean_ingredient_name(x) for x in re.split(r'[,;\n]+', answer) if x.strip()]
+                parts = list(dict.fromkeys(x for x in parts if x))
+                if not parts: raise ValueError('Add at least one ingredient.')
+                data['ingredients'] = parts
                 recipe_id = _telegram_save_recipe(data)
                 _telegram_set_state(None)
-                return f"✅ Recipe saved · {data['name']}\n{data['meal_type'].title()} · {data['prep_min']} min prep · {data['cook_min']} min cook · {data['servings']:g} servings\nRecipe #{recipe_id} is now available in Meal Manager."
+                return (f"✅ Meal saved · {data['name']}\n"
+                        f"{data.get('calories_kcal') or 'Calories not set'} kcal/plate · every {data['eating_interval_days']} day(s) · "
+                        f"{data['batch_plates']} plates per batch\nMeal #{recipe_id} is ready for your planner.")
         except (TypeError, ValueError, ZeroDivisionError):
-            prompts = {'prep':'Enter a whole number from 0 to 1440 for preparation minutes.', 'cook':'Enter a whole number from 0 to 1440 for cooking minutes.', 'servings':'Enter servings from 0.25 to 100.', 'ingredients':'Use ingredients like 200 g chicken; 1 onion; 2 tbsp oil.'}
+            prompts = {'calories':'Send a valid kcal number, or type skip.', 'interval':'Enter a whole number from 1 to 90 days.', 'plates':'Enter a whole number from 1 to 100 plates.', 'ingredients':'Enter at least one ingredient, separated by commas.'}
             return prompts.get(step, 'I could not use that answer. Please try again, or send /cancel.')
     if flow_state and flow_state.get('flow') == 'shopping' and not flow_interrupted:
         try:
@@ -1437,8 +1597,8 @@ async def telegram_command(text: str) -> str:
             _telegram_set_state(None)
             return reply
         except (TypeError, ValueError):
-            return 'I could not read that item. Example: 2 kg rice or 6 tomatoes. Send /cancel to stop.'
-    if state and (low.startswith('/') or low in ('📅 today','today','✅ tasks','tasks','💳 bills','bills','🔁 routines','routines','🏃 fitness','fitness','🗓 week','week','❔ help','help') or low in meal_menu_commands or low.startswith(('weight ','log weight ','treadmill ','run ','walk ','task ','paid ','done '))):
+            return 'I could not read that item. Send a simple item name, for example rice or tomatoes. Send /cancel to stop.'
+    if state and (low.startswith('/') or low in ('📅 today','today','✅ tasks','tasks','💳 bills','bills','🔁 routines','routines','🏃 fitness','fitness','🗓 week','week','❔ help','help') or low in meal_menu_commands or low.startswith(('weight ','log weight ','treadmill ','run ','walk ','task ','paid ','done ', *meal_interrupt_prefixes))):
         _telegram_set_state(None)
         state = None
     if low in ('⚖️ add weight', 'add weight', '/weight', 'weight'):
@@ -1467,41 +1627,45 @@ async def telegram_command(text: str) -> str:
         return '➕ ADD A RECIPE\nWhat is the recipe name?\nSend /cancel to stop.'
     if low in ('➕ add grocery','add grocery','/additem','add item'):
         _telegram_set_flow('shopping','item',{})
-        return '🛒 ADD SHOPPING ITEM\nSend an item such as 2 kg rice, 6 tomatoes or olive oil.\n/cancel to stop.'
+        return '🛒 ADD SHOPPING ITEM\nSend the item name, for example rice, tomatoes or olive oil.\n/cancel to stop.'
     add_item_match = re.match(r'(?i)^(?:/additem(?:@[a-z0-9_]+)?|add item|add grocery)\s+(.+)$', raw)
     if add_item_match:
         try: return _telegram_save_shopping_item(add_item_match.group(1))
-        except (TypeError, ValueError): return 'Use: add item 2 kg rice'
-    if low in ('🍽 today meals','today meals','meals','/meals','what should i eat today','what am i eating today'):
+        except (TypeError, ValueError): return 'Use: add item rice'
+    if low in ('🍽 today plate','🍽 today meals','today meals','today plate','meals','/meals','what should i eat today','what am i eating today'):
         return _telegram_meal_text(today,1)
     if low in ('🗓 meal plan','meal plan','/mealplan','my meal plan'):
         return _telegram_meal_text(today,7)
     if low in ('🛒 shopping list','shopping list','shopping','/shopping','/groceries'):
         return _telegram_shopping_text()
+    # The pending plate confirmation is intentionally a simple YES / NO reply.
+    if low in ('✅ ate it','ate it','yes','y','/yes','/eaten','i ate it','⏭ not today','not today','no','n','/no','/skip'):
+        pending = one("SELECT id,plan_date FROM daily_meals WHERE status='pending' AND plan_date<=? ORDER BY plan_date,id LIMIT 1", (today_iso,))
+        if not pending:
+            return 'There is no plate waiting for confirmation.'
+        eaten = low in ('✅ ate it','ate it','yes','y','/yes','/eaten','i ate it')
+        try:
+            updated = _confirm_daily_meal(int(pending['id']), eaten)
+        except ValueError as exc:
+            return str(exc)
+        if eaten:
+            return '✅ Confirmed! Enjoy. Your next planned plate stays on schedule.'
+        delay = int(updated.get('shift_days') or 1)
+        return f"↪️ No problem. This plate moved to {_telegram_date_label(updated['plan_date'], True)}. Every later plate moved by {delay} day(s) too."
+
     suggest_match = re.match(r'(?i)^(?:/suggestmeals(?:@[a-z0-9_]+)?|suggest meals|plan meals)(?:\s+(\d+))?$', raw)
     if suggest_match:
         try:
-            days = int(suggest_match.group(1) or 3)
-            if not 1 <= days <= 30: raise ValueError()
-            suggestions = _suggest_meals(days,['lunch','dinner'],today)
-            if not suggestions:
-                return 'No saved recipes match. Add some lunch/dinner recipes first, then use /suggestmeals 3.'
-            saved = 0; skipped = 0
-            with connect() as c:
-                c.execute('BEGIN IMMEDIATE')
-                for meal in suggestions:
-                    exists = c.execute('SELECT 1 FROM meal_plans WHERE plan_date=? AND meal_type=?', (meal['plan_date'],meal['meal_type'])).fetchone()
-                    if exists:
-                        skipped += 1; continue
-                    c.execute('INSERT INTO meal_plans(plan_date,meal_type,recipe_id,servings) VALUES(?,?,?,?)', (meal['plan_date'],meal['meal_type'],meal['recipe_id'],meal['servings']))
-                    saved += 1
-            lines = [f'✅ Meal plan created · {saved} meals saved']
-            lines.extend(f"{_telegram_date_label(x['plan_date'])} · {x['meal_type'].title()}: {x['recipe_name']}" for x in suggestions)
-            if skipped: lines.append(f'\nℹ️ {skipped} existing meal slot(s) were kept unchanged.')
-            lines.append('\nUse /mealplan to view the plan or /shopping to see groceries.')
+            days = int(suggest_match.group(1) or 7)
+            result = _generate_daily_meals(days, today)
+            if not result['meals']:
+                return 'No plates could be planned. Add meals first, or check their eating intervals and batch sizes.'
+            lines = [f"✅ Meal plan updated · {result['created']} new plate(s) planned"]
+            lines.extend(f"{_telegram_date_label(x['plan_date'])} · {x['recipe_name']}" for x in result['meals'])
+            lines.append('\nI will message you on each planned day. Reply YES if you ate it or NO to move it and all later plates one day.')
             return '\n'.join(lines)
-        except (TypeError, ValueError):
-            return 'Use /suggestmeals 3 (choose between 1 and 30 days).'
+        except (TypeError, ValueError) as exc:
+            return f'Use /suggestmeals 7 (choose between 1 and 90 days). {exc}'
     bought_match = re.match(r'(?i)^(?:/bought(?:@[a-z0-9_]+)?|bought|got)\s+(.+)$', raw)
     if bought_match:
         query = bought_match.group(1).strip()
@@ -1522,9 +1686,10 @@ async def telegram_command(text: str) -> str:
             '• treadmill 30\n'
             '• task done Buy groceries\n'
             '• paid Electricity\n'
-            '• /meals · /mealplan · /suggestmeals 3\n'
+            '• /meals · /mealplan · /suggestmeals 7\n'
             '• /shopping · bought tomatoes · /addrecipe · /additem\n'
-            '• Add recipes through the guided questions; use /cancel to stop.'
+            '• A meal needs name, kcal per plate, eating interval, batch plates and ingredients.\n'
+            '• Reply YES after eating, or NO to move that meal and all later meals one day.'
         )
 
     if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
@@ -1640,6 +1805,8 @@ async def telegram_command(text: str) -> str:
         for routine in rows('SELECT name,next_due,routine_time FROM routines WHERE next_due>=? AND next_due<=?', (today_iso, end)):
             clock = routine.get('routine_time') or '23:59'
             items.append((routine['next_due']+'T'+clock, f"{_telegram_date_label(routine['next_due'])} {routine.get('routine_time') or 'Any time'} · {routine['name']}"))
+        for meal in rows('''SELECT dm.plan_date,r.name AS recipe_name FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date>=? AND dm.plan_date<=?''', (today_iso, end)):
+            items.append((meal['plan_date']+'T12:00', f"{_telegram_date_label(meal['plan_date'])} · 🍽 {meal['recipe_name']}"))
         items.sort(key=lambda item: item[0])
         if not items:
             return '🗓 Nothing scheduled in the next 7 days.'
@@ -1769,9 +1936,10 @@ async def telegram_command(text: str) -> str:
             '• weight 89.5\n'
             '• treadmill 30\n'
             '• paid Electricity\n'
-            '• /meals · /mealplan · /suggestmeals 3\n'
+            '• /meals · /mealplan · /suggestmeals 7\n'
+            '• Reply YES to confirm a plate or NO to move it and all later plates one day.\n'
             '• /shopping · bought tomatoes · /addrecipe · /additem\n'
-            '• Add recipes through the guided questions; use /cancel to stop.')
+            '• Add a meal through the short guided questions; use /cancel to stop.')
 
 if __name__ == '__main__':
     import uvicorn
