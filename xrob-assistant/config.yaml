@@ -1,6 +1,6 @@
 name: XROB Assistant
-description: Local planner, fitness logger, bill tracker and routines with Telegram guided logging
-version: 0.2.0
+description: Local personal planner, fitness tracker, bills, routines and Meal Manager with Telegram guided logging
+version: 0.3.0
 slug: xrob_assistant
 init: false
 startup: services
