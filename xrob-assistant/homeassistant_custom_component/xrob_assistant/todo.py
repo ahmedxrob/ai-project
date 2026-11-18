@@ -31,8 +31,18 @@ class XrobTodo(CoordinatorEntity,TodoListEntity):
             async with s.post(self.url+'/api/tasks',json={'data':{'title':item.summary,'due_date':str(item.due)[:10] if item.due else None}}) as r: r.raise_for_status()
         await self.coordinator.async_request_refresh()
     async def async_update_todo_item(self,item):
+        old = next((x for x in self.coordinator.data if str(x['id']) == str(item.uid)), None)
+        due_date = item.due.isoformat()[:10] if item.due else None
+        data = {'title': item.summary, 'status': 'done' if item.status == TodoItemStatus.COMPLETED else 'open'}
+        # A HA todo update may be only a title/status change. Preserve the app's
+        # reminder time unless the due date itself was changed in HA.
+        if old and old.get('due_date') != due_date:
+            data['due_date'] = due_date
+            data['due_time'] = None
+        elif not old:
+            data['due_date'] = due_date
         async with aiohttp.ClientSession() as s:
-            async with s.patch(self.url+f'/api/tasks/{item.uid}',json={'data':{'title':item.summary,'status':'done' if item.status == TodoItemStatus.COMPLETED else 'open'}}) as r: r.raise_for_status()
+            async with s.patch(self.url+f'/api/tasks/{item.uid}',json={'data':data},timeout=10) as r: r.raise_for_status()
         await self.coordinator.async_request_refresh()
     async def async_delete_todo_items(self,uids):
         async with aiohttp.ClientSession() as s:
