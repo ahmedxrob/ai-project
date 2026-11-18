@@ -1,220 +1,1946 @@
-const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const isoDate=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
-const today=isoDate(new Date());let cache={},calendarMonth=new Date();
-const titles={overview:'Good day.',calendar:'Planner',fitness:'Fitness',bills:'Bills & payments',care:'Routines',meals:'Meal Manager',settings:'Settings & Telegram'};
-let selectedCalendarDate=today;
-function formatDate(v){if(!v)return '—';const m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}/${m[2]}/${m[1].slice(-2)}`:String(v)}
-function formatDateTime(v){if(!v)return '—';const s=String(v);return `${formatDate(s)}${s.includes('T')?' '+s.slice(11,16):''}`}
-function parseDateInput(v){const s=String(v||'').trim();if(!s)return '';let m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(m)return s;m=s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2}|\d{4})$/);if(!m)throw Error('Enter the date as DD/MM/YY, for example 16/11/26.');let [,dd,mm,yy]=m;let year=Number(yy);if(yy.length===2)year+=2000;const d=new Date(year,Number(mm)-1,Number(dd));if(d.getFullYear()!==year||d.getMonth()!==Number(mm)-1||d.getDate()!==Number(dd))throw Error('Please enter a valid date.');return `${year}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`}
-function displayDateInput(v=today){return formatDate(v)}
-function parseDateTimeInput(v){const s=String(v||'').trim();if(!s)return '';if(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s))return s;const m=s.match(/^(.+?)\s+(\d{1,2}):(\d{2})$/);if(!m)throw Error('Enter date and time as DD/MM/YY HH:MM.');const date=parseDateInput(m[1]),hour=Number(m[2]),minute=Number(m[3]);if(hour>23||minute>59)throw Error('Please enter a valid time.');return `${date}T${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`}
-function displayDateTimeInput(v){return v?formatDateTime(v):''}
-$('#today-label').textContent=`${new Date().toLocaleDateString(undefined,{weekday:'long'}).toUpperCase()} · ${formatDate(today)}`;
-async function api(path,opts={}){let r=await fetch('/api/'+path,{headers:{'Content-Type':'application/json'},...opts});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Request failed');return d}
-function toast(s){let t=$('#toast');t.textContent=s;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)}
-function money(n){return Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' MAD'}
-function billCountdown(bill){if(!bill)return '—';const days=Number(bill.days_left);if(days<0)return `Overdue ${Math.abs(days)} ${Math.abs(days)===1?'day':'days'}`;if(days===0)return 'Due today';return `${days} ${days===1?'day':'days'} left`;}
-function formatKg(n){return Number(n||0).toLocaleString('fr-MA',{minimumFractionDigits:2,maximumFractionDigits:2})}
-function empty(s='Nothing here yet. Add your first record to get started.'){return `<div class="empty">${s}</div>`}
-function item(title,sub='',tag='',actions=''){return `<div class="row-item"><div class="row-main"><b>${esc(title)}</b><small>${esc(sub)}</small></div>${tag?`<span class="tag">${esc(tag)}</span>`:''}${actions?`<div class="action-group">${actions}</div>`:''}</div>`}
-function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function stat(label,value,hint=''){return `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div><div class="hint">${hint}</div></div>`}
-function uniqueWeightsPerDay(weights){const byDay=new Map();for(const w of [...weights].sort((a,b)=>Number(a.id)-Number(b.id)))byDay.set(w.date,w);return [...byDay.values()].sort((a,b)=>a.date.localeCompare(b.date)||Number(a.id)-Number(b.id))}
-function weightLatest(weights){return uniqueWeightsPerDay(weights).slice(-1)[0]}
-function estimateCalories(duration,weights){const latest=weightLatest(weights);const kg=latest?Number(latest.kg):70;return Math.round((3.5*3.5*kg/200)*Number(duration||0))}
-function updateTreadmillPreview(){const d=Number($('#treadmill-form [name="duration_min"]')?.value||0);const el=$('#treadmill-calorie-preview');if(!el)return;const kg=weightLatest(cache.weights||[]);if(d>0){el.textContent=`${estimateCalories(d,cache.weights||[])} kcal`;el.title=kg?`Estimate based on ${formatKg(kg.kg)} kg`: 'Estimate uses a 70 kg default because no weight is saved yet.'}else el.textContent='— kcal'}
-function weekStartISO(v){const d=new Date(v+'T12:00:00');d.setDate(d.getDate()-((d.getDay()+6)%7));return isoDate(d)}
-function renderFitnessStats(treadmills,workouts,weights){
- const all=[...treadmills.map(x=>({date:x.date})),...workouts.map(x=>({date:x.date}))];
- const thisMonth=all.filter(x=>(x.date||'').slice(0,7)===today.slice(0,7)).length;
- const activeWeeks=new Set(all.map(x=>weekStartISO(x.date)));
- let streak=0,week=new Date(weekStartISO(today)+'T12:00:00');while(activeWeeks.has(isoDate(week))&&streak<520){streak++;week.setDate(week.getDate()-7)}
- const thisWeek=weekStartISO(today);
- const thisWeekWeights=uniqueWeightsPerDay(weights).filter(x=>x.date>=thisWeek&&x.date<=today);
- const weeklyAverage=thisWeekWeights.length?thisWeekWeights.reduce((sum,x)=>sum+Number(x.kg),0)/thisWeekWeights.length:null;
- const start=new Date();start.setDate(start.getDate()-83);const startISO=isoDate(start);
- const treadmillMins=treadmills.filter(x=>x.date>=startISO&&x.date<=today).reduce((a,x)=>a+Number(x.duration_min||0),0);
- const gymCount=workouts.filter(x=>x.date>=startISO&&x.date<=today).length;
- $('#fitness-stats').innerHTML=stat('Workouts',all.length,'Treadmill + gym')+stat('This month',thisMonth,'Sessions')+stat('Week streak',streak,'Consecutive active weeks')+stat('This week avg weight',weeklyAverage===null?'—':`${formatKg(weeklyAverage)} kg`,`${thisWeekWeights.length} weight ${thisWeekWeights.length===1?'entry':'entries'} this week`)+stat('Treadmill avg / week',`${Math.round(treadmillMins/12)} min`,'Last 12 weeks')+stat('Gym avg / week',`${(gymCount/12).toFixed(1)}`,'Sessions · last 12 weeks');
-}
-function renderWeightHistory(weights){
- const sorted=[...uniqueWeightsPerDay(weights)].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id));
- $('#weight-history-count').textContent=`${sorted.length} entries`;
- $('#weight-history').innerHTML=sorted.map(w=>`<div class="history-entry"><div class="history-entry-main"><b>${formatDate(w.date)}</b><small>Recorded weight</small></div><div class="history-entry-side"><strong>${formatKg(w.kg)} kg</strong></div></div>`).join('')||empty('No weight records yet.');
-}
-function renderWeightGraph(weights){
- const host=$('#weight-graph');if(!host)return;
- const sorted=uniqueWeightsPerDay(weights);
- if(!sorted.length){host.innerHTML=empty('Record your weight to see your progress graph.');return}
- const W=960,H=280,L=62,R=28,T=22,B=48,plotW=W-L-R,plotH=H-T-B;
- const vals=sorted.map(x=>Number(x.kg)).filter(Number.isFinite);let min=Math.min(...vals),max=Math.max(...vals);
- if(min===max){min-=0.5;max+=0.5}else{const pad=Math.max((max-min)*0.12,0.25);min-=pad;max+=pad}
- const xAt=i=>sorted.length===1?L+plotW/2:L+(i/(sorted.length-1))*plotW;
- const yAt=v=>T+((max-v)/(max-min))*plotH;
- const grid=Array.from({length:5},(_,i)=>{const value=min+(max-min)*i/4,y=yAt(value);return `<line class="weight-grid-line" x1="${L}" y1="${y}" x2="${W-R}" y2="${y}"/><text class="weight-axis-label" x="${L-10}" y="${y+4}" text-anchor="end">${value.toFixed(1)}</text>`}).join('');
- const points=sorted.map((r,i)=>`${xAt(i)},${yAt(Number(r.kg))}`).join(' ');
- const dots=sorted.map((r,i)=>`<circle class="weight-point" cx="${xAt(i)}" cy="${yAt(Number(r.kg))}" r="5.5" tabindex="0" role="img" data-date="${esc(formatDate(r.date))}" data-weight="${esc(formatKg(r.kg))}"><title>${formatDate(r.date)} · ${formatKg(r.kg)} kg</title></circle>`).join('');
- const tickCount=Math.min(6,sorted.length),ticks=Array.from({length:tickCount},(_,i)=>{const ix=tickCount===1?0:Math.round(i*(sorted.length-1)/(tickCount-1));return `<text class="weight-axis-label" x="${xAt(ix)}" y="${H-15}" text-anchor="middle">${formatDate(sorted[ix].date)}</text>`}).join('');
- const latest=sorted[sorted.length-1];
- host.innerHTML=`<div class="weight-chart-scroll"><div class="weight-chart-wrap"><svg class="weight-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight progress graph, ${sorted.length} records, latest ${formatKg(latest.kg)} kilograms"><defs><linearGradient id="weight-area" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="var(--green)" stop-opacity=".24"/><stop offset="100%" stop-color="var(--green)" stop-opacity="0"/></linearGradient></defs>${grid}<polygon class="weight-area" points="${L},${T+plotH} ${points} ${W-R},${T+plotH}"/><polyline class="weight-line" points="${points}"/>${dots}${ticks}</svg><div class="weight-chart-tooltip" role="status" hidden></div></div></div><div class="weight-chart-meta"><span>First: ${formatKg(sorted[0].kg)} kg · ${formatDate(sorted[0].date)}</span><b>Latest: ${formatKg(latest.kg)} kg · ${formatDate(latest.date)}</b></div>`;
- const wrap=host.querySelector('.weight-chart-wrap'),tip=host.querySelector('.weight-chart-tooltip');
- const showTip=(point,event)=>{const rect=wrap.getBoundingClientRect();const px=event&&Number.isFinite(event.clientX)?event.clientX:point.getBoundingClientRect().left+point.getBoundingClientRect().width/2;const py=event&&Number.isFinite(event.clientY)?event.clientY:point.getBoundingClientRect().top;tip.innerHTML=`<b>${point.dataset.weight} kg</b><span>${point.dataset.date}</span>`;tip.hidden=false;tip.style.left=`${Math.max(8,Math.min(rect.width-145,px-rect.left+12))}px`;tip.style.top=`${Math.max(4,Math.min(rect.height-58,py-rect.top-52))}px`};
- const hideTip=()=>{tip.hidden=true};
- wrap.querySelectorAll('.weight-point').forEach(point=>{point.addEventListener('pointerenter',e=>showTip(point,e));point.addEventListener('pointermove',e=>showTip(point,e));point.addEventListener('pointerleave',hideTip);point.addEventListener('focus',()=>showTip(point));point.addEventListener('blur',hideTip);point.addEventListener('click',e=>showTip(point,e))});
-}
-function renderWeeklyWeightAverages(weights){
- const host=$('#weekly-weight-average');if(!host)return;
- const grouped=new Map();
- for(const w of uniqueWeightsPerDay(weights)){const start=weekStartISO(w.date);if(!grouped.has(start))grouped.set(start,[]);grouped.get(start).push(Number(w.kg))}
- const weeks=[...grouped.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([start,values])=>({start,avg:values.reduce((a,b)=>a+b,0)/values.length,count:values.length}));
- if(!weeks.length){host.innerHTML=empty('Add weight records to compare weekly averages.');return}
- const min=Math.min(...weeks.map(x=>x.avg)),max=Math.max(...weeks.map(x=>x.avg)),span=max-min||1;
- const bars=weeks.map((w,i)=>{const height=38+((w.avg-min)/span)*132;const end=new Date(w.start+'T12:00:00');end.setDate(end.getDate()+6);const endISO=isoDate(end);const tip=`Week ${formatDate(w.start)}–${formatDate(endISO)} · average ${formatKg(w.avg)} kg · ${w.count} ${w.count===1?'entry':'entries'}`;return `<div class="week-average-column" title="${esc(tip)}" aria-label="${esc(tip)}"><span class="week-average-value">${formatKg(w.avg)}</span><div class="week-average-track"><i style="height:${height}px"></i></div><small>${i%4===0||i===weeks.length-1?formatDate(w.start):''}</small></div>`}).join('');
- const minChartWidth=Math.max(320,weeks.length*52);
- host.innerHTML=`<div class="weekly-average-summary"><span>${weeks.length} weeks with recorded weight</span><b>Latest week: ${formatKg(weeks[weeks.length-1].avg)} kg</b></div><div class="weekly-average-scroll"><div class="weekly-average-chart" style="--week-count:${weeks.length};min-width:${minChartWidth}px">${bars}</div></div><p class="muted weekly-average-help">Each bar is the average of all weigh-ins recorded during that Monday–Sunday week. The chart fills the card; older weeks remain available by horizontal scrolling.</p>`;
-}
-function renderHeatmap(id,records,kind){
- const host=$(id);if(!host)return;const values={};for(const r of records){const key=r.date;if(!key)continue;values[key]=(values[key]||0)+(kind==='minutes'?Number(r.duration_min||0):1)}
- const end=new Date(today+'T12:00:00'),start=new Date(end);start.setDate(start.getDate()-364);start.setDate(start.getDate()-start.getDay());
- const days=[];for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){const date=isoDate(d),value=values[date]||0;let level=0;if(value>0){if(kind==='minutes')level=value<30?1:value<60?2:value<90?3:4;else level=value===1?1:value===2?2:value===3?3:4}days.push({date,value,level,week:Math.floor((d-start)/86400000/7),weekday:d.getDay(),month:d.getMonth()})}
- const weeks=Math.max(...days.map(x=>x.week))+1;let monthHtml='',seen=-1;for(const day of days){if(day.month!==seen&&day.weekday===0){const label=new Date(day.date+'T12:00:00').toLocaleDateString(undefined,{month:'short'});monthHtml+=`<span style="grid-column:${day.week+1}/span 3">${label}</span>`;seen=day.month}}
- const cells=days.map(x=>`<span class="heat-cell level-${x.level}" style="grid-column:${x.week+1};grid-row:${x.weekday+1}" title="${formatDate(x.date)} · ${kind==='minutes'?`${x.value} min`:`${x.value} gym session${x.value===1?'':'s'}`}" aria-label="${formatDate(x.date)} ${x.value}"></span>`).join('');
- const rangeStart=isoDate(new Date(end.getTime()-364*86400000));
- const period=records.filter(x=>x.date>=rangeStart&&x.date<=today);
- const total=kind==='minutes'?period.reduce((a,x)=>a+Number(x.duration_min||0),0):period.length;
- host.innerHTML=`<div class="heatmap-scroll"><div class="heatmap-months" style="--weeks:${weeks}">${monthHtml}</div><div class="heatmap-grid" style="--weeks:${weeks}">${cells}</div></div><div class="heatmap-footer"><span>${kind==='minutes'?`${Math.round(total)} minutes trained`:`${total} gym sessions`} · ${period.length} entries in view</span><span class="heat-legend">Less <i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i> More</span></div>`;
-}
-async function refresh(){try{
- const [sum,events,tasks,weights,treadmills,workouts,workout_plan,bills,routines,recipes,dailyMeals,shoppingItems]=await Promise.all([
-  'summary','events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000'
- ].map(x=>api(x)));
- cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems};$('#api-status').textContent='API connected';
- const nextBill=sum.upcoming_bill;
- const billHint=nextBill?`${esc(nextBill.name)} · ${formatDate(nextBill.due_date)} · ${money(nextBill.amount_mad)}`:'No unpaid bills coming up';
- const routinesDueToday=routines.filter(r=>r.next_due&&r.next_due<=today).length;
- const tomorrowDate=new Date();tomorrowDate.setDate(tomorrowDate.getDate()+1);
- const tomorrowISO=isoDate(tomorrowDate);
- const routinesDueTomorrow=routines.filter(r=>r.next_due===tomorrowISO).length;
- $('#stats').innerHTML=stat('Routines',routinesDueToday,'Due or overdue')+stat('Tomorrow routines',routinesDueTomorrow,'Scheduled for tomorrow')+stat('Latest weight',sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'—','Fitness log')+stat('Upcoming bills',billCountdown(nextBill),billHint);
- renderTodayMeal();
- let attention=[];tasks.filter(t=>t.status!=='done').sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999')||(a.due_time||'99:99').localeCompare(b.due_time||'99:99')).slice(0,4).forEach(t=>attention.push(item(t.title,(t.due_date?formatDate(t.due_date):'No due date')+(t.due_time?' · '+t.due_time:''),t.priority)));bills.filter(b=>b.status!=='paid').sort((a,b)=>a.due_date.localeCompare(b.due_date)).slice(0,3).forEach(b=>attention.push(item(b.name+' · '+money(b.amount_mad),'Due '+formatDate(b.due_date),'Unpaid')));$('#attention').innerHTML=attention.join('')||empty('Nothing urgent.');
- $('#fitness-snapshot').innerHTML=`<div><div class="big-number">${sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'—'}</div><small class="muted">Latest weight</small></div><div><div class="big-number">${treadmills.length}</div><small class="muted">Treadmill sessions</small></div><div><div class="big-number">${workouts.length}</div><small class="muted">Gym workouts</small></div>`;
- $('#routine-snapshot').innerHTML=[...routines].sort((a,b)=>(a.next_due||'9999').localeCompare(b.next_due||'9999')).slice(0,4).map(r=>item(r.name,`Next: ${r.next_due?formatDate(r.next_due):'Not scheduled'} · ${r.routine_time||'—'} · Late ${r.routine_late_time||'off'}`,r.interval_days+' day interval',`<button class="mini-btn" data-complete="${r.id}">Done</button>`)).join('')||empty();
- $('#planner-list').innerHTML=[...((cache.daily_meals||[]).map(m=>({kind:'meal',at:m.plan_date+'T12:00',title:'🍽 '+(m.recipe_name||'Saved meal'),sub:formatDate(m.plan_date)+' · '+(m.status==='eaten'?'Confirmed eaten':'Waiting for confirmation'),id:m.id,category:'Daily plate',actions:m.status==='pending'&&m.plan_date<=today?`<button class="mini-btn" data-meal-confirm="${m.id}" data-meal-decision="yes">Eaten</button>`:''}))),...events.map(e=>({kind:'event',at:e.start_at,title:e.title,sub:formatDateTime(e.start_at)+(e.end_at?' – '+formatDateTime(e.end_at):''),id:e.id,category:e.category,actions:`<button class="mini-btn" data-delete="events:${e.id}">Delete</button>`})),...tasks.map(t=>({kind:'task',at:t.due_date?(t.due_date+(t.due_time?'T'+t.due_time:'')):'9999',title:t.title,sub:(t.due_date?formatDate(t.due_date):'No due date')+(t.due_time?' · '+t.due_time:'')+' · '+t.category,id:t.id,category:t.status==='done'?'Completed':t.priority,actions:t.status!=='done'?`<button class="mini-btn" data-taskdone="${t.id}">Complete</button>`:`<button class="mini-btn" data-delete="tasks:${t.id}">Delete</button>`}))].sort((a,b)=>a.at.localeCompare(b.at)).map(x=>item(x.title,x.sub,x.kind+(x.category?' · '+x.category:''),x.actions)).join('')||empty('No planner items. Add an event or task.');renderCalendar(events);
- renderWeightHistory(weights);renderWeightGraph(weights);renderWeeklyWeightAverages(weights);
- $('#treadmill-history-count').textContent=`${treadmills.length} sessions`;
- $('#treadmill-history').innerHTML=[...treadmills].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id)).map(t=>`<div class="history-entry"><div class="history-entry-main"><b>${Number(t.duration_min)} min · ${Number(t.distance_km).toFixed(2)} km</b><small>${formatDate(t.date)} · ${Number(t.speed_kmh||5).toFixed(0)} km/h · 0% incline</small></div><div class="history-entry-side"><strong>${Number(t.calories_kcal||0)} kcal</strong><small>Estimated</small></div></div>`).join('')||empty();
- $('#workout-history-count').textContent=`${workouts.length} workouts`;
- $('#workout-history').innerHTML=[...workouts].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id)).map(w=>`<div class="history-entry"><div class="history-entry-main"><b>${esc(w.name)}</b><small>${formatDate(w.date)}${w.notes?' · '+esc(w.notes):''}</small></div><div class="history-entry-side"><span class="tag">Gym</span><button class="mini-btn" data-delete="workouts:${w.id}">Delete</button></div></div>`).join('')||empty();
- renderFitnessStats(treadmills,workouts,weights);renderHeatmap('#treadmill-activity',treadmills,'minutes');renderHeatmap('#gym-activity',workouts,'count');updateTreadmillPreview();
- $('#workout-plan-list').innerHTML=workout_plan.sort((a,b)=>['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].indexOf(a.weekday)-['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].indexOf(b.weekday)).map(w=>item(w.weekday,w.name,'Planned',`<button class="mini-btn" data-delete="workout_plan:${w.id}">Remove</button>`)).join('')||empty('No workout days planned yet.');
- $('#bill-summary').innerHTML=stat('Unpaid bills',sum.unpaid_bills,'Outstanding')+stat('Total outstanding',money(sum.unpaid_total_mad),'MAD')+stat('Open tasks',sum.open_tasks,'In Planner');
- $('#bills-list').innerHTML=[...bills].sort((a,b)=>(a.status==='paid')-(b.status==='paid')||a.due_date.localeCompare(b.due_date)).map(b=>item(b.name,money(b.amount_mad)+' · Due '+formatDate(b.due_date),b.status,b.status!=='paid'?`<button class="mini-btn" data-pay="${b.id}">Mark paid</button>`:'' )).join('')||empty();
- $('#routines-list').innerHTML=routines.map(r=>item(r.name,`Last: ${r.last_done?formatDate(r.last_done):'Not recorded'} · Next: ${r.next_due?formatDate(r.next_due):'—'} · Time ${r.routine_time||'—'} · Late alert ${r.routine_late_time||'off'}`,r.interval_days+' days',`<button class="mini-btn" data-edit-routine="${r.id}">Edit routine</button><button class="mini-btn" data-edit-routine-record="${r.id}">Edit last record</button><button class="mini-btn" data-complete="${r.id}">Done</button>`)).join('')||empty();
- renderMeals();
- }catch(e){$('#api-status').textContent='API unavailable';console.error(e);toast(e.message)}}
-function calendarItemsForDay(day){
- const items=[];const c=cache;
- for(const e of (c.events||[]).filter(x=>x.start_at.slice(0,10)===day))items.push({type:'event',sortTime:e.start_at.includes('T')?e.start_at.slice(11,16):null,text:`${e.start_at.includes('T')?e.start_at.slice(11,16)+' ':''}${e.title}`,detail:`Event${e.category?' · '+e.category:''}`});
- for(const t of (c.tasks||[]).filter(x=>x.status!=='done'&&x.due_date===day))items.push({type:'task',sortTime:t.due_time||null,text:`${t.due_time?t.due_time+' ':''}${t.title}`,detail:'Task reminder'});
- const weight=uniqueWeightsPerDay(c.weights||[]).find(x=>x.date===day);if(weight)items.push({type:'weight',sortTime:null,text:`${formatKg(weight.kg)} kg`,detail:'Recorded weight'});
- const tread=(c.treadmill||[]).filter(x=>x.date===day);if(tread.length){const mins=tread.reduce((a,x)=>a+Number(x.duration_min||0),0);items.push({type:'treadmill',sortTime:null,text:`Treadmill ${Math.round(mins)} min`,detail:`${tread.length} session${tread.length===1?'':'s'} · ${tread.reduce((a,x)=>a+Number(x.calories_kcal||0),0)} estimated kcal`})}
- for(const w of (c.workouts||[]).filter(x=>x.date===day))items.push({type:'gym',sortTime:null,text:`Gym: ${w.name}${Number(w.duration_min||0)>0?' · '+Number(w.duration_min)+' min':''}`,detail:w.notes||'Gym workout'});
- for(const r of (c.routines||[])){if(r.next_due===day)items.push({type:'care',sortTime:r.routine_time||null,text:`${r.routine_time?r.routine_time+' ':''}Routine: ${r.name}`,detail:`Scheduled routine · late reminder ${r.routine_late_time||'off'} · every ${Math.max(1,Number(r.interval_days||1))} days`})}
- for(const b of (c.bills||[]).filter(x=>x.status!=='paid'&&x.due_date===day))items.push({type:'bill',sortTime:null,text:`Bill: ${b.name}`,detail:`${money(b.amount_mad)} due`});
- for(const m of (c.daily_meals||[]).filter(x=>x.plan_date===day))items.push({type:'meal',sortTime:null,text:`🍽 ${m.recipe_name||'Saved meal'}`,detail:`Daily plate · ${m.status==='eaten'?'confirmed eaten':'waiting for Telegram confirmation'}${m.calories_kcal!=null?' · '+Number(m.calories_kcal)+' kcal':''}`});
- // Items with explicit times come first, sorted from earliest to latest;
- // date-only logs follow them in a stable, predictable order.
- return items.map((item,index)=>({...item,_index:index})).sort((a,b)=>{
-   const at=a.sortTime||'99:99',bt=b.sortTime||'99:99';
-   return at.localeCompare(bt)||a._index-b._index;
- }).map(({_index,sortTime,...item})=>item);
-}
-function renderCalendar(events){
- const year=calendarMonth.getFullYear(),month=calendarMonth.getMonth();$('#calendar-month-label').textContent=calendarMonth.toLocaleDateString(undefined,{month:'long',year:'numeric'});
- const first=new Date(year,month,1),start=new Date(year,month,1-first.getDay());const heads=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(x=>`<div class="cal-head">${x}</div>`).join('');let cells='';
- for(let i=0;i<42;i++){
-  const d=new Date(start);d.setDate(start.getDate()+i);const iso=isoDate(d);const entries=calendarItemsForDay(iso);const shown=entries.slice(0,4);
-  cells+=`<div class="cal-day ${d.getMonth()!==month?'outside':''} ${iso===today?'today':''} ${iso===selectedCalendarDate?'selected':''} ${entries.length?'has-event':''}" data-calendar-date="${iso}" role="button" tabindex="0" title="${formatDate(iso)} · ${entries.length} item${entries.length===1?'':'s'}"><div class="day-number">${d.getDate()}</div><div class="cal-day-items">${shown.map(x=>`<span class="cal-event ${x.type}" title="${esc(x.detail)}">${esc(x.text)}</span>`).join('')}${entries.length>4?`<span class="cal-more">+${entries.length-4} more</span>`:''}</div></div>`;
- }
- $('#calendar-grid').innerHTML=heads+cells;
- const selectedItems=calendarItemsForDay(selectedCalendarDate);const selected=new Date(selectedCalendarDate+'T12:00:00');
- $('#calendar-selected-label').textContent=selected.toLocaleDateString(undefined,{weekday:'long'})+' · '+formatDate(selectedCalendarDate);
- $('#calendar-day-detail').innerHTML=selectedItems.length?selectedItems.map(x=>`<div class="calendar-detail-row"><span class="calendar-detail-dot ${x.type}"></span><div><b>${esc(x.text)}</b><small>${esc(x.detail)}</small></div></div>`).join(''):empty('Nothing scheduled or recorded on this day.');
-}
-function shiftCalendarMonth(delta){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+delta,1);selectedCalendarDate=isoDate(calendarMonth);renderCalendar(cache.events||[])}
-$('#month-prev').onclick=()=>shiftCalendarMonth(-1);$('#month-next').onclick=()=>shiftCalendarMonth(1);$('#month-today').onclick=()=>{calendarMonth=new Date();selectedCalendarDate=today;renderCalendar(cache.events||[])};$('#calendar-grid').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-calendar-date]')){e.preventDefault();selectedCalendarDate=e.target.closest('[data-calendar-date]').dataset.calendarDate;renderCalendar(cache.events||[])}});
-function navigate(page){$$('.page').forEach(p=>p.classList.toggle('active',p.id===page));$$('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));$('#page-title').textContent=titles[page]||'XROB'}
-$('#nav').addEventListener('click',e=>{let b=e.target.closest('[data-page]');if(b)navigate(b.dataset.page)});
-document.addEventListener('click',e=>{let calendarDay=e.target.closest('[data-calendar-date]');if(calendarDay){selectedCalendarDate=calendarDay.dataset.calendarDate;renderCalendar(cache.events||[])}let go=e.target.closest('[data-go]');if(go)navigate(go.dataset.go);let del=e.target.closest('[data-delete]');if(del){let [r,id]=del.dataset.delete.split(':');if(!confirm('Delete this record? This cannot be undone.'))return;api(r+'/'+id,{method:'DELETE'}).then(()=>{toast('Deleted');refresh()}).catch(err=>toast(err.message))}let done=e.target.closest('[data-taskdone]');if(done)api('tasks/'+done.dataset.taskdone,{method:'PATCH',body:JSON.stringify({data:{status:'done'}})}).then(()=>{toast('Task completed');refresh()});let pay=e.target.closest('[data-pay]');if(pay)api('bills/'+pay.dataset.pay+'/pay',{method:'POST'}).then(()=>{toast('Bill marked paid');refresh()});let comp=e.target.closest('[data-complete]');if(comp)api('routines/'+comp.dataset.complete+'/complete',{method:'POST'}).then(()=>{toast('Routine completed');refresh()}).catch(err=>toast(err.message));let edit=e.target.closest('[data-edit-routine]');if(edit){const r=(cache.routines||[]).find(x=>x.id===Number(edit.dataset.editRoutine));if(r)openModal('routine',r)}let editRecord=e.target.closest('[data-edit-routine-record]');if(editRecord){const r=(cache.routines||[]).find(x=>x.id===Number(editRecord.dataset.editRoutineRecord));if(r)openModal('routine_record',{...r,completed_at:r.last_done||today})}let modal=e.target.closest('[data-modal]');if(modal)openModal(modal.dataset.modal)});
-const configs={planner:{title:'Add planner item'},bill:{title:'Add bill',resource:'bills',fields:[['name','Bill name','text',true],['amount_mad','Amount (MAD)','number',true],['due_date','Due date','date',true],['reminder_days','Remind me before (days)','number'],['recurrence','Recurrence','select',['none','monthly','quarterly','yearly']],['notes','Notes','textarea']]},routine:{title:'Add routine',resource:'routines',fields:[['name','Routine name','text',true],['interval_days','Repeat every (days)','number',true],['routine_time','Routine time (24-hour)','time24'],['routine_late_time','Late reminder time (optional)','time24'],['category','Category','text'],['notes','Notes','textarea']]},routine_record:{title:'Edit last completion record',resource:'routines',fields:[['completed_at','Last completed on','date',true]]}};
-function openModal(type,existing=null){
- const c=configs[type];$('#modal-title').textContent=existing?'Edit '+(existing.name||'routine'):c.title;
- if(type==='planner'){
-  $('#modal-form').innerHTML=`<label>Type<select name="kind"><option value="task">Task / reminder</option><option value="event">Event / appointment</option></select></label><label>Title<input name="title" required maxlength="160" placeholder="What do you need to do?" /></label><label data-field="date">Date<input name="date" type="text" inputmode="numeric" value="${displayDateInput(selectedCalendarDate)}" placeholder="DD/MM/YY (optional for tasks)" autocomplete="off" /></label><label data-field="time">Time<input name="time" type="text" inputmode="numeric" placeholder="HH:MM (optional)" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" autocomplete="off" /></label><label data-field="end_time" hidden>End time (event only)<input name="end_time" type="text" inputmode="numeric" placeholder="HH:MM (optional)" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" autocomplete="off" /></label><label data-field="priority">Priority<select name="priority"><option>normal</option><option>high</option><option>low</option></select></label><label data-field="category">Category<input name="category" placeholder="general" /></label><label>Notes<textarea name="notes" placeholder="Optional details"></textarea></label><button class="primary">Save planner item</button>`;
-  const kind=$('#modal-form [name="kind"]');const showFields=()=>{const isEvent=kind.value==='event';$('#modal-form [data-field="end_time"]').hidden=!isEvent;$('#modal-form [data-field="priority"]').hidden=isEvent;$('#modal-form [data-field="date"]').querySelector('input').placeholder=isEvent?'DD/MM/YY (required)':'DD/MM/YY (optional)';$('#modal-form [data-field="category"]').querySelector('input').placeholder=isEvent?'personal':'general'};kind.addEventListener('change',showFields);showFields();
-  $('#modal-form').onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(e.target));const day=d.date?parseDateInput(d.date):'';for(const field of ['time','end_time'])if(d[field]&&!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(d[field]))throw Error('Enter time as 24-hour HH:MM.');let resource,payload;if(d.kind==='event'){if(!day)throw Error('Events need a date.');resource='events';payload={title:d.title.trim(),start_at:day+(d.time?'T'+d.time:''),end_at:d.end_time?day+'T'+d.end_time:null,category:d.category||'personal',notes:d.notes||''};if(payload.end_at&&payload.end_at<=payload.start_at)throw Error('End time must be after start time.')}else{resource='tasks';if(d.time&&!day)throw Error('Choose a date before setting a task reminder time.');payload={title:d.title.trim(),due_date:day||null,due_time:d.time||null,priority:d.priority||'normal',category:d.category||'general',notes:d.notes||''}}if(!payload.title)throw Error('Enter a title.');await api(resource,{method:'POST',body:JSON.stringify({data:payload})});$('#modal').classList.add('hidden');toast(d.kind==='event'?'Event saved':'Task saved');refresh()}catch(err){toast(err.message)}};
- }else{
-  $('#modal-form').innerHTML=c.fields.map(([n,l,t,req])=>{const v=existing?.[n]??(n==='reminder_days'?'3':n==='interval_days'?'7':n==='routine_time'?'10:00':n==='routine_late_time'?'':n==='due_date'||n==='expiry_date'?today:'');if(t==='textarea')return `<label>${l}<textarea name="${n}">${esc(v)}</textarea></label>`;if(t==='select')return `<label>${l}<select name="${n}">${req.map(x=>`<option ${String(v)===x?'selected':''}>${x}</option>`).join('')}</select></label>`;const inputType=(t==='date'||t==='datetime-local'||t==='time24')?'text':t;const value=t==='date'?(v?displayDateInput(v):''):t==='datetime-local'?displayDateTimeInput(v):v;const dateAttrs=t==='date'?'inputmode="numeric" placeholder="DD/MM/YY" autocomplete="off"':t==='datetime-local'?'placeholder="DD/MM/YY HH:MM" autocomplete="off"':t==='time24'?(n==='routine_late_time'?'inputmode="numeric" placeholder="Optional · leave blank to disable" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" autocomplete="off"':'inputmode="numeric" placeholder="HH:MM (00:00–23:59)" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" autocomplete="off"'):'';return `<label>${l}<input name="${n}" type="${inputType}" ${dateAttrs} ${req===true?'required':''} ${n==='interval_days'?'min="1" step="1"':''} ${n==='amount_mad'?'step="0.01" min="0"':''} value="${esc(value)}"></label>`}).join('')+'<button class="primary">'+(existing?'Save changes':'Save')+'</button>';
-  $('#modal-form').onsubmit=async e=>{e.preventDefault();try{let d=Object.fromEntries(new FormData(e.target));for(const [n,l,t] of c.fields){if(t==='date'&&d[n])d[n]=parseDateInput(d[n]);if(t==='datetime-local'&&d[n])d[n]=parseDateTimeInput(d[n])}for(let k of ['amount_mad','reminder_days','interval_days'])if(d[k]!==undefined&&d[k]!=='')d[k]=Number(d[k]);for(const field of ['routine_time','routine_late_time'])if(d[field]&&!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(d[field]))throw Error('Enter time in 24-hour HH:MM format, from 00:00 to 23:59.');if(type==='routine'&&d.routine_time&&d.routine_late_time&&d.routine_late_time<=d.routine_time)throw Error('Late reminder time must be later than the routine time.');const path=type==='routine_record'?`routines/${existing.id}/last-record`:existing?`${c.resource}/${existing.id}`:c.resource;await api(path,{method:existing?'PATCH':'POST',body:JSON.stringify({data:d})});$('#modal').classList.add('hidden');toast(existing?'Changes saved':'Saved successfully');refresh()}catch(err){toast(err.message)}}
- }
- $('#modal').classList.remove('hidden');
-}
-$('#modal-close').onclick=()=>$('#modal').classList.add('hidden');$('#modal').onclick=e=>{if(e.target.id==='modal')$('#modal').classList.add('hidden')};
-function bindForm(id,resource,transform=x=>x){$(id).addEventListener('submit',async e=>{e.preventDefault();try{let d=Object.fromEntries(new FormData(e.target));for(const [k,v] of Object.entries(d))if(['date','due_date','expiry_date','last_done','next_due'].includes(k)&&v)d[k]=parseDateInput(v);d=transform(d);await api(resource,{method:'POST',body:JSON.stringify({data:d})});e.target.reset();e.target.querySelectorAll('.date-entry').forEach(x=>x.value=displayDateInput(today));const successMessage=resource==='treadmill'?'Treadmill session saved':resource==='weights'?'Weight saved':'Saved successfully';toast(successMessage);refresh()}catch(err){toast(err.message)}})}
-bindForm('#plan-form','workout_plan');bindForm('#weight-form','weights',d=>{const kg=Number(String(d.kg).replace(',','.'));if(!Number.isFinite(kg)||kg<=0)throw Error('Enter a valid weight.');return {...d,kg}});bindForm('#treadmill-form','treadmill',d=>({date:d.date,duration_min:Number(d.duration_min)}));bindForm('#workout-form','workouts',d=>({name:d.name,date:d.date,notes:d.notes}));
+from __future__ import annotations
+import asyncio, json, os, sqlite3, re, math, random
+from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, date, timedelta
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-function setMealTab(tab){
- $$('.meal-tab').forEach(x=>x.classList.toggle('active',x.dataset.mealTab===tab));
- $$('.meal-pane').forEach(x=>x.classList.toggle('active',x.id===`meal-pane-${tab}`));
-}
-function recipeCard(r){
- const ingredients=Array.isArray(r.ingredients)?r.ingredients:[];
- const kcal=r.calories_kcal==null?'Calories not set':`${Number(r.calories_kcal).toLocaleString()} kcal per plate`;
- const interval=Math.max(1,Number(r.eating_interval_days||1));
- const plates=Math.max(1,Number(r.batch_plates||7));
- return `<article class="recipe-card"><div class="recipe-card-top"><span class="tag">Every ${interval} day${interval===1?'':'s'}</span><span class="recipe-plates">${plates} plates per batch</span></div><h3>${esc(r.name)}</h3><p class="muted recipe-meta">${esc(kcal)}</p><div class="recipe-ingredients"><b>Ingredients</b><ul>${ingredients.map(x=>`<li>${esc(x)}</li>`).join('')||'<li>None added</li>'}</ul></div><div class="recipe-card-actions"><button class="mini-btn" data-edit-recipe="${r.id}">Edit</button><button class="mini-btn" data-delete="recipes:${r.id}">Delete</button></div></article>`;
-}
-function renderMeals(){
- const recipes=cache.recipes||[], meals=cache.daily_meals||[], shopping=cache.shopping_items||[];
- $('#recipe-count').textContent=`${recipes.length} meal${recipes.length===1?'':'s'}`;
- $('#recipe-list').innerHTML=recipes.map(recipeCard).join('')||empty('No meals saved yet. Add your first meal using just its name, calories, ingredients and cooking routine.');
- const upcoming=meals.filter(x=>x.plan_date>=today).sort((a,b)=>a.plan_date.localeCompare(b.plan_date));
- $('#daily-meal-list').innerHTML=upcoming.map(m=>`<div class="meal-plan-row"><div class="meal-plan-date"><b>${formatDate(m.plan_date)}</b><small>${m.status==='eaten'?'Eaten':'To eat'}</small></div><div class="meal-plan-info"><b>${esc(m.recipe_name||'Saved meal')}</b><small>${m.calories_kcal==null?'Calories not set':`${Number(m.calories_kcal)} kcal per plate`}</small></div>${m.status==='pending'&&m.plan_date<=today?`<button class="mini-btn" data-meal-confirm="${m.id}" data-meal-decision="yes">Eaten</button>`:''}<button class="mini-btn" data-delete="daily_meals:${m.id}">Remove</button></div>`).join('')||empty('No plates scheduled. Generate a plan to put your saved meals on the calendar.');
- $('#shopping-list').innerHTML=shopping.map(i=>`<div class="shopping-row ${Number(i.checked)?'is-checked':''}"><label><input type="checkbox" data-shopping-check="${i.id}" ${Number(i.checked)?'checked':''}><span>${esc(i.name)}</span></label><button class="mini-btn" data-delete="shopping_items:${i.id}">×</button></div>`).join('')||empty('Your shopping list is empty. Add an item or generate it from your planned meals.');
- renderTodayMeal();
-}
-function renderTodayMeal(){
- const host=$('#today-meal-card');if(!host)return;
- const meal=(cache.daily_meals||[]).find(x=>x.plan_date===today);
- if(!meal){
-  host.innerHTML=`<div class="today-meal-empty"><p class="muted">No plate is planned for today yet.</p><button class="primary" data-generate-today>Suggest today's plate</button></div>`;
-  return;
- }
- const kcal=meal.calories_kcal==null?'Calories not set':`${Number(meal.calories_kcal)} kcal per plate`;
- const state=meal.status==='eaten'?'<span class="meal-confirmed">✓ Confirmed eaten</span>':'<span class="meal-pending">Waiting for your Telegram confirmation</span>';
- host.innerHTML=`<div class="today-meal-main"><div><h3>${esc(meal.recipe_name||'Saved meal')}</h3><p class="muted">${esc(kcal)}</p>${state}</div><div class="today-meal-actions">${meal.status==='pending'?`<button class="mini-btn" data-meal-confirm="${meal.id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${meal.id}" data-meal-decision="no">Not today</button>`:'<span class="tag">Done</span>'}</div></div>`;
-}
-function parseMealIngredients(text){
- const list=String(text||'').split(/[\n,;]+/).map(x=>x.trim().replace(/^[-•]\s*/,'' )).filter(Boolean);
- const seen=new Set();return list.filter(x=>{const k=x.toLowerCase().replace(/\s+/g,' ');if(seen.has(k))return false;seen.add(k);return true;});
-}
-function openRecipeModal(existing=null){
- const form=$('#modal-form');$('#modal-title').textContent=existing?'Edit meal':'Add a meal';
- const ingredients=Array.isArray(existing?.ingredients)?existing.ingredients.join('\n'):'';
- form.innerHTML=`<label>Meal name<input name="name" required maxlength="160" value="${esc(existing?.name||'')}" placeholder="e.g. Chicken meal"></label><label>Kcal per plate<input name="calories_kcal" type="number" min="0" max="10000" step="1" value="${existing?.calories_kcal??''}" placeholder="e.g. 650"></label><div class="two-field"><label>Eat every (days)<input name="eating_interval_days" type="number" min="1" max="90" step="1" required value="${Number(existing?.eating_interval_days||1)}"></label><label>Plates cooked in one batch<input name="batch_plates" type="number" min="1" max="100" step="1" required value="${Number(existing?.batch_plates||7)}"></label></div><label>Ingredients · one item per line<textarea name="ingredients" required rows="5" placeholder="Chicken\nOnions\nTomatoes\nOlive oil">${esc(ingredients)}</textarea></label><button class="primary">${existing?'Save changes':'Save meal'}</button>`;
- form.onsubmit=async e=>{e.preventDefault();try{const f=new FormData(form);const names=parseMealIngredients(f.get('ingredients'));if(!names.length)throw Error('Add at least one ingredient.');const rawKcal=String(f.get('calories_kcal')||'').trim();const payload={name:String(f.get('name')||'').trim(),calories_kcal:rawKcal?Number(rawKcal):null,eating_interval_days:Number(f.get('eating_interval_days')),batch_plates:Number(f.get('batch_plates')),ingredients_json:JSON.stringify(names)};if(!payload.name)throw Error('Meal name is required.');if(!Number.isInteger(payload.eating_interval_days)||payload.eating_interval_days<1||payload.eating_interval_days>90)throw Error('Eating interval must be between 1 and 90 days.');if(!Number.isInteger(payload.batch_plates)||payload.batch_plates<1||payload.batch_plates>100)throw Error('Batch plates must be between 1 and 100.');if(payload.calories_kcal!==null&&(!Number.isFinite(payload.calories_kcal)||payload.calories_kcal<0||payload.calories_kcal>10000))throw Error('Enter valid kcal per plate.');await api(existing?`recipes/${existing.id}`:'recipes',{method:existing?'PATCH':'POST',body:JSON.stringify({data:payload})});$('#modal').classList.add('hidden');toast(existing?'Meal updated':'Meal saved');refresh()}catch(err){toast(err.message)}};
- $('#modal').classList.remove('hidden');
-}
-$('#add-recipe-btn').addEventListener('click',()=>openRecipeModal());
-$$('.meal-tab').forEach(b=>b.addEventListener('click',()=>setMealTab(b.dataset.mealTab)));
+DATA = Path(os.getenv('XROB_DATA_DIR', '/config'))
+DATA.mkdir(parents=True, exist_ok=True)
+DB = DATA / 'xrob_assistant.db'
+WWW = Path(__file__).resolve().parent / 'www'
+TOKEN = os.getenv('XROB_TELEGRAM_TOKEN', '').strip()
+ALLOWED_CHAT = os.getenv('XROB_TELEGRAM_CHAT_ID', '').strip()
 
-$('#daily-meal-generate-form').addEventListener('submit',async e=>{e.preventDefault();try{const f=new FormData(e.target);const result=await api('daily-meals/generate',{method:'POST',body:JSON.stringify({data:{days:Number(f.get('days')),start_date:today}})});$('#daily-meal-status').textContent=`${result.created} new plate(s) added. Planned ${result.meals.length} date(s) in this range.`;toast(result.message||'Meal plan updated');refresh()}catch(err){toast(err.message)}});
-async function buildShoppingList(){try{const future=(cache.daily_meals||[]).filter(x=>x.plan_date>=today).map(x=>x.plan_date).sort();if(!future.length)throw Error('Generate your meal plan first.');const data=await api('meals/shopping-list',{method:'POST',body:JSON.stringify({data:{start_date:today,end_date:future[future.length-1]}})});toast(`${data.new_items} new shopping item(s) added`);setMealTab('shopping');refresh()}catch(err){toast(err.message)}}
-$('#plan-to-shopping').addEventListener('click',buildShoppingList);
-$('#shopping-add-form').addEventListener('submit',async e=>{e.preventDefault();try{const f=new FormData(e.target);await api('shopping_items',{method:'POST',body:JSON.stringify({data:{name:f.get('name'),source:'manual'}})});e.target.reset();toast('Item added');refresh()}catch(err){toast(err.message)}});
-$('#shopping-list').addEventListener('change',async e=>{const input=e.target.closest('[data-shopping-check]');if(!input)return;try{await api(`shopping_items/${input.dataset.shoppingCheck}`,{method:'PATCH',body:JSON.stringify({data:{checked:input.checked?1:0}})});refresh()}catch(err){toast(err.message)}});
-$('#clear-bought-items').addEventListener('click',async()=>{const bought=(cache.shopping_items||[]).filter(i=>Number(i.checked));if(!bought.length){toast('No checked items to clear');return}if(!confirm(`Remove ${bought.length} checked item(s) from the list?`))return;try{await Promise.all(bought.map(i=>api(`shopping_items/${i.id}`,{method:'DELETE'})));toast('Checked items cleared');refresh()}catch(err){toast(err.message)}});
-async function confirmMeal(id,decision){try{await api(`daily-meals/${id}/confirm`,{method:'POST',body:JSON.stringify({data:{decision}})});toast(decision==='yes'?'Plate confirmed':'Plate and following days moved');refresh()}catch(err){toast(err.message)}}
-document.addEventListener('click',e=>{const edit=e.target.closest('[data-edit-recipe]');if(edit){const recipe=(cache.recipes||[]).find(r=>r.id===Number(edit.dataset.editRecipe));if(recipe)openRecipeModal(recipe)}const confirm=e.target.closest('[data-meal-confirm]');if(confirm)confirmMeal(Number(confirm.dataset.mealConfirm),confirm.dataset.mealDecision);const generate=e.target.closest('[data-generate-today]');if(generate){api('daily-meals/generate',{method:'POST',body:JSON.stringify({data:{days:7,start_date:today}})}).then(result=>{toast(result.message||'Meal plan generated');refresh()}).catch(err=>toast(err.message))}});
-$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);refresh();setInterval(refresh,60000);
+SCHEMA = '''
+CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL, due_date TEXT, due_time TEXT, priority TEXT DEFAULT 'normal', status TEXT DEFAULT 'open', category TEXT DEFAULT 'general', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS weights (id INTEGER PRIMARY KEY, date TEXT NOT NULL, kg REAL NOT NULL, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS workouts (id INTEGER PRIMARY KEY, date TEXT NOT NULL, name TEXT NOT NULL, duration_min INTEGER DEFAULT 0, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS workout_plan (id INTEGER PRIMARY KEY, weekday TEXT NOT NULL, name TEXT NOT NULL, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS exercises (id INTEGER PRIMARY KEY, workout_id INTEGER NOT NULL, name TEXT NOT NULL, sets INTEGER DEFAULT 0, reps TEXT DEFAULT '', weight_kg REAL DEFAULT 0, FOREIGN KEY(workout_id) REFERENCES workouts(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS treadmill (id INTEGER PRIMARY KEY, date TEXT NOT NULL, duration_min REAL DEFAULT 0, distance_km REAL DEFAULT 0, speed_kmh REAL DEFAULT 0, incline REAL DEFAULT 0, calories_kcal REAL DEFAULT 0, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS bills (id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_mad REAL DEFAULT 0, due_date TEXT NOT NULL, recurrence TEXT DEFAULT 'none', reminder_days INTEGER DEFAULT 3, status TEXT DEFAULT 'unpaid', paid_at TEXT, notes TEXT DEFAULT '', recurrence_day INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, name TEXT NOT NULL, expiry_date TEXT NOT NULL, reminder_days INTEGER DEFAULT 30, reference TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', routine_time TEXT DEFAULT '10:00', routine_late_time TEXT DEFAULT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS routine_logs (id INTEGER PRIMARY KEY, routine_id INTEGER NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS notification_log (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, item_id INTEGER NOT NULL, reminder_date TEXT NOT NULL, UNIQUE(kind,item_id,reminder_date));
+CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS telegram_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS recipes (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL, meal_type TEXT NOT NULL DEFAULT 'any', cuisine TEXT DEFAULT '',
+ prep_min INTEGER DEFAULT 0, cook_min INTEGER DEFAULT 0, servings REAL DEFAULT 2, difficulty TEXT DEFAULT 'easy',
+ ingredients_json TEXT NOT NULL DEFAULT '[]', instructions TEXT DEFAULT '', dietary_tags TEXT DEFAULT '',
+ calories_kcal REAL, protein_g REAL, carbs_g REAL, fat_g REAL, source_url TEXT DEFAULT '', notes TEXT DEFAULT '',
+ favorite INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, eating_interval_days INTEGER NOT NULL DEFAULT 1, batch_plates INTEGER NOT NULL DEFAULT 7,
+ created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_recipes_meal_type ON recipes(meal_type);
+CREATE TABLE IF NOT EXISTS meal_plans (
+ id INTEGER PRIMARY KEY, plan_date TEXT NOT NULL, meal_type TEXT NOT NULL, recipe_id INTEGER,
+ servings REAL NOT NULL DEFAULT 2, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(plan_date, meal_type), FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_meal_plans_date ON meal_plans(plan_date);
+CREATE TABLE IF NOT EXISTS shopping_items (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL, quantity REAL DEFAULT 1, unit TEXT DEFAULT '',
+ category TEXT DEFAULT 'Other', checked INTEGER DEFAULT 0, source TEXT DEFAULT 'manual', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_shopping_checked ON shopping_items(checked, category, name);
+CREATE TABLE IF NOT EXISTS meal_batches (
+ id INTEGER PRIMARY KEY, recipe_id INTEGER NOT NULL, start_date TEXT NOT NULL, plates_total INTEGER NOT NULL, plates_scheduled INTEGER NOT NULL DEFAULT 0,
+ eating_interval_days INTEGER NOT NULL DEFAULT 1, last_scheduled_date TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_meal_batches_active ON meal_batches(recipe_id, plates_scheduled, plates_total);
+CREATE TABLE IF NOT EXISTS daily_meals (
+ id INTEGER PRIMARY KEY, plan_date TEXT NOT NULL UNIQUE, recipe_id INTEGER NOT NULL, batch_id INTEGER, status TEXT NOT NULL DEFAULT 'pending',
+ notified_date TEXT, confirmed_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE RESTRICT, FOREIGN KEY(batch_id) REFERENCES meal_batches(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_meals_date ON daily_meals(plan_date, status);
+CREATE TRIGGER IF NOT EXISTS weights_no_duplicate_date_insert BEFORE INSERT ON weights WHEN EXISTS (SELECT 1 FROM weights WHERE date=NEW.date) BEGIN SELECT RAISE(ABORT, 'weight date already exists'); END;
+CREATE TRIGGER IF NOT EXISTS weights_no_duplicate_date_update BEFORE UPDATE OF date ON weights WHEN EXISTS (SELECT 1 FROM weights WHERE date=NEW.date AND id!=NEW.id) BEGIN SELECT RAISE(ABORT, 'weight date already exists'); END;
+'''
+
+@contextmanager
+def connect():
+    c = sqlite3.connect(DB, timeout=15)
+    c.row_factory = sqlite3.Row
+    c.execute('PRAGMA foreign_keys=ON')
+    c.execute('PRAGMA busy_timeout=15000')
+    try:
+        yield c
+    except Exception:
+        c.rollback()
+        raise
+    else:
+        c.commit()
+    finally:
+        c.close()
+
+def init_db():
+    with connect() as c:
+        c.executescript(SCHEMA)
+        # Add the optional task time column to databases created by earlier versions.
+        recipe_columns = {r['name'] for r in c.execute('PRAGMA table_info(recipes)').fetchall()}
+        if 'eating_interval_days' not in recipe_columns:
+            c.execute('ALTER TABLE recipes ADD COLUMN eating_interval_days INTEGER NOT NULL DEFAULT 1')
+        if 'batch_plates' not in recipe_columns:
+            c.execute('ALTER TABLE recipes ADD COLUMN batch_plates INTEGER NOT NULL DEFAULT 7')
+        # Meal Manager 0.4.0 adds a single-plate-per-day schedule. The older
+        # meal_plans table is retained so historical 0.3.0 data is not lost.
+        c.execute('''CREATE TABLE IF NOT EXISTS meal_batches (
+            id INTEGER PRIMARY KEY, recipe_id INTEGER NOT NULL, start_date TEXT NOT NULL,
+            plates_total INTEGER NOT NULL, plates_scheduled INTEGER NOT NULL DEFAULT 0,
+            eating_interval_days INTEGER NOT NULL DEFAULT 1, last_scheduled_date TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE CASCADE)''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_meal_batches_active ON meal_batches(recipe_id, plates_scheduled, plates_total)')
+        c.execute('''CREATE TABLE IF NOT EXISTS daily_meals (
+            id INTEGER PRIMARY KEY, plan_date TEXT NOT NULL UNIQUE, recipe_id INTEGER NOT NULL, batch_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'pending', notified_date TEXT, confirmed_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE RESTRICT,
+            FOREIGN KEY(batch_id) REFERENCES meal_batches(id) ON DELETE SET NULL)''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_daily_meals_date ON daily_meals(plan_date, status)')
+        task_columns = {r['name'] for r in c.execute('PRAGMA table_info(tasks)').fetchall()}
+        if 'due_time' not in task_columns:
+            c.execute('ALTER TABLE tasks ADD COLUMN due_time TEXT')
+        bill_columns = {r['name'] for r in c.execute('PRAGMA table_info(bills)').fetchall()}
+        if 'recurrence_day' not in bill_columns:
+            c.execute('ALTER TABLE bills ADD COLUMN recurrence_day INTEGER')
+        routine_columns = {r['name'] for r in c.execute('PRAGMA table_info(routines)').fetchall()}
+        if 'routine_time' not in routine_columns:
+            c.execute("ALTER TABLE routines ADD COLUMN routine_time TEXT DEFAULT '10:00'")
+        if 'routine_late_time' not in routine_columns:
+            c.execute("ALTER TABLE routines ADD COLUMN routine_late_time TEXT DEFAULT NULL")
+        # In 0.1.11, 12:00 was automatically populated for every routine.
+        # Convert those generated defaults to NULL so late reminders are opt-in.
+        # Preserve any other time that the user may have deliberately selected.
+        late_opt_in_migration = c.execute("SELECT 1 FROM app_migrations WHERE name='routine_late_reminder_optional_v1'").fetchone()
+        if not late_opt_in_migration:
+            c.execute("UPDATE routines SET routine_late_time=NULL WHERE routine_late_time='12:00'")
+            c.execute("INSERT INTO app_migrations(name) VALUES('routine_late_reminder_optional_v1')")
+        # Starter routines are inserted only once.
+        if c.execute('SELECT COUNT(*) FROM routines').fetchone()[0] == 0:
+            today = date.today().isoformat()
+            for name, days, cat in [('Nail care',15,'personal care'),('Haircut',30,'personal care'),('Shower',1,'hygiene')]:
+                c.execute('INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,?,?,?,?,?,?)', (name,days,None,today,cat,'10:00',None))
+        # Add a daily Weight check once during this upgrade so the scheduled/late
+        # reminder flow works immediately; users can later edit or delete it.
+        weight_seed = c.execute("SELECT 1 FROM app_migrations WHERE name='seed_weight_check_routine_v1'").fetchone()
+        if not weight_seed:
+            has_weight = c.execute("SELECT 1 FROM routines WHERE lower(name) LIKE '%weight%' OR lower(name) LIKE '%weigh%' LIMIT 1").fetchone()
+            if not has_weight:
+                c.execute("INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,1,NULL,?,'health','10:00',NULL)", ('Weight check', date.today().isoformat()))
+            c.execute("INSERT INTO app_migrations(name) VALUES('seed_weight_check_routine_v1')")
+        # Add a daily Treadmill check only once, unless the user already has a
+        # routine whose name identifies treadmill activity. Logging a treadmill
+        # session will automatically check this routine for that session's date.
+        treadmill_seed = c.execute("SELECT 1 FROM app_migrations WHERE name='seed_treadmill_check_routine_v1'").fetchone()
+        if not treadmill_seed:
+            has_treadmill = c.execute("SELECT 1 FROM routines WHERE lower(name) LIKE '%treadmill%' LIMIT 1").fetchone()
+            if not has_treadmill:
+                c.execute("INSERT INTO routines(name,interval_days,last_done,next_due,category,routine_time,routine_late_time) VALUES(?,1,NULL,?,'fitness','10:00',NULL)", ('Treadmill check', date.today().isoformat()))
+            c.execute("INSERT INTO app_migrations(name) VALUES('seed_treadmill_check_routine_v1')")
+
+def rows(sql, params=()):
+    with connect() as c: return [dict(r) for r in c.execute(sql, params).fetchall()]
+def one(sql, params=()):
+    with connect() as c:
+        r=c.execute(sql,params).fetchone(); return dict(r) if r else None
+
+class Payload(BaseModel):
+    data: dict[str, Any] = Field(default_factory=dict)
+
+TABLES = {
+ 'events': ('events', ['title','start_at','end_at','category','notes']),
+ 'tasks': ('tasks', ['title','due_date','due_time','priority','status','category','notes']),
+ 'weights': ('weights', ['date','kg','notes']),
+ 'workouts': ('workouts', ['date','name','notes']),
+ 'workout_plan': ('workout_plan', ['weekday','name','notes']),
+ 'treadmill': ('treadmill', ['date','duration_min','distance_km','speed_kmh','incline','calories_kcal','notes']),
+ 'bills': ('bills', ['name','amount_mad','due_date','recurrence','reminder_days','status','paid_at','notes']),
+ 'documents': ('documents', ['name','expiry_date','reminder_days','reference','notes']),
+ 'routines': ('routines', ['name','interval_days','last_done','next_due','category','notes','routine_time','routine_late_time']),
+ 'recipes': ('recipes', ['name','calories_kcal','ingredients_json','eating_interval_days','batch_plates']),
+ 'meal_plans': ('meal_plans', ['plan_date','meal_type','recipe_id','servings','notes']),
+ 'daily_meals': ('daily_meals', ['plan_date','recipe_id','batch_id','status','notified_date','confirmed_at']),
+ 'shopping_items': ('shopping_items', ['name','checked','source']),
+}
+
+@asynccontextmanager
+async def lifespan(app):
+    init_db()
+    background = []
+    if TOKEN and ALLOWED_CHAT:
+        background = [asyncio.create_task(telegram_poll()), asyncio.create_task(reminder_loop())]
+    elif TOKEN:
+        print('Telegram bot token is set but allowed chat ID is empty; bot disabled for safety.', flush=True)
+    try:
+        yield
+    finally:
+        for task in background:
+            task.cancel()
+        if background:
+            await asyncio.gather(*background, return_exceptions=True)
+
+app = FastAPI(title='XROB Assistant API', version='0.4.0', lifespan=lifespan, docs_url=None, redoc_url=None)
+app.mount('/static', StaticFiles(directory=WWW), name='static')
+
+@app.get('/')
+def home(): return FileResponse(WWW/'index.html')
+@app.get('/api/health')
+def health():
+    try:
+        with connect() as c: c.execute('SELECT 1').fetchone()
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.0','database':'connected'}
+    except Exception as exc:
+        raise HTTPException(503, f'Database check failed: {exc}')
+
+@app.get('/api/{resource}')
+def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
+    if resource == 'summary': return summary()
+    if resource not in TABLES: raise HTTPException(404,'Unknown resource')
+    table,_=TABLES[resource]
+    if resource == 'meal_plans':
+        return rows('''SELECT mp.*, r.name AS recipe_name, r.meal_type AS recipe_category, r.prep_min, r.cook_min
+                       FROM meal_plans mp LEFT JOIN recipes r ON r.id=mp.recipe_id
+                       ORDER BY mp.plan_date, CASE mp.meal_type WHEN 'breakfast' THEN 1 WHEN 'lunch' THEN 2 WHEN 'dinner' THEN 3 ELSE 4 END, mp.id LIMIT ?''', (limit,))
+    if resource == 'daily_meals':
+        return rows('''SELECT dm.*, r.name AS recipe_name, r.calories_kcal, r.ingredients_json,
+                              r.eating_interval_days, r.batch_plates
+                       FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                       ORDER BY dm.plan_date, dm.id LIMIT ?''', (limit,))
+    if resource == 'recipes':
+        result = rows('''SELECT id,name,calories_kcal,eating_interval_days,batch_plates,ingredients_json,created_at
+                        FROM recipes ORDER BY name COLLATE NOCASE LIMIT ?''', (limit,))
+        for item in result:
+            item['ingredients'] = _recipe_ingredient_names(item.pop('ingredients_json', '[]'))
+        return result
+    if resource == 'shopping_items':
+        return rows('SELECT id,name,checked,source FROM shopping_items ORDER BY checked, name COLLATE NOCASE, id DESC LIMIT ?', (limit,))
+    return rows(f'SELECT * FROM {table} ORDER BY id DESC LIMIT ?', (limit,))
+
+MEAL_TYPES = ('breakfast', 'lunch', 'dinner', 'snack')
+MEAL_CATEGORIES = {'produce': 'Produce', 'fruit': 'Produce', 'vegetable': 'Produce', 'meat': 'Meat & seafood', 'fish': 'Meat & seafood', 'seafood': 'Meat & seafood', 'dairy': 'Dairy & eggs', 'egg': 'Dairy & eggs', 'eggs': 'Dairy & eggs', 'bread': 'Bakery', 'grain': 'Grains & pasta', 'pasta': 'Grains & pasta', 'rice': 'Grains & pasta', 'spice': 'Spices & seasonings', 'oil': 'Oils & condiments'}
+
+INGREDIENT_AISLES = {
+    'Produce': ('tomato','onion','garlic','potato','carrot','cucumber','lettuce','spinach','pepper','zucchini','courgette','eggplant','aubergine','broccoli','cauliflower','lemon','lime','orange','apple','banana','parsley','cilantro','coriander leaves','mint','ginger','mushroom','avocado'),
+    'Meat & seafood': ('chicken','beef','lamb','meat','turkey','fish','salmon','tuna','shrimp','prawn','sausage','mince','bacon'),
+    'Dairy & eggs': ('milk','cheese','yogurt','yoghurt','butter','cream','egg','mozzarella','feta'),
+    'Bakery': ('bread','pita','baguette','bun','croissant','tortilla'),
+    'Grains & pasta': ('rice','pasta','noodle','spaghetti','couscous','flour','oat','quinoa','semolina'),
+    'Pantry & canned': ('chickpea','lentil','bean','canned','can of','tomato paste','stock','broth','sugar','honey'),
+    'Spices & seasonings': ('salt','cumin','paprika','turmeric','cinnamon','peppercorn','chili powder','chilli powder','saffron','oregano','thyme','curry','seasoning'),
+    'Oils & condiments': ('oil','vinegar','mayonnaise','mustard','soy sauce','ketchup','harissa','sauce')
+}
+
+def _ingredient_category(name: str, fallback: str = 'Other') -> str:
+    low = str(name or '').lower()
+    # Protect common spice names from the produce keyword "pepper".
+    if any(term in low for term in ('black pepper', 'white pepper', 'peppercorn', 'pepper powder')):
+        return 'Spices & seasonings'
+    if 'bell pepper' in low or 'sweet pepper' in low:
+        return 'Produce'
+    for aisle, keywords in INGREDIENT_AISLES.items():
+        # Accept common plural spellings (onion/onions, tomato/tomatoes,
+        # chickpea/chickpeas) so aisle grouping stays useful for natural entries.
+        if any(re.search(rf'\b{re.escape(word)}(?:s|es)?\b', low) for word in keywords):
+            return aisle
+    return fallback or 'Other'
+
+
+def _decode_ingredients(raw: Any) -> list[dict]:
+    try:
+        value = json.loads(raw or '[]') if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    return value if isinstance(value, list) else []
+
+def _clean_ingredient_name(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get('name', '')
+    text = str(value or '').strip().lstrip('-•').strip()
+    if not text:
+        return ''
+    try:
+        parsed = _parse_ingredient_line(text)
+        text = parsed.get('name', text) if parsed else text
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return re.sub(r'\s+', ' ', text).strip(' ,;')[:120]
+
+
+def _recipe_ingredient_names(raw: Any) -> list[str]:
+    names = []
+    for item in _decode_ingredients(raw):
+        name = _clean_ingredient_name(item)
+        if name and _ingredient_key(name) not in {_ingredient_key(x) for x in names}:
+            names.append(name)
+    return names
+
+
+def _parse_quantity(value: str) -> float:
+    value = str(value or '').strip().replace(',', '.')
+    fractions = {'½': 0.5, '⅓': 1/3, '⅔': 2/3, '¼': 0.25, '¾': 0.75, '⅛': 0.125}
+    if value in fractions:
+        return fractions[value]
+    if '/' in value:
+        a, b = value.split('/', 1)
+        return float(a) / float(b)
+    return float(value)
+
+
+def _parse_ingredient_line(line: str) -> dict | None:
+    text = str(line or '').strip().lstrip('-•').strip()
+    if not text:
+        return None
+    pattern = r'^(?P<qty>\d+(?:[.,]\d+)?|\d+\/\d+|[½⅓⅔¼¾⅛])\s*(?P<unit>kg|g|mg|l|ml|cl|tbsp|tbsps|tablespoons?|tsp|tsps|teaspoons?|cups?|pcs?|pieces?|cloves?|slices?|cans?|packs?|pinch(?:es)?|bunch(?:es)?)?\s+(?P<name>.+)$'
+    match = re.match(pattern, text, re.I)
+    if match:
+        qty = _parse_quantity(match.group('qty'))
+        unit = (match.group('unit') or '').lower()
+        name = match.group('name').strip()
+    else:
+        qty, unit, name = 1.0, '', text
+    if qty <= 0 or not name:
+        raise ValueError(f'Invalid ingredient: {text}')
+    unit_map = {'tbsps':'tbsp','tablespoon':'tbsp','tablespoons':'tbsp','tsps':'tsp','teaspoon':'tsp','teaspoons':'tsp','piece':'pcs','pc':'pcs','clove':'cloves','slice':'slices','can':'cans','pack':'packs','bunch':'bunches','pinch':'pinches'}
+    unit = unit_map.get(unit, unit)
+    category = _ingredient_category(name)
+    return {'name': name, 'quantity': round(qty, 3), 'unit': unit, 'category': category}
+
+
+def _normalize_unit(quantity: float, unit: str) -> tuple[float, str]:
+    unit = (unit or '').strip().lower()
+    if unit == 'kg': return quantity * 1000, 'g'
+    if unit in ('l', 'cl'): return quantity * (1000 if unit == 'l' else 10), 'ml'
+    if unit == 'mg': return quantity / 1000, 'g'
+    if unit in ('piece', 'pc'): return quantity, 'pcs'
+    return quantity, unit
+
+
+def _ingredient_key(name: str) -> str:
+    return re.sub(r'\s+', ' ', re.sub(r'[\W_]+', ' ', str(name or '').lower(), flags=re.UNICODE)).strip()
+
+
+def _suggest_meals(days: int, meal_types: list[str], start_date: date, dietary: str = '', exclude: str = '', max_prep: int | None = None) -> list[dict]:
+    recipes = rows('SELECT * FROM recipes ORDER BY favorite DESC, name COLLATE NOCASE')
+    if not recipes:
+        return []
+    meal_types = [x for x in meal_types if x in MEAL_TYPES]
+    if not meal_types:
+        raise ValueError('Choose at least one meal type.')
+    excluded = {_ingredient_key(x) for x in re.split(r'[,;\n]+', exclude) if _ingredient_key(x)}
+    diet_terms = {_ingredient_key(x) for x in re.split(r'[,;]+', dietary) if _ingredient_key(x)}
+    recent_rows = rows('SELECT recipe_id, meal_type, COUNT(*) AS uses FROM meal_plans WHERE plan_date>=? GROUP BY recipe_id, meal_type', ((start_date - timedelta(days=14)).isoformat(),))
+    recent = {(int(x['recipe_id']), x['meal_type']): int(x['uses']) for x in recent_rows if x['recipe_id'] is not None}
+    result = []
+    used_in_plan: set[int] = set()
+    for offset in range(days):
+        day = start_date + timedelta(days=offset)
+        for meal_type in meal_types:
+            candidates = []
+            for recipe in recipes:
+                category = (recipe.get('meal_type') or 'any').lower()
+                if category not in (meal_type, 'any', 'all'):
+                    continue
+                prep_total = int(recipe.get('prep_min') or 0) + int(recipe.get('cook_min') or 0)
+                if max_prep and prep_total > max_prep:
+                    continue
+                ingredients = _decode_ingredients(recipe.get('ingredients_json'))
+                if excluded and any(any(term in _ingredient_key(i.get('name', '')) for term in excluded) for i in ingredients):
+                    continue
+                tags = {_ingredient_key(x) for x in re.split(r'[,;]+', recipe.get('dietary_tags') or '') if _ingredient_key(x)}
+                if diet_terms and not diet_terms.issubset(tags):
+                    continue
+                used = int(recipe['id']) in used_in_plan
+                recent_uses = recent.get((int(recipe['id']), meal_type), 0)
+                exact_match = 0 if category == meal_type else 1
+                candidates.append(((used, recent_uses, exact_match, -int(recipe.get('favorite') or 0), prep_total, str(recipe['name']).lower()), recipe))
+            if not candidates:
+                continue
+            candidates.sort(key=lambda pair: pair[0])
+            # Randomize equally-ranked candidates so repeated plans don't always favor
+            # the same alphabetically-first recipe when other signals are equal.
+            best_key = candidates[0][0][:5]
+            tied = [r for key, r in candidates if key[:5] == best_key]
+            chosen = random.choice(tied)
+            used_in_plan.add(int(chosen['id']))
+            result.append({'plan_date': day.isoformat(), 'meal_type': meal_type, 'recipe_id': int(chosen['id']),
+                           'recipe_name': chosen['name'], 'servings': float(chosen.get('servings') or 2),
+                           'reason': ('Matches your ' + meal_type + ' preference') if chosen.get('meal_type') == meal_type else 'Flexible recipe; fits this meal slot'})
+    return result
+
+
+@app.post('/api/meals/suggest')
+def suggest_meals(payload: Payload):
+    data = payload.data
+    try:
+        days_raw = data.get('days', 1)
+        days = int(days_raw)
+        if float(days_raw) != days or not 1 <= days <= 30: raise ValueError()
+        start = date.fromisoformat(str(data.get('start_date') or date.today().isoformat()))
+        max_prep_raw = data.get('max_prep')
+        max_prep = int(max_prep_raw) if max_prep_raw not in (None, '', 0, '0') else None
+        if max_prep is not None and (float(max_prep_raw) != max_prep or not 1 <= max_prep <= 1440): raise ValueError()
+    except (TypeError, ValueError):
+        raise HTTPException(400, 'Choose 1–30 days, a valid start date and a valid maximum preparation time.')
+    meal_types = data.get('meal_types') or ['lunch', 'dinner']
+    if not isinstance(meal_types, list) or any(x not in MEAL_TYPES for x in meal_types):
+        raise HTTPException(400, 'Choose valid meal types.')
+    meal_types = list(dict.fromkeys(meal_types))
+    try:
+        suggestions = _suggest_meals(days, meal_types, start, str(data.get('dietary') or ''), str(data.get('exclude') or ''), max_prep)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    expected = days * len(meal_types)
+    return {'suggestions': suggestions, 'requested': expected, 'suggested': len(suggestions), 'missing': expected - len(suggestions)}
+
+
+@app.post('/api/meals/apply')
+def apply_meal_suggestions(payload: Payload):
+    data = payload.data
+    plan = data.get('plan') or []
+    replace_value = data.get('replace_existing', False)
+    replace_existing = replace_value is True or str(replace_value).strip().lower() in ('1', 'true', 'yes', 'on')
+    if not isinstance(plan, list) or not plan:
+        raise HTTPException(400, 'There are no meal suggestions to save.')
+    clean = []
+    seen_slots = set()
+    for item in plan:
+        if not isinstance(item, dict): continue
+        try:
+            day = date.fromisoformat(str(item.get('plan_date')))
+            meal_type = str(item.get('meal_type'))
+            recipe_id = int(item.get('recipe_id'))
+            servings = float(item.get('servings', 2))
+            if meal_type not in MEAL_TYPES or not 0.25 <= servings <= 100: raise ValueError()
+            if (day.isoformat(), meal_type) in seen_slots: raise ValueError()
+            seen_slots.add((day.isoformat(), meal_type))
+            if not one('SELECT id FROM recipes WHERE id=?', (recipe_id,)): raise ValueError()
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'A suggested meal contains an invalid date, category, recipe or serving count.')
+        clean.append((day.isoformat(), meal_type, recipe_id, servings, str(item.get('notes') or '')[:1000]))
+    if not clean: raise HTTPException(400, 'No valid meal suggestions were supplied.')
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        for day, meal_type, recipe_id, servings, notes in clean:
+            existing = c.execute('SELECT id FROM meal_plans WHERE plan_date=? AND meal_type=?', (day, meal_type)).fetchone()
+            if existing and not replace_existing:
+                raise HTTPException(409, f'A {meal_type} is already planned for {day}. Choose replace existing to overwrite it.')
+            c.execute('''INSERT INTO meal_plans(plan_date,meal_type,recipe_id,servings,notes) VALUES(?,?,?,?,?)
+                         ON CONFLICT(plan_date,meal_type) DO UPDATE SET recipe_id=excluded.recipe_id, servings=excluded.servings, notes=excluded.notes''',
+                      (day, meal_type, recipe_id, servings, notes))
+    return {'saved': len(clean)}
+
+
+def _generate_daily_meals(days: int, start: date) -> dict:
+    if not 1 <= int(days) <= 90:
+        raise ValueError('Choose between 1 and 90 days.')
+    if start < date.today():
+        raise ValueError('The meal plan cannot start in the past. Choose today or a future date.')
+    created = []
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        recipes = c.execute('SELECT id,eating_interval_days,batch_plates FROM recipes ORDER BY name COLLATE NOCASE').fetchall()
+        if not recipes:
+            return {'created': 0, 'meals': [], 'message': 'Add at least one meal first.'}
+        for recipe in recipes:
+            recipe_id = int(recipe['id'])
+            active = c.execute('SELECT 1 FROM meal_batches WHERE recipe_id=? AND plates_scheduled<plates_total LIMIT 1', (recipe_id,)).fetchone()
+            pending = c.execute("SELECT 1 FROM daily_meals WHERE recipe_id=? AND status='pending' LIMIT 1", (recipe_id,)).fetchone()
+            if not active and not pending:
+                c.execute('INSERT INTO meal_batches(recipe_id,start_date,plates_total,eating_interval_days) VALUES(?,?,?,?)',
+                          (recipe_id, start.isoformat(), int(recipe['batch_plates'] or 1), int(recipe['eating_interval_days'] or 1)))
+        for offset in range(int(days)):
+            day_iso = (start + timedelta(days=offset)).isoformat()
+            if c.execute('SELECT 1 FROM daily_meals WHERE plan_date=?', (day_iso,)).fetchone():
+                continue
+            eligible = c.execute('''SELECT b.*,r.name AS recipe_name,r.calories_kcal
+                                    FROM meal_batches b JOIN recipes r ON r.id=b.recipe_id
+                                    WHERE b.plates_scheduled<b.plates_total
+                                      AND (b.last_scheduled_date IS NULL OR date(b.last_scheduled_date, '+' || b.eating_interval_days || ' day')<=?)
+                                    ORDER BY COALESCE(b.last_scheduled_date,'0001-01-01'), b.plates_scheduled, b.id''', (day_iso,)).fetchall()
+            if not eligible:
+                continue
+            batch = eligible[0]
+            cur = c.execute("INSERT INTO daily_meals(plan_date,recipe_id,batch_id,status) VALUES(?,?,?,'pending')",
+                            (day_iso, int(batch['recipe_id']), int(batch['id'])))
+            c.execute('UPDATE meal_batches SET plates_scheduled=plates_scheduled+1,last_scheduled_date=? WHERE id=?', (day_iso, int(batch['id'])))
+            created.append({'id': int(cur.lastrowid), 'plan_date': day_iso, 'recipe_id': int(batch['recipe_id']),
+                            'recipe_name': batch['recipe_name'], 'calories_kcal': batch['calories_kcal'], 'status': 'pending'})
+        meals = [dict(r) for r in c.execute('''SELECT dm.*,r.name AS recipe_name,r.calories_kcal,r.ingredients_json
+                                               FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                                               WHERE dm.plan_date BETWEEN ? AND ? ORDER BY dm.plan_date''',
+                                            (start.isoformat(), (start+timedelta(days=days-1)).isoformat())).fetchall()]
+    for meal in meals:
+        meal['ingredients'] = _recipe_ingredient_names(meal.pop('ingredients_json', '[]'))
+    return {'created': len(created), 'meals': meals, 'message': f'{len(created)} daily plate(s) planned.'}
+
+
+def _confirm_daily_meal(meal_id: int, eaten: bool) -> dict:
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        meal = c.execute('SELECT * FROM daily_meals WHERE id=?', (meal_id,)).fetchone()
+        if not meal:
+            raise ValueError('Meal not found.')
+        if meal['status'] != 'pending':
+            return {**dict(meal), 'shift_days': 0}
+        if eaten:
+            c.execute("UPDATE daily_meals SET status='eaten',confirmed_at=?,notified_date=? WHERE id=?",
+                      (datetime.now().isoformat(timespec='seconds'), date.today().isoformat(), meal_id))
+        else:
+            old_day = date.fromisoformat(meal['plan_date'])
+            destination = max(old_day + timedelta(days=1), date.today() + timedelta(days=1))
+            delta = (destination - old_day).days
+            later = c.execute('SELECT id,plan_date,batch_id FROM daily_meals WHERE plan_date>? ORDER BY plan_date DESC,id DESC',
+                              (old_day.isoformat(),)).fetchall()
+            shifted_batches = {int(row['batch_id']) for row in later if row['batch_id'] is not None}
+            if meal['batch_id'] is not None:
+                shifted_batches.add(int(meal['batch_id']))
+            for row in later:
+                shifted = date.fromisoformat(row['plan_date']) + timedelta(days=delta)
+                c.execute('UPDATE daily_meals SET plan_date=?,notified_date=NULL WHERE id=?', (shifted.isoformat(), int(row['id'])))
+            c.execute('UPDATE daily_meals SET plan_date=?,notified_date=NULL WHERE id=?', (destination.isoformat(), meal_id))
+            for batch_id in shifted_batches:
+                c.execute('''UPDATE meal_batches SET last_scheduled_date=date(last_scheduled_date, '+' || ? || ' day')
+                             WHERE id=? AND last_scheduled_date>=?''', (delta, batch_id, old_day.isoformat()))
+        updated = c.execute('SELECT * FROM daily_meals WHERE id=?', (meal_id,)).fetchone()
+        return {**dict(updated), 'shift_days': 0 if eaten else delta}
+
+
+@app.post('/api/daily-meals/generate')
+def generate_daily_meals(payload: Payload):
+    data = payload.data
+    try:
+        days_raw = data.get('days', 7)
+        days = int(days_raw)
+        if float(days_raw) != days:
+            raise ValueError('Choose a whole number of days.')
+        start = date.fromisoformat(str(data.get('start_date') or date.today().isoformat()))
+        return _generate_daily_meals(days, start)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc) or 'Enter a valid meal planning range.')
+
+
+@app.post('/api/daily-meals/{meal_id}/confirm')
+def confirm_daily_meal(meal_id: int, payload: Payload):
+    decision = str(payload.data.get('decision') or '').lower()
+    if decision not in ('yes', 'no', 'eaten', 'not_today'):
+        raise HTTPException(400, 'Decision must be yes or no.')
+    try:
+        return _confirm_daily_meal(meal_id, decision in ('yes', 'eaten'))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.post('/api/meals/shopping-list')
+def add_meal_ingredients_to_shopping(payload: Payload):
+    data = payload.data
+    start = validate_date_field(data.get('start_date') or date.today().isoformat(), 'Start date')
+    end = validate_date_field(data.get('end_date') or (date.today()+timedelta(days=30)).isoformat(), 'End date')
+    if not start or not end or end < start or (date.fromisoformat(end)-date.fromisoformat(start)).days > 89:
+        raise HTTPException(400, 'Choose a valid shopping-list date range (maximum 90 days).')
+    meal_rows = rows('''SELECT r.ingredients_json FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                        WHERE dm.plan_date BETWEEN ? AND ?''', (start, end))
+    names = {}
+    for meal in meal_rows:
+        for name in _recipe_ingredient_names(meal.get('ingredients_json')):
+            names.setdefault(_ingredient_key(name), name)
+    if not names:
+        raise HTTPException(400, 'No ingredients found in the planned meals for this date range.')
+    added = 0
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        existing = {_ingredient_key(r['name']) for r in c.execute('SELECT name FROM shopping_items WHERE checked=0').fetchall()}
+        for key, name in names.items():
+            if key in existing:
+                continue
+            c.execute("INSERT INTO shopping_items(name,quantity,unit,category,checked,source) VALUES(?,1,'','',0,'meal plan')", (name,))
+            existing.add(key)
+            added += 1
+    return {'items_processed': len(names), 'new_items': added, 'meals': len(meal_rows), 'idempotent': True}
+
+
+def validate_clock_time(value: Any, label: str) -> str | None:
+    value = str(value or '').strip()
+    if not value:
+        return None
+    if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', value):
+        raise HTTPException(400, f'{label} must use 24-hour HH:MM time (00:00–23:59).')
+    return value
+
+def validate_task_schedule(data: dict[str, Any], existing: dict[str, Any] | None = None) -> None:
+    existing = existing or {}
+    if 'due_time' in data:
+        value = str(data.get('due_time') or '').strip()
+        if value:
+            if not data.get('due_date', existing.get('due_date')):
+                raise HTTPException(400, 'Choose a due date before setting a reminder time.')
+            data['due_time'] = validate_clock_time(value, 'Task reminder time')
+        else:
+            data['due_time'] = None
+
+def validate_routine_schedule(data: dict[str, Any], existing: dict[str, Any] | None = None) -> None:
+    existing = existing or {}
+    if 'routine_time' in data:
+        data['routine_time'] = validate_clock_time(data.get('routine_time'), 'Routine time')
+    if 'routine_late_time' in data:
+        data['routine_late_time'] = validate_clock_time(data.get('routine_late_time'), 'Routine late reminder time')
+    routine_time = data.get('routine_time', existing.get('routine_time') or '10:00')
+    late_time = data.get('routine_late_time', existing.get('routine_late_time'))
+    if routine_time and late_time and late_time <= routine_time:
+        raise HTTPException(400, 'Late reminder time must be later than the routine time.')
+
+
+def validate_date_field(value: Any, label: str) -> str | None:
+    if value in (None, ''):
+        return None
+    try:
+        return date.fromisoformat(str(value)).isoformat()
+    except (TypeError, ValueError):
+        raise HTTPException(400, f'{label} must be a valid YYYY-MM-DD date.')
+
+def validate_event_schedule(data: dict[str, Any], existing: dict[str, Any] | None = None) -> None:
+    existing = existing or {}
+    start = data.get('start_at', existing.get('start_at'))
+    end = data.get('end_at', existing.get('end_at'))
+    if not start:
+        raise HTTPException(400, 'Event start date/time is required.')
+    try:
+        parsed_start = datetime.fromisoformat(str(start))
+    except (TypeError, ValueError):
+        raise HTTPException(400, 'Event start must be a valid date/time.')
+    if end:
+        try:
+            parsed_end = datetime.fromisoformat(str(end))
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Event end must be a valid date/time.')
+        if parsed_end <= parsed_start:
+            raise HTTPException(400, 'Event end must be after its start.')
+
+def is_weight_routine(routine: dict[str, Any]) -> bool:
+    name = str(routine.get('name') or '').lower()
+    return 'weight' in name or 'weigh' in name
+
+def is_treadmill_routine(routine: dict[str, Any]) -> bool:
+    name = str(routine.get('name') or '').lower()
+    return 'treadmill' in name
+
+def auto_complete_matching_routines(completed_on: date, matcher) -> int:
+    """Check matching routines when the corresponding activity is logged.
+
+    A log is stored against the activity's date. Backdated entries are retained
+    without moving a routine's current schedule backwards. Same-day duplicate
+    activity logs never create duplicate routine completion records.
+    """
+    day = completed_on.isoformat()
+    completed_count = 0
+    for routine in rows('SELECT * FROM routines'):
+        if not matcher(routine):
+            continue
+        interval = max(1, int(routine.get('interval_days') or 1))
+        next_due = (completed_on + timedelta(days=interval)).isoformat()
+        with connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            c.execute(
+                'INSERT INTO routine_logs(routine_id,completed_at) SELECT ?,? WHERE NOT EXISTS '
+                '(SELECT 1 FROM routine_logs WHERE routine_id=? AND completed_at=?)',
+                (routine['id'], day, routine['id'], day)
+            )
+            current = c.execute('SELECT last_done FROM routines WHERE id=?', (routine['id'],)).fetchone()
+            current_last = current['last_done'] if current else None
+            if not current_last or day >= current_last:
+                c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?', (day, next_due, routine['id']))
+            completed_count += 1
+    return completed_count
+
+def auto_complete_weight_routines(completed_on: date) -> int:
+    return auto_complete_matching_routines(completed_on, is_weight_routine)
+
+def auto_complete_treadmill_routines(completed_on: date) -> int:
+    return auto_complete_matching_routines(completed_on, is_treadmill_routine)
+
+def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
+    """Send the normal reminder on its due day; optional late reminders start next day.
+
+    Overdue routines remain due until completed. If a late time is configured,
+    a follow-up is sent at that time on each subsequent day, independent of interval_days.
+    """
+    today = now.date()
+    current_hm = now.strftime('%H:%M')
+    reminders: list[tuple[str, int, str, str]] = []
+    for routine in rows('SELECT * FROM routines WHERE next_due IS NOT NULL'):
+        try:
+            due = date.fromisoformat(routine['next_due'])
+            if due > today:
+                continue
+            # A weight log itself satisfies a Weight/Weigh-in routine.
+            if is_weight_routine(routine) and one('SELECT id FROM weights WHERE date=? LIMIT 1', (today.isoformat(),)):
+                auto_complete_weight_routines(today)
+                continue
+            routine_time = validate_clock_time(routine.get('routine_time'), 'Routine time')
+            late_time = validate_clock_time(routine.get('routine_late_time'), 'Routine late reminder time')
+            name = routine['name']
+            if due == today:
+                # The regular reminder is on the scheduled day. The late reminder
+                # is deliberately deferred until the following day.
+                if routine_time and current_hm >= routine_time:
+                    reminders.append(('routine-time', routine['id'], today.isoformat(), f"🔁 ROUTINE DUE\n{name}\nScheduled: {routine_time}\nWhen finished, reply: done {name}"))
+            elif late_time and current_hm >= late_time:
+                scheduled = f'\nScheduled: {routine_time}' if routine_time else ''
+                days_late = (today - due).days
+                reminders.append(('routine-late', routine['id'], today.isoformat(), f"⚠️ ROUTINE STILL OPEN\n{name}\nOverdue: {days_late} day{'s' if days_late != 1 else ''}{scheduled}\nReply when finished: done {name}"))
+        except Exception as exc:
+            print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
+    return reminders
+
+@app.post('/api/{resource}')
+def create_resource(resource: str, payload: Payload):
+    if resource not in TABLES: raise HTTPException(404,'Unknown resource')
+    table, allowed=TABLES[resource]
+    data={k:v for k,v in payload.data.items() if k in allowed}
+    if resource == 'tasks':
+        data.setdefault('priority','normal')
+        data.setdefault('status','open')
+        data.setdefault('category','general')
+        data['due_date'] = validate_date_field(data.get('due_date'), 'Task due date')
+        validate_task_schedule(data)
+    if resource == 'events':
+        validate_event_schedule(data)
+    if resource in ('weights','workouts','treadmill') and 'date' in data:
+        data['date'] = validate_date_field(data.get('date'), 'Record date')
+    if resource == 'weights':
+        try:
+            kg = float(data.get('kg'))
+            if not 20 <= kg <= 350: raise ValueError()
+            data['kg'] = round(kg, 2)
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Weight must be between 20 and 350 kg.')
+    if resource == 'bills':
+        data.setdefault('recurrence','none')
+        data.setdefault('reminder_days',3)
+        data['due_date'] = validate_date_field(data.get('due_date'), 'Bill due date')
+        try:
+            amount = float(data.get('amount_mad', 0))
+            reminder_raw = float(data.get('reminder_days', 3))
+            reminder_days = int(reminder_raw)
+            if amount < 0 or reminder_days < 0 or reminder_raw != reminder_days: raise ValueError()
+            data['amount_mad'] = amount
+            data['reminder_days'] = reminder_days
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Bill amount and reminder days must be non-negative numbers.')
+    if resource == 'documents':
+        data['expiry_date'] = validate_date_field(data.get('expiry_date'), 'Document expiry date')
+        if not data.get('expiry_date'): raise HTTPException(400, 'Document expiry date is required.')
+    if resource == 'routines':
+        data.setdefault('routine_time', '10:00')
+        data.setdefault('routine_late_time', None)
+        data.setdefault('next_due', date.today().isoformat())
+        data['next_due'] = validate_date_field(data.get('next_due'), 'Routine next due date')
+        if data.get('last_done'): data['last_done'] = validate_date_field(data.get('last_done'), 'Routine last completed date')
+        validate_routine_schedule(data)
+    treadmill_day = None
+    if resource == 'treadmill':
+        try:
+            treadmill_day = date.fromisoformat(str(data.get('date', '')))
+            duration = float(data.get('duration_min', 0))
+            if not 1 <= duration <= 1440: raise ValueError()
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Enter a valid treadmill date and duration (1–1440 minutes).')
+        latest = one('SELECT kg FROM weights ORDER BY date DESC,id DESC LIMIT 1')
+        body_weight = float(latest['kg']) if latest else 70.0
+        data.update({'date': treadmill_day.isoformat(), 'speed_kmh': 5.0, 'incline': 0.0,
+                     'distance_km': round(5.0 * duration / 60.0, 2),
+                     'calories_kcal': round(3.5 * 3.5 * body_weight / 200.0 * duration)})
+    if resource == 'recipes':
+        name = str(data.get('name') or '').strip()
+        if not name:
+            raise HTTPException(400, 'Meal name is required.')
+        data['name'] = name[:160]
+        raw_kcal = data.get('calories_kcal')
+        if raw_kcal in ('', None):
+            data['calories_kcal'] = None
+        else:
+            try:
+                kcal = float(raw_kcal)
+                if not math.isfinite(kcal) or not 0 <= kcal <= 10000:
+                    raise ValueError()
+                data['calories_kcal'] = kcal
+            except (TypeError, ValueError):
+                raise HTTPException(400, 'Calories per plate must be between 0 and 10000 kcal.')
+        try:
+            interval_raw = float(data.get('eating_interval_days', 1))
+            interval = int(interval_raw)
+            plates_raw = float(data.get('batch_plates', 7))
+            plates = int(plates_raw)
+            if interval_raw != interval or not 1 <= interval <= 90:
+                raise ValueError()
+            if plates_raw != plates or not 1 <= plates <= 100:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Eating interval must be 1–90 whole days and batch plates must be 1–100.')
+        data['eating_interval_days'] = interval
+        data['batch_plates'] = plates
+        try:
+            raw_ingredients = data.get('ingredients_json', '[]')
+            ingredients = json.loads(raw_ingredients) if isinstance(raw_ingredients, str) else raw_ingredients
+            if not isinstance(ingredients, list):
+                raise ValueError()
+            clean = []
+            seen = set()
+            for ingredient in ingredients:
+                name_part = _clean_ingredient_name(ingredient)
+                key = _ingredient_key(name_part)
+                if name_part and key not in seen:
+                    clean.append(name_part)
+                    seen.add(key)
+            if not clean:
+                raise ValueError()
+            data['ingredients_json'] = json.dumps(clean, ensure_ascii=False)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(400, 'Add at least one valid ingredient name.')
+    if resource == 'meal_plans':
+        data['plan_date'] = validate_date_field(data.get('plan_date'), 'Meal date')
+        if not data.get('plan_date'): raise HTTPException(400, 'Meal date is required.')
+        if data.get('meal_type') not in MEAL_TYPES: raise HTTPException(400, 'Choose breakfast, lunch, dinner or snack.')
+        try:
+            recipe_id = int(data.get('recipe_id'))
+            servings = float(data.get('servings', 2))
+            if not one('SELECT id FROM recipes WHERE id=?', (recipe_id,)) or not 0.25 <= servings <= 100: raise ValueError()
+            data['recipe_id'] = recipe_id; data['servings'] = servings
+        except (TypeError, ValueError): raise HTTPException(400, 'Choose a saved recipe and a valid serving count.')
+    if resource == 'shopping_items':
+        data['name'] = str(data.get('name') or '').strip()[:160]
+        if not data['name']:
+            raise HTTPException(400, 'Shopping item name is required.')
+        data['checked'] = 1 if str(data.get('checked', 0)).lower() in ('1','true','yes','on') else 0
+        data.setdefault('source', 'manual')
+    if not data: raise HTTPException(400,'No valid fields supplied')
+    if resource in ('events','tasks','workouts','bills','documents','routines','workout_plan') and not data.get('title' if resource in ('events','tasks') else 'name'):
+        raise HTTPException(400,'A title/name is required')
+    if resource == 'workouts' and not data.get('date'):
+        raise HTTPException(400, 'Workout date is required.')
+    if resource == 'workout_plan' and data.get('weekday') not in ('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'):
+        raise HTTPException(400, 'Choose a valid weekday.')
+    if resource == 'tasks' and data.get('priority') not in ('low','normal','high'):
+        raise HTTPException(400, 'Choose a valid task priority.')
+    if resource == 'tasks' and data.get('status') not in ('open','done'):
+        raise HTTPException(400, 'Task status must be open or done.')
+    if resource == 'bills' and not data.get('due_date'):
+        raise HTTPException(400, 'Bill due date is required.')
+    if resource == 'bills' and data.get('recurrence') not in ('none','monthly','quarterly','yearly'):
+        raise HTTPException(400, 'Choose a valid bill recurrence.')
+    if resource == 'routines':
+        try:
+            interval_raw = float(data.get('interval_days', 1))
+            interval = int(interval_raw)
+            if interval < 1 or interval_raw != interval: raise ValueError()
+            data['interval_days'] = interval
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Routine interval must be at least one day.')
+    keys=list(data); marks=','.join('?' for _ in keys)
+    with connect() as c:
+        if resource == 'weights':
+            try:
+                weight_day = date.fromisoformat(str(data.get('date', '')))
+            except (TypeError, ValueError):
+                raise HTTPException(400, 'Enter a valid weight date (YYYY-MM-DD).')
+            # Acquire the SQLite write lock before checking so two near-simultaneous
+            # submissions cannot create two records for the same calendar day.
+            c.execute('BEGIN IMMEDIATE')
+            existing = c.execute('SELECT kg FROM weights WHERE date=? ORDER BY id DESC LIMIT 1', (weight_day.isoformat(),)).fetchone()
+            if existing:
+                pretty = weight_day.strftime('%d/%m/%Y')
+                raise HTTPException(409, f'Weight already recorded for {pretty} ({float(existing["kg"]):.2f} kg). No new entry was added.')
+        cur=c.execute(f"INSERT INTO {table} ({','.join(keys)}) VALUES ({marks})", [data[k] for k in keys])
+        new_id=cur.lastrowid
+    if resource == 'weights':
+        auto_complete_weight_routines(weight_day)
+    elif resource == 'treadmill':
+        auto_complete_treadmill_routines(treadmill_day)
+    result = one(f'SELECT * FROM {table} WHERE id=?',(new_id,))
+    if resource == 'recipes' and result:
+        result = {k: result.get(k) for k in ('id','name','calories_kcal','eating_interval_days','batch_plates','created_at')}
+        result['ingredients'] = _recipe_ingredient_names(one('SELECT ingredients_json FROM recipes WHERE id=?',(new_id,))['ingredients_json'])
+    return result
+
+@app.patch('/api/{resource}/{item_id}')
+def update_resource(resource: str, item_id: int, payload: Payload):
+    if resource not in TABLES: raise HTTPException(404,'Unknown resource')
+    table,allowed=TABLES[resource]; data={k:v for k,v in payload.data.items() if k in allowed}
+    if resource in ('weights','workouts','treadmill') and 'date' in data:
+        data['date'] = validate_date_field(data.get('date'), 'Record date')
+    if resource == 'weights':
+        if 'kg' in data:
+            try:
+                kg=float(data['kg'])
+                if not 20 <= kg <= 350: raise ValueError()
+                data['kg']=round(kg,2)
+            except (TypeError,ValueError): raise HTTPException(400, 'Weight must be between 20 and 350 kg.')
+        if 'date' in data:
+            duplicate=one('SELECT id FROM weights WHERE date=? AND id!=?',(data['date'],item_id))
+            if duplicate: raise HTTPException(409, 'A weight record already exists for this date.')
+    if resource == 'bills':
+        if 'due_date' in data: data['due_date'] = validate_date_field(data.get('due_date'), 'Bill due date')
+        if 'recurrence' in data and data['recurrence'] not in ('none','monthly','quarterly','yearly'):
+            raise HTTPException(400, 'Choose a valid bill recurrence.')
+        if 'amount_mad' in data:
+            try:
+                amount = float(data['amount_mad'])
+                if amount < 0: raise ValueError()
+                data['amount_mad'] = amount
+            except (TypeError, ValueError): raise HTTPException(400, 'Bill amount must be non-negative.')
+    if resource == 'events':
+        existing_event = one('SELECT * FROM events WHERE id=?',(item_id,))
+        if not existing_event:
+            raise HTTPException(404, 'Event not found')
+        validate_event_schedule(data, existing_event)
+    if resource == 'tasks':
+        if 'priority' in data and data['priority'] not in ('low','normal','high'):
+            raise HTTPException(400, 'Choose a valid task priority.')
+        if 'status' in data and data['status'] not in ('open','done'):
+            raise HTTPException(400, 'Task status must be open or done.')
+        if 'due_date' in data:
+            data['due_date'] = validate_date_field(data.get('due_date'), 'Task due date')
+        existing_task = one('SELECT * FROM tasks WHERE id=?',(item_id,))
+        if not existing_task:
+            raise HTTPException(404, 'Task not found')
+        if 'due_date' in data and not data.get('due_date') and existing_task.get('due_time') and 'due_time' not in data:
+            data['due_time'] = None
+        validate_task_schedule(data, existing_task)
+    if resource == 'documents':
+        if 'expiry_date' in data: data['expiry_date']=validate_date_field(data.get('expiry_date'),'Document expiry date')
+    if resource == 'routines':
+        if 'next_due' in data: data['next_due']=validate_date_field(data.get('next_due'),'Routine next due date')
+        if 'last_done' in data and data.get('last_done'): data['last_done']=validate_date_field(data.get('last_done'),'Routine last completed date')
+        existing_routine = one('SELECT * FROM routines WHERE id=?',(item_id,))
+        if not existing_routine:
+            raise HTTPException(404, 'Routine not found')
+        validate_routine_schedule(data, existing_routine)
+    if resource == 'recipes':
+        existing_recipe = one('SELECT * FROM recipes WHERE id=?', (item_id,))
+        if not existing_recipe:
+            raise HTTPException(404, 'Meal not found.')
+        if 'name' in data:
+            data['name'] = str(data['name'] or '').strip()[:160]
+            if not data['name']:
+                raise HTTPException(400, 'Meal name is required.')
+        if 'calories_kcal' in data:
+            raw_kcal = data['calories_kcal']
+            if raw_kcal in ('', None):
+                data['calories_kcal'] = None
+            else:
+                try:
+                    kcal = float(raw_kcal)
+                    if not math.isfinite(kcal) or not 0 <= kcal <= 10000:
+                        raise ValueError()
+                    data['calories_kcal'] = kcal
+                except (TypeError, ValueError):
+                    raise HTTPException(400, 'Calories per plate must be between 0 and 10000 kcal.')
+        for field, default, low, high in (('eating_interval_days', 1, 1, 90), ('batch_plates', 7, 1, 100)):
+            if field in data:
+                try:
+                    raw_value = float(data[field])
+                    value = int(raw_value)
+                    if raw_value != value or not low <= value <= high:
+                        raise ValueError()
+                    data[field] = value
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f'{field.replace("_", " ").title()} must be a whole number from {low} to {high}.')
+        if 'ingredients_json' in data:
+            try:
+                raw_ingredients = data['ingredients_json']
+                ingredients = json.loads(raw_ingredients) if isinstance(raw_ingredients, str) else raw_ingredients
+                if not isinstance(ingredients, list):
+                    raise ValueError()
+                clean = []
+                seen = set()
+                for ingredient in ingredients:
+                    name_part = _clean_ingredient_name(ingredient)
+                    key = _ingredient_key(name_part)
+                    if name_part and key not in seen:
+                        clean.append(name_part)
+                        seen.add(key)
+                if not clean:
+                    raise ValueError()
+                data['ingredients_json'] = json.dumps(clean, ensure_ascii=False)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raise HTTPException(400, 'Add at least one valid ingredient name.')
+    if resource == 'meal_plans':
+        if 'plan_date' in data: data['plan_date'] = validate_date_field(data['plan_date'], 'Meal date')
+        if 'meal_type' in data and data['meal_type'] not in MEAL_TYPES: raise HTTPException(400, 'Choose breakfast, lunch, dinner or snack.')
+        if 'recipe_id' in data:
+            try:
+                data['recipe_id'] = int(data['recipe_id'])
+                if not one('SELECT id FROM recipes WHERE id=?', (data['recipe_id'],)): raise ValueError()
+            except (TypeError, ValueError): raise HTTPException(400, 'Choose a saved recipe.')
+        if 'servings' in data:
+            try:
+                data['servings'] = float(data['servings'])
+                if not 0.25 <= data['servings'] <= 100: raise ValueError()
+            except (TypeError, ValueError): raise HTTPException(400, 'Servings must be between 0.25 and 100.')
+    if resource == 'shopping_items':
+        if 'name' in data:
+            data['name'] = str(data['name'] or '').strip()[:160]
+            if not data['name']:
+                raise HTTPException(400, 'Shopping item name is required.')
+        if 'checked' in data:
+            data['checked'] = 1 if str(data['checked']).lower() in ('1','true','yes','on') else 0
+    if not data: raise HTTPException(400,'No valid fields supplied')
+    if resource == 'treadmill' and ('duration_min' in data or 'date' in data):
+        existing_tread = one('SELECT * FROM treadmill WHERE id=?', (item_id,))
+        if not existing_tread: raise HTTPException(404, 'Treadmill session not found')
+        try:
+            duration = float(data.get('duration_min', existing_tread['duration_min']))
+            if not 1 <= duration <= 1440: raise ValueError()
+        except (TypeError,ValueError): raise HTTPException(400, 'Duration must be between 1 and 1440 minutes.')
+        latest = one('SELECT kg FROM weights ORDER BY date DESC,id DESC LIMIT 1')
+        body_weight = float(latest['kg']) if latest else 70.0
+        data.update({'duration_min':duration,'speed_kmh':5.0,'incline':0.0,'distance_km':round(5.0*duration/60.0,2),'calories_kcal':round(3.5*3.5*body_weight/200.0*duration)})
+    if resource == 'routines' and 'interval_days' in data:
+        try:
+            interval_raw=float(data['interval_days'])
+            interval=int(interval_raw)
+            if interval_raw != interval: raise ValueError()
+        except (TypeError,ValueError):
+            raise HTTPException(400,'Repeat interval must be a positive number of days.')
+        existing=one('SELECT last_done FROM routines WHERE id=?',(item_id,))
+        reference=date.fromisoformat(existing['last_done']) if existing and existing.get('last_done') else date.today()
+        data['interval_days']=interval
+        data['next_due']=(reference+timedelta(days=interval)).isoformat()
+    with connect() as c:
+        cur=c.execute(f"UPDATE {table} SET {','.join(k+'=?' for k in data)} WHERE id=?", [*data.values(),item_id])
+        if cur.rowcount == 0: raise HTTPException(404,'Record not found')
+    result = one(f'SELECT * FROM {table} WHERE id=?',(item_id,))
+    if resource == 'recipes' and result:
+        result = {k: result.get(k) for k in ('id','name','calories_kcal','eating_interval_days','batch_plates','created_at')}
+        ingredients_row = one('SELECT ingredients_json FROM recipes WHERE id=?',(item_id,))
+        result['ingredients'] = _recipe_ingredient_names(ingredients_row['ingredients_json'] if ingredients_row else '[]')
+    return result
+
+@app.delete('/api/{resource}/{item_id}')
+def delete_resource(resource: str, item_id: int):
+    if resource not in TABLES: raise HTTPException(404,'Unknown resource')
+    table,_=TABLES[resource]
+    if resource == 'recipes':
+        planned = one('SELECT COUNT(*) AS n FROM daily_meals WHERE recipe_id=?', (item_id,))
+        if planned and planned['n']:
+            raise HTTPException(409, 'This meal has scheduled plates. Remove those planned days before deleting it.')
+    with connect() as c:
+        if resource == 'daily_meals':
+            meal = c.execute('SELECT batch_id,status FROM daily_meals WHERE id=?', (item_id,)).fetchone()
+            if not meal:
+                raise HTTPException(404, 'Record not found')
+            cur = c.execute('DELETE FROM daily_meals WHERE id=?', (item_id,))
+            # Removing an unconfirmed plate returns it to the cooking batch.
+            # Recompute the latest scheduled date so the planner can refill the
+            # next valid day without losing a plate from the batch.
+            if meal['status'] == 'pending' and meal['batch_id'] is not None:
+                batch_id = int(meal['batch_id'])
+                c.execute('''UPDATE meal_batches
+                             SET plates_scheduled=MAX(0,plates_scheduled-1),
+                                 last_scheduled_date=(SELECT MAX(plan_date) FROM daily_meals WHERE batch_id=?)
+                             WHERE id=?''', (batch_id, batch_id))
+        else:
+            cur=c.execute(f'DELETE FROM {table} WHERE id=?',(item_id,))
+        if cur.rowcount == 0: raise HTTPException(404,'Record not found')
+        reminder_kinds={'tasks':['task','task-time'],'bills':['bill'],'routines':['routine-time','routine-late']}
+        for kind in reminder_kinds.get(resource,[]):
+            c.execute('DELETE FROM notification_log WHERE kind=? AND item_id=?',(kind,item_id))
+    return {'deleted':True,'id':item_id}
+
+# Legacy exercises table is retained to protect existing records; no UI currently uses it.
+
+@app.post('/api/routines/{routine_id}/complete')
+def complete_routine(routine_id:int):
+    r=one('SELECT * FROM routines WHERE id=?',(routine_id,))
+    if not r: raise HTTPException(404,'Routine not found')
+    today=date.today(); nxt=(today+timedelta(days=max(1,int(r['interval_days'])))).isoformat()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        c.execute('INSERT INTO routine_logs(routine_id,completed_at) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM routine_logs WHERE routine_id=? AND completed_at=?)',(routine_id,today.isoformat(),routine_id,today.isoformat()))
+        latest = c.execute('SELECT MAX(completed_at) FROM routine_logs WHERE routine_id=?',(routine_id,)).fetchone()[0] or today.isoformat()
+        latest_date = date.fromisoformat(latest)
+        next_due = (latest_date+timedelta(days=max(1,int(r['interval_days'])))).isoformat()
+        c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?',(latest,next_due,routine_id))
+    return one('SELECT * FROM routines WHERE id=?',(routine_id,))
+
+@app.patch('/api/routines/{routine_id}/last-record')
+def edit_routine_last_record(routine_id: int, payload: Payload):
+    r=one('SELECT * FROM routines WHERE id=?',(routine_id,))
+    if not r: raise HTTPException(404,'Routine not found')
+    raw=payload.data.get('completed_at')
+    try:
+        completed=date.fromisoformat(str(raw)).isoformat()
+    except (TypeError,ValueError):
+        raise HTTPException(400,'Enter a valid completion date (YYYY-MM-DD).')
+    interval=max(1,int(r['interval_days'] or 1))
+    with connect() as c:
+        latest=c.execute('SELECT id FROM routine_logs WHERE routine_id=? ORDER BY completed_at DESC,id DESC LIMIT 1',(routine_id,)).fetchone()
+        if latest:
+            c.execute('UPDATE routine_logs SET completed_at=? WHERE id=?',(completed,latest['id']))
+        else:
+            c.execute('INSERT INTO routine_logs(routine_id,completed_at) VALUES(?,?)',(routine_id,completed))
+        latest_after=c.execute('SELECT MAX(completed_at) AS completed_at FROM routine_logs WHERE routine_id=?',(routine_id,)).fetchone()['completed_at']
+        latest_after=latest_after or completed
+        next_due=(date.fromisoformat(latest_after)+timedelta(days=interval)).isoformat()
+        c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?',(latest_after,next_due,routine_id))
+    return one('SELECT * FROM routines WHERE id=?',(routine_id,))
+
+
+def next_recurrence_date(due: date, recurrence: str, anchor_day: int | None = None) -> date | None:
+    anchor = max(1, min(31, int(anchor_day or due.day)))
+    if recurrence == 'monthly':
+        year = due.year + (1 if due.month == 12 else 0)
+        month = 1 if due.month == 12 else due.month + 1
+        # Clamp to the last day of the target month (Jan 31 -> Feb 28/29).
+        import calendar
+        return date(year, month, min(anchor, calendar.monthrange(year, month)[1]))
+    if recurrence == 'quarterly':
+        month_index = due.month - 1 + 3
+        year = due.year + month_index // 12
+        month = month_index % 12 + 1
+        import calendar
+        return date(year, month, min(anchor, calendar.monthrange(year, month)[1]))
+    if recurrence == 'yearly':
+        year = due.year + 1
+        import calendar
+        return date(year, due.month, min(anchor, calendar.monthrange(year, due.month)[1]))
+    return None
+
+
+def mark_bill_paid(bill_id: int) -> dict:
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        bill_row = c.execute('SELECT * FROM bills WHERE id=?', (bill_id,)).fetchone()
+        if not bill_row:
+            raise HTTPException(404, 'Bill not found')
+        bill = dict(bill_row)
+        if bill.get('status') == 'paid':
+            return bill
+        now = datetime.now().isoformat(timespec='minutes')
+        due_date = date.fromisoformat(bill['due_date'])
+        anchor_day = int(bill.get('recurrence_day') or due_date.day)
+        recurrence = bill.get('recurrence') or 'none'
+        next_due = next_recurrence_date(due_date, recurrence, anchor_day)
+        # If payment is late, roll to the first cycle strictly after today.
+        while next_due and next_due <= date.today():
+            next_due = next_recurrence_date(next_due, recurrence, anchor_day)
+        c.execute("UPDATE bills SET status='paid',paid_at=? WHERE id=? AND status!='paid'", (now, bill_id))
+        if next_due:
+            c.execute('INSERT INTO bills(name,amount_mad,due_date,recurrence,reminder_days,status,notes,recurrence_day) VALUES(?,?,?,?,?,?,?,?)',
+                      (bill['name'], bill['amount_mad'], next_due.isoformat(), recurrence, bill['reminder_days'], 'unpaid', bill['notes'], anchor_day))
+    return one('SELECT * FROM bills WHERE id=?', (bill_id,))
+
+
+@app.post('/api/bills/{bill_id}/pay')
+def pay_bill(bill_id:int):
+    return mark_bill_paid(bill_id)
+
+def count_expiring_documents(today: date | None = None) -> int:
+    today = today or date.today()
+    count = 0
+    for document in rows('SELECT expiry_date,reminder_days FROM documents'):
+        try:
+            expiry = date.fromisoformat(document['expiry_date'])
+            lead = max(0, int(document.get('reminder_days') if document.get('reminder_days') is not None else 30))
+            if expiry <= today + timedelta(days=lead): count += 1
+        except (TypeError, ValueError):
+            continue
+    return count
+
+@app.get('/api/summary')
+def summary():
+    today=date.today().isoformat()
+    next_bill = one("SELECT name,due_date,amount_mad FROM bills WHERE status!='paid' ORDER BY CASE WHEN due_date>=? THEN 0 ELSE 1 END, CASE WHEN due_date>=? THEN due_date END ASC, CASE WHEN due_date<? THEN due_date END DESC, id ASC LIMIT 1", (today, today, today))
+    days_to_next_bill = (date.fromisoformat(next_bill['due_date']) - date.today()).days if next_bill else None
+    return {
+      'events_today':len(rows('SELECT id FROM events WHERE substr(start_at,1,10)=?',(today,))),
+      'routines_due_today':one('SELECT COUNT(*) n FROM routines WHERE next_due<=?',(today,))['n'],
+      'open_tasks':one("SELECT COUNT(*) n FROM tasks WHERE status!='done'")['n'],
+      'latest_weight':one('SELECT kg,date FROM weights ORDER BY date DESC,id DESC LIMIT 1'),
+      'unpaid_bills':one("SELECT COUNT(*) n FROM bills WHERE status!='paid'")['n'],
+      'unpaid_total_mad':one("SELECT COALESCE(SUM(amount_mad),0) n FROM bills WHERE status!='paid'")['n'],
+      'upcoming_bill':({**next_bill, 'days_left': days_to_next_bill} if next_bill else None),
+      'expiring_documents':count_expiring_documents(),
+      'next_routine':one('SELECT * FROM routines ORDER BY next_due LIMIT 1'),
+      'recent_treadmill':one('SELECT * FROM treadmill ORDER BY date DESC,id DESC LIMIT 1'),
+      'today_meal':one('''SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal
+                         FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=? LIMIT 1''',(today,))
+    }
+
+@app.get('/api/ha/state')
+def ha_state():
+    s=summary()
+    return {'weight_kg':s['latest_weight']['kg'] if s['latest_weight'] else None,'unpaid_bills':s['unpaid_bills'],'unpaid_total_mad':s['unpaid_total_mad'],'expiring_documents':s['expiring_documents'],'open_tasks':s['open_tasks'],'events_today':s['events_today'],'routines_due_today':s['routines_due_today'],'next_routine':s['next_routine']['name'] if s['next_routine'] else None}
+
+async def reminder_loop():
+    """Send due reminders once at their scheduled task time or once daily for date-only items."""
+    import httpx
+    async with httpx.AsyncClient(timeout=15) as client:
+        while True:
+            try:
+                now = datetime.now()
+                today = now.date()
+                reminders = []
+                for b in rows("SELECT * FROM bills WHERE status!='paid'"):
+                    try: remind_on = date.fromisoformat(b['due_date']) - timedelta(days=int(b.get('reminder_days') or 3))
+                    except Exception: continue
+                    if remind_on <= today:
+                        reminders.append(('bill', b['id'], today.isoformat(), f"💳 BILL REMINDER\n{b['name']} · {b['amount_mad']:.2f} MAD\nDue: {date.fromisoformat(b['due_date']).strftime('%d/%m/%y')}\nAfter paying, reply: paid {b['name']}"))
+                for t in rows("SELECT * FROM tasks WHERE status!='done' AND due_date IS NOT NULL"):
+                    try:
+                        due_day = date.fromisoformat(t['due_date'])
+                        if t.get('due_time'):
+                            due_at = datetime.combine(due_day, datetime.strptime(t['due_time'], '%H:%M').time())
+                            if due_at <= now:
+                                reminder_key = due_at.strftime('%Y-%m-%dT%H:%M')
+                                reminders.append(('task-time', t['id'], reminder_key, f"⏰ TASK REMINDER\n{t['title']}\n{due_day.strftime('%d/%m/%y')} · {t['due_time']}\nWhen finished, reply: task done {t['title']}"))
+                        elif due_day <= today:
+                            reminders.append(('task', t['id'], today.isoformat(), f"📌 TASK OVERDUE\n{t['title']}\nDue: {due_day.strftime('%d/%m/%y')}\nWhen finished, reply: task done {t['title']}"))
+                    except Exception:
+                        continue
+                # Ask for one daily meal confirmation. A missed confirmation is
+                # re-sent once on the next day until the user answers.
+                pending_meal = one('''SELECT dm.id,dm.plan_date,r.name AS recipe_name,r.calories_kcal
+                                     FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                                     WHERE dm.status='pending' AND dm.plan_date<=?
+                                     ORDER BY dm.plan_date,dm.id LIMIT 1''', (today.isoformat(),))
+                if pending_meal and pending_meal.get('notified_date') != today.isoformat():
+                    meal_day = date.fromisoformat(pending_meal['plan_date'])
+                    kcal = f" · {float(pending_meal['calories_kcal']):g} kcal/plate" if pending_meal.get('calories_kcal') is not None else ''
+                    message = (f"🍽 MEAL CHECK-IN\n{pending_meal['recipe_name']}{kcal}\n"
+                               f"Planned for {meal_day.strftime('%A %d/%m/%y')}. Did you eat it?\n"
+                               "Reply YES to confirm, or NO to move this and all following meals one day later.")
+                    sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
+                    sent.raise_for_status()
+                    with connect() as c:
+                        c.execute("UPDATE daily_meals SET notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(pending_meal['id'])))
+                reminders.extend(build_routine_reminders(now))
+                for kind, item_id, reminder_date, message in reminders:
+                    already_sent = one('SELECT id FROM notification_log WHERE kind=? AND item_id=? AND reminder_date=?', (kind, item_id, reminder_date))
+                    if already_sent:
+                        continue
+                    sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
+                    sent.raise_for_status()
+                    with connect() as c:
+                        c.execute('INSERT OR IGNORE INTO notification_log(kind,item_id,reminder_date) VALUES(?,?,?)', (kind, item_id, reminder_date))
+            except Exception as e:
+                print(f'Reminder scheduler error: {e}', flush=True)
+            await asyncio.sleep(15)
+
+async def telegram_poll():
+    """Telegram bot with a compact menu, command shortcuts and persistent update offset."""
+    import httpx
+    keyboard = {
+        'keyboard': [
+            [{'text': '📅 Today'}, {'text': '✅ Tasks'}],
+            [{'text': '🔁 Routines'}, {'text': '💳 Bills'}],
+            [{'text': '🏃 Fitness'}, {'text': '🗓 Week'}],
+            [{'text': '🍽 Today plate'}, {'text': '🗓 Meal plan'}],
+            [{'text': '✅ Ate it'}, {'text': '⏭ Not today'}],
+            [{'text': '🛒 Shopping list'}, {'text': '➕ Add grocery'}],
+            [{'text': '➕ Add recipe'}],
+            [{'text': '⚖️ Add weight'}, {'text': '🏃 Add treadmill'}],
+            [{'text': '❔ Help'}]
+        ],
+        'resize_keyboard': True,
+        'is_persistent': True,
+        'input_field_placeholder': 'Try: task Workout tomorrow at 18:00'
+    }
+    commands = [
+        {'command': 'today', 'description': 'Today’s plan'},
+        {'command': 'tasks', 'description': 'Open tasks'},
+        {'command': 'routines', 'description': 'Due and upcoming routines'},
+        {'command': 'bills', 'description': 'Unpaid bills and due dates'},
+        {'command': 'fitness', 'description': 'Weight and activity summary'},
+        {'command': 'week', 'description': 'Next 7 days'},
+        {'command': 'done', 'description': 'Complete a routine'},
+        {'command': 'taskdone', 'description': 'Complete a task'},
+        {'command': 'weight', 'description': 'Log weight (guided)'},
+        {'command': 'treadmill', 'description': 'Log treadmill session (guided)'},
+        {'command': 'paid', 'description': 'Mark a bill paid'},
+        {'command': 'meals', 'description': 'Show today’s meals'},
+        {'command': 'mealplan', 'description': 'Show the next 7 days of meals'},
+        {'command': 'suggestmeals', 'description': 'Plan daily plates, e.g. /suggestmeals 7'},
+        {'command': 'yes', 'description': 'Confirm you ate today’s plate'},
+        {'command': 'no', 'description': 'Move today’s plate and later meals'},
+        {'command': 'shopping', 'description': 'Show shopping list'},
+        {'command': 'addrecipe', 'description': 'Add a recipe with a guided flow'},
+        {'command': 'additem', 'description': 'Add a shopping item'},
+        {'command': 'bought', 'description': 'Mark a shopping item purchased'},
+        {'command': 'cancel', 'description': 'Cancel a guided entry'},
+        {'command': 'help', 'description': 'Show examples'}
+    ]
+    saved_offset = one("SELECT value FROM telegram_state WHERE key='update_offset'")
+    try:
+        offset = int(saved_offset['value']) if saved_offset else 0
+    except (TypeError, ValueError):
+        offset = 0
+    async with httpx.AsyncClient(timeout=40) as client:
+        try:
+            await client.post(f'https://api.telegram.org/bot{TOKEN}/setMyCommands', json={'commands': commands})
+        except Exception as exc:
+            print(f'Telegram command-menu setup warning: {exc}', flush=True)
+        while True:
+            try:
+                response = await client.get(
+                    f'https://api.telegram.org/bot{TOKEN}/getUpdates',
+                    params={'timeout': 30, 'offset': offset, 'allowed_updates': json.dumps(['message'])}
+                )
+                response.raise_for_status()
+                data = response.json()
+                if not data.get('ok'):
+                    raise RuntimeError(data.get('description', 'Telegram getUpdates failed'))
+                for update in data.get('result', []):
+                    offset = int(update['update_id']) + 1
+                    message = update.get('message', {})
+                    chat = str(message.get('chat', {}).get('id', ''))
+                    message_text = (message.get('text') or '').strip()
+                    if not message_text or chat != ALLOWED_CHAT:
+                        with connect() as c:
+                            c.execute("INSERT INTO telegram_state(key,value) VALUES('update_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(offset),))
+                        continue
+                    try:
+                        reply = await telegram_command(message_text)
+                    except Exception as exc:
+                        print(f'Telegram command failed for update {update["update_id"]}: {exc}', flush=True)
+                        reply = 'I could not complete that. Check the details and try again, or send /help.'
+                    # Persist after applying the command but before replying. If Telegram's
+                    # sendMessage endpoint is temporarily unavailable, an action is not replayed.
+                    with connect() as c:
+                        c.execute("INSERT INTO telegram_state(key,value) VALUES('update_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(offset),))
+                    sent = await client.post(
+                        f'https://api.telegram.org/bot{TOKEN}/sendMessage',
+                        json={'chat_id': chat, 'text': reply, 'reply_markup': keyboard, 'disable_web_page_preview': True}
+                    )
+                    sent.raise_for_status()
+            except Exception as exc:
+                print(f'Telegram polling error: {exc}', flush=True)
+                await asyncio.sleep(5)
+
+def _telegram_parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    raw = value.strip().lower()
+    today = date.today()
+    if raw in ('today', 'today\'s'):
+        return today
+    if raw == 'yesterday':
+        return today - timedelta(days=1)
+    if raw == 'tomorrow':
+        return today + timedelta(days=1)
+    if raw in ('day after tomorrow', 'the day after tomorrow'):
+        return today + timedelta(days=2)
+    for fmt in ('%d/%m/%Y', '%d/%m/%y', '%d-%m-%Y', '%d-%m-%y', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            pass
+    raise ValueError('Date not understood. Use tomorrow or DD/MM/YY.')
+
+def _telegram_task_payload(text: str) -> tuple[str, str | None, str | None]:
+    body = text.strip()
+    body = re.sub(r'^(?:/task(?:@[a-z0-9_]+)?|task|add task|new task|remind me to|please remind me to|remind me|i want to|schedule)\s*', '', body, flags=re.I)
+    body = body.replace('|', ' ')
+    if re.search(r'\b(?:AM|PM)\b', body, flags=re.I):
+        raise ValueError('Use 24-hour time, for example 18:00.')
+    time_match = re.search(r'(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)', body)
+    due_time = f'{int(time_match.group(1)):02d}:{time_match.group(2)}' if time_match else None
+    if time_match:
+        body = body[:time_match.start()] + ' ' + body[time_match.end():]
+    date_match = re.search(r'(?i)\b(day after tomorrow|tomorrow|today|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})\b', body)
+    due_date = None
+    if date_match:
+        due_date = _telegram_parse_date(date_match.group(1)).isoformat()
+        body = body[:date_match.start()] + ' ' + body[date_match.end():]
+    elif due_time:
+        parsed_time = datetime.strptime(due_time, '%H:%M').time()
+        due_day = date.today()
+        if parsed_time <= datetime.now().time():
+            due_day += timedelta(days=1)
+        due_date = due_day.isoformat()
+    # Remove only scheduling connectors, not words inside the task title (e.g. "go to gym").
+    body = re.sub(r'(?i)^\s*(?:on|at|for|please)\b', ' ', body)
+    body = re.sub(r'(?i)\b(?:on|at|for)\s*$', ' ', body)
+    title = re.sub(r'\s+', ' ', body).strip(' .,:;-')
+    if not title:
+        raise ValueError('Add a task name. Example: task Workout tomorrow at 18:00.')
+    return title, due_date, due_time
+
+def _telegram_name_key(value: str) -> str:
+    return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9]+', ' ', str(value or '').lower())).strip()
+
+
+def _telegram_date_label(value: str | None, include_weekday: bool = False) -> str:
+    if not value:
+        return 'No date'
+    parsed = date.fromisoformat(value)
+    return parsed.strftime('%a %d/%m/%y' if include_weekday else '%d/%m/%y')
+
+
+def _telegram_match_named_item(query: str, items: list[dict], field: str = 'name') -> tuple[dict | None, list[dict]]:
+    wanted = _telegram_name_key(query)
+    exact = [item for item in items if _telegram_name_key(item.get(field, '')) == wanted]
+    matches = exact or [item for item in items if wanted and wanted in _telegram_name_key(item.get(field, ''))]
+    return (matches[0] if len(matches) == 1 else None), matches
+
+
+
+def _telegram_get_state() -> str | None:
+    state = one("SELECT value FROM telegram_state WHERE key='conversation_state'")
+    return state['value'] if state else None
+
+
+def _telegram_set_state(value: str | None) -> None:
+    with connect() as c:
+        if value is None:
+            c.execute("DELETE FROM telegram_state WHERE key='conversation_state'")
+        else:
+            c.execute("INSERT INTO telegram_state(key,value) VALUES('conversation_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (value,))
+
+
+def _telegram_get_flow() -> dict | None:
+    raw = _telegram_get_state()
+    if not raw or not raw.startswith('{'):
+        return None
+    try:
+        value = json.loads(raw)
+        return value if isinstance(value, dict) and value.get('flow') else None
+    except ValueError:
+        return None
+
+
+def _telegram_set_flow(flow: str, step: str, data: dict | None = None) -> None:
+    _telegram_set_state(json.dumps({'flow': flow, 'step': step, 'data': data or {}}, ensure_ascii=False))
+
+
+def _telegram_save_recipe(data: dict) -> int:
+    ingredients = []
+    for raw in data.get('ingredients', []):
+        name = _clean_ingredient_name(raw)
+        if name and _ingredient_key(name) not in {_ingredient_key(x) for x in ingredients}:
+            ingredients.append(name)
+    if not ingredients:
+        raise ValueError('Add at least one ingredient.')
+    with connect() as c:
+        cur = c.execute('''INSERT INTO recipes(name,calories_kcal,ingredients_json,eating_interval_days,batch_plates)
+                           VALUES(?,?,?,?,?)''',
+                        (data['name'], data.get('calories_kcal'), json.dumps(ingredients, ensure_ascii=False),
+                         int(data.get('eating_interval_days', 1)), int(data.get('batch_plates', 7))))
+        return int(cur.lastrowid)
+
+
+def _telegram_save_shopping_item(line: str) -> str:
+    name = _clean_ingredient_name(line)
+    if not name:
+        raise ValueError('Enter an item name.')
+    with connect() as c:
+        existing = c.execute('SELECT id,name FROM shopping_items WHERE lower(trim(name))=lower(trim(?)) AND checked=0 LIMIT 1', (name,)).fetchone()
+        if existing:
+            return f"ℹ️ Already on your shopping list · {existing['name']}"
+        c.execute("INSERT INTO shopping_items(name,quantity,unit,category,source) VALUES(?,1,'','','Telegram')", (name,))
+    return f"✅ Added to shopping list · {name}"
+
+
+def _telegram_meal_text(start: date, days: int) -> str:
+    end = start + timedelta(days=days-1)
+    meals = rows('''SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal
+                    FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                    WHERE dm.plan_date BETWEEN ? AND ? ORDER BY dm.plan_date''',
+                 (start.isoformat(), end.isoformat()))
+    if not meals:
+        return '🍽 No plates are planned for this period. Use /suggestmeals 7 to build a plan from your saved meals.'
+    labels = []
+    for meal in meals:
+        status = '✅ Eaten' if meal['status'] == 'eaten' else '⏳ Waiting for confirmation'
+        kcal = f" · {float(meal['calories_kcal']):g} kcal/plate" if meal.get('calories_kcal') is not None else ''
+        labels.append(f"{_telegram_date_label(meal['plan_date'], True)}\n• {meal['recipe_name']}{kcal}\n  {status}")
+    return '🍽 DAILY PLATES\n\n' + '\n\n'.join(labels)
+
+
+def _telegram_shopping_text() -> str:
+    items = rows('SELECT id,name,checked FROM shopping_items ORDER BY checked,name COLLATE NOCASE LIMIT 60')
+    if not items:
+        return '🛒 Your shopping list is empty. Use /additem to add an item.'
+    pending = [x for x in items if not int(x['checked'])]
+    bought = [x for x in items if int(x['checked'])]
+    lines = [f'🛒 SHOPPING LIST · {len(pending)} to buy']
+    lines.extend(f"□ {item['name']} · bought {item['name']}" for item in pending)
+    if bought:
+        lines.append(f'\n✅ Purchased: {len(bought)}')
+        lines.extend(f"✓ {x['name']}" for x in bought[:8])
+    return '\n'.join(lines)
+
+
+def _telegram_save_weight(kg: float, day: date) -> str:
+    if not 20 <= kg <= 350:
+        raise ValueError('Weight must be between 20 and 350 kg.')
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        existing = c.execute('SELECT kg FROM weights WHERE date=? ORDER BY id DESC LIMIT 1', (day.isoformat(),)).fetchone()
+        if existing:
+            return f"Already saved for {day.strftime('%d/%m/%y')}: {float(existing['kg']):.2f} kg. No duplicate was added."
+        c.execute('INSERT INTO weights(date,kg) VALUES(?,?)', (day.isoformat(), kg))
+    auto_complete_weight_routines(day)
+    return f'✅ Weight saved · {kg:.2f} kg · {day.strftime("%d/%m/%y")}.'
+
+
+def _telegram_save_treadmill(duration: float, day: date) -> str:
+    if not 1 <= duration <= 1440:
+        raise ValueError('Duration must be between 1 and 1440 minutes.')
+    latest = one('SELECT kg FROM weights ORDER BY date DESC,id DESC LIMIT 1')
+    body_weight = float(latest['kg']) if latest else 70.0
+    distance = round(5.0 * duration / 60.0, 2)
+    calories = round(3.5 * 3.5 * body_weight / 200.0 * duration)
+    with connect() as c:
+        c.execute('INSERT INTO treadmill(date,duration_min,distance_km,speed_kmh,incline,calories_kcal) VALUES(?,?,?,?,?,?)', (day.isoformat(), duration, distance, 5.0, 0.0, calories))
+    auto_complete_treadmill_routines(day)
+    estimate_note = '' if latest else '\nCalories estimated using default 70 kg (no weight record).'
+    return f'✅ Treadmill saved · {duration:g} min\n{day.strftime("%d/%m/%y")} · 5 km/h · 0% incline\n{distance:.2f} km · ~{calories} kcal{estimate_note}'
+
+
+def _telegram_parse_weight(text: str) -> tuple[float, date]:
+    raw = re.sub(r'(?i)^(?:/weight(?:@[a-z0-9_]+)?|weight|log weight)\s*', '', text.strip())
+    raw = raw.lower().replace('kg', '').strip()
+    date_match = re.search(r'(?i)(today|tomorrow|yesterday|day after tomorrow|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})', raw)
+    day = _telegram_parse_date(date_match.group(1)) if date_match else date.today()
+    if date_match:
+        raw = raw[:date_match.start()] + ' ' + raw[date_match.end():]
+    raw = raw.strip().replace(',', '.')
+    kg = float(raw)
+    if not 20 <= kg <= 350:
+        raise ValueError()
+    return kg, day
+
+
+def _telegram_parse_treadmill(text: str) -> tuple[float, date]:
+    raw = re.sub(r'(?i)^(?:/treadmill(?:@[a-z0-9_]+)?|treadmill|run|walk)\s*', '', text.strip()).lower().replace('minutes', 'min').replace('minute', 'min')
+    date_match = re.search(r'(?i)(today|tomorrow|yesterday|day after tomorrow|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})', raw)
+    day = _telegram_parse_date(date_match.group(1)) if date_match else date.today()
+    if date_match:
+        raw = raw[:date_match.start()] + ' ' + raw[date_match.end():]
+    raw = re.sub(r'(?i)\b(?:treadmill|run|walk|session|log|add|duration|min)\b', ' ', raw)
+    duration = float(raw.strip().replace(',', '.'))
+    if not 1 <= duration <= 1440:
+        raise ValueError()
+    return duration, day
+
+async def telegram_command(text: str) -> str:
+    """Short, action-oriented Telegram interface for the XROB personal manager."""
+    raw = text.strip()
+    low = raw.lower().strip()
+    today = date.today()
+    today_iso = today.isoformat()
+
+    # Guided input flows. They survive restarts and can be cancelled with /cancel.
+    state = _telegram_get_state()
+    flow_state = _telegram_get_flow()
+    if low in ('/cancel', 'cancel', 'stop'):
+        _telegram_set_state(None)
+        return 'Cancelled. Nothing was saved.'
+    meal_menu_commands = ('🍽 today plate','🍽 today meals','today plate','today meals','meals','/meals','🗓 meal plan','meal plan','/mealplan','✅ ate it','ate it','i ate it','⏭ not today','not today','yes','y','/yes','/eaten','no','n','/no','/skip','🛒 shopping list','shopping list','shopping','/shopping','➕ add recipe','add recipe','/addrecipe','➕ add grocery','add grocery','/additem')
+    meal_interrupt_prefixes = ('bought ', 'got ', 'suggest meals', 'plan meals', '/bought', '/suggestmeals', 'add item ', 'add grocery ')
+    flow_interrupted = low in meal_menu_commands or low.startswith(('/', 'weight ', 'treadmill ', 'task ', 'paid ', 'done ', *meal_interrupt_prefixes))
+    if flow_state and flow_state.get('flow') == 'recipe' and not flow_interrupted:
+        step = flow_state.get('step')
+        data = flow_state.setdefault('data', {})
+        answer = raw.strip()
+        try:
+            if step == 'name':
+                if len(answer) < 2 or len(answer) > 160: raise ValueError('Enter a meal name between 2 and 160 characters.')
+                data['name'] = answer
+                _telegram_set_flow('recipe', 'calories', data)
+                return 'How many kcal are in one plate? Send a number, or type skip.'
+            if step == 'calories':
+                data['calories_kcal'] = None if answer.lower() in ('skip','-','none') else float(answer.replace(',', '.'))
+                if data['calories_kcal'] is not None and not 0 <= data['calories_kcal'] <= 10000: raise ValueError()
+                _telegram_set_flow('recipe', 'interval', data)
+                return 'How often do you eat this meal? Send the number of days, for example 1, 2 or 3.'
+            if step == 'interval':
+                value = int(answer)
+                if not 1 <= value <= 90: raise ValueError()
+                data['eating_interval_days'] = value
+                _telegram_set_flow('recipe', 'plates', data)
+                return 'How many plates do you cook in one batch? Send a number from 1 to 100.'
+            if step == 'plates':
+                value = int(answer)
+                if not 1 <= value <= 100: raise ValueError()
+                data['batch_plates'] = value
+                _telegram_set_flow('recipe', 'ingredients', data)
+                return 'List the ingredients, separated by commas or new lines. Example: chicken, onions, tomatoes, olive oil.'
+            if step == 'ingredients':
+                parts = [_clean_ingredient_name(x) for x in re.split(r'[,;\n]+', answer) if x.strip()]
+                parts = list(dict.fromkeys(x for x in parts if x))
+                if not parts: raise ValueError('Add at least one ingredient.')
+                data['ingredients'] = parts
+                recipe_id = _telegram_save_recipe(data)
+                _telegram_set_state(None)
+                return (f"✅ Meal saved · {data['name']}\n"
+                        f"{data.get('calories_kcal') or 'Calories not set'} kcal/plate · every {data['eating_interval_days']} day(s) · "
+                        f"{data['batch_plates']} plates per batch\nMeal #{recipe_id} is ready for your planner.")
+        except (TypeError, ValueError, ZeroDivisionError):
+            prompts = {'calories':'Send a valid kcal number, or type skip.', 'interval':'Enter a whole number from 1 to 90 days.', 'plates':'Enter a whole number from 1 to 100 plates.', 'ingredients':'Enter at least one ingredient, separated by commas.'}
+            return prompts.get(step, 'I could not use that answer. Please try again, or send /cancel.')
+    if flow_state and flow_state.get('flow') == 'shopping' and not flow_interrupted:
+        try:
+            reply = _telegram_save_shopping_item(raw)
+            _telegram_set_state(None)
+            return reply
+        except (TypeError, ValueError):
+            return 'I could not read that item. Send a simple item name, for example rice or tomatoes. Send /cancel to stop.'
+    if state and (low.startswith('/') or low in ('📅 today','today','✅ tasks','tasks','💳 bills','bills','🔁 routines','routines','🏃 fitness','fitness','🗓 week','week','❔ help','help') or low in meal_menu_commands or low.startswith(('weight ','log weight ','treadmill ','run ','walk ','task ','paid ','done ', *meal_interrupt_prefixes))):
+        _telegram_set_state(None)
+        state = None
+    if low in ('⚖️ add weight', 'add weight', '/weight', 'weight'):
+        _telegram_set_state('weight_value')
+        return '⚖️ Weight entry\nSend your weight in kg, for example 82.4. You may add a date: 82.4 tomorrow.\n/cancel to stop.'
+    if low in ('🏃 add treadmill', 'add treadmill', '/treadmill', 'treadmill'):
+        _telegram_set_state('treadmill_duration')
+        return '🏃 Treadmill entry\nHow many minutes? Example: 30. You may add a date: 30 tomorrow.\n/cancel to stop.'
+    if state == 'weight_value' and not low.startswith('/'):
+        try:
+            kg, day = _telegram_parse_weight(raw)
+            _telegram_set_state(None)
+            return _telegram_save_weight(kg, day)
+        except Exception:
+            return 'I could not read that weight. Send a number from 20 to 350, e.g. 82.4 or 82.4 tomorrow. /cancel to stop.'
+    if state == 'treadmill_duration' and not low.startswith('/'):
+        try:
+            duration, day = _telegram_parse_treadmill(raw)
+            _telegram_set_state(None)
+            return _telegram_save_treadmill(duration, day)
+        except Exception:
+            return 'I could not read that duration. Send minutes, e.g. 30 or 30 tomorrow. /cancel to stop.'
+
+    if low in ('➕ add recipe','add recipe','/addrecipe','/recipe'):
+        _telegram_set_flow('recipe','name',{})
+        return '➕ ADD A RECIPE\nWhat is the recipe name?\nSend /cancel to stop.'
+    if low in ('➕ add grocery','add grocery','/additem','add item'):
+        _telegram_set_flow('shopping','item',{})
+        return '🛒 ADD SHOPPING ITEM\nSend the item name, for example rice, tomatoes or olive oil.\n/cancel to stop.'
+    add_item_match = re.match(r'(?i)^(?:/additem(?:@[a-z0-9_]+)?|add item|add grocery)\s+(.+)$', raw)
+    if add_item_match:
+        try: return _telegram_save_shopping_item(add_item_match.group(1))
+        except (TypeError, ValueError): return 'Use: add item rice'
+    if low in ('🍽 today plate','🍽 today meals','today meals','today plate','meals','/meals','what should i eat today','what am i eating today'):
+        return _telegram_meal_text(today,1)
+    if low in ('🗓 meal plan','meal plan','/mealplan','my meal plan'):
+        return _telegram_meal_text(today,7)
+    if low in ('🛒 shopping list','shopping list','shopping','/shopping','/groceries'):
+        return _telegram_shopping_text()
+    # The pending plate confirmation is intentionally a simple YES / NO reply.
+    if low in ('✅ ate it','ate it','yes','y','/yes','/eaten','i ate it','⏭ not today','not today','no','n','/no','/skip'):
+        pending = one("SELECT id,plan_date FROM daily_meals WHERE status='pending' AND plan_date<=? ORDER BY plan_date,id LIMIT 1", (today_iso,))
+        if not pending:
+            return 'There is no plate waiting for confirmation.'
+        eaten = low in ('✅ ate it','ate it','yes','y','/yes','/eaten','i ate it')
+        try:
+            updated = _confirm_daily_meal(int(pending['id']), eaten)
+        except ValueError as exc:
+            return str(exc)
+        if eaten:
+            return '✅ Confirmed! Enjoy. Your next planned plate stays on schedule.'
+        delay = int(updated.get('shift_days') or 1)
+        return f"↪️ No problem. This plate moved to {_telegram_date_label(updated['plan_date'], True)}. Every later plate moved by {delay} day(s) too."
+
+    suggest_match = re.match(r'(?i)^(?:/suggestmeals(?:@[a-z0-9_]+)?|suggest meals|plan meals)(?:\s+(\d+))?$', raw)
+    if suggest_match:
+        try:
+            days = int(suggest_match.group(1) or 7)
+            result = _generate_daily_meals(days, today)
+            if not result['meals']:
+                return 'No plates could be planned. Add meals first, or check their eating intervals and batch sizes.'
+            lines = [f"✅ Meal plan updated · {result['created']} new plate(s) planned"]
+            lines.extend(f"{_telegram_date_label(x['plan_date'])} · {x['recipe_name']}" for x in result['meals'])
+            lines.append('\nI will message you on each planned day. Reply YES if you ate it or NO to move it and all later plates one day.')
+            return '\n'.join(lines)
+        except (TypeError, ValueError) as exc:
+            return f'Use /suggestmeals 7 (choose between 1 and 90 days). {exc}'
+    bought_match = re.match(r'(?i)^(?:/bought(?:@[a-z0-9_]+)?|bought|got)\s+(.+)$', raw)
+    if bought_match:
+        query = bought_match.group(1).strip()
+        items = rows('SELECT * FROM shopping_items WHERE checked=0')
+        matched, matches = _telegram_match_named_item(query, items)
+        if not matched:
+            return 'Which item? ' + ', '.join(x['name'] for x in matches[:6]) if matches else f"I couldn't find '{query}' on the shopping list."
+        with connect() as c: c.execute('UPDATE shopping_items SET checked=1 WHERE id=?', (matched['id'],))
+        return f"✅ Marked purchased · {matched['name']}"
+    if low in ('/start', 'start', '/menu', 'menu', 'hi', 'hello', '/help', 'help', '❔ help'):
+        return (
+            '👋 XROB Assistant\n'
+            'Your daily plan, tasks, routines, bills, fitness and meals.\n\n'
+            'Use the buttons below, or send:\n'
+            '• task Workout tomorrow at 18:00\n'
+            '• done Shower\n'
+            '• weight 89.5\n'
+            '• treadmill 30\n'
+            '• task done Buy groceries\n'
+            '• paid Electricity\n'
+            '• /meals · /mealplan · /suggestmeals 7\n'
+            '• /shopping · bought tomatoes · /addrecipe · /additem\n'
+            '• A meal needs name, kcal per plate, eating interval, batch plates and ingredients.\n'
+            '• Reply YES after eating, or NO to move that meal and all later meals one day.'
+        )
+
+    if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
+        events = rows('SELECT title,start_at FROM events WHERE substr(start_at,1,10)=? ORDER BY start_at', (today_iso,))
+        tasks = rows("SELECT title,due_time FROM tasks WHERE status!='done' AND due_date=? ORDER BY CASE WHEN due_time IS NULL THEN 1 ELSE 0 END,due_time,title", (today_iso,))
+        treadmill = one('SELECT COALESCE(SUM(duration_min),0) AS mins FROM treadmill WHERE date=?', (today_iso,))['mins']
+        gym = rows('SELECT name FROM workouts WHERE date=? ORDER BY id', (today_iso,))
+        bills_today = rows("SELECT name,amount_mad FROM bills WHERE status!='paid' AND due_date=? ORDER BY name", (today_iso,))
+        routines = rows('SELECT name,next_due,routine_time FROM routines WHERE next_due<=? ORDER BY next_due,COALESCE(routine_time,\'23:59\'),name', (today_iso,))
+        lines = [f'📅 TODAY · {today.strftime("%a %d/%m/%y")}', f'{len(tasks)} tasks · {len(routines)} routines · {len(events)} events']
+        for event in events:
+            lines.append(f"{event['start_at'][11:16]} · {event['title']}")
+        for task in tasks:
+            lines.append(f"{task.get('due_time') or 'Any time'} · {task['title']}")
+        if routines:
+            lines.append('')
+            lines.append('ROUTINES')
+            lines.extend((f"{routine.get('routine_time') or 'Any time'} · {routine['name']} · OVERDUE {(today-date.fromisoformat(routine['next_due'])).days}d" if routine['next_due'] < today_iso else f"{routine.get('routine_time') or 'Any time'} · {routine['name']}") for routine in routines)
+        if bills_today:
+            lines.append('')
+            lines.extend(f"💳 Due today · {bill['name']} · {float(bill['amount_mad']):.2f} MAD" for bill in bills_today)
+        activity = []
+        if treadmill:
+            activity.append(f'Treadmill {int(treadmill)} min')
+        if gym:
+            activity.append('Gym: ' + ', '.join(item['name'] for item in gym))
+        if activity:
+            lines.append('')
+            lines.append('ACTIVITY · ' + ' · '.join(activity))
+        if not (events or tasks or routines or bills_today or treadmill or gym):
+            lines.append('No plans today. Enjoy the free time!')
+        return '\n'.join(lines)
+
+    if low in ('✅ tasks', '/tasks', 'tasks', 'my tasks', 'show tasks', 'list tasks', 'to do', 'todo'):
+        tasks = rows("SELECT id,title,due_date,due_time,priority FROM tasks WHERE status!='done' ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,due_date,CASE WHEN due_time IS NULL THEN 1 ELSE 0 END,due_time,id LIMIT 12")
+        if not tasks:
+            return '✅ All clear — no open tasks.'
+        lines = ['✅ OPEN TASKS']
+        for task in tasks:
+            due = _telegram_date_label(task.get('due_date'))
+            if task.get('due_date') and task['due_date'] < today_iso:
+                due = 'OVERDUE · ' + due
+            elif task.get('due_date') == today_iso:
+                due = 'TODAY'
+            time_label = task.get('due_time') or 'Any time'
+            lines.append(f"• {task['title']} · {due} · {time_label}")
+        lines.append('')
+        lines.append('Finish one: task done TASK NAME')
+        return '\n'.join(lines)
+
+    if low in ('💳 bills', '/bills', 'bills', 'my bills', 'unpaid bills'):
+        bills = rows("SELECT id,name,amount_mad,due_date FROM bills WHERE status!='paid' ORDER BY due_date,id LIMIT 10")
+        if not bills:
+            return '✅ No unpaid bills.'
+        lines = ['💳 UNPAID BILLS']
+        for bill in bills:
+            due = date.fromisoformat(bill['due_date'])
+            days = (due - today).days
+            if days < 0:
+                label = f'overdue {abs(days)}d'
+            elif days == 0:
+                label = 'due today'
+            else:
+                label = f'in {days}d'
+            lines.append(f"• {bill['name']} · {float(bill['amount_mad']):.2f} MAD · {label} ({due.strftime('%d/%m/%y')})")
+        lines.append('')
+        lines.append('After paying: paid BILL NAME')
+        return '\n'.join(lines)
+
+    if low in ('🔁 routines', '🧴 personal care', 'care', 'personal care', '/care', 'routines', 'my routines', '/routines'):
+        routines = rows("SELECT id,name,next_due,interval_days,routine_time,routine_late_time,last_done FROM routines ORDER BY CASE WHEN next_due<=? THEN 0 ELSE 1 END,next_due,COALESCE(routine_time,'23:59'),name LIMIT 15", (today_iso,))
+        if not routines:
+            return 'No routines yet. Add them in XROB Assistant.'
+        due_items = [r for r in routines if r.get('next_due') and r['next_due'] <= today_iso]
+        upcoming = [r for r in routines if r not in due_items]
+        lines = [f'🔁 ROUTINES · {len(due_items)} due']
+        for routine in due_items:
+            due = date.fromisoformat(routine['next_due'])
+            status = 'DUE TODAY' if due == today else f'OVERDUE {(today-due).days}d'
+            lines.append(f"• {routine['name']} · {routine.get('routine_time') or 'Any time'} · {status}")
+        if upcoming:
+            lines.append('')
+            lines.append('UP NEXT')
+            for routine in upcoming[:5]:
+                lines.append(f"• {routine['name']} · {_telegram_date_label(routine.get('next_due'))} · {routine.get('routine_time') or 'Any time'}")
+        lines.append('')
+        lines.append('Complete: done ROUTINE NAME')
+        return '\n'.join(lines)
+
+    if low in ('🏃 fitness', '/fitness', 'fitness', 'activity', 'my fitness', 'workouts'):
+        weight = one('SELECT kg,date FROM weights ORDER BY date DESC,id DESC LIMIT 1')
+        treadmill = one('SELECT COALESCE(SUM(duration_min),0) AS mins,COALESCE(SUM(distance_km),0) AS km,COALESCE(SUM(calories_kcal),0) AS kcal FROM treadmill WHERE date=?', (today_iso,))
+        gym = rows('SELECT name FROM workouts WHERE date=? ORDER BY id', (today_iso,))
+        lines = ['🏃 FITNESS']
+        lines.append(f"Weight · {float(weight['kg']):.2f} kg ({_telegram_date_label(weight['date'])})" if weight else 'Weight · no records yet')
+        lines.append(f"Treadmill today · {int(treadmill['mins'] or 0)} min · {float(treadmill['km'] or 0):.2f} km · {int(treadmill['kcal'] or 0)} kcal" if treadmill['mins'] else 'Treadmill today · no session logged')
+        lines.append('Gym today · ' + (', '.join(item['name'] for item in gym) if gym else 'no session logged'))
+        lines.append('')
+        lines.append('Quick log: weight 89.5 · treadmill 30')
+        lines.append('Or tap Add weight / Add treadmill for guided entry.')
+        return '\n'.join(lines)
+
+    if low in ('📆 next 7 days', '🗓 week', '/week', 'week', 'next', 'next 7 days', 'agenda', 'this week'):
+        end = (today + timedelta(days=7)).isoformat()
+        items: list[tuple[str, str]] = []
+        for event in rows('SELECT title,start_at FROM events WHERE substr(start_at,1,10)>=? AND substr(start_at,1,10)<=?', (today_iso, end)):
+            items.append((event['start_at'], f"{event['start_at'][8:10]}/{event['start_at'][5:7]} {event['start_at'][11:16]} · {event['title']}"))
+        for task in rows("SELECT title,due_date,due_time FROM tasks WHERE status!='done' AND due_date>=? AND due_date<=?", (today_iso, end)):
+            clock = task.get('due_time') or '23:59'
+            items.append((task['due_date']+'T'+clock, f"{_telegram_date_label(task['due_date'])} {task.get('due_time') or 'Any time'} · {task['title']}"))
+        for bill in rows("SELECT name,due_date FROM bills WHERE status!='paid' AND due_date>=? AND due_date<=?", (today_iso, end)):
+            items.append((bill['due_date']+'T23:59', f"{_telegram_date_label(bill['due_date'])} · Bill: {bill['name']}"))
+        for routine in rows('SELECT name,next_due,routine_time FROM routines WHERE next_due>=? AND next_due<=?', (today_iso, end)):
+            clock = routine.get('routine_time') or '23:59'
+            items.append((routine['next_due']+'T'+clock, f"{_telegram_date_label(routine['next_due'])} {routine.get('routine_time') or 'Any time'} · {routine['name']}"))
+        for meal in rows('''SELECT dm.plan_date,r.name AS recipe_name FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date>=? AND dm.plan_date<=?''', (today_iso, end)):
+            items.append((meal['plan_date']+'T12:00', f"{_telegram_date_label(meal['plan_date'])} · 🍽 {meal['recipe_name']}"))
+        items.sort(key=lambda item: item[0])
+        if not items:
+            return '🗓 Nothing scheduled in the next 7 days.'
+        return '🗓 NEXT 7 DAYS\n' + '\n'.join('• ' + item[1] for item in items[:30])
+
+    # Direct quick logs; guided entry is available from the menu or /weight and /treadmill.
+    if re.match(r'(?i)^/(?:weight|logweight)(?:@[a-z0-9_]+)?\s+', raw) or low.startswith('/weight ') or low.startswith('/logweight ') or low.startswith('weight ') or low.startswith('log weight '):
+        try:
+            kg, day = _telegram_parse_weight(raw)
+            return _telegram_save_weight(kg, day)
+        except Exception:
+            return 'Enter a weight from 20–350 kg, e.g. weight 89.5 or weight 89.5 17/11/26.'
+
+    if re.match(r'(?i)^/treadmill(?:@[a-z0-9_]+)?\s+', raw) or low.startswith('/treadmill ') or low.startswith('treadmill ') or low.startswith('run ') or low.startswith('walk '):
+        try:
+            duration, day = _telegram_parse_treadmill(raw)
+            return _telegram_save_treadmill(duration, day)
+        except Exception:
+            return 'Enter a duration in minutes, e.g. treadmill 30 or treadmill 30 17/11/26.'
+
+    # Mark a bill as paid (tracking only; no payment is performed).
+    paid_match = re.match(r'(?i)^(?:/paid(?:@[a-z0-9_]+)?|paid|bill paid)\s+(.+)$', raw)
+    if paid_match:
+        query = paid_match.group(1).strip()
+        bills = rows("SELECT * FROM bills WHERE status!='paid'")
+        matched, matches = _telegram_match_named_item(query, bills)
+        if not matched:
+            if len(matches) > 1:
+                return 'Which bill? ' + ', '.join(item['name'] for item in matches[:5])
+            return f"I couldn't find an unpaid bill called '{query}'. Send Bills to see the list."
+        mark_bill_paid(matched['id'])
+        next_text = f' Next bill due {_telegram_date_label(next_recurrence_date(date.fromisoformat(matched['due_date']), matched.get('recurrence') or 'none').isoformat())}.' if next_recurrence_date(date.fromisoformat(matched['due_date']), matched.get('recurrence') or 'none') else ''
+        return f"✅ Marked paid: {matched['name']} · {float(matched['amount_mad']):.2f} MAD.{next_text}"
+
+    # Bare /taskdone displays open items for convenient selection.
+    if low in ('/taskdone','task done','finish task','complete task'):
+        open_tasks=rows("SELECT id,title,due_date,due_time FROM tasks WHERE status!='done' ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,due_date,due_time,id LIMIT 12")
+        if not open_tasks: return 'No open tasks to complete.'
+        return 'Open tasks:\n'+'\n'.join(f"• {t['title']} · {_telegram_date_label(t.get('due_date'))} {t.get('due_time') or ''}\nComplete with: task done {t['title']}" for t in open_tasks)
+
+    # Mark a task complete without confusing it with routine completion.
+    task_done = re.match(r'(?i)^(?:/taskdone(?:@[a-z0-9_]+)?|task done|done task|finish task)\s+(.+)$', raw)
+    if task_done:
+        query = task_done.group(1).strip()
+        tasks = rows("SELECT * FROM tasks WHERE status!='done'")
+        matched, matches = _telegram_match_named_item(query, tasks, 'title')
+        if not matched:
+            if len(matches) > 1:
+                return 'Which task? ' + ', '.join(item['title'] for item in matches[:5])
+            return f"I couldn't find an open task called '{query}'. Send Tasks to see open tasks."
+        with connect() as c:
+            c.execute("UPDATE tasks SET status='done' WHERE id=?", (matched['id'],))
+        return f"✅ Task completed: {matched['title']}"
+
+    # Add a scheduled task. Times always use 24-hour HH:MM.
+    task_request = (bool(re.match(r'(?i)^/task(?:@[a-z0-9_]+)?\s+', raw)) or low.startswith('/task ') or low.startswith('task ') or low.startswith('add task ') or
+                    low.startswith('new task ') or low.startswith('remind me to ') or
+                    low.startswith('please remind me to ') or low.startswith('i want to ') or
+                    low.startswith('schedule '))
+    bare_scheduled_task = bool(re.search(r'(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)', raw)) and low not in ('today', 'agenda', 'next 7 days') and not low.startswith('/event ')
+    if task_request or bare_scheduled_task:
+        try:
+            title, due_date, due_time = _telegram_task_payload(raw)
+            with connect() as c:
+                c.execute('INSERT INTO tasks(title,due_date,due_time,category) VALUES(?,?,?,?)', (title, due_date, due_time, 'general'))
+            if due_date and due_time:
+                return f"✅ Reminder set · {title}\n{_telegram_date_label(due_date)} at {due_time}."
+            if due_date:
+                return f"✅ Task added · {title}\nDue {_telegram_date_label(due_date)}."
+            return f"✅ Task added · {title}\nNo reminder set yet. Add a date/time in the app or resend with 'tomorrow at 18:00'."
+        except ValueError as exc:
+            return str(exc)
+
+    # Complete a routine. A bare /done shows which routines need attention.
+    done_command = re.match(r'(?i)^/done(?:@[a-z0-9_]+)?(?:\s+(.+))?$', raw)
+    done_name = None
+    if low in ('done', 'complete routine', 'mark routine done') or (done_command and not done_command.group(1)):
+        due_now = rows("SELECT name FROM routines WHERE next_due<=? ORDER BY COALESCE(routine_time,'23:59'),name", (today_iso,))
+        return 'Routines to check off:\n' + ('\n'.join('• ' + item['name'] for item in due_now) if due_now else 'None due today.') + '\n\nComplete one: done ROUTINE NAME'
+    if done_command and done_command.group(1):
+        done_name = done_command.group(1).strip()
+    elif low.startswith('done ') or low.startswith('complete '):
+        done_name = re.sub(r'^(?:done|complete)\s+', '', raw, flags=re.I).strip()
+    else:
+        mark_match = re.match(r'(?i)^mark\s+(.+?)\s+(?:as\s+)?done$', raw)
+        if mark_match:
+            done_name = mark_match.group(1).strip()
+        else:
+            did_match = re.match(r'(?i)^(?:i did|i completed|finished)\s+(.+)$', raw)
+            if did_match:
+                done_name = did_match.group(1).strip()
+    if done_name:
+        wanted = _telegram_name_key(done_name)
+        wanted = re.sub(r'^(?:the|my)\s+', '', wanted)
+        wanted = re.sub(r'\s+routine$', '', wanted)
+        routines = rows('SELECT * FROM routines')
+        matched, matches = _telegram_match_named_item(wanted, routines)
+        if not matched:
+            if len(matches) > 1:
+                return 'Which routine? ' + ', '.join(item['name'] for item in matches[:5])
+            return f"I couldn't find '{done_name}'. Send Routines to see your list."
+        updated = complete_routine(matched['id'])
+        next_due = _telegram_date_label(updated.get('next_due'))
+        return f"✅ Routine done · {updated['name']}\nNext due: {next_due}."
+
+    if low in ('/event', '/add_event'):
+        return 'To add an event, use: /event Dentist|20/11/26 10:00'
+    if re.match(r'(?i)^/event(?:@[a-z0-9_]+)?\s+', raw) or low.startswith('/event '):
+        try:
+            event_body = re.sub(r'(?i)^/event(?:@[a-z0-9_]+)?\s*', '', raw)
+            title, when = event_body.split('|', 1)
+            title = title.strip()
+            _, due_day, due_time = _telegram_task_payload(f'event {title} {when}')
+            if not due_day or not due_time:
+                raise ValueError()
+            start_at = f'{due_day}T{due_time}'
+            with connect() as c:
+                c.execute('INSERT INTO events(title,start_at,category) VALUES(?,?,?)', (title, start_at, 'personal'))
+            return f"✅ Event added · {title}\n{_telegram_date_label(due_day)} at {due_time}."
+        except Exception:
+            return 'Use: /event Dentist|20/11/26 10:00'
+
+    return ('I can help with your day. Use the buttons below, or send:\n'
+            '• task Workout tomorrow at 18:00\n'
+            '• done Shower\n'
+            '• task done Buy groceries\n'
+            '• weight 89.5\n'
+            '• treadmill 30\n'
+            '• paid Electricity\n'
+            '• /meals · /mealplan · /suggestmeals 7\n'
+            '• Reply YES to confirm a plate or NO to move it and all later plates one day.\n'
+            '• /shopping · bought tomatoes · /addrecipe · /additem\n'
+            '• Add a meal through the short guided questions; use /cancel to stop.')
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=8090)
