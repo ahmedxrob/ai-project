@@ -1,6 +1,6 @@
 name: XROB Assistant
-description: Self-hosted scheduler and assistant for calendar, timed tasks, fitness, bills and routines
-version: 0.1.14
+description: Local planner, fitness logger, bill tracker and routines with Telegram guided logging
+version: 0.2.0
 slug: xrob_assistant
 init: false
 startup: services
