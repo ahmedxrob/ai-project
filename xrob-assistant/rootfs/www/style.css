@@ -424,3 +424,28 @@ header h1{line-height:1.15;}
 body.inner-page>main>header{display:none;}
 body:not(.inner-page)>main>header{display:flex;}
 @media(max-width:700px){body.inner-page>main{padding-top:calc(15px + env(safe-area-inset-top))!important;}}
+
+
+/* 0.4.5 — confirmed plates are visibly green throughout the Planner. */
+.cal-event.meal-eaten{background:#173f2a!important;color:#baf5cc!important;border:1px solid #286d45}
+.calendar-detail-dot.meal-eaten{background:#35c978;box-shadow:0 0 0 3px rgba(53,201,120,.14)}
+.calendar-meal-panel{margin-top:0;margin-bottom:14px;border-color:#2e4938}
+.calendar-meal-card{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 16px;border:1px solid #3c4a39;border-radius:12px;background:linear-gradient(110deg,rgba(47,94,57,.16),rgba(23,29,24,.45))}
+.calendar-meal-card.is-eaten{border-color:#287749;background:linear-gradient(110deg,rgba(30,116,66,.28),rgba(20,45,30,.36))}
+.calendar-meal-card.is-pending{border-color:#725a2b;background:linear-gradient(110deg,rgba(125,91,31,.17),rgba(37,32,21,.34))}
+.calendar-meal-card.is-empty{border-color:var(--line);background:var(--panel2)}
+.calendar-meal-main{display:flex;align-items:center;gap:13px;min-width:0}
+.calendar-meal-icon{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border-radius:12px;background:rgba(65,82,66,.28);font-size:21px;color:#8be5aa}
+.calendar-meal-card.is-eaten .calendar-meal-icon{background:#174b30;color:#c1f8d2;font-weight:800}
+.calendar-meal-copy{display:grid;gap:5px;min-width:0}
+.calendar-meal-copy>b{font-size:16px;overflow-wrap:anywhere}
+.calendar-meal-copy>small{font-size:11px;color:var(--muted)}
+.calendar-meal-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
+.calendar-meal-empty{display:flex;align-items:center;gap:12px;color:var(--muted)}
+.calendar-meal-empty>span{font-size:24px}
+.calendar-meal-empty>div{display:grid;gap:4px}
+.calendar-meal-empty b{color:var(--text);font-size:13px}
+.calendar-meal-empty small{font-size:11px}
+.mini-btn.success{border-color:#287749;background:#17452d;color:#c2f7d2}
+.mini-btn.danger{border-color:#714047;color:#ffc0c5}
+@media(max-width:620px){.calendar-meal-card{align-items:stretch;flex-direction:column;padding:13px;gap:12px}.calendar-meal-actions{justify-content:flex-start}.calendar-meal-actions .mini-btn{flex:1}.calendar-meal-copy>b{font-size:14px}}
