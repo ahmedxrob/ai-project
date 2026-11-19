@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS recipes (
  calories_kcal REAL, protein_g REAL, carbs_g REAL, fat_g REAL, source_url TEXT DEFAULT '', notes TEXT DEFAULT '',
  favorite INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, eating_interval_days INTEGER NOT NULL DEFAULT 1, batch_plates INTEGER NOT NULL DEFAULT 7, is_active INTEGER NOT NULL DEFAULT 1,
  meal_source TEXT NOT NULL DEFAULT 'home', plates_ready INTEGER NOT NULL DEFAULT 0, next_routine_date TEXT,
+ excluded_weekdays_json TEXT NOT NULL DEFAULT '[]',
  created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_recipes_meal_type ON recipes(meal_type);
@@ -68,6 +69,8 @@ CREATE TABLE IF NOT EXISTS daily_meals (
 CREATE INDEX IF NOT EXISTS idx_daily_meals_date ON daily_meals(plan_date, status);
 CREATE TABLE IF NOT EXISTS meal_cook_reminders (id INTEGER PRIMARY KEY, recipe_id INTEGER NOT NULL, due_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(recipe_id,due_date), FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE CASCADE);
 CREATE INDEX IF NOT EXISTS idx_meal_cook_reminders_date ON meal_cook_reminders(due_date,status);
+CREATE TABLE IF NOT EXISTS meal_schedule_skips (plan_date TEXT PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS idx_meal_schedule_skips_date ON meal_schedule_skips(plan_date);
 CREATE TRIGGER IF NOT EXISTS weights_no_duplicate_date_insert BEFORE INSERT ON weights WHEN EXISTS (SELECT 1 FROM weights WHERE date=NEW.date) BEGIN SELECT RAISE(ABORT, 'weight date already exists'); END;
 CREATE TRIGGER IF NOT EXISTS weights_no_duplicate_date_update BEFORE UPDATE OF date ON weights WHEN EXISTS (SELECT 1 FROM weights WHERE date=NEW.date AND id!=NEW.id) BEGIN SELECT RAISE(ABORT, 'weight date already exists'); END;
 '''
@@ -106,6 +109,8 @@ def init_db():
             c.execute('ALTER TABLE recipes ADD COLUMN plates_ready INTEGER NOT NULL DEFAULT 0')
         if 'next_routine_date' not in recipe_columns:
             c.execute('ALTER TABLE recipes ADD COLUMN next_routine_date TEXT')
+        if 'excluded_weekdays_json' not in recipe_columns:
+            c.execute("ALTER TABLE recipes ADD COLUMN excluded_weekdays_json TEXT NOT NULL DEFAULT '[]'")
         # Meal Manager 0.4.0 adds a single-plate-per-day schedule. The older
         # meal_plans table is retained so historical 0.3.0 data is not lost.
         c.execute('''CREATE TABLE IF NOT EXISTS meal_batches (
@@ -132,6 +137,8 @@ def init_db():
             status TEXT NOT NULL DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(recipe_id,due_date), FOREIGN KEY(recipe_id) REFERENCES recipes(id) ON DELETE CASCADE)''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_meal_cook_reminders_date ON meal_cook_reminders(due_date,status)')
+        c.execute('CREATE TABLE IF NOT EXISTS meal_schedule_skips (plan_date TEXT PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_meal_schedule_skips_date ON meal_schedule_skips(plan_date)')
         if not had_plates_ready:
             c.execute('''UPDATE recipes SET plates_ready=MAX(batch_plates,
                 (SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=recipes.id AND dm.status='pending'))
@@ -208,7 +215,7 @@ TABLES = {
  'bills': ('bills', ['name','amount_mad','due_date','recurrence','reminder_days','status','paid_at','notes']),
  'documents': ('documents', ['name','expiry_date','reminder_days','reference','notes']),
  'routines': ('routines', ['name','interval_days','last_done','next_due','category','notes','routine_time','routine_late_time','routine_rollover_after_late']),
- 'recipes': ('recipes', ['name','calories_kcal','ingredients_json','eating_interval_days','batch_plates','meal_source','plates_ready']),
+ 'recipes': ('recipes', ['name','calories_kcal','ingredients_json','eating_interval_days','batch_plates','meal_source','plates_ready','excluded_weekdays_json']),
  'meal_cook_reminders': ('meal_cook_reminders', ['recipe_id','due_date','status']),
  'meal_plans': ('meal_plans', ['plan_date','meal_type','recipe_id','servings','notes']),
  'daily_meals': ('daily_meals', ['plan_date','recipe_id','batch_id','status','notified_date','confirmed_at']),
@@ -235,7 +242,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.8', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.9', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -244,9 +251,36 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.8','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.9','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
+
+@app.post('/api/daily-meals/restore')
+def restore_daily_meal_day(payload: Payload):
+    try:
+        plan_day = date.fromisoformat(str(payload.data.get('plan_date') or ''))
+    except (TypeError, ValueError):
+        raise HTTPException(400, 'Choose a valid date.')
+    if plan_day < date.today():
+        raise HTTPException(400, 'Past dates are read-only in the weekly meal plan.')
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        c.execute('DELETE FROM meal_schedule_skips WHERE plan_date=?', (plan_day.isoformat(),))
+    maintain_meal_schedule()
+    return {'plan_date': plan_day.isoformat(), 'restored': True}
+
+
+@app.get('/api/meal-schedule-skips')
+def list_meal_schedule_skips(start_date: str | None = None, end_date: str | None = None):
+    try:
+        start = date.fromisoformat(start_date) if start_date else date.today()
+        end = date.fromisoformat(end_date) if end_date else start + timedelta(days=90)
+        if end < start or (end - start).days > 365:
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise HTTPException(400, 'Choose a valid date range up to 365 days.')
+    return rows('SELECT plan_date FROM meal_schedule_skips WHERE plan_date BETWEEN ? AND ? ORDER BY plan_date', (start.isoformat(), end.isoformat()))
+
 
 @app.get('/api/{resource}')
 def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
@@ -267,16 +301,67 @@ def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
                        JOIN recipes r ON r.id=mcr.recipe_id WHERE mcr.status='open'
                        ORDER BY mcr.due_date,r.name COLLATE NOCASE LIMIT ?''', (limit,))
     if resource == 'recipes':
-        result = rows('''SELECT id,name,calories_kcal,eating_interval_days,batch_plates,meal_source,plates_ready,next_routine_date,ingredients_json,created_at
+        result = rows('''SELECT id,name,calories_kcal,eating_interval_days,batch_plates,meal_source,plates_ready,next_routine_date,excluded_weekdays_json,ingredients_json,created_at
                         FROM recipes WHERE is_active=1 ORDER BY meal_source,name COLLATE NOCASE LIMIT ?''', (limit,))
         for item in result:
             item['ingredients'] = _recipe_ingredient_names(item.pop('ingredients_json', '[]'))
+            item['excluded_weekdays'] = _decode_excluded_weekdays(item.pop('excluded_weekdays_json', '[]'))
         return result
     if resource == 'shopping_items':
         return rows('SELECT id,name,checked,source FROM shopping_items ORDER BY checked, name COLLATE NOCASE, id DESC LIMIT ?', (limit,))
     return rows(f'SELECT * FROM {table} ORDER BY id DESC LIMIT ?', (limit,))
 
 MEAL_TYPES = ('breakfast', 'lunch', 'dinner', 'snack')
+WEEKDAY_NAMES = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+WEEKDAY_LOOKUP = {name.casefold(): index for index, name in enumerate(WEEKDAY_NAMES)}
+
+def _decode_excluded_weekdays(raw: Any) -> list[int]:
+    """Return normalized Monday=0..Sunday=6 weekday numbers from stored JSON."""
+    try:
+        values = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError, json.JSONDecodeError):
+        values = []
+    if not isinstance(values, list):
+        return []
+    result = set()
+    for value in values:
+        if isinstance(value, str) and value.strip().casefold() in WEEKDAY_LOOKUP:
+            result.add(WEEKDAY_LOOKUP[value.strip().casefold()])
+            continue
+        try:
+            day = int(value)
+            if str(value).strip() == str(day) and 0 <= day <= 6:
+                result.add(day)
+        except (TypeError, ValueError):
+            continue
+    return sorted(result)
+
+def _normalize_excluded_weekdays(raw: Any) -> str:
+    """Validate user-supplied weekday names or indices and return canonical JSON."""
+    try:
+        values = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise ValueError('Choose valid weekdays to exclude.')
+    if values in (None, ''):
+        values = []
+    if not isinstance(values, list):
+        raise ValueError('Choose valid weekdays to exclude.')
+    result = set()
+    for value in values:
+        if isinstance(value, str) and value.strip().casefold() in WEEKDAY_LOOKUP:
+            result.add(WEEKDAY_LOOKUP[value.strip().casefold()])
+            continue
+        try:
+            day = int(value)
+            if str(value).strip() != str(day) or not 0 <= day <= 6:
+                raise ValueError()
+            result.add(day)
+        except (TypeError, ValueError):
+            raise ValueError('Choose valid weekdays to exclude.')
+    if len(result) == 7:
+        raise ValueError('A meal must be available on at least one day of the week.')
+    return json.dumps(sorted(result))
+
 MEAL_CATEGORIES = {'produce': 'Produce', 'fruit': 'Produce', 'vegetable': 'Produce', 'meat': 'Meat & seafood', 'fish': 'Meat & seafood', 'seafood': 'Meat & seafood', 'dairy': 'Dairy & eggs', 'egg': 'Dairy & eggs', 'eggs': 'Dairy & eggs', 'bread': 'Bakery', 'grain': 'Grains & pasta', 'pasta': 'Grains & pasta', 'rice': 'Grains & pasta', 'spice': 'Spices & seasonings', 'oil': 'Oils & condiments'}
 
 INGREDIENT_AISLES = {
@@ -529,6 +614,51 @@ def _sync_home_stock(c: sqlite3.Connection, recipe_id: int, plates_ready: int) -
         _ensure_cook_reminder(c, recipe_id, date.today() + timedelta(days=1))
 
 
+def _shift_pending_meal_sequence(c: sqlite3.Connection, moving_rows: list[dict], base_delta: int, first_target: date) -> dict[int, date]:
+    """Shift an ordered pending sequence forward without violating closures or explicit day-offs."""
+    ordered = sorted((dict(row) for row in moving_rows), key=lambda row: (row['plan_date'], int(row['id'])))
+    if not ordered:
+        return {}
+    moving_ids = {int(row['id']) for row in ordered}
+    marks = ','.join('?' for _ in moving_ids)
+    fixed_dates = {row['plan_date'] for row in c.execute(
+        f"SELECT plan_date FROM daily_meals WHERE id NOT IN ({marks})", tuple(moving_ids)).fetchall()}
+    skipped_dates = {row['plan_date'] for row in c.execute('SELECT plan_date FROM meal_schedule_skips').fetchall()}
+    excluded_by_recipe: dict[int, set[int]] = {}
+    for recipe_id in {int(row['recipe_id']) for row in ordered}:
+        recipe = c.execute('SELECT excluded_weekdays_json FROM recipes WHERE id=?', (recipe_id,)).fetchone()
+        excluded_by_recipe[recipe_id] = set(_decode_excluded_weekdays(recipe['excluded_weekdays_json'] if recipe else '[]'))
+
+    destinations: dict[int, date] = {}
+    previous_target: date | None = None
+    for index, row in enumerate(ordered):
+        original = date.fromisoformat(row['plan_date'])
+        candidate = max(original + timedelta(days=base_delta), first_target)
+        if previous_target is not None:
+            candidate = max(candidate, previous_target + timedelta(days=1))
+        excluded = excluded_by_recipe.get(int(row['recipe_id']), set())
+        for _ in range(3660):
+            iso = candidate.isoformat()
+            if candidate.weekday() not in excluded and iso not in skipped_dates and iso not in fixed_dates:
+                break
+            candidate += timedelta(days=1)
+        else:
+            raise ValueError('Could not find an available date for the pending meal sequence. Review weekday exclusions and skipped days.')
+        destinations[int(row['id'])] = candidate
+        previous_target = candidate
+
+    # Update in reverse chronological order so the UNIQUE(plan_date) constraint
+    # never collides with a later row that has not yet moved out of its old date.
+    for row in reversed(ordered):
+        meal_id = int(row['id'])
+        c.execute('''UPDATE daily_meals SET plan_date=?,notified_date=NULL,
+            suggestion_notified_date=NULL,checkin_notified_date=NULL WHERE id=? AND status='pending' ''',
+            (destinations[meal_id].isoformat(), meal_id))
+    for recipe_id in excluded_by_recipe:
+        _recalculate_recipe_due(c, recipe_id)
+    return destinations
+
+
 def _generate_daily_meals(days: int, start: date) -> dict:
     if not 1 <= int(days) <= 90:
         raise ValueError('Choose between 1 and 90 days.')
@@ -540,19 +670,22 @@ def _generate_daily_meals(days: int, start: date) -> dict:
         recipes = c.execute("SELECT id FROM recipes WHERE is_active=1").fetchall()
         if not recipes:
             return {'created': 0, 'meals': [], 'message': 'Add at least one meal first.'}
+        skipped_dates = {row['plan_date'] for row in c.execute('SELECT plan_date FROM meal_schedule_skips WHERE plan_date>=?', (start.isoformat(),)).fetchall()}
         for offset in range(int(days)):
             day = start + timedelta(days=offset)
             day_iso = day.isoformat()
-            if c.execute('SELECT 1 FROM daily_meals WHERE plan_date=?', (day_iso,)).fetchone():
+            if day_iso in skipped_dates or c.execute('SELECT 1 FROM daily_meals WHERE plan_date=?', (day_iso,)).fetchone():
                 continue
-            eligible = c.execute('''SELECT r.*,COUNT(dm.id) AS reserved_plates
+            candidates = c.execute('''SELECT r.*,COUNT(dm.id) AS reserved_plates
                 FROM recipes r LEFT JOIN daily_meals dm ON dm.recipe_id=r.id AND dm.status='pending'
                 WHERE r.is_active=1 AND COALESCE(r.next_routine_date,date('now'))<=?
                   GROUP BY r.id
                 HAVING r.meal_source='outside' OR r.plates_ready>COUNT(dm.id)
                 ORDER BY COALESCE(r.next_routine_date,date('now')),
                          CASE r.meal_source WHEN 'home' THEN 0 ELSE 1 END,
-                         r.name COLLATE NOCASE,r.id LIMIT 1''', (day_iso,)).fetchone()
+                         r.name COLLATE NOCASE,r.id''', (day_iso,)).fetchall()
+            eligible = next((candidate for candidate in candidates
+                             if day.weekday() not in _decode_excluded_weekdays(candidate['excluded_weekdays_json'])), None)
             if not eligible:
                 continue
             cur = c.execute("INSERT INTO daily_meals(plan_date,recipe_id,batch_id,status) VALUES(?,?,NULL,'pending')",
@@ -573,24 +706,15 @@ def _generate_daily_meals(days: int, start: date) -> dict:
 def _roll_forward_unconfirmed_meals(today: date) -> int:
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        overdue = c.execute("SELECT id,plan_date FROM daily_meals WHERE status='pending' AND plan_date<? ORDER BY plan_date,id LIMIT 1", (today.isoformat(),)).fetchone()
+        overdue = c.execute("SELECT id,plan_date,recipe_id FROM daily_meals WHERE status='pending' AND plan_date<? ORDER BY plan_date,id LIMIT 1", (today.isoformat(),)).fetchone()
         if not overdue:
             return 0
         old_day = date.fromisoformat(overdue['plan_date'])
         delta = (today - old_day).days
-        later = c.execute("SELECT id,plan_date,recipe_id FROM daily_meals WHERE plan_date>? AND status='pending' ORDER BY plan_date DESC,id DESC", (old_day.isoformat(),)).fetchall()
-        affected = {int(row['recipe_id']) for row in later}
-        affected.add(int(c.execute('SELECT recipe_id FROM daily_meals WHERE id=?', (int(overdue['id']),)).fetchone()['recipe_id']))
-        for row in later:
-            shifted = date.fromisoformat(row['plan_date']) + timedelta(days=delta)
-            c.execute('''UPDATE daily_meals SET plan_date=?,notified_date=NULL,
-                suggestion_notified_date=NULL,checkin_notified_date=NULL WHERE id=?''', (shifted.isoformat(), int(row['id'])))
-        c.execute('''UPDATE daily_meals SET plan_date=?,notified_date=NULL,
-            suggestion_notified_date=NULL,checkin_notified_date=NULL WHERE id=?''', (today.isoformat(), int(overdue['id'])))
-        for recipe_id in affected:
-            _recalculate_recipe_due(c, recipe_id)
+        later = c.execute("SELECT id,plan_date,recipe_id FROM daily_meals WHERE plan_date>? AND status='pending' ORDER BY plan_date,id", (old_day.isoformat(),)).fetchall()
+        moving = [dict(overdue)] + [dict(row) for row in later]
+        _shift_pending_meal_sequence(c, moving, delta, today)
         return 1
-
 
 def maintain_meal_schedule() -> dict:
     today = date.today()
@@ -636,16 +760,11 @@ def _confirm_daily_meal(meal_id: int, eaten: bool) -> dict:
             old_day = date.fromisoformat(meal['plan_date'])
             destination = max(old_day + timedelta(days=1), date.today() + timedelta(days=1))
             delta = (destination - old_day).days
-            later = c.execute("SELECT id,plan_date,recipe_id FROM daily_meals WHERE plan_date>? AND status='pending' ORDER BY plan_date DESC,id DESC",
+            later = c.execute("SELECT id,plan_date,recipe_id FROM daily_meals WHERE plan_date>? AND status='pending' ORDER BY plan_date,id",
                               (old_day.isoformat(),)).fetchall()
-            affected = {int(row['recipe_id']) for row in later}
-            affected.add(recipe_id)
-            for row in later:
-                shifted = date.fromisoformat(row['plan_date']) + timedelta(days=delta)
-                c.execute('UPDATE daily_meals SET plan_date=?,notified_date=NULL,suggestion_notified_date=NULL,checkin_notified_date=NULL WHERE id=?', (shifted.isoformat(), int(row['id'])))
-            c.execute('UPDATE daily_meals SET plan_date=?,notified_date=NULL,suggestion_notified_date=NULL,checkin_notified_date=NULL WHERE id=?', (destination.isoformat(), meal_id))
-            for affected_id in affected:
-                _recalculate_recipe_due(c, affected_id)
+            moving = [dict(meal)] + [dict(row) for row in later]
+            destinations = _shift_pending_meal_sequence(c, moving, delta, destination)
+            delta = (destinations[int(meal_id)] - old_day).days
         if eaten:
             _recalculate_recipe_due(c, recipe_id)
         updated = c.execute('SELECT * FROM daily_meals WHERE id=?', (meal_id,)).fetchone()
@@ -688,6 +807,9 @@ def _select_daily_meal(recipe_id: int, plan_day: date) -> dict:
         recipe = c.execute("SELECT id,name,meal_source,plates_ready,eating_interval_days,calories_kcal FROM recipes WHERE id=? AND is_active=1", (recipe_id,)).fetchone()
         if not recipe:
             raise ValueError('This meal is no longer available. Refresh the Meals page and choose another.')
+        recipe_full = c.execute('SELECT excluded_weekdays_json FROM recipes WHERE id=?', (recipe_id,)).fetchone()
+        if plan_day.weekday() in _decode_excluded_weekdays(recipe_full['excluded_weekdays_json'] if recipe_full else '[]'):
+            raise ValueError(f"{recipe['name']} is not available on {WEEKDAY_NAMES[plan_day.weekday()]}s. Choose another meal.")
         if recipe['meal_source'] == 'home':
             reserved = int(c.execute("SELECT COUNT(*) FROM daily_meals WHERE recipe_id=? AND status='pending'", (recipe_id,)).fetchone()[0])
             ready = max(0, int(recipe['plates_ready'] or 0))
@@ -695,6 +817,7 @@ def _select_daily_meal(recipe_id: int, plan_day: date) -> dict:
                 raise ValueError(f"{recipe['name']} has no unreserved plates ready. Update its stock first.")
         cursor = c.execute("INSERT INTO daily_meals(plan_date,recipe_id,batch_id,status) VALUES(?,?,NULL,'pending')",
                            (plan_day.isoformat(), recipe_id))
+        c.execute('DELETE FROM meal_schedule_skips WHERE plan_date=?', (plan_day.isoformat(),))
         _recalculate_recipe_due(c, recipe_id)
         result = dict(recipe)
         result.update({'id': int(cursor.lastrowid), 'plan_date': plan_day.isoformat(), 'status': 'pending'})
@@ -713,6 +836,62 @@ def select_daily_meal(payload: Payload):
         return result
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, str(exc) or 'Choose a valid meal.')
+
+
+def _assign_or_skip_daily_meal(plan_day: date, recipe_id: int | None) -> dict:
+    """Assign/replace one pending plate, or deliberately leave a day without a plate."""
+    _roll_forward_unconfirmed_meals(date.today())
+    if plan_day < date.today():
+        raise ValueError('Past dates are read-only in the weekly meal plan.')
+    day_iso = plan_day.isoformat()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        current = c.execute('SELECT id,recipe_id,status FROM daily_meals WHERE plan_date=?', (day_iso,)).fetchone()
+        if current and current['status'] != 'pending':
+            raise ValueError('This plate is already confirmed as eaten and cannot be changed.')
+        old_recipe_id = int(current['recipe_id']) if current else None
+        if recipe_id is None:
+            if current:
+                c.execute("DELETE FROM daily_meals WHERE id=? AND status='pending'", (int(current['id']),))
+            c.execute('INSERT OR IGNORE INTO meal_schedule_skips(plan_date) VALUES(?)', (day_iso,))
+            if old_recipe_id:
+                _recalculate_recipe_due(c, old_recipe_id)
+            result = {'plan_date': day_iso, 'skipped': True, 'recipe_id': None}
+        else:
+            recipe = c.execute('SELECT id,name,meal_source,plates_ready,excluded_weekdays_json FROM recipes WHERE id=? AND is_active=1', (recipe_id,)).fetchone()
+            if not recipe:
+                raise ValueError('This meal option is no longer available. Refresh the page and try again.')
+            if plan_day.weekday() in _decode_excluded_weekdays(recipe['excluded_weekdays_json']):
+                raise ValueError(f"{recipe['name']} is excluded on {WEEKDAY_NAMES[plan_day.weekday()]}s.")
+            if recipe['meal_source'] == 'home':
+                reserved = c.execute("SELECT COUNT(*) FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date!=?", (recipe_id, day_iso)).fetchone()[0]
+                if int(recipe['plates_ready'] or 0) <= int(reserved):
+                    raise ValueError(f"{recipe['name']} has no unreserved plates ready. Update its stock first.")
+            if current:
+                c.execute("UPDATE daily_meals SET recipe_id=?,batch_id=NULL,notified_date=NULL,suggestion_notified_date=NULL,checkin_notified_date=NULL WHERE id=? AND status='pending'", (recipe_id, int(current['id'])))
+                meal_id = int(current['id'])
+            else:
+                cursor = c.execute("INSERT INTO daily_meals(plan_date,recipe_id,batch_id,status) VALUES(?,?,NULL,'pending')", (day_iso, recipe_id))
+                meal_id = int(cursor.lastrowid)
+            c.execute('DELETE FROM meal_schedule_skips WHERE plan_date=?', (day_iso,))
+            if old_recipe_id and old_recipe_id != recipe_id:
+                _recalculate_recipe_due(c, old_recipe_id)
+            _recalculate_recipe_due(c, recipe_id)
+            result = {'id': meal_id, 'plan_date': day_iso, 'recipe_id': recipe_id, 'recipe_name': recipe['name'], 'meal_source': recipe['meal_source'], 'status': 'pending', 'skipped': False}
+    maintain_meal_schedule()
+    return result
+
+
+@app.post('/api/daily-meals/assign')
+def assign_daily_meal(payload: Payload):
+    data = payload.data
+    try:
+        plan_day = date.fromisoformat(str(data.get('plan_date') or ''))
+        raw_recipe_id = data.get('recipe_id')
+        recipe_id = None if raw_recipe_id in (None, '', 0, '0') else int(raw_recipe_id)
+        return _assign_or_skip_daily_meal(plan_day, recipe_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc) or 'Choose a valid date and meal.')
 
 
 @app.post('/api/daily-meals/generate')
@@ -992,6 +1171,10 @@ def create_resource(resource: str, payload: Payload):
                      'calories_kcal': round(3.5 * 3.5 * body_weight / 200.0 * duration)})
     if resource == 'recipes':
         data.setdefault('meal_source', 'home')
+        try:
+            data['excluded_weekdays_json'] = _normalize_excluded_weekdays(data.get('excluded_weekdays_json', []))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
         if data['meal_source'] not in ('home','outside'):
             raise HTTPException(400, 'Meal type must be home or outside.')
         data.setdefault('plates_ready', data.get('batch_plates', 1) if data['meal_source']=='home' else 0)
@@ -1116,6 +1299,7 @@ def create_resource(resource: str, payload: Payload):
             with connect() as c: _ensure_cook_reminder(c, int(new_id), date.today()+timedelta(days=1))
         maintain_meal_schedule()
         result = {k: result.get(k) for k in ('id','name','calories_kcal','eating_interval_days','batch_plates','meal_source','plates_ready','next_routine_date','created_at')}
+        result['excluded_weekdays'] = _decode_excluded_weekdays(one('SELECT excluded_weekdays_json FROM recipes WHERE id=?',(new_id,))['excluded_weekdays_json'])
         result['ingredients'] = _recipe_ingredient_names(one('SELECT ingredients_json FROM recipes WHERE id=?',(new_id,))['ingredients_json'])
     return result
 
@@ -1179,6 +1363,11 @@ def update_resource(resource: str, item_id: int, payload: Payload):
             raise HTTPException(404, 'Meal not found.')
         if 'meal_source' in data and data['meal_source'] not in ('home','outside'):
             raise HTTPException(400, 'Meal type must be home or outside.')
+        if 'excluded_weekdays_json' in data:
+            try:
+                data['excluded_weekdays_json'] = _normalize_excluded_weekdays(data['excluded_weekdays_json'])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
         if data.get('meal_source') == 'outside':
             data['plates_ready'] = 0
         if 'plates_ready' in data:
@@ -1278,6 +1467,17 @@ def update_resource(resource: str, item_id: int, payload: Payload):
     with connect() as c:
         cur=c.execute(f"UPDATE {table} SET {','.join(k+'=?' for k in data)} WHERE id=?", [*data.values(),item_id])
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
+        if resource == 'recipes' and 'excluded_weekdays_json' in data:
+            excluded = set(_decode_excluded_weekdays(data['excluded_weekdays_json']))
+            pending = c.execute("SELECT id,plan_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>=?", (item_id, date.today().isoformat())).fetchall()
+            for scheduled in pending:
+                try:
+                    if date.fromisoformat(scheduled['plan_date']).weekday() in excluded:
+                        c.execute("DELETE FROM daily_meals WHERE id=? AND status='pending'", (int(scheduled['id']),))
+                except ValueError:
+                    continue
+            if pending:
+                _recalculate_recipe_due(c, item_id)
     result = one(f'SELECT * FROM {table} WHERE id=?',(item_id,))
     if resource == 'recipes' and result:
         if 'meal_source' in data or 'plates_ready' in data:
@@ -1287,6 +1487,7 @@ def update_resource(resource: str, item_id: int, payload: Payload):
                 elif current: c.execute("UPDATE meal_cook_reminders SET status='done' WHERE recipe_id=? AND status='open'", (item_id,))
         maintain_meal_schedule()
         result = {k: result.get(k) for k in ('id','name','calories_kcal','eating_interval_days','batch_plates','meal_source','plates_ready','next_routine_date','created_at')}
+        result['excluded_weekdays'] = _decode_excluded_weekdays(one('SELECT excluded_weekdays_json FROM recipes WHERE id=?',(item_id,))['excluded_weekdays_json'])
         ingredients_row = one('SELECT ingredients_json FROM recipes WHERE id=?',(item_id,))
         result['ingredients'] = _recipe_ingredient_names(ingredients_row['ingredients_json'] if ingredients_row else '[]')
     return result
@@ -1335,6 +1536,9 @@ def delete_resource(resource: str, item_id: int):
             if meal['status'] != 'pending':
                 raise HTTPException(409, 'A confirmed eaten plate is part of your history and cannot be removed.')
             cur = c.execute("DELETE FROM daily_meals WHERE id=? AND status='pending'", (item_id,))
+            # A manual removal means the user wants this date left open; persist
+            # that choice so the automatic scheduler does not immediately refill it.
+            c.execute('INSERT OR IGNORE INTO meal_schedule_skips(plan_date) VALUES(?)', (meal['plan_date'],))
             # Removing a pending plate is a schedule cancellation, not an eaten
             # plate: keep kitchen stock unchanged and preserve confirmed history.
             if meal['batch_id'] is not None:
@@ -1851,12 +2055,13 @@ def _telegram_save_recipe(data: dict) -> int:
     source = data.get('meal_source','home') if data.get('meal_source','home') in ('home','outside') else 'home'
     if not ingredients and source == 'home':
         raise ValueError('Home meals need at least one ingredient.')
+    excluded_weekdays_json = _normalize_excluded_weekdays(data.get('excluded_weekdays', []))
     with connect() as c:
         plates = int(data.get('plates_ready', data.get('batch_plates', 1))) if source == 'home' else 0
-        cur = c.execute('''INSERT INTO recipes(name,calories_kcal,ingredients_json,eating_interval_days,batch_plates,meal_source,plates_ready,next_routine_date)
-                           VALUES(?,?,?,?,?,?,?,?)''',
+        cur = c.execute('''INSERT INTO recipes(name,calories_kcal,ingredients_json,eating_interval_days,batch_plates,meal_source,plates_ready,next_routine_date,excluded_weekdays_json)
+                           VALUES(?,?,?,?,?,?,?,?,?)''',
                         (data['name'], data.get('calories_kcal'), json.dumps(ingredients, ensure_ascii=False),
-                         int(data.get('eating_interval_days', 1)), max(1, plates or 1), source, plates, date.today().isoformat()))
+                         int(data.get('eating_interval_days', 1)), max(1, plates or 1), source, plates, date.today().isoformat(), excluded_weekdays_json))
         recipe_id = int(cur.lastrowid)
         if source == 'home' and plates == 0:
             _ensure_cook_reminder(c, recipe_id, date.today() + timedelta(days=1))
@@ -1866,7 +2071,7 @@ def _telegram_save_recipe(data: dict) -> int:
 
 
 def _telegram_meals_by_source(source: str) -> str:
-    meals = rows("SELECT id,name,calories_kcal,eating_interval_days,plates_ready,next_routine_date FROM recipes WHERE is_active=1 AND meal_source=? ORDER BY name COLLATE NOCASE", (source,))
+    meals = rows("SELECT id,name,calories_kcal,eating_interval_days,plates_ready,next_routine_date,excluded_weekdays_json FROM recipes WHERE is_active=1 AND meal_source=? ORDER BY name COLLATE NOCASE", (source,))
     if not meals:
         return 'No ' + ('home' if source == 'home' else 'outside') + ' meals yet. Use /addrecipe to add one.'
     title = '🏠 HOME MEALS' if source == 'home' else '🍴 OUTSIDE MEALS'
@@ -1874,7 +2079,9 @@ def _telegram_meals_by_source(source: str) -> str:
     for meal in meals:
         stock = f" · {int(meal['plates_ready'] or 0)} plates ready" if source == 'home' else ''
         due = f" · next { _telegram_date_label(meal.get('next_routine_date')) }" if meal.get('next_routine_date') else ''
-        lines.append(f"• {meal['name']}{stock} · every {int(meal['eating_interval_days'] or 1)} day(s){due}")
+        excluded = _decode_excluded_weekdays(meal.get('excluded_weekdays_json', '[]'))
+        unavailable = f" · not scheduled: {', '.join(WEEKDAY_NAMES[x] for x in excluded)}" if excluded else ''
+        lines.append(f"• {meal['name']}{stock} · every {int(meal['eating_interval_days'] or 1)} day(s){due}{unavailable}")
     return '\n'.join(lines)
 
 
@@ -1909,12 +2116,15 @@ def _telegram_save_shopping_item(line: str) -> str:
 
 
 def _telegram_available_today_meals() -> list[dict]:
-    """Meals a user can actually select today: any Outside meal or unreserved Home stock."""
-    return rows("""SELECT r.id,r.name,r.meal_source,r.plates_ready,r.calories_kcal,
+    """Meals selectable today, excluding closed weekdays and reserved-out Home stock."""
+    today = date.today()
+    candidates = rows("""SELECT r.id,r.name,r.meal_source,r.plates_ready,r.calories_kcal,r.excluded_weekdays_json,
         COALESCE((SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.plan_date>=?),0) AS reserved_plates
         FROM recipes r WHERE r.is_active=1
           AND (r.meal_source='outside' OR r.plates_ready>COALESCE((SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.plan_date>=?),0))
-        ORDER BY CASE r.meal_source WHEN 'home' THEN 0 ELSE 1 END,r.name COLLATE NOCASE""", (date.today().isoformat(), date.today().isoformat()))
+        ORDER BY CASE r.meal_source WHEN 'home' THEN 0 ELSE 1 END,r.name COLLATE NOCASE""", (today.isoformat(), today.isoformat()))
+    return [meal for meal in candidates if today.weekday() not in _decode_excluded_weekdays(meal.get('excluded_weekdays_json', '[]'))]
+
 
 
 def _telegram_meal_text(start: date, days: int) -> str:
@@ -2129,7 +2339,7 @@ async def telegram_command(text: str) -> str:
                 else: raise ValueError()
                 data['meal_source']=source
                 _telegram_set_flow('recipe','name',data)
-                return ('🍽️ ADD A HOME MEAL · 2/6\n\n' if source=='home' else '🍴 ADD AN OUTSIDE MEAL · 2/5\n\n') + 'What is the meal name?\nExample: Chicken tagine'
+                return ('🍽️ ADD A HOME MEAL · 2/7\n\n' if source=='home' else '🍴 ADD AN OUTSIDE MEAL · 2/6\n\n') + 'What is the meal name?\nExample: Chicken tagine'
             if step == 'name':
                 if answer.lower() in ('yes', 'y', 'no', 'n', 'skip') or len(answer) < 2 or len(answer) > 160: raise ValueError('Enter the meal name (2–160 characters). YES/NO is only used when I show the final review.')
                 data['name'] = answer
@@ -2167,12 +2377,20 @@ async def telegram_command(text: str) -> str:
                 parts = list(dict.fromkeys(x for x in parts if x))
                 if not parts and data.get('meal_source','home') == 'home': raise ValueError('Home meals need at least one ingredient.')
                 data['ingredients'] = parts
+                _telegram_set_flow('recipe','excluded_days',data)
+                return ('Step 7 · Closed days\n\n' if data.get('meal_source') == 'home' else 'Step 6 · Closed days\n\n') + 'Which days should this meal NOT be scheduled? Send full weekday names separated by commas (example: Sunday, Wednesday), or type none.\n/cancel to stop.'
+            if step == 'excluded_days':
+                normalized = _normalize_excluded_weekdays([] if answer.lower() in ('none','no','skip','-') else re.split(r'[,;]+', answer))
+                data['excluded_weekdays'] = json.loads(normalized)
                 _telegram_set_flow('recipe','confirm',data)
                 source_label = 'Home meal' if data.get('meal_source') == 'home' else 'Outside meal'
                 kcal_label = f"{data['calories_kcal']:g} kcal/plate" if data.get('calories_kcal') is not None else 'Calories not set'
                 stock_label = f"\nReady plates: {int(data.get('plates_ready',0))}" if data.get('meal_source') == 'home' else ''
-                ingredient_label = ', '.join(parts) if parts else 'Not added'
-                return (f"🔎 REVIEW YOUR MEAL\n\nType: {source_label}\nName: {data['name']}\nCalories: {kcal_label}\nFrequency: every {data['eating_interval_days']} day(s){stock_label}\nIngredients: {ingredient_label}\n\n"
+                ingredients = data.get('ingredients', [])
+                ingredient_label = ', '.join(ingredients) if ingredients else 'Not added'
+                excluded = data['excluded_weekdays']
+                excluded_label = f"\nNot scheduled: {', '.join(WEEKDAY_NAMES[x] for x in excluded)}" if excluded else '\nNot scheduled: No weekday restrictions'
+                return (f"🔎 REVIEW YOUR MEAL\n\nType: {source_label}\nName: {data['name']}\nCalories: {kcal_label}\nFrequency: every {data['eating_interval_days']} day(s){stock_label}\nIngredients: {ingredient_label}{excluded_label}\n\n"
                         'Save this meal? Reply YES to save or NO to cancel.\n/cancel also cancels the form.')
             if step == 'confirm':
                 if low in ('yes','y','save','confirm','/yes','/save','/confirm'):
@@ -2190,7 +2408,8 @@ async def telegram_command(text: str) -> str:
                 'calories':'Send a kcal number (for example 650) or type skip.',
                 'interval':'Send a whole number from 1 to 90 days, for example 2 or every 3 days.',
                 'plates':'Send a whole number from 0 to 1000 plates, for example 3.',
-                'ingredients':('Send ingredients separated by commas, or type skip.' if data.get('meal_source') == 'outside' else 'Home meals need at least one ingredient. Send a comma-separated list.')
+                'ingredients':('Send ingredients separated by commas, or type skip.' if data.get('meal_source') == 'outside' else 'Home meals need at least one ingredient. Send a comma-separated list.'),
+                'excluded_days':'Send full weekday names separated by commas (example: Sunday, Wednesday), or type none.'
             }
             return prompts.get(step, 'I could not use that answer. Please try again, or send /cancel.')
 
