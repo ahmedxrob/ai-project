@@ -774,7 +774,7 @@ body{min-height:100vh;min-height:100dvh}
 @media(max-width:1050px){.weekly-meal-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:700px){.weekly-meal-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.weekly-day-card{padding:11px 9px}.weekly-day-content{min-height:56px}.weekly-day-top>b{font-size:10px}.weekly-meal-name{font-size:12px}.weekly-meal-meta{font-size:9px}.weekly-plan-footnote{font-size:10px}}
 
-/* 0.4.12 interval-safe weekly replanning and simplified Telegram fitness menu. */
+/* 0.4.13 restores Telegram Today, Meals, I ate it, and Not today shortcuts. */
 .weekly-plan-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}
 .weekly-plan-header h3{margin:0 0 5px}
 .weekly-plan-header p{margin:0}
