@@ -244,7 +244,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.12', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.13', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -253,7 +253,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.12','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.13','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -1998,23 +1998,30 @@ async def reminder_loop():
             await asyncio.sleep(15)
 
 def _telegram_main_keyboard() -> dict:
-    """Keep the persistent Telegram menu focused on lightweight fitness logging."""
+    """Persistent shortcuts for meal check-ins, today's agenda, and fitness logging."""
     return {
         'keyboard': [
+            [{'text': '📅 Today'}, {'text': '🍽 Meals'}],
+            [{'text': '✅ I ate it'}, {'text': '⏭ Not today'}],
             [{'text': '⚖️ Add weight'}, {'text': '🏃 Add treadmill'}],
             [{'text': '📈 Fitness week'}],
         ],
         'resize_keyboard': True,
         'is_persistent': True,
-        'input_field_placeholder': 'Add weight, log treadmill, or view your week',
+        'input_field_placeholder': 'Today, meals, meal check-in, or fitness',
     }
 
 
 def _telegram_bot_commands() -> list[dict[str, str]]:
-    """Register only the main fitness actions; meal check-ins remain automatic."""
+    """Expose the main agenda, meal, check-in, and fitness actions in Telegram."""
     return [
-        {'command': 'start', 'description': 'Open the quick fitness menu'},
-        {'command': 'help', 'description': 'How to log weight and treadmill'},
+        {'command': 'start', 'description': 'Open the XROB quick menu'},
+        {'command': 'help', 'description': 'Show available actions'},
+        {'command': 'today', 'description': 'Show today agenda'},
+        {'command': 'meals', 'description': "Show today's plate or choose a meal"},
+        {'command': 'yes', 'description': 'Confirm you ate the suggested plate'},
+        {'command': 'no', 'description': 'Move the plate and later plan forward'},
+        {'command': 'choosemeal', 'description': 'Choose or replace today’s plate'},
         {'command': 'weight', 'description': 'Start guided weight entry'},
         {'command': 'treadmill', 'description': 'Start guided treadmill entry'},
         {'command': 'fitnessweek', 'description': 'Weight and treadmill summary for the last 7 days'},
@@ -2446,9 +2453,9 @@ async def telegram_command(text: str) -> str:
         _telegram_set_state(None)
         return '↩️ Back to the main menu. Choose an action from the menu below, or send /help for examples.'
     meal_menu_commands = (
-        '🍽 today plate','🍽 today meals','today plate','today meals','meals','/meals',
+        '🍽 today plate','🍽 today meals','🍽 meals','today plate','today meals','meals','/meals',
         '🗓 meal plan','🗓 7-day meals','🗓 upcoming meals','upcoming meals','meal plan','/mealplan',
-        '✅ ate it','ate it','i ate it','⏭ not today','not today','yes','y','/yes','/eaten','no','n','/no','/skip',
+        '✅ ate it','✅ i ate it','ate it','i ate it','⏭ not today','not today','yes','y','/yes','/eaten','no','n','/no','/skip',
         '🛒 shopping list','shopping list','shopping','/shopping','➕ add recipe','add recipe','➕ add meal','add meal','/addrecipe',
         '🏠 home meals','home meals','/homemeals','🍴 outside meals','outside meals','/outsidemeals',
         '🔢 update plates','update plates','/stock','🗑 remove meal','remove meal','delete meal','/deletemeal','➕ add grocery','add grocery','/additem',
@@ -2464,7 +2471,7 @@ async def telegram_command(text: str) -> str:
         or (low in meal_menu_commands and not guided_yes_no_reply and not guided_confirmation_reply)
         or (low in ('⚖️ add weight', '🏃 add treadmill', '📈 fitness week', 'fitness week', 'week') and not guided_yes_no_reply and not guided_confirmation_reply)
     )
-    meal_checkin_inputs = ('✅ ate it', 'ate it', 'i ate it', 'yes', 'y', '/yes', '/eaten', '⏭ not today', 'not today', 'no', 'n', '/no', '/skip')
+    meal_checkin_inputs = ('✅ ate it', '✅ i ate it', 'ate it', 'i ate it', 'yes', 'y', '/yes', '/eaten', '⏭ not today', 'not today', 'no', 'n', '/no', '/skip')
     if conversation_active and not guided_confirming and low in meal_checkin_inputs:
         return 'You are in the middle of a guided entry. Finish that step or send /cancel first; then use YES or NO for your meal check-in.'
 
@@ -2735,7 +2742,7 @@ async def telegram_command(text: str) -> str:
     if add_item_match:
         try: return _telegram_save_shopping_item(add_item_match.group(1))
         except (TypeError, ValueError): return 'Use: add item rice'
-    today_meal_commands = ('🍽 today plate','🍽 today meals','today meals','today plate','meals','/meals','what should i eat today','what am i eating today')
+    today_meal_commands = ('🍽 today plate','🍽 today meals','🍽 meals','today meals','today plate','meals','/meals','what should i eat today','what am i eating today')
     choose_meal_commands = ('🍽 choose meal','choose meal','/choosemeal')
     if low in today_meal_commands or low in choose_meal_commands:
         today_meal = one("SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=?", (today_iso,))
@@ -2758,11 +2765,11 @@ async def telegram_command(text: str) -> str:
     if low in ('🛒 shopping list','shopping list','shopping','/shopping','/groceries'):
         return _telegram_shopping_text()
     # The pending plate confirmation is intentionally a simple YES / NO reply.
-    if not conversation_active and low in ('✅ ate it','ate it','yes','y','/yes','/eaten','i ate it','⏭ not today','not today','no','n','/no','/skip'):
+    if not conversation_active and low in ('✅ ate it','✅ i ate it','ate it','yes','y','/yes','/eaten','i ate it','⏭ not today','not today','no','n','/no','/skip'):
         pending = one("SELECT id,plan_date FROM daily_meals WHERE status='pending' AND plan_date<=? ORDER BY plan_date,id LIMIT 1", (today_iso,))
         if not pending:
             return 'There is no plate waiting for confirmation.'
-        eaten = low in ('✅ ate it','ate it','yes','y','/yes','/eaten','i ate it')
+        eaten = low in ('✅ ate it','✅ i ate it','ate it','yes','y','/yes','/eaten','i ate it')
         try:
             updated = _confirm_daily_meal(int(pending['id']), eaten)
         except ValueError as exc:
@@ -2786,11 +2793,12 @@ async def telegram_command(text: str) -> str:
         return f"✅ Marked purchased · {matched['name']}"
     if low in ('/start', 'start', '/menu', 'menu', 'hi', 'hello', '/help', 'help', '❔ help'):
         return (
-            '👋 XROB FITNESS QUICK MENU\n\n'
-            '⚖️ Add weight — tap the button, then send a value such as 82.4 kg.\n'
-            '🏃 Add treadmill — tap the button, then send the session length in minutes, such as 30.\n'
-            '📈 Fitness week — see your recent weight and treadmill progress.\n\n'
-            'Meal reminders still arrive automatically. Reply YES when you ate the suggested plate, or NO to move it and the later plan forward. The Telegram menu stays focused on fitness; manage the full meal plan in the app.\n\n'
+            '👋 XROB QUICK MENU\n\n'
+            '📅 Today — see today’s agenda.\n'
+            '🍽 Meals — view today’s plate or choose a meal.\n'
+            '✅ I ate it — confirm today’s suggested plate.\n'
+            '⏭ Not today — move the plate and later plan forward safely.\n'
+            '⚖️ Add weight · 🏃 Add treadmill · 📈 Fitness week — log and review fitness.\n\n'
             'Use /cancel to stop an unfinished entry.'
         )
 
