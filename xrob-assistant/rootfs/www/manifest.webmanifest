@@ -1,11 +1,11 @@
 {
   "name": "XROB Assistant",
   "short_name": "XROB",
-  "description": "Self-hosted personal assistant and scheduler for calendar, tasks, routines and fitness.",
+  "description": "Your personal life manager for planning, routines, fitness, bills and meals.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#050607",
-  "theme_color": "#050607",
+  "background_color": "#080b09",
+  "theme_color": "#080b09",
   "icons": [
     {
       "src": "/static/xrob-logo.png",
@@ -13,5 +13,11 @@
       "type": "image/png",
       "purpose": "any maskable"
     }
+  ],
+  "scope": "/",
+  "orientation": "any",
+  "categories": [
+    "productivity",
+    "lifestyle"
   ]
 }
