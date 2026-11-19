@@ -773,3 +773,13 @@ body{min-height:100vh;min-height:100dvh}
 .weekday-exclude-option span{font-size:11px}
 @media(max-width:1050px){.weekly-meal-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:700px){.weekly-meal-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.weekly-day-card{padding:11px 9px}.weekly-day-content{min-height:56px}.weekly-day-top>b{font-size:10px}.weekly-meal-name{font-size:12px}.weekly-meal-meta{font-size:9px}.weekly-plan-footnote{font-size:10px}}
+
+/* 0.4.10 weekly reset action and responsive header. */
+.weekly-plan-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}
+.weekly-plan-header h3{margin:0 0 5px}
+.weekly-plan-header p{margin:0}
+.weekly-plan-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.weekly-reset-btn{min-height:38px;white-space:nowrap;border-color:#49664e;color:#d9ecdc}
+.weekly-reset-btn:disabled{opacity:.55;cursor:wait}
+@media(max-width:700px){.weekly-plan-header{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}.weekly-plan-actions{display:grid;grid-template-columns:1fr;justify-content:stretch}.weekly-reset-btn{width:100%;min-height:42px}.weekly-plan-actions .tag{justify-self:start}}
+@media(max-width:360px){.weekly-meal-grid{grid-template-columns:minmax(0,1fr)}.weekday-exclude-grid{grid-template-columns:1fr}}
