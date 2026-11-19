@@ -451,7 +451,7 @@ body:not(.inner-page)>main>header{display:flex;}
 @media(max-width:620px){.calendar-meal-card{align-items:stretch;flex-direction:column;padding:13px;gap:12px}.calendar-meal-actions{justify-content:flex-start}.calendar-meal-actions .mini-btn{flex:1}.calendar-meal-copy>b{font-size:14px}}
 
 /* ================================================================
-   XROB Assistant 0.4.7 — unified cross-platform design system
+   XROB Assistant 0.4.8 — unified cross-platform design system
    The earlier rules above preserve specialist chart layouts; this
    final layer brings every page into one consistent visual system.
    ================================================================ */
@@ -708,3 +708,30 @@ input:not([type=checkbox]):not([type=radio]),select,textarea{
 }
 @media(hover:none){.recipe-card:hover,.primary:hover{transform:none}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+
+
+/* XROB Assistant 0.4.8 — full-viewport responsive workspace */
+:root{--xrob-sidebar-width:238px}
+body{width:100%;max-width:100%;overflow-x:hidden}
+main{flex:1 1 auto;width:calc(100% - var(--xrob-sidebar-width));max-width:none;margin-left:var(--xrob-sidebar-width);margin-right:0;min-width:0;padding-left:clamp(18px,2vw,38px);padding-right:clamp(18px,2vw,38px)}
+main>.page{width:100%;max-width:none;min-width:0}
+main>.page>*{min-width:0}
+.today-meal-empty{display:grid;gap:14px;min-width:0}
+.today-meal-empty-copy b{display:block;font-size:14px;color:var(--text)}
+.today-meal-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:10px;max-width:760px}
+.today-meal-picker label{grid-column:1/-1;color:var(--muted);font-size:12px;font-weight:650}
+.today-meal-picker select{width:100%;min-width:0;min-height:43px;padding:10px 12px;border:1px solid #3b5942;border-radius:10px;background:#0c150f;color:var(--text);font:inherit}
+.today-meal-picker .primary{min-height:43px;white-space:nowrap}
+.today-meal-picker .primary:disabled{opacity:.5;cursor:not-allowed}
+@media(min-width:701px) and (max-width:1000px){:root{--xrob-sidebar-width:72px}main{width:calc(100% - var(--xrob-sidebar-width));margin-left:var(--xrob-sidebar-width);max-width:none;padding-left:clamp(16px,2vw,26px);padding-right:clamp(16px,2vw,26px)}}
+@media(max-width:700px){:root{--xrob-sidebar-width:0px}body{display:block;width:100%;min-width:0}main{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding-left:max(12px,env(safe-area-inset-left))!important;padding-right:max(12px,env(safe-area-inset-right))!important}main>.page{width:100%;max-width:none}.today-meal-picker{grid-template-columns:minmax(0,1fr)}.today-meal-picker label{grid-column:auto}.today-meal-picker .primary{width:100%}}
+
+/* XROB Assistant 0.4.8 — viewport sizing and no-schedule meal actions */
+html{min-width:320px;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{min-height:100vh;min-height:100dvh}
+.today-meal-empty-overview{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px}
+.today-meal-empty-overview .secondary{min-height:40px;white-space:nowrap}
+@media(max-width:700px){
+  .today-meal-empty-overview{grid-template-columns:minmax(0,1fr);align-items:stretch}
+  .today-meal-empty-overview .secondary{width:100%;white-space:normal}
+}
