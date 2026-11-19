@@ -1,6 +1,6 @@
 name: XROB Assistant
 description: Local personal planner, fitness tracker, bills, routines and meal routines with automatic scheduling and Telegram check-ins
-version: 0.4.5
+version: 0.4.7
 slug: xrob_assistant
 init: false
 startup: services
