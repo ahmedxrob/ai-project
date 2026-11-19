@@ -235,7 +235,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.7', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.8', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -244,7 +244,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.7','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.8','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -671,6 +671,48 @@ def update_recipe_stock(recipe_id: int, payload: Payload):
         _sync_home_stock(c, recipe_id, value)
     maintain_meal_schedule()
     return one('SELECT id,name,meal_source,plates_ready,next_routine_date FROM recipes WHERE id=?', (recipe_id,))
+
+
+def _select_daily_meal(recipe_id: int, plan_day: date) -> dict:
+    """Manually choose one active meal for a date without consuming stock until eaten."""
+    # First roll any overdue pending plate forward so a late scheduler tick cannot
+    # collide with the manually chosen date's UNIQUE daily_meals slot.
+    _roll_forward_unconfirmed_meals(date.today())
+    if plan_day < date.today():
+        raise ValueError('A meal can only be selected for today or a future date.')
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        existing = c.execute('SELECT id,recipe_id,status FROM daily_meals WHERE plan_date=?', (plan_day.isoformat(),)).fetchone()
+        if existing:
+            raise ValueError('A plate is already scheduled for this date. Remove or move it before choosing another.')
+        recipe = c.execute("SELECT id,name,meal_source,plates_ready,eating_interval_days,calories_kcal FROM recipes WHERE id=? AND is_active=1", (recipe_id,)).fetchone()
+        if not recipe:
+            raise ValueError('This meal is no longer available. Refresh the Meals page and choose another.')
+        if recipe['meal_source'] == 'home':
+            reserved = int(c.execute("SELECT COUNT(*) FROM daily_meals WHERE recipe_id=? AND status='pending'", (recipe_id,)).fetchone()[0])
+            ready = max(0, int(recipe['plates_ready'] or 0))
+            if ready <= reserved:
+                raise ValueError(f"{recipe['name']} has no unreserved plates ready. Update its stock first.")
+        cursor = c.execute("INSERT INTO daily_meals(plan_date,recipe_id,batch_id,status) VALUES(?,?,NULL,'pending')",
+                           (plan_day.isoformat(), recipe_id))
+        _recalculate_recipe_due(c, recipe_id)
+        result = dict(recipe)
+        result.update({'id': int(cursor.lastrowid), 'plan_date': plan_day.isoformat(), 'status': 'pending'})
+    return result
+
+
+@app.post('/api/daily-meals/select')
+def select_daily_meal(payload: Payload):
+    try:
+        recipe_id = int(payload.data.get('recipe_id'))
+        raw_day = str(payload.data.get('plan_date') or date.today().isoformat())
+        plan_day = date.fromisoformat(raw_day)
+        result = _select_daily_meal(recipe_id, plan_day)
+        maintain_meal_schedule()
+        result['message'] = 'Meal selected for ' + plan_day.isoformat() + '.'
+        return result
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc) or 'Choose a valid meal.')
 
 
 @app.post('/api/daily-meals/generate')
@@ -1533,14 +1575,15 @@ async def telegram_poll():
         'keyboard': [
             [{'text': '📅 Today'}, {'text': '✅ Tasks'}],
             [{'text': '🔁 Routines'}, {'text': '💳 Bills'}],
-            [{'text': '🍽 Today plate'}, {'text': '🗓 7-day meals'}],
+            [{'text': '🍽 Today plate'}, {'text': '🍽 Choose meal'}],
+            [{'text': '🗓 7-day meals'}, {'text': '🛒 Shopping list'}],
             [{'text': '🏠 Home meals'}, {'text': '🍴 Outside meals'}],
             [{'text': '➕ Add meal'}, {'text': '🔢 Update plates'}],
-            [{'text': '🗑 Remove meal'}, {'text': '🛒 Shopping list'}],
-            [{'text': '➕ Add grocery'}],
+            [{'text': '🗑 Remove meal'}, {'text': '➕ Add grocery'}],
             [{'text': '✅ Ate it'}, {'text': '⏭ Not today'}],
             [{'text': '⚖️ Add weight'}, {'text': '🏃 Add treadmill'}],
-            [{'text': '🗓 Week'}, {'text': '❔ Help'}]
+            [{'text': '🗓 Week'}, {'text': '❔ Help'}],
+            [{'text': '⬅️ Back'}]
         ],
         'resize_keyboard': True,
         'is_persistent': True,
@@ -1559,7 +1602,9 @@ async def telegram_poll():
         {'command': 'weight', 'description': 'Start guided weight entry'},
         {'command': 'treadmill', 'description': 'Start guided treadmill entry'},
         {'command': 'paid', 'description': 'Mark a bill paid: paid Electricity'},
-        {'command': 'meals', 'description': 'Show today’s plate'},
+        {'command': 'meals', 'description': 'Show today’s plate or choose one'},
+        {'command': 'choosemeal', 'description': 'Choose a meal for today'},
+        {'command': 'back', 'description': 'Return to the main menu'},
         {'command': 'mealplan', 'description': 'Show the next 7 days of plates'},
         {'command': 'yes', 'description': 'Confirm today’s plate was eaten'},
         {'command': 'no', 'description': 'Move today’s plate to tomorrow'},
@@ -1757,7 +1802,13 @@ def _telegram_context_keyboard(default_keyboard: dict) -> dict:
     name, step = flow.get('flow'), flow.get('step')
     rows: list[list[dict[str, str]]] = []
     placeholder = 'Enter your answer'
-    if name == 'recipe' and step == 'source':
+    if name == 'choose_today_meal' and step == 'name':
+        choices = flow.get('data', {}).get('choices', [])
+        buttons = [{'text': str(value)[:60]} for value in choices if str(value).strip() and len(str(value)) <= 60]
+        rows = [buttons[index:index + 2] for index in range(0, len(buttons), 2)]
+        rows.append([{'text': '⬅️ Back'}])
+        placeholder = 'Choose a meal for today'
+    elif name == 'recipe' and step == 'source':
         rows = [[{'text': '🏠 HOME'}, {'text': '🍴 OUTSIDE'}], [{'text': '/cancel'}]]
         placeholder = 'Choose Home or Outside'
     elif name == 'recipe' and step == 'confirm':
@@ -1857,6 +1908,15 @@ def _telegram_save_shopping_item(line: str) -> str:
     return f"✅ Added to shopping list · {name}"
 
 
+def _telegram_available_today_meals() -> list[dict]:
+    """Meals a user can actually select today: any Outside meal or unreserved Home stock."""
+    return rows("""SELECT r.id,r.name,r.meal_source,r.plates_ready,r.calories_kcal,
+        COALESCE((SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.plan_date>=?),0) AS reserved_plates
+        FROM recipes r WHERE r.is_active=1
+          AND (r.meal_source='outside' OR r.plates_ready>COALESCE((SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.plan_date>=?),0))
+        ORDER BY CASE r.meal_source WHEN 'home' THEN 0 ELSE 1 END,r.name COLLATE NOCASE""", (date.today().isoformat(), date.today().isoformat()))
+
+
 def _telegram_meal_text(start: date, days: int) -> str:
     end = start + timedelta(days=days-1)
     meals = rows('''SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal
@@ -1864,7 +1924,7 @@ def _telegram_meal_text(start: date, days: int) -> str:
                     WHERE dm.plan_date BETWEEN ? AND ? ORDER BY dm.plan_date''',
                  (start.isoformat(), end.isoformat()))
     if not meals:
-        return '🍽 No plates are scheduled yet. Add a meal in XROB Assistant; the meal routine scheduler fills the Planner automatically.'
+        return f'🍽 No meal entries in the next {days} day(s). Use Today plate to choose a meal manually, or /addrecipe to save another option.'
     labels = []
     for meal in meals:
         status = '✅ Eaten' if meal['status'] == 'eaten' else '⏳ Waiting for confirmation'
@@ -1955,13 +2015,17 @@ async def telegram_command(text: str) -> str:
     if low in ('/cancel', 'cancel', 'stop'):
         _telegram_set_state(None)
         return 'Cancelled. Nothing was saved.'
+    if low in ('⬅️ back', 'back', '/back'):
+        _telegram_set_state(None)
+        return '↩️ Back to the main menu. Choose an action from the menu below, or send /help for examples.'
     meal_menu_commands = (
         '🍽 today plate','🍽 today meals','today plate','today meals','meals','/meals',
         '🗓 meal plan','🗓 7-day meals','🗓 upcoming meals','upcoming meals','meal plan','/mealplan',
         '✅ ate it','ate it','i ate it','⏭ not today','not today','yes','y','/yes','/eaten','no','n','/no','/skip',
         '🛒 shopping list','shopping list','shopping','/shopping','➕ add recipe','add recipe','➕ add meal','add meal','/addrecipe',
         '🏠 home meals','home meals','/homemeals','🍴 outside meals','outside meals','/outsidemeals',
-        '🔢 update plates','update plates','/stock','🗑 remove meal','remove meal','delete meal','/deletemeal','➕ add grocery','add grocery','/additem'
+        '🔢 update plates','update plates','/stock','🗑 remove meal','remove meal','delete meal','/deletemeal','➕ add grocery','add grocery','/additem',
+        '🍽 choose meal','choose meal','/choosemeal','⬅️ back','back','/back'
     )
     meal_interrupt_prefixes = ('bought ', 'got ', 'suggest meals', 'plan meals', '/bought', '/suggestmeals', 'add item ', 'add grocery ')
     guided_confirming = bool(flow_state and flow_state.get('step') in ('confirm', 'delete_confirm'))
@@ -1975,6 +2039,26 @@ async def telegram_command(text: str) -> str:
     meal_checkin_inputs = ('✅ ate it', 'ate it', 'i ate it', 'yes', 'y', '/yes', '/eaten', '⏭ not today', 'not today', 'no', 'n', '/no', '/skip')
     if conversation_active and not guided_confirming and low in meal_checkin_inputs:
         return 'You are in the middle of a guided entry. Finish that step or send /cancel first; then use YES or NO for your meal check-in.'
+
+    if flow_state and flow_state.get('flow') == 'choose_today_meal' and not flow_interrupted:
+        if flow_state.get('step') == 'name':
+            query = raw.strip()
+            available = _telegram_available_today_meals()
+            matched, matches = _telegram_match_named_item(query, available)
+            if not matched:
+                if matches:
+                    return 'I found more than one match. Please tap or type the full meal name:\n' + '\n'.join('• ' + item['name'] for item in matches[:8])
+                return 'Please choose one of the meal buttons below, or use ⬅️ Back to return to the main menu.'
+            try:
+                selected = _select_daily_meal(int(matched['id']), today)
+                _telegram_set_state(None)
+                maintain_meal_schedule()
+                kcal = f" · {float(selected['calories_kcal']):g} kcal/plate" if selected.get('calories_kcal') is not None else ''
+                return f"✅ Today's plate selected\n\n🍽 {selected['name']}{kcal}\n\nI will ask at 22:00 whether you ate it. You can change your choice from the Meals page if needed."
+            except ValueError as exc:
+                refreshed = _telegram_available_today_meals()
+                _telegram_set_flow('choose_today_meal','name',{'choices':[x['name'] for x in refreshed[:16]]})
+                return str(exc) + ('\n\nChoose another available meal below.' if refreshed else '\n\nNo meal is available now. Update Home stock or add an Outside meal, then try again.')
 
     if flow_state and flow_state.get('flow') == 'stock' and not flow_interrupted:
         step = flow_state.get('step')
@@ -2175,8 +2259,18 @@ async def telegram_command(text: str) -> str:
     if add_item_match:
         try: return _telegram_save_shopping_item(add_item_match.group(1))
         except (TypeError, ValueError): return 'Use: add item rice'
-    if low in ('🍽 today plate','🍽 today meals','today meals','today plate','meals','/meals','what should i eat today','what am i eating today'):
-        return _telegram_meal_text(today,1)
+    if low in ('🍽 today plate','🍽 today meals','today meals','today plate','meals','/meals','what should i eat today','what am i eating today','🍽 choose meal','choose meal','/choosemeal'):
+        today_meal = one("SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=?", (today_iso,))
+        if today_meal:
+            return _telegram_meal_text(today,1)
+        available = _telegram_available_today_meals()
+        if not available:
+            _telegram_set_state(None)
+            return '🍽️ There is no meal ready to choose right now. Add an Outside meal with /addrecipe, or update the ready plates of a Home meal with /stock.\n\nUse ⬅️ Back to return to the main menu.'
+        _telegram_set_flow('choose_today_meal','name',{'choices':[meal['name'] for meal in available[:16]]})
+        options='\n'.join(f"• {meal['name']} · {'Home' if meal['meal_source']=='home' else 'Outside'}" for meal in available[:12])
+        more=f"\n…and {len(available)-12} more" if len(available)>12 else ''
+        return '🍽️ WHAT WOULD YOU LIKE TO EAT TODAY?\n\nChoose a meal below to schedule it for today.\n\n' + options + more + '\n\nTap ⬅️ Back to return to the main menu.'
     if low in ('🗓 meal plan','🗓 upcoming meals','upcoming meals','meal plan','/mealplan','my meal plan'):
         return _telegram_meal_text(today,7)
     if low in ('🛒 shopping list','shopping list','shopping','/shopping','/groceries'):
@@ -2213,7 +2307,8 @@ async def telegram_command(text: str) -> str:
             '👋 WELCOME TO XROB ASSISTANT\n\n'
             'I can help you manage your day, routines, fitness, bills and meals. Use the menu buttons below or type a command.\n\n'
             '🍽️ MEALS\n'
-            '• /meals — today’s plate and the next 7 days\n'
+            '• /meals — today’s plate, or choose a meal if none is scheduled\n'
+            '• /choosemeal — choose a meal for today manually\n'
             '• /homemeals — home meals and ready plates\n'
             '• /outsidemeals — outside meal options\n'
             '• /addrecipe — add a meal with guided questions (YES to save, NO to cancel)\n'
@@ -2231,7 +2326,7 @@ async def telegram_command(text: str) -> str:
             '• done Shower — complete a routine\n'
             '• paid Electricity — mark a bill paid\n'
             '• /today · /tasks · /routines · /bills · /week\n\n'
-            'Any guided form can be stopped with /cancel. I will ask one question at a time and show a summary before saving a new meal.'
+            'Use ⬅️ Back to return to the main menu, or /cancel to stop the current guided form. I ask one question at a time and show a summary before saving a new meal.'
         )
 
     if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
