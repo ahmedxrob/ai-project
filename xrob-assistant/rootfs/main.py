@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS exercises (id INTEGER PRIMARY KEY, workout_id INTEGER
 CREATE TABLE IF NOT EXISTS treadmill (id INTEGER PRIMARY KEY, date TEXT NOT NULL, duration_min REAL DEFAULT 0, distance_km REAL DEFAULT 0, speed_kmh REAL DEFAULT 0, incline REAL DEFAULT 0, calories_kcal REAL DEFAULT 0, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS bills (id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_mad REAL DEFAULT 0, due_date TEXT NOT NULL, recurrence TEXT DEFAULT 'none', reminder_days INTEGER DEFAULT 3, status TEXT DEFAULT 'unpaid', paid_at TEXT, notes TEXT DEFAULT '', recurrence_day INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, name TEXT NOT NULL, expiry_date TEXT NOT NULL, reminder_days INTEGER DEFAULT 30, reference TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', routine_time TEXT DEFAULT '10:00', routine_late_time TEXT DEFAULT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', routine_time TEXT DEFAULT '10:00', routine_late_time TEXT DEFAULT NULL, routine_rollover_after_late INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS routine_logs (id INTEGER PRIMARY KEY, routine_id INTEGER NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS notification_log (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, item_id INTEGER NOT NULL, reminder_date TEXT NOT NULL, UNIQUE(kind,item_id,reminder_date));
 CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -150,6 +150,8 @@ def init_db():
             c.execute("ALTER TABLE routines ADD COLUMN routine_time TEXT DEFAULT '10:00'")
         if 'routine_late_time' not in routine_columns:
             c.execute("ALTER TABLE routines ADD COLUMN routine_late_time TEXT DEFAULT NULL")
+        if 'routine_rollover_after_late' not in routine_columns:
+            c.execute('ALTER TABLE routines ADD COLUMN routine_rollover_after_late INTEGER NOT NULL DEFAULT 0')
         # In 0.1.11, 12:00 was automatically populated for every routine.
         # Convert those generated defaults to NULL so late reminders are opt-in.
         # Preserve any other time that the user may have deliberately selected.
@@ -157,6 +159,12 @@ def init_db():
         if not late_opt_in_migration:
             c.execute("UPDATE routines SET routine_late_time=NULL WHERE routine_late_time='12:00'")
             c.execute("INSERT INTO app_migrations(name) VALUES('routine_late_reminder_optional_v1')")
+        # Preserve the intended behavior for existing routines that already
+        # have a late reminder: enable next-day rollover once during migration.
+        rollover_migration = c.execute("SELECT 1 FROM app_migrations WHERE name='routine_rollover_after_late_v1'").fetchone()
+        if not rollover_migration:
+            c.execute("UPDATE routines SET routine_rollover_after_late=1 WHERE routine_late_time IS NOT NULL AND TRIM(routine_late_time)!=''")
+            c.execute("INSERT INTO app_migrations(name) VALUES('routine_rollover_after_late_v1')")
         # Starter routines are inserted only once.
         if c.execute('SELECT COUNT(*) FROM routines').fetchone()[0] == 0:
             today = date.today().isoformat()
@@ -198,7 +206,7 @@ TABLES = {
  'treadmill': ('treadmill', ['date','duration_min','distance_km','speed_kmh','incline','calories_kcal','notes']),
  'bills': ('bills', ['name','amount_mad','due_date','recurrence','reminder_days','status','paid_at','notes']),
  'documents': ('documents', ['name','expiry_date','reminder_days','reference','notes']),
- 'routines': ('routines', ['name','interval_days','last_done','next_due','category','notes','routine_time','routine_late_time']),
+ 'routines': ('routines', ['name','interval_days','last_done','next_due','category','notes','routine_time','routine_late_time','routine_rollover_after_late']),
  'recipes': ('recipes', ['name','calories_kcal','ingredients_json','eating_interval_days','batch_plates','meal_source','plates_ready']),
  'meal_cook_reminders': ('meal_cook_reminders', ['recipe_id','due_date','status']),
  'meal_plans': ('meal_plans', ['plan_date','meal_type','recipe_id','servings','notes']),
@@ -226,7 +234,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.3', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.4', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -235,7 +243,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.3','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.4','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -748,6 +756,15 @@ def validate_routine_schedule(data: dict[str, Any], existing: dict[str, Any] | N
         raise HTTPException(400, 'Late reminder time must be later than the routine time.')
 
 
+def normalize_routine_rollover(data: dict[str, Any], existing: dict[str, Any] | None = None) -> None:
+    """Allow automatic next-day rollover only when a late reminder is configured."""
+    existing = existing or {}
+    late_time = data.get('routine_late_time', existing.get('routine_late_time'))
+    raw = data.get('routine_rollover_after_late', existing.get('routine_rollover_after_late', 0))
+    enabled = str(raw).strip().lower() in ('1', 'true', 'yes', 'on')
+    data['routine_rollover_after_late'] = 1 if late_time and enabled else 0
+
+
 def validate_date_field(value: Any, label: str) -> str | None:
     if value in (None, ''):
         return None
@@ -845,10 +862,31 @@ def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
             elif late_time and current_hm >= late_time:
                 scheduled = f'\nScheduled: {routine_time}' if routine_time else ''
                 days_late = (today - due).days
-                reminders.append(('routine-late', routine['id'], today.isoformat(), f"⚠️ ROUTINE STILL OPEN\n{name}\nOverdue: {days_late} day{'s' if days_late != 1 else ''}{scheduled}\nReply when finished: done {name}"))
+                rollover_note = '\nStill incomplete after this alert? It will move to tomorrow automatically.' if int(routine.get('routine_rollover_after_late') or 0) else ''
+                reminders.append(('routine-late', routine['id'], today.isoformat(), f"⚠️ ROUTINE STILL OPEN\n{name}\nOverdue: {days_late} day{'s' if days_late != 1 else ''}{scheduled}{rollover_note}\nReply when finished: done {name}"))
         except Exception as exc:
             print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
     return reminders
+
+
+def roll_forward_late_routine(routine_id: int, reminder_day: date) -> bool:
+    """Move an uncompleted opted-in routine to tomorrow after its late alert is delivered."""
+    tomorrow = (reminder_day + timedelta(days=1)).isoformat()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        current = c.execute('SELECT next_due,routine_late_time,routine_rollover_after_late FROM routines WHERE id=?', (routine_id,)).fetchone()
+        if not current or not current['routine_late_time'] or not int(current['routine_rollover_after_late'] or 0):
+            return False
+        try:
+            due = date.fromisoformat(current['next_due']) if current['next_due'] else None
+        except (TypeError, ValueError):
+            return False
+        # A completion from the website or Telegram changes next_due. Only roll
+        # forward if it is still overdue; never overwrite a newer completion.
+        if due is None or due >= reminder_day:
+            return False
+        cur = c.execute('UPDATE routines SET next_due=? WHERE id=? AND next_due=?', (tomorrow, routine_id, current['next_due']))
+        return cur.rowcount == 1
 
 @app.post('/api/{resource}')
 def create_resource(resource: str, payload: Payload):
@@ -895,6 +933,7 @@ def create_resource(resource: str, payload: Payload):
         data['next_due'] = validate_date_field(data.get('next_due'), 'Routine next due date')
         if data.get('last_done'): data['last_done'] = validate_date_field(data.get('last_done'), 'Routine last completed date')
         validate_routine_schedule(data)
+        normalize_routine_rollover(data)
     treadmill_day = None
     if resource == 'treadmill':
         try:
@@ -1090,6 +1129,7 @@ def update_resource(resource: str, item_id: int, payload: Payload):
         if not existing_routine:
             raise HTTPException(404, 'Routine not found')
         validate_routine_schedule(data, existing_routine)
+        normalize_routine_rollover(data, existing_routine)
     if resource == 'recipes':
         existing_recipe = one('SELECT * FROM recipes WHERE id=?', (item_id,))
         if not existing_recipe:
@@ -1426,11 +1466,15 @@ async def reminder_loop():
                 for kind, item_id, reminder_date, message in reminders:
                     already_sent = one('SELECT id FROM notification_log WHERE kind=? AND item_id=? AND reminder_date=?', (kind, item_id, reminder_date))
                     if already_sent:
+                        if kind == 'routine-late':
+                            roll_forward_late_routine(int(item_id), date.fromisoformat(reminder_date))
                         continue
                     sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                     sent.raise_for_status()
                     with connect() as c:
                         c.execute('INSERT OR IGNORE INTO notification_log(kind,item_id,reminder_date) VALUES(?,?,?)', (kind, item_id, reminder_date))
+                    if kind == 'routine-late':
+                        roll_forward_late_routine(int(item_id), date.fromisoformat(reminder_date))
             except Exception as e:
                 print(f'Reminder scheduler error: {e}', flush=True)
             await asyncio.sleep(15)
@@ -2031,7 +2075,7 @@ async def telegram_command(text: str) -> str:
         return '\n'.join(lines)
 
     if low in ('🔁 routines', '🧴 personal care', 'care', 'personal care', '/care', 'routines', 'my routines', '/routines'):
-        routines = rows("SELECT id,name,next_due,interval_days,routine_time,routine_late_time,last_done FROM routines ORDER BY CASE WHEN next_due<=? THEN 0 ELSE 1 END,next_due,COALESCE(routine_time,'23:59'),name LIMIT 15", (today_iso,))
+        routines = rows("SELECT id,name,next_due,interval_days,routine_time,routine_late_time,routine_rollover_after_late,last_done FROM routines ORDER BY CASE WHEN next_due<=? THEN 0 ELSE 1 END,next_due,COALESCE(routine_time,'23:59'),name LIMIT 15", (today_iso,))
         if not routines:
             return 'No routines yet. Add them in XROB Assistant.'
         due_items = [r for r in routines if r.get('next_due') and r['next_due'] <= today_iso]
@@ -2040,7 +2084,8 @@ async def telegram_command(text: str) -> str:
         for routine in due_items:
             due = date.fromisoformat(routine['next_due'])
             status = 'DUE TODAY' if due == today else f'OVERDUE {(today-due).days}d'
-            lines.append(f"• {routine['name']} · {routine.get('routine_time') or 'Any time'} · {status}")
+            late_behavior = ' · moves to tomorrow after late alert' if routine.get('routine_late_time') and int(routine.get('routine_rollover_after_late') or 0) else ''
+            lines.append(f"• {routine['name']} · {routine.get('routine_time') or 'Any time'} · {status}{late_behavior}")
         if upcoming:
             lines.append('')
             lines.append('UP NEXT')
