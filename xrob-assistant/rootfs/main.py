@@ -234,7 +234,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.4', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.5', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -243,7 +243,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.4','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.5','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -1003,11 +1003,11 @@ def create_resource(resource: str, payload: Payload):
                 if name_part and key not in seen:
                     clean.append(name_part)
                     seen.add(key)
-            if not clean:
+            if not clean and data['meal_source'] == 'home':
                 raise ValueError()
             data['ingredients_json'] = json.dumps(clean, ensure_ascii=False)
         except (TypeError, ValueError, json.JSONDecodeError):
-            raise HTTPException(400, 'Add at least one valid ingredient name.')
+            raise HTTPException(400, 'Home meals need at least one valid ingredient name. Ingredients are optional for Outside meals.')
     if resource == 'meal_plans':
         data['plan_date'] = validate_date_field(data.get('plan_date'), 'Meal date')
         if not data.get('plan_date'): raise HTTPException(400, 'Meal date is required.')
@@ -1184,11 +1184,12 @@ def update_resource(resource: str, item_id: int, payload: Payload):
                     if name_part and key not in seen:
                         clean.append(name_part)
                         seen.add(key)
-                if not clean:
+                effective_source = data.get('meal_source', existing_recipe.get('meal_source', 'home'))
+                if not clean and effective_source == 'home':
                     raise ValueError()
                 data['ingredients_json'] = json.dumps(clean, ensure_ascii=False)
             except (TypeError, ValueError, json.JSONDecodeError):
-                raise HTTPException(400, 'Add at least one valid ingredient name.')
+                raise HTTPException(400, 'Home meals need at least one valid ingredient name. Ingredients are optional for Outside meals.')
     if resource == 'meal_plans':
         if 'plan_date' in data: data['plan_date'] = validate_date_field(data['plan_date'], 'Meal date')
         if 'meal_type' in data and data['meal_type'] not in MEAL_TYPES: raise HTTPException(400, 'Choose breakfast, lunch, dinner or snack.')
@@ -1255,28 +1256,41 @@ def delete_resource(resource: str, item_id: int):
         # The Meals UI no longer exposes an archive/delete action. Keep meal
         # definitions and their confirmed history safe from accidental removal.
         raise HTTPException(405, 'Meal removal is disabled to preserve planned and eaten history. Use Edit meal to update it.')
+    refresh_meal_schedule = resource == 'daily_meals'
     with connect() as c:
         if resource == 'daily_meals':
-            meal = c.execute('SELECT batch_id,status FROM daily_meals WHERE id=?', (item_id,)).fetchone()
+            meal = c.execute('SELECT id,batch_id,status,plan_date,recipe_id FROM daily_meals WHERE id=?', (item_id,)).fetchone()
             if not meal:
-                raise HTTPException(404, 'Record not found')
-            cur = c.execute('DELETE FROM daily_meals WHERE id=?', (item_id,))
-            # Removing an unconfirmed plate returns it to the cooking batch.
-            # Recompute the latest scheduled date so the planner can refill the
-            # next valid day without losing a plate from the batch.
-            if meal['status'] == 'pending' and meal['batch_id'] is not None:
+                raise HTTPException(404, 'Plate not found.')
+            if meal['status'] != 'pending':
+                raise HTTPException(409, 'A confirmed eaten plate is part of your history and cannot be removed.')
+            cur = c.execute("DELETE FROM daily_meals WHERE id=? AND status='pending'", (item_id,))
+            # Removing a pending plate is a schedule cancellation, not an eaten
+            # plate: keep kitchen stock unchanged and preserve confirmed history.
+            if meal['batch_id'] is not None:
                 batch_id = int(meal['batch_id'])
-                c.execute('''UPDATE meal_batches
+                c.execute("""UPDATE meal_batches
                              SET plates_scheduled=MAX(0,plates_scheduled-1),
                                  last_scheduled_date=(SELECT MAX(plan_date) FROM daily_meals WHERE batch_id=?)
-                             WHERE id=?''', (batch_id, batch_id))
+                             WHERE id=?""", (batch_id, batch_id))
+            recipe = c.execute('SELECT eating_interval_days,next_routine_date FROM recipes WHERE id=?', (int(meal['recipe_id']),)).fetchone()
+            if recipe:
+                min_next = (date.fromisoformat(meal['plan_date']) + timedelta(days=max(1,int(recipe['eating_interval_days'] or 1)))).isoformat()
+                current_next = recipe['next_routine_date'] or min_next
+                if current_next <= meal['plan_date']:
+                    c.execute('UPDATE recipes SET next_routine_date=? WHERE id=?', (min_next, int(meal['recipe_id'])))
         else:
             cur=c.execute(f'DELETE FROM {table} WHERE id=?',(item_id,))
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
         reminder_kinds={'tasks':['task','task-time'],'bills':['bill'],'routines':['routine-time','routine-late']}
         for kind in reminder_kinds.get(resource,[]):
             c.execute('DELETE FROM notification_log WHERE kind=? AND item_id=?',(kind,item_id))
-    return {'deleted':True,'id':item_id}
+    if refresh_meal_schedule:
+        maintain_meal_schedule()
+    result = {'deleted':True,'id':item_id}
+    if refresh_meal_schedule:
+        result['stock_changed'] = False
+    return result
 
 # Legacy exercises table is retained to protect existing records; no UI currently uses it.
 
@@ -1674,10 +1688,10 @@ def _telegram_save_recipe(data: dict) -> int:
         name = _clean_ingredient_name(raw)
         if name and _ingredient_key(name) not in {_ingredient_key(x) for x in ingredients}:
             ingredients.append(name)
-    if not ingredients:
-        raise ValueError('Add at least one ingredient.')
+    source = data.get('meal_source','home') if data.get('meal_source','home') in ('home','outside') else 'home'
+    if not ingredients and source == 'home':
+        raise ValueError('Home meals need at least one ingredient.')
     with connect() as c:
-        source = data.get('meal_source','home') if data.get('meal_source','home') in ('home','outside') else 'home'
         plates = int(data.get('plates_ready', data.get('batch_plates', 1))) if source == 'home' else 0
         cur = c.execute('''INSERT INTO recipes(name,calories_kcal,ingredients_json,eating_interval_days,batch_plates,meal_source,plates_ready,next_routine_date)
                            VALUES(?,?,?,?,?,?,?,?)''',
@@ -1880,7 +1894,7 @@ async def telegram_command(text: str) -> str:
                     data['plates_ready']=0
                     data['batch_plates']=1
                     _telegram_set_flow('recipe','ingredients',data)
-                    return 'List the ingredients, separated by commas or new lines.'
+                    return 'List ingredients separated by commas, or type skip. Ingredients are optional for Outside meals.'
                 _telegram_set_flow('recipe', 'plates', data)
                 return 'How many plates are ready in your kitchen now? Send a whole number from 0 to 1000.'
             if step == 'plates':
@@ -1891,19 +1905,20 @@ async def telegram_command(text: str) -> str:
                 _telegram_set_flow('recipe', 'ingredients', data)
                 return 'List the ingredients, separated by commas or new lines. Example: chicken, onions, tomatoes, olive oil.'
             if step == 'ingredients':
-                parts = [_clean_ingredient_name(x) for x in re.split(r'[,;\n]+', answer) if x.strip()]
+                parts = [] if answer.strip().lower() in ('skip','-','none') else [_clean_ingredient_name(x) for x in re.split(r'[,;\n]+', answer) if x.strip()]
                 parts = list(dict.fromkeys(x for x in parts if x))
-                if not parts: raise ValueError('Add at least one ingredient.')
+                if not parts and data.get('meal_source','home') == 'home': raise ValueError('Home meals need at least one ingredient.')
                 data['ingredients'] = parts
                 recipe_id = _telegram_save_recipe(data)
                 _telegram_set_state(None)
                 source_label = 'Home meal' if data.get('meal_source','home') == 'home' else 'Outside meal'
                 stock_label = f"\n{int(data.get('plates_ready',0))} plates ready" if data.get('meal_source','home') == 'home' else ''
+                ingredient_label = f"\nIngredients: {', '.join(parts)}" if parts else '\nIngredients not saved'
                 return (f"✅ {source_label} saved · {data['name']}\n"
-                        f"{data.get('calories_kcal') or 'Calories not set'} kcal/plate · every {data['eating_interval_days']} day(s){stock_label}\n"
-                        f"Meal #{recipe_id} is now part of your automatic routine.")
+                        f"{data.get('calories_kcal') if data.get('calories_kcal') is not None else 'Calories not set'} kcal/plate · every {data['eating_interval_days']} day(s){stock_label}"
+                        f"{ingredient_label}\nMeal #{recipe_id} is now part of your automatic routine.")
         except (TypeError, ValueError, ZeroDivisionError):
-            prompts = {'calories':'Send a valid kcal number, or type skip.', 'interval':'Enter a whole number from 1 to 90 days.', 'plates':'Enter a whole number from 0 to 1000 plates.', 'ingredients':'Enter at least one ingredient, separated by commas.'}
+            prompts = {'calories':'Send a valid kcal number, or type skip.', 'interval':'Enter a whole number from 1 to 90 days.', 'plates':'Enter a whole number from 0 to 1000 plates.', 'ingredients':('Enter ingredients separated by commas, or type skip.' if data.get('meal_source') == 'outside' else 'Enter at least one ingredient, separated by commas.')}
             return prompts.get(step, 'I could not use that answer. Please try again, or send /cancel.')
     if flow_state and flow_state.get('flow') == 'shopping' and not flow_interrupted:
         try:
