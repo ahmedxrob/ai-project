@@ -735,3 +735,41 @@ body{min-height:100vh;min-height:100dvh}
   .today-meal-empty-overview{grid-template-columns:minmax(0,1fr);align-items:stretch}
   .today-meal-empty-overview .secondary{width:100%;white-space:normal}
 }
+
+/* Weekly meal plan and weekday availability controls (0.4.9). */
+.weekly-meal-plan-panel{border-color:#36513d;background:linear-gradient(155deg,#17231a,#121a15)}
+.weekly-meal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:9px;align-items:stretch}
+.weekly-day-card{min-width:0;display:flex;flex-direction:column;gap:11px;padding:12px 10px;border:1px solid #314638;border-radius:12px;background:#111a14}
+.weekly-day-card.is-today{border-color:#65a975;box-shadow:inset 0 0 0 1px #315d3b}
+.weekly-day-card.is-past{opacity:.78}
+.weekly-day-card.is-day-off{background:#171b17;border-style:dashed}
+.weekly-day-top{display:flex;align-items:flex-start;justify-content:space-between;gap:6px;min-height:34px}
+.weekly-day-top>b{font-size:11px;line-height:1.35;color:#dce9de}
+.weekly-today-label{font-size:9px;color:#a9edbd;white-space:nowrap}
+.weekly-day-content{min-height:68px;display:flex;flex-direction:column;gap:6px}
+.weekly-meal-name{font-size:13px;font-weight:750;line-height:1.35;overflow-wrap:anywhere;color:#f1f7f1}
+.weekly-meal-meta{font-size:10px;line-height:1.4;color:#9baa9e;overflow-wrap:anywhere}
+.weekly-day-bottom{margin-top:auto;display:grid;gap:9px}
+.weekly-state{font-size:9px;font-weight:750;justify-self:start;border-radius:20px;padding:4px 7px}
+.weekly-state.is-eaten{color:#baf4cb;background:#17452a}
+.weekly-state.is-pending{color:#ffe2a7;background:#47381f}
+.weekly-state.is-skipped{color:#c5ccc6;background:#303a33}
+.weekly-state.is-empty{color:#aeb9b0;background:#273229}
+.weekly-meal-controls{display:grid;gap:6px}
+.weekly-meal-editor{display:grid;gap:6px}
+.weekly-meal-editor select{width:100%;min-width:0;min-height:36px;padding:6px 7px;border-radius:7px;border:1px solid #3c5742;background:#0d150f;color:#e8f1e9;font:11px system-ui;outline-offset:2px}
+.weekly-meal-editor .mini-btn,.weekly-meal-controls>.mini-btn{width:100%;min-height:32px}
+.weekly-save-btn{background:#1c3b27;border-color:#3c7850;color:#c3f3cf}
+.weekly-skip-btn{color:#e3c7c7;border-color:#554044;background:#241a1b}
+.weekly-no-options{font-size:10px;line-height:1.4;color:#d7b77c}
+.weekly-plan-footnote{font-size:11px;line-height:1.5;color:#91a296;margin:13px 2px 0}
+.meal-excluded-days{font-size:10px;color:#d9c08b;padding:7px 9px;border:1px solid #55482d;border-radius:8px;background:#282216}
+.weekday-exclude-field{border:1px solid #3b5140;border-radius:10px;padding:11px 12px 13px;margin:2px 0 0;min-width:0}
+.weekday-exclude-field legend{padding:0 5px;color:#d5e5d8;font-size:12px;font-weight:700}
+.weekday-exclude-field>p{font-size:11px;color:#9bad9f;margin:0 0 9px}
+.weekday-exclude-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.weekday-exclude-option{display:flex!important;align-items:center;gap:8px!important;padding:7px 9px;border:1px solid #34493a;border-radius:8px;background:#111a14;color:#d7e3d9!important;cursor:pointer}
+.weekday-exclude-option input{width:16px!important;height:16px;min-height:16px!important;margin:0;accent-color:#73c887}
+.weekday-exclude-option span{font-size:11px}
+@media(max-width:1050px){.weekly-meal-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:700px){.weekly-meal-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.weekly-day-card{padding:11px 9px}.weekly-day-content{min-height:56px}.weekly-day-top>b{font-size:10px}.weekly-meal-name{font-size:12px}.weekly-meal-meta{font-size:9px}.weekly-plan-footnote{font-size:10px}}
