@@ -244,7 +244,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.10', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.11', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -253,7 +253,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.10','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.11','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -583,12 +583,25 @@ def _ensure_cook_reminder(c: sqlite3.Connection, recipe_id: int, due_date: date)
 
 
 def _recalculate_recipe_due(c: sqlite3.Connection, recipe_id: int) -> None:
+    """Set the next due date from the latest retained occurrence of this meal."""
     row = c.execute('SELECT eating_interval_days FROM recipes WHERE id=?', (recipe_id,)).fetchone()
     if not row:
         return
     latest = c.execute('SELECT MAX(plan_date) AS last_date FROM daily_meals WHERE recipe_id=?', (recipe_id,)).fetchone()
     next_due = (date.fromisoformat(latest['last_date']) + timedelta(days=max(1, int(row['eating_interval_days'] or 1)))).isoformat() if latest and latest['last_date'] else date.today().isoformat()
     c.execute('UPDATE recipes SET next_routine_date=? WHERE id=?', (next_due, recipe_id))
+
+
+def _rebase_recipe_schedule_after_manual(c: sqlite3.Connection, recipe_id: int, plan_day: date) -> int:
+    """Restart this meal's repeat interval from an explicit user choice.
+
+    Future automatic suggestions are disposable and are rebuilt from the latest
+    retained occurrence plus the saved interval. Manual choices and eaten history
+    are never moved or deleted.
+    """
+    removed = c.execute("DELETE FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>? AND assignment_source IN ('automatic','unknown')", (recipe_id, plan_day.isoformat())).rowcount
+    _recalculate_recipe_due(c, recipe_id)
+    return int(removed)
 
 
 def _sync_home_stock(c: sqlite3.Connection, recipe_id: int, plates_ready: int) -> None:
@@ -825,10 +838,8 @@ def update_recipe_stock(recipe_id: int, payload: Payload):
     return one('SELECT id,name,meal_source,plates_ready,next_routine_date FROM recipes WHERE id=?', (recipe_id,))
 
 
-def _select_daily_meal(recipe_id: int, plan_day: date) -> dict:
-    """Manually choose one active meal for a date without consuming stock until eaten."""
-    # First roll any overdue pending plate forward so a late scheduler tick cannot
-    # collide with the manually chosen date's UNIQUE daily_meals slot.
+def _select_daily_meal(recipe_id: int, plan_day: date, replace_pending: bool = False) -> dict:
+    """Choose a meal for a date and restart its repeat interval from that choice."""
     _roll_forward_unconfirmed_meals(date.today())
     if plan_day < date.today():
         raise ValueError('A meal can only be selected for today or a future date.')
@@ -836,20 +847,31 @@ def _select_daily_meal(recipe_id: int, plan_day: date) -> dict:
         c.execute('BEGIN IMMEDIATE')
         existing = c.execute('SELECT id,recipe_id,status FROM daily_meals WHERE plan_date=?', (plan_day.isoformat(),)).fetchone()
         if existing:
-            raise ValueError('A plate is already scheduled for this date. Remove or move it before choosing another.')
-        recipe = c.execute("SELECT id,name,meal_source,plates_ready,eating_interval_days,calories_kcal FROM recipes WHERE id=? AND is_active=1", (recipe_id,)).fetchone()
+            if existing['status'] != 'pending':
+                raise ValueError('This plate is already confirmed as eaten and cannot be changed.')
+            if not replace_pending:
+                raise ValueError('A plate is already scheduled for this date. Change it from the weekly meal plan.')
+        recipe = c.execute("SELECT id,name,meal_source,plates_ready,eating_interval_days,calories_kcal,excluded_weekdays_json FROM recipes WHERE id=? AND is_active=1", (recipe_id,)).fetchone()
         if not recipe:
             raise ValueError('This meal is no longer available. Refresh the Meals page and choose another.')
-        recipe_full = c.execute('SELECT excluded_weekdays_json FROM recipes WHERE id=?', (recipe_id,)).fetchone()
-        if plan_day.weekday() in _decode_excluded_weekdays(recipe_full['excluded_weekdays_json'] if recipe_full else '[]'):
+        if plan_day.weekday() in _decode_excluded_weekdays(recipe['excluded_weekdays_json']):
             raise ValueError(f"{recipe['name']} is not available on {WEEKDAY_NAMES[plan_day.weekday()]}s. Choose another meal.")
-        reallocated_from = _ensure_home_plate_available(c, recipe_id, plan_day) if recipe['meal_source'] == 'home' else None
-        cursor = c.execute("INSERT INTO daily_meals(plan_date,recipe_id,batch_id,status,assignment_source) VALUES(?,?,NULL,'pending','manual')",
-                           (plan_day.isoformat(), recipe_id))
+
+        old_recipe_id = int(existing['recipe_id']) if existing else None
+        reallocated_from = _ensure_home_plate_available(c, recipe_id, plan_day) if recipe['meal_source'] == 'home' and old_recipe_id != recipe_id else None
+        if existing:
+            meal_id = int(existing['id'])
+            c.execute("UPDATE daily_meals SET recipe_id=?,batch_id=NULL,assignment_source='manual',notified_date=NULL,suggestion_notified_date=NULL,checkin_notified_date=NULL WHERE id=? AND status='pending'", (recipe_id, meal_id))
+        else:
+            cursor = c.execute("INSERT INTO daily_meals(plan_date,recipe_id,batch_id,status,assignment_source) VALUES(?,?,NULL,'pending','manual')", (plan_day.isoformat(), recipe_id))
+            meal_id = int(cursor.lastrowid)
         c.execute('DELETE FROM meal_schedule_skips WHERE plan_date=?', (plan_day.isoformat(),))
-        _recalculate_recipe_due(c, recipe_id)
+        if old_recipe_id and old_recipe_id != recipe_id:
+            _recalculate_recipe_due(c, old_recipe_id)
+        replanned = _rebase_recipe_schedule_after_manual(c, recipe_id, plan_day)
         result = dict(recipe)
-        result.update({'id': int(cursor.lastrowid), 'plan_date': plan_day.isoformat(), 'status': 'pending', 'assignment_source': 'manual', 'reallocated_from': reallocated_from})
+        result.pop('excluded_weekdays_json', None)
+        result.update({'id': meal_id, 'plan_date': plan_day.isoformat(), 'status': 'pending', 'assignment_source': 'manual', 'reallocated_from': reallocated_from, 'replanned_automatic': replanned})
     return result
 
 
@@ -861,6 +883,10 @@ def select_daily_meal(payload: Payload):
         plan_day = date.fromisoformat(raw_day)
         result = _select_daily_meal(recipe_id, plan_day)
         maintain_meal_schedule()
+        recipe_state = one('SELECT next_routine_date FROM recipes WHERE id=?', (recipe_id,))
+        result['next_routine_date'] = recipe_state.get('next_routine_date') if recipe_state else None
+        next_plan = one("SELECT MIN(plan_date) AS next_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>?", (recipe_id, plan_day.isoformat()))
+        result['next_planned_date'] = next_plan.get('next_date') if next_plan else None
         result['message'] = 'Meal selected for ' + plan_day.isoformat() + '.'
         return result
     except (TypeError, ValueError) as exc:
@@ -892,7 +918,7 @@ def _assign_or_skip_daily_meal(plan_day: date, recipe_id: int | None) -> dict:
                 raise ValueError('This meal option is no longer available. Refresh the page and try again.')
             if plan_day.weekday() in _decode_excluded_weekdays(recipe['excluded_weekdays_json']):
                 raise ValueError(f"{recipe['name']} is excluded on {WEEKDAY_NAMES[plan_day.weekday()]}s.")
-            reallocated_from = _ensure_home_plate_available(c, recipe_id, plan_day) if recipe['meal_source'] == 'home' else None
+            reallocated_from = _ensure_home_plate_available(c, recipe_id, plan_day) if recipe['meal_source'] == 'home' and old_recipe_id != recipe_id else None
             if current:
                 c.execute("UPDATE daily_meals SET recipe_id=?,batch_id=NULL,assignment_source='manual',notified_date=NULL,suggestion_notified_date=NULL,checkin_notified_date=NULL WHERE id=? AND status='pending'", (recipe_id, int(current['id'])))
                 meal_id = int(current['id'])
@@ -902,9 +928,14 @@ def _assign_or_skip_daily_meal(plan_day: date, recipe_id: int | None) -> dict:
             c.execute('DELETE FROM meal_schedule_skips WHERE plan_date=?', (day_iso,))
             if old_recipe_id and old_recipe_id != recipe_id:
                 _recalculate_recipe_due(c, old_recipe_id)
-            _recalculate_recipe_due(c, recipe_id)
-            result = {'id': meal_id, 'plan_date': day_iso, 'recipe_id': recipe_id, 'recipe_name': recipe['name'], 'meal_source': recipe['meal_source'], 'status': 'pending', 'skipped': False, 'reallocated_from': reallocated_from}
+            replanned = _rebase_recipe_schedule_after_manual(c, recipe_id, plan_day)
+            result = {'id': meal_id, 'plan_date': day_iso, 'recipe_id': recipe_id, 'recipe_name': recipe['name'], 'meal_source': recipe['meal_source'], 'status': 'pending', 'skipped': False, 'reallocated_from': reallocated_from, 'replanned_automatic': replanned}
     maintain_meal_schedule()
+    if recipe_id is not None:
+        recipe_state = one('SELECT next_routine_date FROM recipes WHERE id=?', (recipe_id,))
+        result['next_routine_date'] = recipe_state.get('next_routine_date') if recipe_state else None
+        next_plan = one("SELECT MIN(plan_date) AS next_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>?", (recipe_id, plan_day.isoformat()))
+        result['next_planned_date'] = next_plan.get('next_date') if next_plan else None
     return result
 
 
@@ -1519,16 +1550,22 @@ def update_resource(resource: str, item_id: int, payload: Payload):
     with connect() as c:
         cur=c.execute(f"UPDATE {table} SET {','.join(k+'=?' for k in data)} WHERE id=?", [*data.values(),item_id])
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
-        if resource == 'recipes' and 'excluded_weekdays_json' in data:
-            excluded = set(_decode_excluded_weekdays(data['excluded_weekdays_json']))
-            pending = c.execute("SELECT id,plan_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>=?", (item_id, date.today().isoformat())).fetchall()
-            for scheduled in pending:
-                try:
-                    if date.fromisoformat(scheduled['plan_date']).weekday() in excluded:
-                        c.execute("DELETE FROM daily_meals WHERE id=? AND status='pending'", (int(scheduled['id']),))
-                except ValueError:
-                    continue
-            if pending:
+        if resource == 'recipes':
+            if 'excluded_weekdays_json' in data:
+                excluded = set(_decode_excluded_weekdays(data['excluded_weekdays_json']))
+                pending = c.execute("SELECT id,plan_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>=?", (item_id, date.today().isoformat())).fetchall()
+                for scheduled in pending:
+                    try:
+                        if date.fromisoformat(scheduled['plan_date']).weekday() in excluded:
+                            c.execute("DELETE FROM daily_meals WHERE id=? AND status='pending'", (int(scheduled['id']),))
+                    except ValueError:
+                        continue
+                if pending:
+                    _recalculate_recipe_due(c, item_id)
+            if 'eating_interval_days' in data and int(data['eating_interval_days']) != int(existing_recipe.get('eating_interval_days') or 1):
+                # Keep today's plate and explicit manual choices. Rebuild only future
+                # automatic suggestions using the newly saved repeat interval.
+                c.execute("DELETE FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>? AND assignment_source IN ('automatic','unknown')", (item_id, date.today().isoformat()))
                 _recalculate_recipe_due(c, item_id)
     result = one(f'SELECT * FROM {table} WHERE id=?',(item_id,))
     if resource == 'recipes' and result:
@@ -1746,6 +1783,19 @@ def ha_state():
     s=summary()
     return {'weight_kg':s['latest_weight']['kg'] if s['latest_weight'] else None,'unpaid_bills':s['unpaid_bills'],'unpaid_total_mad':s['unpaid_total_mad'],'expiring_documents':s['expiring_documents'],'open_tasks':s['open_tasks'],'events_today':s['events_today'],'routines_due_today':s['routines_due_today'],'next_routine':s['next_routine']['name'] if s['next_routine'] else None}
 
+def _telegram_response_data(response, action: str) -> dict:
+    """Return a confirmed Telegram API payload, not merely an HTTP-success response."""
+    response.raise_for_status()
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise RuntimeError(f'Telegram {action} returned an unreadable response.') from exc
+    if not isinstance(data, dict) or data.get('ok') is not True:
+        description = data.get('description', 'Telegram did not confirm the request.') if isinstance(data, dict) else 'Telegram returned an invalid response.'
+        raise RuntimeError(f'Telegram {action} failed: {description}')
+    return data
+
+
 async def reminder_loop():
     """Send due reminders once at their scheduled task time or once daily for date-only items."""
     import httpx
@@ -1791,7 +1841,7 @@ async def reminder_loop():
                         message = (f"🍽️ TODAY'S SUGGESTED PLATE\n\n{today_meal['recipe_name']}{kcal}\n\n"
                                    "This is your suggested plate for today. I will check with you at 22:00.")
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
-                        sent.raise_for_status()
+                        _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
                             c.execute("UPDATE daily_meals SET suggestion_notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(today_meal['id'])))
                     if now.time() >= time(22, 0) and today_meal.get('checkin_notified_date') != today.isoformat():
@@ -1799,7 +1849,7 @@ async def reminder_loop():
                                    f"{today_meal['recipe_name']}{kcal}\n\n"
                                    "Reply YES if you ate it, or NO to move this plate and every later plate to the next day.")
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
-                        sent.raise_for_status()
+                        _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
                             c.execute("UPDATE daily_meals SET checkin_notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(today_meal['id'])))
                 reminders.extend(build_routine_reminders(now))
@@ -1810,7 +1860,7 @@ async def reminder_loop():
                             roll_forward_late_routine(int(item_id), date.fromisoformat(reminder_date))
                         continue
                     sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
-                    sent.raise_for_status()
+                    _telegram_response_data(sent, 'sendMessage')
                     with connect() as c:
                         c.execute('INSERT OR IGNORE INTO notification_log(kind,item_id,reminder_date) VALUES(?,?,?)', (kind, item_id, reminder_date))
                     if kind == 'routine-late':
@@ -1882,11 +1932,10 @@ async def telegram_poll():
         offset = 0
 
     async with httpx.AsyncClient(timeout=40) as client:
+        retry_delay = 5
         try:
             setup = await client.post(f'https://api.telegram.org/bot{TOKEN}/setMyCommands', json={'commands': commands})
-            setup.raise_for_status()
-            if not setup.json().get('ok'):
-                print('Telegram command-menu setup warning: ' + str(setup.json().get('description', 'unknown error')), flush=True)
+            _telegram_response_data(setup, 'setMyCommands')
         except Exception as exc:
             print(f'Telegram command-menu setup warning: {exc}', flush=True)
 
@@ -1896,10 +1945,7 @@ async def telegram_poll():
                     f'https://api.telegram.org/bot{TOKEN}/getUpdates',
                     params={'timeout': 30, 'offset': offset, 'allowed_updates': json.dumps(['message'])}
                 )
-                response.raise_for_status()
-                data = response.json()
-                if not data.get('ok'):
-                    raise RuntimeError(data.get('description', 'Telegram getUpdates failed'))
+                data = _telegram_response_data(response, 'getUpdates')
 
                 for update in data.get('result', []):
                     update_id = int(update['update_id'])
@@ -1938,10 +1984,7 @@ async def telegram_poll():
                         f'https://api.telegram.org/bot{TOKEN}/sendMessage',
                         json={'chat_id': chat, 'text': reply, 'reply_markup': reply_keyboard, 'disable_web_page_preview': True}
                     )
-                    sent.raise_for_status()
-                    sent_data = sent.json()
-                    if not sent_data.get('ok'):
-                        raise RuntimeError(sent_data.get('description', 'Telegram sendMessage failed'))
+                    _telegram_response_data(sent, 'sendMessage')
 
                     # Persist the reply as delivered and advance the offset only
                     # after Telegram confirms delivery. A failed send reuses the
@@ -1950,9 +1993,11 @@ async def telegram_poll():
                     with connect() as c:
                         c.execute('UPDATE telegram_inbox SET sent_at=CURRENT_TIMESTAMP WHERE update_id=?', (update_id,))
                         c.execute("INSERT INTO telegram_state(key,value) VALUES('update_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(offset),))
+                retry_delay = 5
             except Exception as exc:
                 print(f'Telegram polling error: {exc}', flush=True)
-                await asyncio.sleep(5)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(60, retry_delay * 2)
 
 def _telegram_parse_date(value: str | None) -> date | None:
     if not value:
@@ -2060,10 +2105,17 @@ def _telegram_context_keyboard(default_keyboard: dict) -> dict:
     placeholder = 'Enter your answer'
     if name == 'choose_today_meal' and step == 'name':
         choices = flow.get('data', {}).get('choices', [])
-        buttons = [{'text': str(value)[:60]} for value in choices if str(value).strip() and len(str(value)) <= 60]
+        buttons = []
+        for value in choices:
+            label = str(value.get('button') or value.get('name') or '').strip() if isinstance(value, dict) else str(value).strip()
+            if label:
+                buttons.append({'text': label[:64]})
         rows = [buttons[index:index + 2] for index in range(0, len(buttons), 2)]
         rows.append([{'text': '⬅️ Back'}])
         placeholder = 'Choose a meal for today'
+    elif name == 'choose_today_meal_confirm' and step == 'confirm':
+        rows = [[{'text': 'YES · Move it'}, {'text': 'NO · Keep it'}], [{'text': '⬅️ Back'}]]
+        placeholder = 'Confirm reservation move'
     elif name == 'recipe' and step == 'source':
         rows = [[{'text': '🏠 HOME'}, {'text': '🍴 OUTSIDE'}], [{'text': '/cancel'}]]
         placeholder = 'Choose Home or Outside'
@@ -2171,11 +2223,14 @@ def _telegram_available_today_meals() -> list[dict]:
     """Meals selectable today, including Home meals with a movable automatic reservation."""
     today = date.today()
     candidates = rows("""SELECT r.id,r.name,r.meal_source,r.plates_ready,r.calories_kcal,r.excluded_weekdays_json,
-        COALESCE((SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.plan_date>=?),0) AS reserved_plates,
-        EXISTS(SELECT 1 FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.assignment_source='automatic' AND dm.plan_date>?) AS movable_reservation
+        COALESCE((SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.plan_date>?),0) AS reserved_plates,
+        EXISTS(SELECT 1 FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending'
+               AND dm.assignment_source IN ('automatic','unknown') AND dm.plan_date>?) AS movable_reservation
         FROM recipes r WHERE r.is_active=1
-          AND (r.meal_source='outside' OR (r.plates_ready>0 AND (r.plates_ready>COALESCE((SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.plan_date>=?),0)
-               OR EXISTS(SELECT 1 FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.assignment_source='automatic' AND dm.plan_date>?))))
+          AND (r.meal_source='outside' OR (r.plates_ready>0 AND (
+               r.plates_ready>COALESCE((SELECT COUNT(*) FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending' AND dm.plan_date>?),0)
+               OR EXISTS(SELECT 1 FROM daily_meals dm WHERE dm.recipe_id=r.id AND dm.status='pending'
+                         AND dm.assignment_source IN ('automatic','unknown') AND dm.plan_date>?))))
         ORDER BY CASE r.meal_source WHEN 'home' THEN 0 ELSE 1 END,r.name COLLATE NOCASE""",
         (today.isoformat(), today.isoformat(), today.isoformat(), today.isoformat()))
     return [meal for meal in candidates if today.weekday() not in _decode_excluded_weekdays(meal.get('excluded_weekdays_json', '[]'))]
@@ -2293,7 +2348,7 @@ async def telegram_command(text: str) -> str:
         '🍽 choose meal','choose meal','/choosemeal','⬅️ back','back','/back'
     )
     meal_interrupt_prefixes = ('bought ', 'got ', 'suggest meals', 'plan meals', '/bought', '/suggestmeals', 'add item ', 'add grocery ')
-    guided_confirming = bool(flow_state and flow_state.get('step') in ('confirm', 'delete_confirm'))
+    guided_confirming = bool(flow_state and (flow_state.get('step') in ('confirm', 'delete_confirm') or flow_state.get('flow') == 'choose_today_meal_confirm'))
     guided_confirmation_reply = guided_confirming and low in ('yes', 'y', 'save', 'confirm', 'no', 'n', 'remove', 'delete', '/yes', '/no', '/save', '/confirm')
     guided_yes_no_reply = bool(conversation_active and low in ('yes', 'y', 'no', 'n'))
     flow_interrupted = (
@@ -2305,24 +2360,65 @@ async def telegram_command(text: str) -> str:
     if conversation_active and not guided_confirming and low in meal_checkin_inputs:
         return 'You are in the middle of a guided entry. Finish that step or send /cancel first; then use YES or NO for your meal check-in.'
 
+    if flow_state and flow_state.get('flow') == 'choose_today_meal_confirm' and not flow_interrupted:
+        if low in ('yes', 'y', 'move', 'yes · move it', 'confirm'):
+            choice = flow_state.get('data', {})
+            recipe_id = int(choice.get('recipe_id') or 0)
+            available = _telegram_available_today_meals()
+            matched = next((item for item in available if int(item['id']) == recipe_id), None)
+            if not matched:
+                _telegram_set_state(None)
+                return 'That meal is no longer available today. Open Choose meal again to see current options.'
+            try:
+                selected = _select_daily_meal(recipe_id, today, replace_pending=True)
+                _telegram_set_state(None)
+                maintain_meal_schedule()
+                moved = selected.get('reallocated_from')
+                move_text = (f"\nIts automatic reservation on {_telegram_date_label(moved, True)} was released." if moved else '')
+                next_plan = one("SELECT MIN(plan_date) AS next_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>?", (recipe_id, today.isoformat()))
+                repeat_text = f"\nNext planned repeat: {_telegram_date_label(next_plan['next_date'], True)}." if next_plan and next_plan.get('next_date') else f"\nThe next repeat follows the every {int(selected['eating_interval_days'] or 1)} day rule when stock and an open date are available."
+                return f"✅ Today's plate selected\n\n🍽 {selected['name']}{move_text}{repeat_text}\n\nI will ask at 22:00 whether you ate it."
+            except ValueError as exc:
+                _telegram_set_state(None)
+                return str(exc)
+        if low in ('no', 'n', 'keep', 'no · keep it'):
+            _telegram_set_state(None)
+            return 'No change made. The existing reservation stays where it is.'
+        return 'Please choose YES · Move it or NO · Keep it. You can also use Back.'
+
     if flow_state and flow_state.get('flow') == 'choose_today_meal' and not flow_interrupted:
         if flow_state.get('step') == 'name':
             query = raw.strip()
             available = _telegram_available_today_meals()
-            matched, matches = _telegram_match_named_item(query, available)
+            id_match = re.search(r'#(\d+)\s*$', query)
+            matched = next((item for item in available if int(item['id']) == int(id_match.group(1))), None) if id_match else None
+            matches = []
+            if not matched:
+                matched, matches = _telegram_match_named_item(query, available)
             if not matched:
                 if matches:
-                    return 'I found more than one match. Please tap or type the full meal name:\n' + '\n'.join('• ' + item['name'] for item in matches[:8])
-                return 'Please choose one of the meal buttons below, or use ⬅️ Back to return to the main menu.'
+                    return 'I found more than one match. Please tap a meal button or type its full name:\n' + '\n'.join('• ' + item['name'] for item in matches[:8])
+                return 'Please choose one of the meal buttons below, or use Back to return to the main menu.'
+            ready = max(0, int(matched.get('plates_ready') or 0))
+            reserved = max(0, int(matched.get('reserved_plates') or 0))
+            current_today = one("SELECT recipe_id,status FROM daily_meals WHERE plan_date=?", (today.isoformat(),))
+            already_today = bool(current_today and current_today.get('status') == 'pending' and int(current_today['recipe_id']) == int(matched['id']))
+            if matched.get('meal_source') == 'home' and not already_today and ready <= reserved and bool(matched.get('movable_reservation')):
+                _telegram_set_flow('choose_today_meal_confirm', 'confirm', {'recipe_id': int(matched['id']), 'name': matched['name']})
+                return (f"🍽 {matched['name']} has {ready} ready plate(s), all reserved later in the plan.\n\n"
+                        'Move this meal to today and rebuild its future repeats using the saved interval?\nReply YES to move it or NO to keep the current plan.')
             try:
-                selected = _select_daily_meal(int(matched['id']), today)
+                selected = _select_daily_meal(int(matched['id']), today, replace_pending=True)
                 _telegram_set_state(None)
                 maintain_meal_schedule()
                 kcal = f" · {float(selected['calories_kcal']):g} kcal/plate" if selected.get('calories_kcal') is not None else ''
-                return f"✅ Today's plate selected\n\n🍽 {selected['name']}{kcal}\n\nI will ask at 22:00 whether you ate it. You can change your choice from the Meals page if needed."
+                next_plan = one("SELECT MIN(plan_date) AS next_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>?", (int(matched['id']), today.isoformat()))
+                repeat_text = f"Next planned repeat: {_telegram_date_label(next_plan['next_date'], True)}." if next_plan and next_plan.get('next_date') else f"The next repeat follows the every {int(selected['eating_interval_days'] or 1)} day rule when stock and an open date are available."
+                return f"✅ Today's plate selected\n\n🍽 {selected['name']}{kcal}\n\n{repeat_text} I will ask at 22:00 whether you ate it."
             except ValueError as exc:
                 refreshed = _telegram_available_today_meals()
-                _telegram_set_flow('choose_today_meal','name',{'choices':[x['name'] for x in refreshed[:16]]})
+                choices = [{'id': x['id'], 'name': x['name'], 'button': f"{x['name'][:34]} · {'Home' if x['meal_source']=='home' else 'Outside'} #{x['id']}"} for x in refreshed[:16]]
+                _telegram_set_flow('choose_today_meal','name',{'choices':choices})
                 return str(exc) + ('\n\nChoose another available meal below.' if refreshed else '\n\nNo meal is available now. Update Home stock or add an Outside meal, then try again.')
 
     if flow_state and flow_state.get('flow') == 'stock' and not flow_interrupted:
@@ -2533,18 +2629,24 @@ async def telegram_command(text: str) -> str:
     if add_item_match:
         try: return _telegram_save_shopping_item(add_item_match.group(1))
         except (TypeError, ValueError): return 'Use: add item rice'
-    if low in ('🍽 today plate','🍽 today meals','today meals','today plate','meals','/meals','what should i eat today','what am i eating today','🍽 choose meal','choose meal','/choosemeal'):
+    today_meal_commands = ('🍽 today plate','🍽 today meals','today meals','today plate','meals','/meals','what should i eat today','what am i eating today')
+    choose_meal_commands = ('🍽 choose meal','choose meal','/choosemeal')
+    if low in today_meal_commands or low in choose_meal_commands:
         today_meal = one("SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=?", (today_iso,))
-        if today_meal:
+        if low in today_meal_commands and today_meal:
             return _telegram_meal_text(today,1)
+        if today_meal and today_meal.get('status') == 'eaten':
+            return '✅ Today’s plate is already confirmed as eaten. Choose a meal for another day from the weekly plan.'
         available = _telegram_available_today_meals()
         if not available:
             _telegram_set_state(None)
-            return '🍽️ There is no meal ready to choose right now. Add an Outside meal with /addrecipe, or update the ready plates of a Home meal with /stock.\n\nUse ⬅️ Back to return to the main menu.'
-        _telegram_set_flow('choose_today_meal','name',{'choices':[meal['name'] for meal in available[:16]]})
+            return '🍽️ No meal is available to choose today. Add an Outside meal with /addrecipe, or update Home stock with /stock.\n\nUse Back to return to the main menu.'
+        choices = [{'id': meal['id'], 'name': meal['name'], 'button': f"{meal['name'][:34]} · {'Home' if meal['meal_source']=='home' else 'Outside'} #{meal['id']}"} for meal in available[:16]]
+        _telegram_set_flow('choose_today_meal','name',{'choices':choices})
         options='\n'.join(f"• {meal['name']} · {'Home' if meal['meal_source']=='home' else 'Outside'}" for meal in available[:12])
         more=f"\n…and {len(available)-12} more" if len(available)>12 else ''
-        return '🍽️ WHAT WOULD YOU LIKE TO EAT TODAY?\n\nChoose a meal below to schedule it for today.\n\n' + options + more + '\n\nTap ⬅️ Back to return to the main menu.'
+        intro = 'Choose a replacement for today’s pending plate.' if today_meal else 'Choose a meal to schedule for today.'
+        return '🍽️ WHAT WOULD YOU LIKE TO EAT TODAY?\n\n' + intro + '\n\n' + options + more + '\n\nTap a meal button or Back to return to the main menu.'
     if low in ('🗓 meal plan','🗓 upcoming meals','upcoming meals','meal plan','/mealplan','my meal plan'):
         return _telegram_meal_text(today,7)
     if low in ('🛒 shopping list','shopping list','shopping','/shopping','/groceries'):
