@@ -1,6 +1,6 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const isoDate=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
-const today=isoDate(new Date());let cache={},calendarMonth=new Date(),mealFilter='all';
+let today=isoDate(new Date());let cache={},calendarMonth=new Date(),mealFilter='all';
 const titles={overview:'Good day.',calendar:'Planner',fitness:'Fitness',bills:'Bills & payments',care:'Routines',meals:'Meals',settings:'Settings & Telegram'};
 let selectedCalendarDate=today;
 function formatDate(v){if(!v)return '—';const m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}/${m[2]}/${m[1].slice(-2)}`:String(v)}
@@ -11,6 +11,7 @@ function parseDateTimeInput(v){const s=String(v||'').trim();if(!s)return '';if(/
 function displayDateTimeInput(v){return v?formatDateTime(v):''}
 $('#today-label').textContent=`${new Date().toLocaleDateString(undefined,{weekday:'long'}).toUpperCase()} · ${formatDate(today)}`;
 function longDateLabel(value){const d=new Date(value+'T12:00:00');return `${d.toLocaleDateString(undefined,{weekday:'long'})} · ${formatDate(value)}`}
+function syncCurrentDate(){const next=isoDate(new Date());if(next===today)return;const previous=today,wasViewingToday=selectedCalendarDate===previous;today=next;if(wasViewingToday)selectedCalendarDate=next;const currentMonth=new Date();if(calendarMonth.getFullYear()===new Date(previous+'T12:00:00').getFullYear()&&calendarMonth.getMonth()===new Date(previous+'T12:00:00').getMonth())calendarMonth=new Date(currentMonth.getFullYear(),currentMonth.getMonth(),1);$('#today-label').textContent=`${currentMonth.toLocaleDateString(undefined,{weekday:'long'}).toUpperCase()} · ${formatDate(today)}`;$$('.date-entry').forEach(input=>{if(input.value===displayDateInput(previous))input.value=displayDateInput(today)})}
 async function api(path,opts={}){let r=await fetch('/api/'+path,{headers:{'Content-Type':'application/json'},...opts});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Request failed');return d}
 function toast(s){let t=$('#toast');t.textContent=s;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)}
 function money(n){return Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' MAD'}
@@ -86,6 +87,7 @@ function renderHeatmap(id,records,kind){
  host.innerHTML=`<div class="heatmap-scroll"><div class="heatmap-months" style="--weeks:${weeks}">${monthHtml}</div><div class="heatmap-grid" style="--weeks:${weeks}">${cells}</div></div><div class="heatmap-footer"><span>${kind==='minutes'?`${Math.round(total)} minutes trained`:`${total} gym sessions`} · ${period.length} entries in view</span><span class="heat-legend">Less <i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i> More</span></div>`;
 }
 async function refresh(){try{
+ syncCurrentDate();
  const [sum,events,tasks,weights,treadmills,workouts,workout_plan,bills,routines,recipes,dailyMeals,shoppingItems,cookReminders]=await Promise.all([
   'summary','events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000','meal_cook_reminders?limit=10000'
  ].map(x=>api(x)));
@@ -219,14 +221,24 @@ function renderTodayMeal(){
  const hosts=[$('#today-meal-card'),$('#meals-today-meal-card')].filter(Boolean);
  if(!hosts.length)return;
  const meal=(cache.daily_meals||[]).find(x=>x.plan_date===today);
+ const pendingCounts=new Map();
+ (cache.daily_meals||[]).filter(x=>x.status==='pending'&&x.plan_date>=today).forEach(x=>pendingCounts.set(Number(x.recipe_id),(pendingCounts.get(Number(x.recipe_id))||0)+1));
+ const choices=(cache.recipes||[]).filter(r=>r.meal_source==='outside'||Math.max(0,Number(r.plates_ready||0))>(pendingCounts.get(Number(r.id))||0));
+ const pickerMarkup=`<div class="today-meal-empty"><div class="today-meal-empty-copy"><b>No plate selected for today</b><p class="muted">Choose what you would like to eat. Home meals are available when an unreserved plate is ready; Outside meals are always selectable.</p></div><div class="today-meal-picker"><label>Select today's meal</label><select data-today-meal-choice aria-label="Select today's meal" ${choices.length?'':'disabled'}><option value="">${choices.length?'Choose a meal…':'No meals currently available'}</option>${choices.map(r=>`<option value="${Number(r.id)}">${esc(r.name)} · ${r.meal_source==='outside'?'Outside':`${Math.max(0,Number(r.plates_ready||0))-(pendingCounts.get(Number(r.id))||0)} ready`}</option>`).join('')}</select><button type="button" class="primary" data-select-today-meal ${choices.length?'':'disabled'}>Choose this meal</button></div>${choices.length?'':'<small class="muted">Add an Outside meal or update the stock of a Home meal in the meal options below.</small>'}</div>`;
  const markup=!meal
-  ? `<div class="today-meal-empty"><p class="muted">No plate is scheduled for today. Your meal routines will fill available days automatically when stock and frequency allow.</p></div>`
+  ? null
   : (()=>{
     const kcal=meal.calories_kcal==null?'Calories not set':`${Number(meal.calories_kcal)} kcal per plate`;
     const state=meal.status==='eaten'?'<span class="meal-confirmed">✓ Confirmed eaten</span>':'<span class="meal-pending">Waiting for your 22:00 Telegram check-in</span>';
-    return `<div class="today-meal-main ${meal.status==='eaten'?'is-eaten':'is-pending'}"><div><h3>${esc(meal.recipe_name||'Meal')}</h3><p class="muted">${esc(kcal)}</p>${state}</div><div class="today-meal-actions">${meal.status==='pending'?`<button class="mini-btn success" data-meal-confirm="${meal.id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${meal.id}" data-meal-decision="no">Move to tomorrow</button>`:'<span class="tag good">Done</span>'}</div></div>`;
+    return `<div class="today-meal-main ${meal.status==='eaten'?'is-eaten':'is-pending'}"><div><h3>${esc(meal.recipe_name||'Meal')}</h3><p class="muted">${esc(kcal)}</p>${state}</div><div class="today-meal-actions">${meal.status==='pending'?`<button class="mini-btn success" data-meal-confirm="${meal.id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${meal.id}" data-meal-decision="no">Move to tomorrow</button><button class="mini-btn danger" data-remove-plate="${meal.id}" aria-label="Remove this pending plate">Remove plate</button>`:'<span class="tag good">Done</span>'}</div></div>`;
   })();
- hosts.forEach(host=>{host.innerHTML=markup;host.classList.toggle('has-meal',Boolean(meal));});
+ hosts.forEach(host=>{
+  const isMealsPage=host.id==='meals-today-meal-card';
+  if(!meal){
+   host.innerHTML=isMealsPage?pickerMarkup:'<div class="today-meal-empty today-meal-empty-overview"><div class="today-meal-empty-copy"><b>No plate selected for today</b><p class="muted">Choose today&#39;s meal from the Meals page.</p></div><button type="button" class="secondary" data-go="meals">Choose a meal ↗</button></div>';
+  }else host.innerHTML=markup;
+  host.classList.toggle('has-meal',Boolean(meal));
+ });
 }
 async function removePlate(id){
  if(!confirm('Remove this pending plate from the schedule? It will not be marked as eaten and your ready-plate stock will stay unchanged.'))return;
@@ -264,5 +276,5 @@ $('#meals-shopping-add-form').addEventListener('submit',async e=>{e.preventDefau
 $('#meals-shopping-list').addEventListener('change',async e=>{const input=e.target.closest('[data-shopping-check]');if(!input)return;try{await api(`shopping_items/${input.dataset.shoppingCheck}`,{method:'PATCH',body:JSON.stringify({data:{checked:input.checked?1:0}})});refresh()}catch(err){toast(err.message)}});
 $('#clear-bought-items').addEventListener('click',async()=>{const bought=(cache.shopping_items||[]).filter(i=>Number(i.checked));if(!bought.length){toast('No purchased items to clear');return}if(!confirm(`Remove ${bought.length} purchased item(s) from the list?`))return;try{await Promise.all(bought.map(i=>api(`shopping_items/${i.id}`,{method:'DELETE'})));toast('Purchased items cleared');refresh()}catch(err){toast(err.message)}});
 async function confirmMeal(id,decision){try{await api(`daily-meals/${id}/confirm`,{method:'POST',body:JSON.stringify({data:{decision}})});toast(decision==='yes'?'Plate confirmed':'Plate and following days moved');refresh()}catch(err){toast(err.message)}}
-document.addEventListener('click',e=>{const edit=e.target.closest('[data-edit-recipe]');if(edit){const recipe=(cache.recipes||[]).find(r=>r.id===Number(edit.dataset.editRecipe));if(recipe)openRecipeModal(recipe)}const confirm=e.target.closest('[data-meal-confirm]');if(confirm)confirmMeal(Number(confirm.dataset.mealConfirm),confirm.dataset.mealDecision);const remove=e.target.closest('[data-remove-plate]');if(remove)removePlate(Number(remove.dataset.removePlate))});
-$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);refresh();setInterval(refresh,60000);
+document.addEventListener('click',async e=>{const choose=e.target.closest('[data-select-today-meal]');if(choose){const host=choose.closest('.today-meal-card'),select=host?.querySelector('[data-today-meal-choice]'),recipeId=Number(select?.value);if(!recipeId){toast('Choose a meal first.');return}choose.disabled=true;try{const result=await api('daily-meals/select',{method:'POST',body:JSON.stringify({data:{recipe_id:recipeId,plan_date:today}})});toast(`Today's plate selected · ${result.name}`);refresh()}catch(err){toast(err.message)}finally{choose.disabled=false}return}const edit=e.target.closest('[data-edit-recipe]');if(edit){const recipe=(cache.recipes||[]).find(r=>r.id===Number(edit.dataset.editRecipe));if(recipe)openRecipeModal(recipe)}const confirm=e.target.closest('[data-meal-confirm]');if(confirm)confirmMeal(Number(confirm.dataset.mealConfirm),confirm.dataset.mealDecision);const remove=e.target.closest('[data-remove-plate]');if(remove)removePlate(Number(remove.dataset.removePlate))});
+$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});refresh();setInterval(refresh,60000);
