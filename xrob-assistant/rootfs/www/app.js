@@ -28,6 +28,23 @@ function updateTreadmillPreview(){const d=Number($('#treadmill-form [name="durat
 function weekStartISO(v){const d=new Date(v+'T12:00:00');d.setDate(d.getDate()-((d.getDay()+6)%7));return isoDate(d)}
 function addDaysISO(v,days){const d=new Date(v+'T12:00:00');d.setDate(d.getDate()+days);return isoDate(d)}
 const WEEKDAY_LABELS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+function movableHomeReservation(recipe,day,meals=cache.daily_meals||[]){
+ if(recipe.meal_source==='outside')return null;
+ const ready=Math.max(0,Number(recipe.plates_ready||0));
+ const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(recipe.id)&&m.plan_date>=today&&m.plan_date!==day);
+ if(ready>reserved.length)return null;
+ return reserved.filter(m=>m.plan_date>day&&['automatic','unknown'].includes(m.assignment_source||'unknown')).sort((a,b)=>b.plan_date.localeCompare(a.plan_date))[0]||null;
+}
+function recipeCanBeAssignedForDay(recipe,day,meals=cache.daily_meals||[]){
+ const weekdayIndex=(new Date(day+'T12:00:00').getDay()+6)%7;
+ if((recipe.excluded_weekdays||[]).map(Number).includes(weekdayIndex))return false;
+ if(recipe.meal_source==='outside')return true;
+ const ready=Math.max(0,Number(recipe.plates_ready||0));
+ if(ready<=0)return false;
+ const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(recipe.id)&&m.plan_date>=today&&m.plan_date!==day);
+ if(ready>reserved.length)return true;
+ return meals.some(m=>m.status==='pending'&&Number(m.recipe_id)===Number(recipe.id)&&m.plan_date>day&&['automatic','unknown'].includes(m.assignment_source||'unknown'));
+}
 function renderFitnessStats(treadmills,workouts,weights){
  const all=[...treadmills.map(x=>({date:x.date})),...workouts.map(x=>({date:x.date}))];
  const thisMonth=all.filter(x=>(x.date||'').slice(0,7)===today.slice(0,7)).length;
@@ -229,16 +246,12 @@ function renderWeeklyMealPlan(){
   const meta=meal?`${meal.meal_source==='outside'?'🍴 Outside':'🏠 Home'}${meal.calories_kcal==null?'':` · ${Number(meal.calories_kcal)} kcal`}`:skipped?'You chose to keep this day free':'No plate assigned yet';
   let controls='';
   if(!isPast&&meal?.status!=='eaten'){
-   const options=recipes.filter(r=>{
-    if((r.excluded_weekdays||[]).map(Number).includes(weekdayIndex))return false;
-    if(r.meal_source==='outside')return true;
-    const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(r.id)&&m.plan_date!==day).length;
-    return Number(r.plates_ready||0)>reserved;
-   });
+   const options=recipes.filter(r=>recipeCanBeAssignedForDay(r,day,meals));
    const optionHtml=options.map(r=>{
     const current=meal&&Number(meal.recipe_id)===Number(r.id);
-    const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(r.id)&&m.plan_date!==day).length;
-    const stockText=r.meal_source==='outside'?'Outside':`${Math.max(0,Number(r.plates_ready||0)-reserved)} ready`;
+    const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(r.id)&&m.plan_date>=today&&m.plan_date!==day).length;
+    const free=Math.max(0,Number(r.plates_ready||0)-reserved);
+    const stockText=r.meal_source==='outside'?'Outside':free>0?`${free} free`:'move later reservation';
     return `<option value="${Number(r.id)}" ${current?'selected':''}>${esc(r.name)} · ${stockText}</option>`;
    }).join('');
    const selector=options.length?`<div class="weekly-meal-editor"><label class="sr-only" for="weekly-meal-${day}">Select meal for ${esc(title)}</label><select id="weekly-meal-${day}" data-week-meal-select="${day}"><option value="">Choose a meal…</option>${optionHtml}</select><button class="mini-btn weekly-save-btn" data-week-assign="${day}">${meal?'Change':'Add meal'}</button></div>`:`<small class="weekly-no-options">No eligible meals. Add an option or update Home stock.</small>`;
@@ -262,11 +275,9 @@ function renderTodayMeal(){
  const hosts=[$('#today-meal-card'),$('#meals-today-meal-card')].filter(Boolean);
  if(!hosts.length)return;
  const meal=(cache.daily_meals||[]).find(x=>x.plan_date===today);
- const pendingCounts=new Map();
- (cache.daily_meals||[]).filter(x=>x.status==='pending'&&x.plan_date>=today).forEach(x=>pendingCounts.set(Number(x.recipe_id),(pendingCounts.get(Number(x.recipe_id))||0)+1));
- const todayWeekday=(new Date(today+'T12:00:00').getDay()+6)%7;
- const choices=(cache.recipes||[]).filter(r=>!(r.excluded_weekdays||[]).map(Number).includes(todayWeekday)&&(r.meal_source==='outside'||Math.max(0,Number(r.plates_ready||0))>(pendingCounts.get(Number(r.id))||0)));
- const pickerMarkup=`<div class="today-meal-empty"><div class="today-meal-empty-copy"><b>No plate selected for today</b><p class="muted">Choose what you would like to eat. Home meals are available when an unreserved plate is ready; Outside meals are always selectable.</p></div><div class="today-meal-picker"><label>Select today's meal</label><select data-today-meal-choice aria-label="Select today's meal" ${choices.length?'':'disabled'}><option value="">${choices.length?'Choose a meal…':'No meals currently available'}</option>${choices.map(r=>`<option value="${Number(r.id)}">${esc(r.name)} · ${r.meal_source==='outside'?'Outside':`${Math.max(0,Number(r.plates_ready||0))-(pendingCounts.get(Number(r.id))||0)} ready`}</option>`).join('')}</select><button type="button" class="primary" data-select-today-meal ${choices.length?'':'disabled'}>Choose this meal</button></div>${choices.length?'':'<small class="muted">Add an Outside meal or update the stock of a Home meal in the meal options below.</small>'}</div>`;
+ const meals=cache.daily_meals||[];
+ const choices=(cache.recipes||[]).filter(r=>recipeCanBeAssignedForDay(r,today,meals));
+ const pickerMarkup=`<div class="today-meal-empty"><div class="today-meal-empty-copy"><b>No plate selected for today</b><p class="muted">Choose a Home meal with ready plates or an Outside option. When all Home plates are reserved later in the plan, choosing one moves the latest automatic reservation to today; your manual choices are protected.</p></div><div class="today-meal-picker"><label>Select today's meal</label><select data-today-meal-choice aria-label="Select today's meal" ${choices.length?'':'disabled'}><option value="">${choices.length?'Choose a meal…':'No meals currently available'}</option>${choices.map(r=>{const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(r.id)&&m.plan_date>=today).length,free=Math.max(0,Number(r.plates_ready||0)-reserved),stock=r.meal_source==='outside'?'Outside':free>0?`${free} ready`:'move later reservation';return `<option value="${Number(r.id)}">${esc(r.name)} · ${stock}</option>`}).join('')}</select><button type="button" class="primary" data-select-today-meal ${choices.length?'':'disabled'}>Choose this meal</button></div>${choices.length?'':'<small class="muted">Add an Outside meal or update the stock of a Home meal in the meal options below.</small>'}</div>`;
  const markup=!meal
   ? null
   : (()=>{
@@ -321,13 +332,15 @@ $('#meals-shopping-list').addEventListener('change',async e=>{const input=e.targ
 $('#clear-bought-items').addEventListener('click',async()=>{const bought=(cache.shopping_items||[]).filter(i=>Number(i.checked));if(!bought.length){toast('No purchased items to clear');return}if(!confirm(`Remove ${bought.length} purchased item(s) from the list?`))return;try{await Promise.all(bought.map(i=>api(`shopping_items/${i.id}`,{method:'DELETE'})));toast('Purchased items cleared');refresh()}catch(err){toast(err.message)}});
 async function confirmMeal(id,decision){try{await api(`daily-meals/${id}/confirm`,{method:'POST',body:JSON.stringify({data:{decision}})});toast(decision==='yes'?'Plate confirmed':'Plate and following days moved');refresh()}catch(err){toast(err.message)}}
 document.addEventListener('click',async e=>{
+ const resetWeek=e.target.closest('[data-reset-week-plan]');
+ if(resetWeek){if(!confirm('Generate a fresh upcoming plan? This replaces pending plates from today onward and clears future day-off markers. Past history and confirmed eaten plates stay; unconfirmed overdue plates are included after the normal rollover.'))return;resetWeek.disabled=true;try{const result=await api('daily-meals/reset-week',{method:'POST',body:JSON.stringify({data:{}})});toast(`Upcoming plan refreshed · ${result.created} new plate(s)`);await refresh()}catch(err){toast(err.message)}finally{resetWeek.disabled=false}return}
  const weekAssign=e.target.closest('[data-week-assign]');
- if(weekAssign){const day=weekAssign.dataset.weekAssign,select=document.querySelector(`[data-week-meal-select="${day}"]`),recipeId=Number(select?.value);if(!recipeId){toast('Choose a meal for this day first.');return}weekAssign.disabled=true;try{await api('daily-meals/assign',{method:'POST',body:JSON.stringify({data:{plan_date:day,recipe_id:recipeId}})});toast(`Meal saved for ${formatDate(day)}`);await refresh()}catch(err){toast(err.message)}finally{weekAssign.disabled=false}return}
+ if(weekAssign){const day=weekAssign.dataset.weekAssign,select=document.querySelector(`[data-week-meal-select="${day}"]`),recipeId=Number(select?.value),recipe=(cache.recipes||[]).find(r=>Number(r.id)===recipeId);if(!recipeId){toast('Choose a meal for this day first.');return}const movable=recipe?movableHomeReservation(recipe,day):null;if(movable&&!confirm(`A plate of ${recipe.name} is currently reserved for ${formatDate(movable.plan_date)}. Move that automatic reservation to ${formatDate(day)}?`))return;weekAssign.disabled=true;try{const result=await api('daily-meals/assign',{method:'POST',body:JSON.stringify({data:{plan_date:day,recipe_id:recipeId}})});toast(result.reallocated_from?`Meal saved · moved reservation from ${formatDate(result.reallocated_from)}`:`Meal saved for ${formatDate(day)}`);await refresh()}catch(err){toast(err.message)}finally{weekAssign.disabled=false}return}
  const weekSkip=e.target.closest('[data-week-skip]');
  if(weekSkip){const day=weekSkip.dataset.weekSkip,meal=(cache.daily_meals||[]).find(x=>x.plan_date===day);if(!confirm(meal?`Cancel the pending ${meal.recipe_name} plate for ${formatDate(day)} and leave this day free? Ready-plate stock will not be consumed.`:`Leave ${formatDate(day)} free of a meal?`))return;weekSkip.disabled=true;try{await api('daily-meals/assign',{method:'POST',body:JSON.stringify({data:{plan_date:day,recipe_id:null}})});toast('Day left free');await refresh()}catch(err){toast(err.message)}finally{weekSkip.disabled=false}return}
  const weekRestore=e.target.closest('[data-week-restore]');
  if(weekRestore){const day=weekRestore.dataset.weekRestore;weekRestore.disabled=true;try{await api('daily-meals/restore',{method:'POST',body:JSON.stringify({data:{plan_date:day}})});toast('Day restored to automatic planning');await refresh()}catch(err){toast(err.message)}finally{weekRestore.disabled=false}return}
- const choose=e.target.closest('[data-select-today-meal]');if(choose){const host=choose.closest('.today-meal-card'),select=host?.querySelector('[data-today-meal-choice]'),recipeId=Number(select?.value);if(!recipeId){toast('Choose a meal first.');return}choose.disabled=true;try{const result=await api('daily-meals/select',{method:'POST',body:JSON.stringify({data:{recipe_id:recipeId,plan_date:today}})});toast(`Today's plate selected · ${result.name}`);refresh()}catch(err){toast(err.message)}finally{choose.disabled=false}return}
- const edit=e.target.closest('[data-edit-recipe]');if(edit){const recipe=(cache.recipes||[]).find(r=>r.id===Number(edit.dataset.editRecipe));if(recipe)openRecipeModal(recipe)}const confirm=e.target.closest('[data-meal-confirm]');if(confirm)confirmMeal(Number(confirm.dataset.mealConfirm),confirm.dataset.mealDecision);const remove=e.target.closest('[data-remove-plate]');if(remove)removePlate(Number(remove.dataset.removePlate))
+ const choose=e.target.closest('[data-select-today-meal]');if(choose){const host=choose.closest('.today-meal-card'),select=host?.querySelector('[data-today-meal-choice]'),recipeId=Number(select?.value),recipe=(cache.recipes||[]).find(r=>Number(r.id)===recipeId);if(!recipeId){toast('Choose a meal first.');return}const movable=recipe?movableHomeReservation(recipe,today):null;if(movable&&!confirm(`A plate of ${recipe.name} is currently reserved for ${formatDate(movable.plan_date)}. Use it today and move that reservation?`))return;choose.disabled=true;try{const result=await api('daily-meals/select',{method:'POST',body:JSON.stringify({data:{recipe_id:recipeId,plan_date:today}})});toast(result.reallocated_from?`Today's plate selected · moved a reservation from ${formatDate(result.reallocated_from)}`:`Today's plate selected · ${result.name}`);await refresh()}catch(err){toast(err.message)}finally{choose.disabled=false}return}
+ const edit=e.target.closest('[data-edit-recipe]');if(edit){const recipe=(cache.recipes||[]).find(r=>r.id===Number(edit.dataset.editRecipe));if(recipe)openRecipeModal(recipe)}const mealConfirmBtn=e.target.closest('[data-meal-confirm]');if(mealConfirmBtn)confirmMeal(Number(mealConfirmBtn.dataset.mealConfirm),mealConfirmBtn.dataset.mealDecision);const remove=e.target.closest('[data-remove-plate]');if(remove)removePlate(Number(remove.dataset.removePlate))
 });
 $$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});refresh();setInterval(refresh,60000);
