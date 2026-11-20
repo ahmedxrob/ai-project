@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS treadmill (id INTEGER PRIMARY KEY, date TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS bills (id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_mad REAL DEFAULT 0, due_date TEXT NOT NULL, recurrence TEXT DEFAULT 'none', reminder_days INTEGER DEFAULT 3, status TEXT DEFAULT 'unpaid', paid_at TEXT, notes TEXT DEFAULT '', recurrence_day INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, name TEXT NOT NULL, expiry_date TEXT NOT NULL, reminder_days INTEGER DEFAULT 30, reference TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', routine_time TEXT DEFAULT '10:00', routine_late_time TEXT DEFAULT NULL, routine_rollover_after_late INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS routine_logs (id INTEGER PRIMARY KEY, routine_id INTEGER NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS routine_logs (id INTEGER PRIMARY KEY, routine_id INTEGER NOT NULL, completed_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual', FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS notification_log (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, item_id INTEGER NOT NULL, reminder_date TEXT NOT NULL, UNIQUE(kind,item_id,reminder_date));
 CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS telegram_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -162,6 +162,29 @@ def init_db():
             c.execute("ALTER TABLE routines ADD COLUMN routine_late_time TEXT DEFAULT NULL")
         if 'routine_rollover_after_late' not in routine_columns:
             c.execute('ALTER TABLE routines ADD COLUMN routine_rollover_after_late INTEGER NOT NULL DEFAULT 0')
+        routine_log_columns = {r['name'] for r in c.execute('PRAGMA table_info(routine_logs)').fetchall()}
+        if 'source' not in routine_log_columns:
+            c.execute("ALTER TABLE routine_logs ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+        # Old versions did not record why a routine was completed. Recover the
+        # activity-linked rows so deleting an old weight/session can also undo
+        # the matching automatic routine check. Other historic checks stay manual.
+        activity_log_migration = c.execute("SELECT 1 FROM app_migrations WHERE name='routine_activity_log_sources_v1'").fetchone()
+        if not activity_log_migration:
+            c.execute('''UPDATE routine_logs SET source='weight'
+                         WHERE EXISTS (SELECT 1 FROM routines r
+                                       WHERE r.id=routine_logs.routine_id
+                                         AND (lower(r.name) LIKE '%weight%' OR lower(r.name) LIKE '%weigh%'))
+                           AND EXISTS (SELECT 1 FROM weights w WHERE w.date=routine_logs.completed_at)''')
+            c.execute('''UPDATE routine_logs SET source='treadmill'
+                         WHERE EXISTS (SELECT 1 FROM routines r
+                                       WHERE r.id=routine_logs.routine_id AND lower(r.name) LIKE '%treadmill%')
+                           AND EXISTS (SELECT 1 FROM treadmill t WHERE t.date=routine_logs.completed_at)''')
+            c.execute("INSERT INTO app_migrations(name) VALUES('routine_activity_log_sources_v1')")
+        # Keep one completion row per routine and day, including concurrent
+        # Telegram, website and activity-triggered updates.
+        c.execute('''DELETE FROM routine_logs
+                     WHERE id NOT IN (SELECT MIN(id) FROM routine_logs GROUP BY routine_id,completed_at)''')
+        c.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_routine_logs_unique_day ON routine_logs(routine_id,completed_at)')
         # In 0.1.11, 12:00 was automatically populated for every routine.
         # Convert those generated defaults to NULL so late reminders are opt-in.
         # Preserve any other time that the user may have deliberately selected.
@@ -244,7 +267,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.13', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.14', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -253,7 +276,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.13','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.14','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -312,6 +335,11 @@ def list_resource(resource: str, limit: int = Query(250, ge=1, le=10000)):
         return result
     if resource == 'shopping_items':
         return rows('SELECT id,name,checked,source FROM shopping_items ORDER BY checked, name COLLATE NOCASE, id DESC LIMIT ?', (limit,))
+    if resource == 'routines':
+        return rows('''SELECT * FROM routines
+                       ORDER BY CASE WHEN next_due<=? THEN 0 ELSE 1 END,
+                                next_due,COALESCE(routine_time,'23:59'),id DESC LIMIT ?''',
+                    (date.today().isoformat(), limit))
     return rows(f'SELECT * FROM {table} ORDER BY id DESC LIMIT ?', (limit,))
 
 MEAL_TYPES = ('breakfast', 'lunch', 'dinner', 'snack')
@@ -1230,11 +1258,9 @@ def auto_complete_matching_routines(completed_on: date, matcher) -> int:
         next_due = (completed_on + timedelta(days=interval)).isoformat()
         with connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            c.execute(
-                'INSERT INTO routine_logs(routine_id,completed_at) SELECT ?,? WHERE NOT EXISTS '
-                '(SELECT 1 FROM routine_logs WHERE routine_id=? AND completed_at=?)',
-                (routine['id'], day, routine['id'], day)
-            )
+            source = 'weight' if matcher is is_weight_routine else 'treadmill'
+            c.execute('INSERT OR IGNORE INTO routine_logs(routine_id,completed_at,source) VALUES(?,?,?)',
+                      (routine['id'], day, source))
             current = c.execute('SELECT last_done FROM routines WHERE id=?', (routine['id'],)).fetchone()
             current_last = current['last_done'] if current else None
             if not current_last or day >= current_last:
@@ -1249,10 +1275,12 @@ def auto_complete_treadmill_routines(completed_on: date) -> int:
     return auto_complete_matching_routines(completed_on, is_treadmill_routine)
 
 def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
-    """Send the normal reminder on its due day; optional late reminders start next day.
+    """Send both routine and late reminders on the same due day.
 
-    Overdue routines remain due until completed. If a late time is configured,
-    a follow-up is sent at that time on each subsequent day, independent of interval_days.
+    The routine time is the first notification. The late time is the follow-up
+    later that same day, not the next calendar day. If a routine is overdue
+    because the service was offline, it is treated as due today and catches up
+    without skipping today's occurrence.
     """
     today = now.date()
     current_hm = now.strftime('%H:%M')
@@ -1269,23 +1297,25 @@ def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
             routine_time = validate_clock_time(routine.get('routine_time'), 'Routine time')
             late_time = validate_clock_time(routine.get('routine_late_time'), 'Routine late reminder time')
             name = routine['name']
-            if due == today:
-                # The regular reminder is on the scheduled day. The late reminder
-                # is deliberately deferred until the following day.
-                if routine_time and current_hm >= routine_time:
-                    reminders.append(('routine-time', routine['id'], today.isoformat(), f"🔁 ROUTINE DUE\n{name}\nScheduled: {routine_time}\nWhen finished, reply: done {name}"))
-            elif late_time and current_hm >= late_time:
+            if routine_time and current_hm >= routine_time:
+                reminders.append(('routine-time', routine['id'], today.isoformat(),
+                                  f"🔁 ROUTINE DUE\n{name}\nScheduled: {routine_time}\nWhen finished, reply: done {name}"))
+            if late_time and current_hm >= late_time:
                 scheduled = f'\nScheduled: {routine_time}' if routine_time else ''
-                days_late = (today - due).days
-                rollover_note = '\nStill incomplete after this alert? It will move to tomorrow automatically.' if int(routine.get('routine_rollover_after_late') or 0) else ''
-                reminders.append(('routine-late', routine['id'], today.isoformat(), f"⚠️ ROUTINE STILL OPEN\n{name}\nOverdue: {days_late} day{'s' if days_late != 1 else ''}{scheduled}{rollover_note}\nReply when finished: done {name}"))
+                days_late = max(0, (today - due).days)
+                rollover_note = ('\nStill incomplete after this alert? It will move to tomorrow automatically.'
+                                 if int(routine.get('routine_rollover_after_late') or 0) else '')
+                overdue_note = (f"\nOverdue: {days_late} day{'s' if days_late != 1 else ''}"
+                                if days_late else '')
+                reminders.append(('routine-late', routine['id'], today.isoformat(),
+                                  f"⚠️ ROUTINE STILL OPEN\n{name}{overdue_note}{scheduled}{rollover_note}\nReply when finished: done {name}"))
         except Exception as exc:
             print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
     return reminders
 
 
 def roll_forward_late_routine(routine_id: int, reminder_day: date) -> bool:
-    """Move an uncompleted opted-in routine to tomorrow after its late alert is delivered."""
+    """Move an uncompleted opted-in routine to tomorrow after today's late alert."""
     tomorrow = (reminder_day + timedelta(days=1)).isoformat()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -1297,11 +1327,60 @@ def roll_forward_late_routine(routine_id: int, reminder_day: date) -> bool:
         except (TypeError, ValueError):
             return False
         # A completion from the website or Telegram changes next_due. Only roll
-        # forward if it is still overdue; never overwrite a newer completion.
-        if due is None or due >= reminder_day:
+        # forward if it is still due today or earlier; never overwrite a newer
+        # completion or a future schedule.
+        if due is None or due > reminder_day:
             return False
         cur = c.execute('UPDATE routines SET next_due=? WHERE id=? AND next_due=?', (tomorrow, routine_id, current['next_due']))
         return cur.rowcount == 1
+
+
+def normalize_overdue_routine_dates(current_day: date) -> int:
+    """Rebase opted-in overdue routines to today before issuing today's reminders.
+
+    This handles a service restart or missed midnight boundary without leaving
+    a routine parked on yesterday (or an older date). The late alert still moves
+    an unfinished routine to tomorrow after it is successfully delivered.
+    """
+    day = current_day.isoformat()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        cur = c.execute('''UPDATE routines SET next_due=?
+                           WHERE next_due IS NOT NULL AND next_due<?
+                             AND routine_late_time IS NOT NULL
+                             AND TRIM(routine_late_time)!=''
+                             AND routine_rollover_after_late=1''', (day, day))
+        return cur.rowcount
+
+
+def _recalculate_routine_after_activity_removal(c: sqlite3.Connection, routine_id: int) -> None:
+    """Rebuild a routine's last/next dates after an auto-completing activity is removed."""
+    routine = c.execute('SELECT interval_days FROM routines WHERE id=?', (routine_id,)).fetchone()
+    if not routine:
+        return
+    latest = c.execute('SELECT MAX(completed_at) FROM routine_logs WHERE routine_id=?', (routine_id,)).fetchone()[0]
+    interval = max(1, int(routine['interval_days'] or 1))
+    next_due = (date.fromisoformat(latest) + timedelta(days=interval)).isoformat() if latest else date.today().isoformat()
+    c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?', (latest, next_due, routine_id))
+
+
+def _undo_activity_routine_completion(c: sqlite3.Connection, source: str, activity_day: str) -> int:
+    """Remove only activity-generated checks and keep manually completed routines."""
+    if source == 'weight':
+        matcher = "(lower(name) LIKE '%weight%' OR lower(name) LIKE '%weigh%')"
+    elif source == 'treadmill':
+        matcher = "lower(name) LIKE '%treadmill%'"
+    else:
+        return 0
+    linked = c.execute(f'''SELECT rl.routine_id FROM routine_logs rl
+                           JOIN routines r ON r.id=rl.routine_id
+                           WHERE rl.completed_at=? AND rl.source=? AND {matcher}''',
+                       (activity_day, source)).fetchall()
+    c.execute(f'''DELETE FROM routine_logs WHERE completed_at=? AND source=?
+                  AND routine_id IN (SELECT id FROM routines WHERE {matcher})''', (activity_day, source))
+    for row in linked:
+        _recalculate_routine_after_activity_removal(c, int(row['routine_id']))
+    return len(linked)
 
 @app.post('/api/{resource}')
 def create_resource(resource: str, payload: Payload):
@@ -1473,6 +1552,13 @@ def create_resource(resource: str, payload: Payload):
                 weight_day = date.fromisoformat(str(data.get('date', '')))
             except (TypeError, ValueError):
                 raise HTTPException(400, 'Enter a valid weight date (YYYY-MM-DD).')
+            try:
+                kg = float(data.get('kg'))
+                if not math.isfinite(kg) or not 20 <= kg <= 350:
+                    raise ValueError()
+                data['kg'] = round(kg, 2)
+            except (TypeError, ValueError):
+                raise HTTPException(400, 'Weight must be between 20 and 350 kg.')
             # Acquire the SQLite write lock before checking so two near-simultaneous
             # submissions cannot create two records for the same calendar day.
             c.execute('BEGIN IMMEDIATE')
@@ -1506,6 +1592,12 @@ def update_resource(resource: str, item_id: int, payload: Payload):
     rebuild_recipe_future = False
     if resource in ('weights','workouts','treadmill') and 'date' in data:
         data['date'] = validate_date_field(data.get('date'), 'Record date')
+    previous_activity_day = None
+    if resource in ('weights', 'treadmill') and 'date' in data:
+        previous = one(f'SELECT date FROM {table} WHERE id=?', (item_id,))
+        if not previous:
+            raise HTTPException(404, 'Record not found')
+        previous_activity_day = previous['date']
     if resource == 'weights':
         if 'kg' in data:
             try:
@@ -1675,6 +1767,13 @@ def update_resource(resource: str, item_id: int, payload: Payload):
     with connect() as c:
         cur=c.execute(f"UPDATE {table} SET {','.join(k+'=?' for k in data)} WHERE id=?", [*data.values(),item_id])
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
+        if previous_activity_day and data.get('date') != previous_activity_day:
+            if resource == 'weights':
+                _undo_activity_routine_completion(c, 'weight', previous_activity_day)
+            elif resource == 'treadmill':
+                remaining = c.execute('SELECT COUNT(*) FROM treadmill WHERE date=?', (previous_activity_day,)).fetchone()[0]
+                if not remaining:
+                    _undo_activity_routine_completion(c, 'treadmill', previous_activity_day)
         if resource == 'recipes':
             if 'excluded_weekdays_json' in data:
                 excluded = set(_decode_excluded_weekdays(data['excluded_weekdays_json']))
@@ -1692,6 +1791,12 @@ def update_resource(resource: str, item_id: int, payload: Payload):
                 # automatic suggestions using the newly saved repeat interval.
                 c.execute("DELETE FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>? AND assignment_source IN ('automatic','unknown')", (item_id, date.today().isoformat()))
                 _recalculate_recipe_due(c, item_id)
+    if previous_activity_day and data.get('date') and data.get('date') != previous_activity_day:
+        new_activity_day = date.fromisoformat(data['date'])
+        if resource == 'weights':
+            auto_complete_weight_routines(new_activity_day)
+        elif resource == 'treadmill':
+            auto_complete_treadmill_routines(new_activity_day)
     result = one(f'SELECT * FROM {table} WHERE id=?',(item_id,))
     if resource == 'recipes' and result:
         if 'meal_source' in data or 'plates_ready' in data:
@@ -1746,6 +1851,12 @@ def delete_resource(resource: str, item_id: int):
             raise HTTPException(404, str(exc))
     refresh_meal_schedule = resource == 'daily_meals'
     with connect() as c:
+        activity_day = None
+        if resource in ('weights', 'treadmill'):
+            activity = c.execute(f'SELECT date FROM {table} WHERE id=?', (item_id,)).fetchone()
+            if not activity:
+                raise HTTPException(404, 'Record not found')
+            activity_day = activity['date']
         if resource == 'daily_meals':
             meal = c.execute('SELECT id,batch_id,status,plan_date,recipe_id FROM daily_meals WHERE id=?', (item_id,)).fetchone()
             if not meal:
@@ -1773,6 +1884,12 @@ def delete_resource(resource: str, item_id: int):
         else:
             cur=c.execute(f'DELETE FROM {table} WHERE id=?',(item_id,))
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
+        if resource == 'weights':
+            _undo_activity_routine_completion(c, 'weight', activity_day)
+        elif resource == 'treadmill':
+            remaining = c.execute('SELECT COUNT(*) FROM treadmill WHERE date=?', (activity_day,)).fetchone()[0]
+            if not remaining:
+                _undo_activity_routine_completion(c, 'treadmill', activity_day)
         reminder_kinds={'tasks':['task','task-time'],'bills':['bill'],'routines':['routine-time','routine-late']}
         for kind in reminder_kinds.get(resource,[]):
             c.execute('DELETE FROM notification_log WHERE kind=? AND item_id=?',(kind,item_id))
@@ -1792,7 +1909,9 @@ def complete_routine(routine_id:int):
     today=date.today(); nxt=(today+timedelta(days=max(1,int(r['interval_days'])))).isoformat()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        c.execute('INSERT INTO routine_logs(routine_id,completed_at) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM routine_logs WHERE routine_id=? AND completed_at=?)',(routine_id,today.isoformat(),routine_id,today.isoformat()))
+        c.execute('''INSERT INTO routine_logs(routine_id,completed_at,source) VALUES(?,?, 'manual')
+                     ON CONFLICT(routine_id,completed_at) DO UPDATE SET source='manual' ''',
+                  (routine_id,today.isoformat()))
         latest = c.execute('SELECT MAX(completed_at) FROM routine_logs WHERE routine_id=?',(routine_id,)).fetchone()[0] or today.isoformat()
         latest_date = date.fromisoformat(latest)
         next_due = (latest_date+timedelta(days=max(1,int(r['interval_days'])))).isoformat()
@@ -1811,10 +1930,13 @@ def edit_routine_last_record(routine_id: int, payload: Payload):
     interval=max(1,int(r['interval_days'] or 1))
     with connect() as c:
         latest=c.execute('SELECT id FROM routine_logs WHERE routine_id=? ORDER BY completed_at DESC,id DESC LIMIT 1',(routine_id,)).fetchone()
+        if latest and c.execute('SELECT 1 FROM routine_logs WHERE routine_id=? AND completed_at=? AND id!=?',
+                                 (routine_id, completed, latest['id'])).fetchone():
+            raise HTTPException(409, 'This routine already has a completion record for that date.')
         if latest:
-            c.execute('UPDATE routine_logs SET completed_at=? WHERE id=?',(completed,latest['id']))
+            c.execute("UPDATE routine_logs SET completed_at=?,source='manual' WHERE id=?",(completed,latest['id']))
         else:
-            c.execute('INSERT INTO routine_logs(routine_id,completed_at) VALUES(?,?)',(routine_id,completed))
+            c.execute("INSERT INTO routine_logs(routine_id,completed_at,source) VALUES(?,?,'manual')",(routine_id,completed))
         latest_after=c.execute('SELECT MAX(completed_at) AS completed_at FROM routine_logs WHERE routine_id=?',(routine_id,)).fetchone()['completed_at']
         latest_after=latest_after or completed
         next_due=(date.fromisoformat(latest_after)+timedelta(days=interval)).isoformat()
@@ -1889,6 +2011,7 @@ def summary():
     next_bill = one("SELECT name,due_date,amount_mad FROM bills WHERE status!='paid' ORDER BY CASE WHEN due_date>=? THEN 0 ELSE 1 END, CASE WHEN due_date>=? THEN due_date END ASC, CASE WHEN due_date<? THEN due_date END DESC, id ASC LIMIT 1", (today, today, today))
     days_to_next_bill = (date.fromisoformat(next_bill['due_date']) - date.today()).days if next_bill else None
     return {
+      'today': today,
       'events_today':len(rows('SELECT id FROM events WHERE substr(start_at,1,10)=?',(today,))),
       'routines_due_today':one('SELECT COUNT(*) n FROM routines WHERE next_due<=?',(today,))['n'],
       'open_tasks':one("SELECT COUNT(*) n FROM tasks WHERE status!='done'")['n'],
@@ -1932,6 +2055,7 @@ async def reminder_loop():
             try:
                 now = datetime.now()
                 today = now.date()
+                normalize_overdue_routine_dates(today)
                 reminders = []
                 for b in rows("SELECT * FROM bills WHERE status!='paid'"):
                     try: remind_on = date.fromisoformat(b['due_date']) - timedelta(days=int(b.get('reminder_days') or 3))
