@@ -783,3 +783,65 @@ body{min-height:100vh;min-height:100dvh}
 .weekly-reset-btn:disabled{opacity:.55;cursor:wait}
 @media(max-width:700px){.weekly-plan-header{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}.weekly-plan-actions{display:grid;grid-template-columns:1fr;justify-content:stretch}.weekly-reset-btn{width:100%;min-height:42px}.weekly-plan-actions .tag{justify-self:start}}
 @media(max-width:360px){.weekly-meal-grid{grid-template-columns:minmax(0,1fr)}.weekday-exclude-grid{grid-template-columns:1fr}}
+
+/* 0.4.14 — iPhone/iPad-safe navigation, touch controls and history actions. */
+.danger-btn{border-color:#714047;background:#24191b;color:#ffc0c5}
+.history-entry-side .mini-btn{min-height:34px;padding:7px 10px}
+@media(max-width:700px){
+  html,body{width:100%;min-width:320px;min-height:100%;overflow-x:hidden}
+  body{display:block;min-height:100vh;min-height:100dvh;padding-bottom:calc(68px + env(safe-area-inset-bottom))}
+  .sidebar{
+    position:fixed;inset:auto 0 0 0;width:100%;height:auto;min-height:calc(62px + env(safe-area-inset-bottom));
+    padding:6px max(7px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(7px,env(safe-area-inset-left));
+    display:flex;flex-direction:row;align-items:center;justify-content:center;z-index:10;
+    border-right:0;border-top:1px solid #303b35;background:#080d0a;
+    box-shadow:0 -8px 24px #0007
+  }
+  .sidebar .brand,.sidebar .sidefoot{display:none!important}
+  #nav{width:100%;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;align-items:stretch}
+  #nav button{
+    min-width:0;min-height:48px;padding:5px 1px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;
+    border-radius:9px;text-align:center;font-size:10px;line-height:1.05
+  }
+  #nav .nav-icon{display:block!important;width:auto;font-size:17px;line-height:1.15}
+  #nav .nav-label{display:block!important;font-size:clamp(7px,2.1vw,9px);line-height:1.1;white-space:nowrap;letter-spacing:-.1px}
+  #nav button.active{box-shadow:inset 0 2px var(--green);background:#1a2820}
+  main{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding:18px max(12px,env(safe-area-inset-right)) 28px max(12px,env(safe-area-inset-left))!important;min-width:0}
+  main>.page{width:100%;max-width:none;min-width:0}
+  header{gap:8px;margin-bottom:18px}
+  h1{font-size:clamp(23px,6vw,29px)}
+  h2{font-size:21px}
+  .section-head{gap:9px}
+  .section-head .primary{max-width:48%;min-height:42px;padding:9px 10px}
+  .panel{min-width:0;padding:14px;border-radius:13px}
+  .panel-head{gap:8px;flex-wrap:wrap}
+  .row-item{flex-wrap:wrap;gap:8px}
+  .row-item .row-main{flex:1 1 100%;width:100%}
+  .row-item>.tag{margin-right:auto}
+  .row-item>.action-group{width:100%;justify-content:flex-start}
+  .history-entry{align-items:flex-start;gap:8px;padding:12px 2px}
+  .history-entry-main{flex:1 1 auto}
+  .history-entry-side{max-width:48%;gap:5px}
+  .history-entry-side .mini-btn{min-width:64px;min-height:36px}
+  .history-grid{grid-template-columns:minmax(0,1fr)}
+  .history-card{height:360px}
+  .modal{place-items:end center;padding:10px 10px calc(10px + env(safe-area-inset-bottom));}
+  .modal-card{width:100%;max-width:560px;max-height:calc(92dvh - env(safe-area-inset-bottom));padding:17px;border-radius:18px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .form input,.form select,.form textarea,.plan-inline input,.plan-inline select{font-size:16px;min-height:43px}
+  button,.mini-btn,.primary,.secondary,.text-btn{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+  .toast{left:12px;right:12px;bottom:calc(74px + env(safe-area-inset-bottom));max-width:none;text-align:center}
+}
+@media(max-width:380px){
+  #nav{gap:1px}
+  #nav button{padding-left:0;padding-right:0}
+  #nav .nav-icon{font-size:16px}
+  #nav .nav-label{font-size:7px}
+  .history-entry-side strong{font-size:11px}
+  .history-entry-side .mini-btn{min-width:58px;padding:6px 7px}
+}
+@supports(padding:max(0px)){
+  @media(max-width:700px){
+    main{padding-left:max(12px,env(safe-area-inset-left))!important;padding-right:max(12px,env(safe-area-inset-right))!important}
+  }
+}
+@media(max-width:700px){.modal{z-index:20}.toast{z-index:30}}
