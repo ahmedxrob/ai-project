@@ -1,6 +1,6 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const isoDate=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
-let today=isoDate(new Date());let cache={},calendarMonth=new Date(),mealFilter='all',refreshSequence=0;
+let today=isoDate(new Date());let cache={},calendarMonth=new Date(today+'T12:00:00'),mealFilter='all',refreshSequence=0;
 const titles={overview:'Good day.',calendar:'Planner',fitness:'Fitness',bills:'Bills & payments',care:'Routines',meals:'Meals',settings:'Settings & Telegram'};
 let selectedCalendarDate=today;
 function formatDate(v){if(!v)return '—';const m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}/${m[2]}/${m[1].slice(-2)}`:String(v)}
@@ -9,10 +9,11 @@ function parseDateInput(v){const s=String(v||'').trim();if(!s)return '';let m=s.
 function displayDateInput(v=today){return formatDate(v)}
 function parseDateTimeInput(v){const s=String(v||'').trim();if(!s)return '';if(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s))return s;const m=s.match(/^(.+?)\s+(\d{1,2}):(\d{2})$/);if(!m)throw Error('Enter date and time as DD/MM/YY HH:MM.');const date=parseDateInput(m[1]),hour=Number(m[2]),minute=Number(m[3]);if(hour>23||minute>59)throw Error('Please enter a valid time.');return `${date}T${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`}
 function displayDateTimeInput(v){return v?formatDateTime(v):''}
-$('#today-label').textContent=`${new Date().toLocaleDateString(undefined,{weekday:'long'}).toUpperCase()} · ${formatDate(today)}`;
+function updateTodayLabel(){const day=new Date(today+'T12:00:00');$('#today-label').textContent=`${day.toLocaleDateString(undefined,{weekday:'long'}).toUpperCase()} · ${formatDate(today)}`}
+updateTodayLabel();
 function longDateLabel(value){const d=new Date(value+'T12:00:00');return `${d.toLocaleDateString(undefined,{weekday:'long'})} · ${formatDate(value)}`}
-function syncCurrentDate(){const next=isoDate(new Date());if(next===today)return;const previous=today,wasViewingToday=selectedCalendarDate===previous;today=next;if(wasViewingToday)selectedCalendarDate=next;const currentMonth=new Date();if(calendarMonth.getFullYear()===new Date(previous+'T12:00:00').getFullYear()&&calendarMonth.getMonth()===new Date(previous+'T12:00:00').getMonth())calendarMonth=new Date(currentMonth.getFullYear(),currentMonth.getMonth(),1);$('#today-label').textContent=`${currentMonth.toLocaleDateString(undefined,{weekday:'long'}).toUpperCase()} · ${formatDate(today)}`;$$('.date-entry').forEach(input=>{if(input.value===displayDateInput(previous))input.value=displayDateInput(today)})}
-async function api(path,opts={}){let r=await fetch('/api/'+path,{headers:{'Content-Type':'application/json'},...opts});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Request failed');return d}
+function syncCurrentDate(serverDay=null){const next=/^\d{4}-\d{2}-\d{2}$/.test(String(serverDay||''))?String(serverDay):isoDate(new Date());if(next===today){updateTodayLabel();return}const previous=today,wasViewingToday=selectedCalendarDate===previous;today=next;if(wasViewingToday){selectedCalendarDate=next;calendarMonth=new Date(next+'T12:00:00')}updateTodayLabel();$$('.date-entry').forEach(input=>{if(input.value===displayDateInput(previous))input.value=displayDateInput(today)})}
+async function api(path,opts={}){let r=await fetch('/api/'+path,{cache:'no-store',headers:{'Content-Type':'application/json'},...opts});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Request failed');return d}
 function toast(s){let t=$('#toast');t.textContent=s;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)}
 function money(n){return Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' MAD'}
 function billCountdown(bill){if(!bill)return '—';let days=Number(bill.days_left);if(!Number.isFinite(days)&&bill.due_date){const due=new Date(String(bill.due_date).slice(0,10)+'T12:00:00'),base=new Date(today+'T12:00:00');if(Number.isFinite(due.getTime()))days=Math.round((due-base)/86400000)}if(!Number.isFinite(days))return 'Date unavailable';if(days<0)return `Overdue ${Math.abs(days)} ${Math.abs(days)===1?'day':'days'}`;if(days===0)return 'Due today';return `${days} ${days===1?'day':'days'} left`;}
@@ -58,7 +59,7 @@ function renderFitnessStats(treadmills,workouts,weights){
  const thisWeek=weekStartISO(today);
  const thisWeekWeights=uniqueWeightsPerDay(weights).filter(x=>x.date>=thisWeek&&x.date<=today);
  const weeklyAverage=thisWeekWeights.length?thisWeekWeights.reduce((sum,x)=>sum+Number(x.kg),0)/thisWeekWeights.length:null;
- const start=new Date();start.setDate(start.getDate()-83);const startISO=isoDate(start);
+ const startISO=addDaysISO(today,-83);
  const treadmillMins=treadmills.filter(x=>x.date>=startISO&&x.date<=today).reduce((a,x)=>a+Number(x.duration_min||0),0);
  const gymCount=workouts.filter(x=>x.date>=startISO&&x.date<=today).length;
  $('#fitness-stats').innerHTML=stat('Workouts',all.length,'Treadmill + gym')+stat('This month',thisMonth,'Sessions')+stat('Week streak',streak,'Consecutive active weeks')+stat('This week avg weight',weeklyAverage===null?'—':`${formatKg(weeklyAverage)} kg`,`${thisWeekWeights.length} weight ${thisWeekWeights.length===1?'entry':'entries'} this week`)+stat('Treadmill avg / week',`${Math.round(treadmillMins/12)} min`,'Last 12 weeks')+stat('Gym avg / week',`${(gymCount/12).toFixed(1)}`,'Sessions · last 12 weeks');
@@ -66,7 +67,7 @@ function renderFitnessStats(treadmills,workouts,weights){
 function renderWeightHistory(weights){
  const sorted=[...uniqueWeightsPerDay(weights)].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id));
  $('#weight-history-count').textContent=`${sorted.length} entries`;
- $('#weight-history').innerHTML=sorted.map(w=>`<div class="history-entry"><div class="history-entry-main"><b>${formatDate(w.date)}</b><small>Recorded weight</small></div><div class="history-entry-side"><strong>${formatKg(w.kg)} kg</strong></div></div>`).join('')||empty('No weight records yet.');
+ $('#weight-history').innerHTML=sorted.map(w=>`<div class="history-entry"><div class="history-entry-main"><b>${formatDate(w.date)}</b><small>Recorded weight</small></div><div class="history-entry-side"><strong>${formatKg(w.kg)} kg</strong><button class="mini-btn danger-btn" data-delete="weights:${w.id}" aria-label="Delete weight record from ${formatDate(w.date)}" title="Remove this weight record">Remove</button></div></div>`).join('')||empty('No weight records yet.');
 }
 function renderWeightGraph(weights){
  const host=$('#weight-graph');if(!host)return;
@@ -111,18 +112,21 @@ function renderHeatmap(id,records,kind){
  host.innerHTML=`<div class="heatmap-scroll"><div class="heatmap-months" style="--weeks:${weeks}">${monthHtml}</div><div class="heatmap-grid" style="--weeks:${weeks}">${cells}</div></div><div class="heatmap-footer"><span>${kind==='minutes'?`${Math.round(total)} minutes trained`:`${total} gym sessions`} · ${period.length} entries in view</span><span class="heat-legend">Less <i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i> More</span></div>`;
 }
 async function refresh(){const requestId=++refreshSequence;try{
- syncCurrentDate();
+ // The add-on timezone is authoritative. Use the API date so iPhone, Android,
+ // desktop and Telegram all interpret today and due dates in the same timezone.
+ const sum=await api('summary');
+ if(requestId!==refreshSequence)return;
+ syncCurrentDate(sum.today);
  const mealWeekStart=weekStartISO(today),mealWeekEnd=addDaysISO(mealWeekStart,6);
- const [sum,events,tasks,weights,treadmills,workouts,workout_plan,bills,routines,recipes,dailyMeals,shoppingItems,cookReminders,mealSkips]=await Promise.all([
-  'summary','events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000','meal_cook_reminders?limit=10000',`meal-schedule-skips?start_date=${mealWeekStart}&end_date=${mealWeekEnd}`
+ const [events,tasks,weights,treadmills,workouts,workout_plan,bills,routines,recipes,dailyMeals,shoppingItems,cookReminders,mealSkips]=await Promise.all([
+  'events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000','meal_cook_reminders?limit=10000',`meal-schedule-skips?start_date=${mealWeekStart}&end_date=${mealWeekEnd}`
  ].map(x=>api(x)));
  if(requestId!==refreshSequence)return;
  cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems,meal_cook_reminders:cookReminders,meal_schedule_skips:mealSkips};$('#api-status').textContent='API connected';
  const nextBill=sum.upcoming_bill;
  const billHint=nextBill?`${esc(nextBill.name)} · ${formatDate(nextBill.due_date)} · ${money(nextBill.amount_mad)}`:'No unpaid bills coming up';
  const routinesDueToday=routines.filter(r=>r.next_due&&r.next_due<=today).length;
- const tomorrowDate=new Date();tomorrowDate.setDate(tomorrowDate.getDate()+1);
- const tomorrowISO=isoDate(tomorrowDate);
+ const tomorrowISO=addDaysISO(today,1);
  const tomorrowSchedules = events.filter(e=>String(e.start_at||'').slice(0,10)===tomorrowISO).length
   + tasks.filter(t=>t.status!=='done'&&t.due_date===tomorrowISO).length
   + routines.filter(r=>r.next_due===tomorrowISO).length
@@ -137,7 +141,7 @@ async function refresh(){const requestId=++refreshSequence;try{
  renderCalendar(events);
  renderWeightHistory(weights);renderWeightGraph(weights);renderWeeklyWeightAverages(weights);
  $('#treadmill-history-count').textContent=`${treadmills.length} sessions`;
- $('#treadmill-history').innerHTML=[...treadmills].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id)).map(t=>`<div class="history-entry"><div class="history-entry-main"><b>${Number(t.duration_min)} min · ${Number(t.distance_km).toFixed(2)} km</b><small>${formatDate(t.date)} · ${Number(t.speed_kmh||5).toFixed(0)} km/h · 0% incline</small></div><div class="history-entry-side"><strong>${Number(t.calories_kcal||0)} kcal</strong><small>Estimated</small></div></div>`).join('')||empty();
+ $('#treadmill-history').innerHTML=[...treadmills].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id)).map(t=>`<div class="history-entry"><div class="history-entry-main"><b>${Number(t.duration_min)} min · ${Number(t.distance_km).toFixed(2)} km</b><small>${formatDate(t.date)} · ${Number(t.speed_kmh||5).toFixed(0)} km/h · 0% incline</small></div><div class="history-entry-side"><strong>${Number(t.calories_kcal||0)} kcal</strong><small>Estimated</small><button class="mini-btn danger-btn" data-delete="treadmill:${t.id}" aria-label="Delete treadmill session from ${formatDate(t.date)}" title="Remove this treadmill session">Remove</button></div></div>`).join('')||empty();
  $('#workout-history-count').textContent=`${workouts.length} workouts`;
  $('#workout-history').innerHTML=[...workouts].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id)).map(w=>`<div class="history-entry"><div class="history-entry-main"><b>${esc(w.name)}</b><small>${formatDate(w.date)}${w.notes?' · '+esc(w.notes):''}</small></div><div class="history-entry-side"><span class="tag">Gym</span><button class="mini-btn" data-delete="workouts:${w.id}">Delete</button></div></div>`).join('')||empty();
  renderFitnessStats(treadmills,workouts,weights);renderHeatmap('#treadmill-activity',treadmills,'minutes');renderHeatmap('#gym-activity',workouts,'count');updateTreadmillPreview();
@@ -178,7 +182,7 @@ function renderCalendar(events){
  $('#calendar-day-detail').innerHTML=selectedItems.length?selectedItems.map(x=>`<div class="calendar-detail-row"><span class="calendar-detail-dot ${x.type}"></span><div><b>${esc(x.text)}</b><small>${esc(x.detail)}</small></div></div>`).join(''):empty('Nothing scheduled or recorded on this day.');
 }
 function shiftCalendarMonth(delta){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+delta,1);selectedCalendarDate=isoDate(calendarMonth);renderCalendar(cache.events||[])}
-$('#month-prev').onclick=()=>shiftCalendarMonth(-1);$('#month-next').onclick=()=>shiftCalendarMonth(1);$('#month-today').onclick=()=>{calendarMonth=new Date();selectedCalendarDate=today;renderCalendar(cache.events||[])};$('#calendar-day-today').onclick=()=>{calendarMonth=new Date();selectedCalendarDate=today;renderCalendar(cache.events||[])};$('#calendar-grid').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-calendar-date]')){e.preventDefault();selectedCalendarDate=e.target.closest('[data-calendar-date]').dataset.calendarDate;renderCalendar(cache.events||[])}});
+$('#month-prev').onclick=()=>shiftCalendarMonth(-1);$('#month-next').onclick=()=>shiftCalendarMonth(1);$('#month-today').onclick=()=>{calendarMonth=new Date(today+'T12:00:00');selectedCalendarDate=today;renderCalendar(cache.events||[])};$('#calendar-day-today').onclick=()=>{calendarMonth=new Date(today+'T12:00:00');selectedCalendarDate=today;renderCalendar(cache.events||[])};$('#calendar-grid').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-calendar-date]')){e.preventDefault();selectedCalendarDate=e.target.closest('[data-calendar-date]').dataset.calendarDate;renderCalendar(cache.events||[])}});
 function navigate(page){$$('.page').forEach(p=>p.classList.toggle('active',p.id===page));$$('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));document.body.classList.toggle('inner-page',page!=='overview');$('#page-title').textContent=titles[page]||'XROB'}
 $('#nav').addEventListener('click',e=>{let b=e.target.closest('[data-page]');if(b)navigate(b.dataset.page)});
 document.addEventListener('click',e=>{let calendarDay=e.target.closest('[data-calendar-date]');if(calendarDay){selectedCalendarDate=calendarDay.dataset.calendarDate;renderCalendar(cache.events||[])}let go=e.target.closest('[data-go]');if(go)navigate(go.dataset.go);let del=e.target.closest('[data-delete]');if(del){let [r,id]=del.dataset.delete.split(':');if(!confirm('Delete this record? This cannot be undone.'))return;api(r+'/'+id,{method:'DELETE'}).then(()=>{toast('Deleted');refresh()}).catch(err=>toast(err.message))}let deleteMeal=e.target.closest('[data-delete-recipe]');if(deleteMeal){deleteRecipeOption(Number(deleteMeal.dataset.deleteRecipe));return}let done=e.target.closest('[data-taskdone]');if(done)api('tasks/'+done.dataset.taskdone,{method:'PATCH',body:JSON.stringify({data:{status:'done'}})}).then(()=>{toast('Task completed');refresh()});let pay=e.target.closest('[data-pay]');if(pay)api('bills/'+pay.dataset.pay+'/pay',{method:'POST'}).then(()=>{toast('Bill marked paid');refresh()});let comp=e.target.closest('[data-complete]');if(comp)api('routines/'+comp.dataset.complete+'/complete',{method:'POST'}).then(()=>{toast('Routine completed');refresh()}).catch(err=>toast(err.message));let edit=e.target.closest('[data-edit-routine]');if(edit){const r=(cache.routines||[]).find(x=>x.id===Number(edit.dataset.editRoutine));if(r)openModal('routine',r)}let editRecord=e.target.closest('[data-edit-routine-record]');if(editRecord){const r=(cache.routines||[]).find(x=>x.id===Number(editRecord.dataset.editRoutineRecord));if(r)openModal('routine_record',{...r,completed_at:r.last_done||today})}let modal=e.target.closest('[data-modal]');if(modal)openModal(modal.dataset.modal)});
