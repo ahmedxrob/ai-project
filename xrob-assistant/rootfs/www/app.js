@@ -482,24 +482,21 @@ $('#mikasa-settings-save')?.addEventListener('click',async()=>{
 async function loadMikasaLearning(){
  const host=$('#mikasa-learning-list'),status=$('#mikasa-learning-status'),badge=$('#mikasa-learning-count');
  if(!host)return;
- if(status)status.textContent='Loading learning inbox…';
+ if(status)status.textContent='Loading missed-message log…';
  try{
-  const filter=$('#mikasa-learning-filter')?.value||'open';
-  const data=await api(`mikasa/learning?status=${encodeURIComponent(filter)}&limit=100`);
+  const data=await api('mikasa/learning?status=open&limit=100');
   const counts=data.counts||{new:0,learned:0,ignored:0};
-  if(badge)badge.textContent=`${counts.new||0} to review · ${counts.learned||0} learned`;
+  if(badge)badge.textContent=`${counts.new||0} missed message pattern${Number(counts.new||0)===1?'':'s'}`;
   const items=data.items||[];
-  if(status)status.textContent=items.length?`${items.length} message pattern${items.length===1?'':'s'} · repeated messages are grouped together.`:'No messages in this view.';
-  if(!items.length){host.innerHTML='<div class="empty">Nothing to review here yet. When Mikasa genuinely doesn’t understand a message, it will appear here.</div>';return}
+  if(status)status.textContent=items.length?`${items.length} distinct message pattern${items.length===1?'':'s'} · repeated messages are grouped and counted.`:'No missed text messages yet. Mikasa will save any message she cannot confidently understand.';
+  if(!items.length){host.innerHTML='<div class="empty">Nothing missed so far. Your secretary is keeping up. 💋</div>';return}
   host.innerHTML=items.map(item=>{
-   const seen=Number(item.occurrences||1),state=item.status||'new';
-   const label=state==='learned'?'Learned':state==='ignored'?'Ignored':'Needs review';
+   const seen=Number(item.occurrences||1);
    const date=String(item.last_seen_at||'').replace('T',' ').slice(0,16);
-   return `<article class="mikasa-learning-card" data-learning-id="${Number(item.id)}"><div class="mikasa-learning-card-head"><span class="tag ${state==='learned'?'good':state==='ignored'?'':'warn'}">${label}</span><small>Seen ${seen} time${seen===1?'':'s'} · Last ${esc(date||'unknown')}</small></div><div class="mikasa-learning-sample">${esc(item.sample_text)}</div><label>What should Mikasa reply to this exact phrase?</label><textarea rows="2" data-learning-reply placeholder="Write the kind of answer you expected…">${esc(item.teaching_reply||'')}</textarea><label>Meaning or context (optional)</label><input type="text" data-learning-note maxlength="500" value="${esc(item.intent_note||'')}" placeholder="What did you mean? This note is for future improvements."><div class="mikasa-learning-actions"><button type="button" class="primary" data-learning-action="teach">${state==='learned'?'Update learned reply':'Teach Mikasa'}</button>${state!=='ignored'?'<button type="button" class="mini-btn" data-learning-action="ignore">Ignore</button>':'<button type="button" class="mini-btn" data-learning-action="reopen">Reopen</button>'}<button type="button" class="mini-btn danger" data-learning-action="delete">Delete</button></div></article>`;
+   return `<article class="mikasa-learning-card"><div class="mikasa-learning-card-head"><span class="tag warn">Missed message</span><small>Seen ${seen} time${seen===1?'':'s'} · Last ${esc(date||'unknown')}</small></div><div class="mikasa-learning-sample">${esc(item.sample_text)}</div></article>`;
   }).join('');
- }catch(error){if(status)status.textContent=`Could not load learning inbox: ${error.message}`}
+ }catch(error){if(status)status.textContent=`Could not load missed-message log: ${error.message}`}
 }
-$('#mikasa-learning-filter')?.addEventListener('change',loadMikasaLearning);
 async function loadMikasaUpdateStatus(){
  const status=$('#mikasa-update-status');if(!status)return;
  try{
@@ -519,30 +516,11 @@ $('#mikasa-update-check')?.addEventListener('click',async()=>{
  }catch(error){if(status)status.textContent=error.message;toast(error.message)}
  finally{button.disabled=false;button.textContent='Check for updates';await loadMikasaUpdateStatus()}
 });
-$('#mikasa-learning-list')?.addEventListener('click',async event=>{
- const button=event.target.closest('[data-learning-action]');if(!button)return;
- const card=button.closest('[data-learning-id]');if(!card)return;
- const id=Number(card.dataset.learningId),action=button.dataset.learningAction;
- const reply=card.querySelector('[data-learning-reply]')?.value||'',note=card.querySelector('[data-learning-note]')?.value||'';
- button.disabled=true;
- try{
-  if(action==='delete'){
-   if(!confirm('Delete this saved message pattern?'))return;
-   await api(`mikasa/learning/${id}`,{method:'DELETE'});toast('Learning entry deleted');
-  }else{
-   const status=action==='teach'?'learned':action==='ignore'?'ignored':'new';
-   await api(`mikasa/learning/${id}`,{method:'PATCH',body:JSON.stringify({data:{status,teaching_reply:reply,intent_note:note}})});
-   toast(action==='teach'?'Mikasa learned a reply for this phrase':action==='ignore'?'Message ignored':'Message returned to review');
-  }
-  await loadMikasaLearning();
- }catch(error){toast(error.message)}
- finally{button.disabled=false}
-});
 $('#mikasa-learning-enabled')?.addEventListener('change',()=>{
  const label=$('#mikasa-learning-status');
- if(label)label.textContent=$('#mikasa-learning-enabled').checked?'Unclear-message capture is enabled. Save message settings to apply.':'Unclear-message capture is paused. Save message settings to apply.';
+ if(label)label.textContent=$('#mikasa-learning-enabled').checked?'Missed-message logging is enabled. Save message settings to apply.':'Missed-message logging is paused. Save message settings to apply.';
 });
 loadMikasaPreferences();
 loadMikasaLearning();
 loadMikasaUpdateStatus();
-$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});window.addEventListener('focus',()=>refresh());refresh();setInterval(refresh,60000);
+$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();if($('#settings')?.classList.contains('active'))loadMikasaLearning()}});window.addEventListener('focus',()=>{refresh();if($('#settings')?.classList.contains('active'))loadMikasaLearning()});refresh();setInterval(refresh,60000);setInterval(()=>{if($('#settings')?.classList.contains('active'))loadMikasaLearning()},60000);
