@@ -1,3 +1,19 @@
+## 0.4.25 — Mikasa learning inbox
+
+- Mikasa records plain-text messages that reach the explicit unhandled-message fallback, groups repeated messages and tracks how many times each phrase was seen.
+- Review the inbox in **Settings → Teach Mikasa from missed messages**. Add the reply you expected, optionally describe what you meant, ignore the entry, reopen it or delete it.
+- A taught reply is used for the exact normalized phrase on future messages. The existing Telegram command engine always runs first, so learned phrases cannot intercept real commands or perform actions.
+- Capture is enabled by default and can be paused in Settings. Captured text stays in the local SQLite database; it is not sent to an AI service. The inbox keeps at most 500 new/ignored patterns; learned entries remain until you delete them.
+- The `mikasa_learning_log` table is created additively at startup. Existing planner, fitness, meal, bill, routine and Telegram records are preserved.
+- The optional persona updater fetches only the fixed HTTPS raw GitHub path, validates the version and required interface, backs up the active override, then atomically replaces only `/config/mikasa_persona.py`. Daily auto-update is off until enabled in Settings.
+
+## 0.4.24 — Mikasa loader hotfix
+
+- Bundled Mikasa is now loaded directly from the path beside `main.py`, avoiding any dependency on `/app` being present in Python's module search path.
+- The `/config/mikasa_persona.py` override remains optional; a missing or invalid override falls back to the bundled file.
+- Docker image construction checks that `/app/mikasa_persona.py` exists and compiles before the image can be produced.
+- No database, command, scheduler, or UI behavior changes.
+
 
 ## 0.4.23 — standalone Mikasa persona pack
 
@@ -19,7 +35,7 @@
 
 # How XROB Assistant thinks
 
-**Version:** 0.4.23
+**Version:** 0.4.25
 
 XROB is a rules-based assistant. It does not invent a plan: it follows the choices, intervals, stock and availability saved in its database.
 
