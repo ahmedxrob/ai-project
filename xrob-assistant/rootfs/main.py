@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,7 @@ _MIKASA_REQUIRED_API = (
     'social_reply', 'command_prefix', 'help_intro', 'help_boundary', 'reminder_task',
     'reminder_routine', 'reminder_bill', 'reminder_bill_early', 'reminder_cook',
     'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_moved', 'task_created',
+    'fallback_reply', 'unsupported_message', 'processing_error',
     'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
 )
 
@@ -452,7 +453,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.25', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.26', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -461,7 +462,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.25','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.26','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -775,6 +776,34 @@ def list_mikasa_learning(status: str = 'open', limit: int = Query(100, ge=1, le=
                               last_seen_at DESC,id DESC LIMIT ?''', (*params, limit))
     counts = _mikasa_learning_counts()
     return {'items': items, 'counts': counts, 'total': sum(counts.values()), 'capture_enabled': _telegram_setting_get('mikasa_learning_enabled', '1') == '1'}
+
+
+@app.get('/api/mikasa/learning/export.txt')
+def export_mikasa_missed_messages():
+    """Download the missed-message inbox as plain text for a future persona update."""
+    items = rows('''SELECT sample_text,occurrences,first_seen_at,last_seen_at
+                       FROM mikasa_learning_log WHERE status='new'
+                       ORDER BY first_seen_at,id''')
+    lines = [
+        'MIKASA — MISSED TELEGRAM MESSAGES',
+        'Copy or send this text log with the XROB project when requesting persona improvements.',
+        '',
+    ]
+    if not items:
+        lines.append('No missed text messages have been recorded.')
+    else:
+        for index, item in enumerate(items, 1):
+            occurrences = max(1, int(item.get('occurrences') or 1))
+            lines.append(f'{index}. Seen {occurrences} time' + ('s' if occurrences != 1 else ''))
+            lines.append(f"   First seen: {item.get('first_seen_at') or 'unknown'}")
+            lines.append(f"   Last seen:  {item.get('last_seen_at') or 'unknown'}")
+            lines.append('   Message:')
+            lines.extend('   ' + part for part in str(item.get('sample_text') or '').splitlines())
+            lines.append('')
+    return PlainTextResponse(
+        '\n'.join(lines).rstrip() + '\n',
+        headers={'Content-Disposition': 'attachment; filename="mikasa-missed-messages.txt"'},
+    )
 
 
 @app.patch('/api/mikasa/learning/{item_id}')
@@ -3088,6 +3117,24 @@ def _telegram_bot_commands() -> list[dict[str, str]]:
     ]
 
 
+def _telegram_incoming_message(message: dict[str, Any]) -> tuple[str, str | None]:
+    """Return the user's text/caption or a media type that needs an acknowledgement."""
+    text = str(message.get('text') or message.get('caption') or '').strip()
+    if text:
+        return text, None
+    media_fields = (
+        ('photo', 'photo'), ('voice', 'voice'), ('audio', 'audio'),
+        ('video_note', 'video_note'), ('video', 'video'), ('animation', 'animation'),
+        ('document', 'document'), ('sticker', 'sticker'), ('location', 'location'),
+        ('venue', 'venue'), ('contact', 'contact'), ('poll', 'poll'), ('dice', 'dice'),
+        ('game', 'game'), ('web_app_data', 'message'),
+    )
+    for field, kind in media_fields:
+        if message.get(field):
+            return '', kind
+    return '', None
+
+
 async def telegram_poll():
     """Poll Telegram with a guided menu and a durable reply queue.
 
@@ -3105,7 +3152,7 @@ async def telegram_poll():
         offset = 0
 
     async with httpx.AsyncClient(timeout=40) as client:
-        retry_delay = 5
+        retry_delay = 2
         try:
             setup = await client.post(f'https://api.telegram.org/bot{TOKEN}/setMyCommands', json={'commands': commands})
             _telegram_response_data(setup, 'setMyCommands')
@@ -3138,10 +3185,11 @@ async def telegram_poll():
                     update_id = int(update['update_id'])
                     message = update.get('message') or {}
                     chat = str((message.get('chat') or {}).get('id', ''))
-                    message_text = (message.get('text') or '').strip()
+                    message_text, media_kind = _telegram_incoming_message(message)
 
-                    # Ignore unsupported updates and unauthorized chats safely.
-                    if not message_text or chat != ALLOWED_CHAT:
+                    # Ignore unsupported update envelopes and unauthorized chats safely.
+                    # User messages with text, captions or known media types are all acknowledged.
+                    if chat != ALLOWED_CHAT or (not message_text and not media_kind):
                         offset = update_id + 1
                         with connect() as c:
                             c.execute("INSERT INTO telegram_state(key,value) VALUES('update_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(offset),))
@@ -3158,10 +3206,14 @@ async def telegram_poll():
                         reply = queued['reply']
                     else:
                         try:
-                            reply = await telegram_command(message_text)
+                            reply = (await telegram_command(message_text)) if message_text else mikasa_persona.unsupported_message(media_kind or 'message')
                         except Exception as exc:
                             print(f'Telegram command failed for update {update_id}: {exc}', flush=True)
-                            reply = 'I could not complete that request. Your data was not intentionally changed by this error. Check your answer and try /help or /cancel.'
+                            if message_text:
+                                _record_mikasa_unhandled_message(message_text)
+                            reply = mikasa_persona.processing_error()
+                        if not str(reply or '').strip():
+                            reply = mikasa_persona.processing_error()
                         with connect() as c:
                             c.execute('INSERT OR IGNORE INTO telegram_inbox(update_id,chat_id,reply) VALUES(?,?,?)', (update_id, chat, reply))
                             c.execute('DELETE FROM telegram_inbox WHERE update_id < (SELECT COALESCE(MAX(update_id),0)-2000 FROM telegram_inbox) AND sent_at IS NOT NULL')
@@ -3180,11 +3232,11 @@ async def telegram_poll():
                     with connect() as c:
                         c.execute('UPDATE telegram_inbox SET sent_at=CURRENT_TIMESTAMP WHERE update_id=?', (update_id,))
                         c.execute("INSERT INTO telegram_state(key,value) VALUES('update_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(offset),))
-                retry_delay = 5
+                retry_delay = 2
             except Exception as exc:
                 print(f'Telegram polling error: {exc}', flush=True)
                 await asyncio.sleep(retry_delay)
-                retry_delay = min(60, retry_delay * 2)
+                retry_delay = min(30, retry_delay * 2)
 
 def _telegram_parse_date(value: str | None) -> date | None:
     if not value:
@@ -3548,10 +3600,35 @@ def telegram_agenda_line(entry: dict[str, Any]) -> str:
     return f'{prefix}{title}' + (f' · {detail}' if detail else '')
 
 
+def _normalize_telegram_command_text(value: str) -> str:
+    """Normalise harmless casing, spacing and trailing punctuation for menu commands."""
+    normalized = unicodedata.normalize('NFKC', str(value or '')).casefold().strip()
+    normalized = re.sub(r'\s+', ' ', normalized)
+    return re.sub(r'[\s.,!?؟،;:…]+$', '', normalized).strip()
+
+
+def _is_today_agenda_request(low: str) -> bool:
+    """Accept natural variations of the Today agenda shortcut."""
+    aliases = {
+        '📅 today', '/today', 'today', 'what is today', "what's today", 'whats today',
+        'what do i have today', 'what do i have on today', 'what is on today',
+        "what's on today", 'whats on today', 'what is on my schedule today',
+        "what's on my schedule today", 'show me today', 'show today', 'today agenda',
+        'agenda today', 'today schedule', "today's agenda", "today's schedule",
+        "today's plan", 'my agenda today', 'my schedule today', 'today please', 'please today',
+    }
+    if low in aliases:
+        return True
+    return bool(re.fullmatch(
+        r'(?:please )?(?:(?:show|tell) me )?(?:today(?:s)?(?: agenda| schedule| plan)?|my (?:agenda|schedule|plan) today)',
+        low,
+    ))
+
+
 async def _telegram_command_core(text: str) -> str:
     """Rules-based Telegram actions; the persona layer never changes these operations."""
     raw = text.strip()
-    low = raw.lower().strip()
+    low = _normalize_telegram_command_text(raw)
     low = re.sub(r'(?m)^(\/[a-z0-9_]+)@[a-z0-9_]+', r'\1', low)
     today = date.today()
     today_iso = today.isoformat()
@@ -3583,6 +3660,7 @@ async def _telegram_command_core(text: str) -> str:
         (low.startswith('/') and not guided_confirmation_reply)
         or low.startswith(('weight ', 'treadmill ', 'task ', 'paid ', 'done ', *meal_interrupt_prefixes))
         or (low in meal_menu_commands and not guided_yes_no_reply and not guided_confirmation_reply)
+        or (_is_today_agenda_request(low) and not guided_yes_no_reply and not guided_confirmation_reply)
         or (low in ('⚖️ add weight', '🏃 add treadmill', '📈 fitness week', 'fitness week', 'week') and not guided_yes_no_reply and not guided_confirmation_reply)
     )
     meal_checkin_inputs = ('✅ ate it', '✅ i ate it', 'ate it', 'i ate it', 'yes', 'y', '/yes', '/eaten', '⏭ not today', 'not today', 'no', 'n', '/no', '/skip')
@@ -3800,7 +3878,7 @@ async def _telegram_command_core(text: str) -> str:
             return reply
         except (TypeError, ValueError):
             return 'I could not read that item. Send a simple item name, for example rice or tomatoes. Send /cancel to stop.'
-    if state and low not in ('yes', 'y', 'no', 'n') and (low.startswith('/') or low in ('📅 today','today','✅ tasks','tasks','💳 bills','bills','🔁 routines','routines','🏃 fitness','fitness','📈 fitness week','fitness week','week','⚖️ add weight','🏃 add treadmill','❔ help','help') or low in meal_menu_commands or low.startswith(('weight ','log weight ','treadmill ','run ','walk ','task ','paid ','done ', *meal_interrupt_prefixes))):
+    if state and low not in ('yes', 'y', 'no', 'n') and (low.startswith('/') or _is_today_agenda_request(low) or low in ('✅ tasks','tasks','💳 bills','bills','🔁 routines','routines','🏃 fitness','fitness','📈 fitness week','fitness week','week','⚖️ add weight','🏃 add treadmill','❔ help','help') or low in meal_menu_commands or low.startswith(('weight ','log weight ','treadmill ','run ','walk ','task ','paid ','done ', *meal_interrupt_prefixes))):
         _telegram_set_state(None)
         state = None
     if low in ('⚖️ add weight', 'add weight', '/weight', 'weight'):
@@ -3910,7 +3988,7 @@ async def _telegram_command_core(text: str) -> str:
     if low in ('/help', 'help', '❔ help', '/capabilities', 'capabilities', 'what can you do'):
         return _telegram_capabilities_message()
 
-    if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
+    if _is_today_agenda_request(low):
         agenda = build_today_agenda(today)
         lines = [f"📅 TODAY · {today.strftime('%a %d/%m')}"]
         sections = [
@@ -4264,7 +4342,7 @@ async def telegram_command(text: str) -> str:
         if learned:
             return learned
         _record_mikasa_unhandled_message(raw)
-        return mikasa_persona.unclear_message()
+        return mikasa_persona.fallback_reply(raw)
     prefix = _telegram_persona_prefix(raw, reply)
     return f'{prefix}\n\n{reply}' if prefix else reply
 
