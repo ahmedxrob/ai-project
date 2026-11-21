@@ -351,7 +351,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.21', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.22', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -360,7 +360,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.21','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.22','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -390,6 +390,75 @@ def list_meal_schedule_skips(start_date: str | None = None, end_date: str | None
     except (TypeError, ValueError):
         raise HTTPException(400, 'Choose a valid date range up to 365 days.')
     return rows('SELECT plan_date FROM meal_schedule_skips WHERE plan_date BETWEEN ? AND ? ORDER BY plan_date', (start.isoformat(), end.isoformat()))
+
+
+TELEGRAM_PREFERENCE_DEFAULTS = {
+    'morning_report_enabled': '0',
+    'morning_report_time': '07:30',
+    'playful_messages_enabled': '0',
+    'playful_frequency': 'few',
+}
+
+
+def _telegram_setting_get(key: str, default: str = '') -> str:
+    row = one('SELECT value FROM telegram_state WHERE key=?', (f'setting:{key}',))
+    return str(row['value']) if row else default
+
+
+def _telegram_setting_set(key: str, value: str) -> None:
+    with connect() as c:
+        c.execute("INSERT INTO telegram_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                  (f'setting:{key}', str(value)))
+
+
+def get_telegram_preferences() -> dict[str, Any]:
+    values = {key: _telegram_setting_get(key, default)
+              for key, default in TELEGRAM_PREFERENCE_DEFAULTS.items()}
+    return {
+        'morning_report_enabled': values['morning_report_enabled'] == '1',
+        'morning_report_time': values['morning_report_time'],
+        'playful_messages_enabled': values['playful_messages_enabled'] == '1',
+        'playful_frequency': values['playful_frequency'],
+        'telegram_configured': bool(TOKEN and ALLOWED_CHAT),
+        'timezone': os.getenv('TZ', 'Local add-on time'),
+    }
+
+
+@app.get('/api/telegram-settings')
+def read_telegram_settings():
+    return get_telegram_preferences()
+
+
+@app.post('/api/telegram-settings')
+def save_telegram_settings(payload: Payload):
+    data = payload.data
+    current = get_telegram_preferences()
+    updates: dict[str, str] = {}
+    for field, key in (
+        ('morning_report_enabled', 'morning_report_enabled'),
+        ('playful_messages_enabled', 'playful_messages_enabled'),
+    ):
+        if field in data:
+            if not isinstance(data[field], bool):
+                raise HTTPException(400, f'{field} must be true or false.')
+            updates[key] = '1' if data[field] else '0'
+    if 'morning_report_time' in data:
+        value = str(data['morning_report_time'] or '').strip()
+        try:
+            parsed = datetime.strptime(value, '%H:%M')
+            if parsed.strftime('%H:%M') != value:
+                raise ValueError()
+        except ValueError:
+            raise HTTPException(400, 'Choose a valid morning report time in 24-hour HH:MM format.')
+        updates['morning_report_time'] = value
+    if 'playful_frequency' in data:
+        value = str(data['playful_frequency'] or '').strip().lower()
+        if value not in ('few', 'daily'):
+            raise HTTPException(400, 'Choose either a few times per week or daily.')
+        updates['playful_frequency'] = value
+    for key, value in updates.items():
+        _telegram_setting_set(key, value)
+    return get_telegram_preferences()
 
 
 @app.get('/api/{resource}')
@@ -2471,6 +2540,125 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
     return reminders
 
 
+def build_morning_report(day: date | None = None) -> str:
+    """Build a compact morning briefing from the same agenda shown in the app."""
+    day = day or date.today()
+    agenda = build_today_agenda(day)
+    items = agenda.get('items') or []
+    lines = [f"Good morning, handsome. ☕ Here's your day at a glance."]
+    if items:
+        lines.append('')
+        for entry in items[:8]:
+            lines.append('• ' + telegram_agenda_line(entry))
+        if len(items) > 8:
+            lines.append(f"• …and {len(items) - 8} more in /today")
+    else:
+        lines.append('Your schedule is clear today. Enjoy the breathing room.')
+    counts = []
+    if agenda.get('open_count'):
+        counts.append(f"{agenda['open_count']} to handle")
+    if agenda.get('scheduled_count'):
+        counts.append(f"{agenda['scheduled_count']} scheduled")
+    if agenda.get('completed_count'):
+        counts.append(f"{agenda['completed_count']} already done")
+    if counts:
+        lines.extend(['', ' · '.join(counts) + '.'])
+    lines.extend(['', "One thing at a time. I've got the details; you bring that handsome determination. 💋"])
+    return '\n'.join(lines)
+
+
+_MIKASA_PLAYFUL_LINES = (
+    "A little trouble from your secretary 😉 Pick one thing you've been avoiding and give it ten focused minutes. I'll be very impressed. 💋",
+    "Darling, that to-do list is getting far too much attention from you and not enough action. Go cross one thing off. Make me proud. 🔥",
+    "Consider this your slightly wicked reminder: shoulders back, chin up, and one small promise kept. You look good being disciplined. 😉",
+    "I'm trying to behave, handsome, but your unfinished plans are testing my patience. Choose one and conquer it. 💋",
+    "A productive man is dangerously attractive. Hydrate, stretch, then handle the next little task. I'll be right here cheering. 😘",
+    "Your secretary has a weakness for follow-through. Give me one finished task and I'll give you my most approving smile. 😉",
+    "Less scrolling, more slaying, handsome. Ten minutes on the thing you've been postponing. You know you've got this. 💋",
+    "A tiny interruption from Mikasa: go move that body or finish that task. I do love a man who keeps his promises to himself. 🔥",
+    "Don't make me flirt you into opening that planner. Pick your next move and make it happen, gorgeous. 😉",
+    "Here's your cue to be irresistible to your own goals: one task, one workout, or one good choice. Start now, darling. 💗",
+    "I have the schedule handled. You just bring the ambition—and perhaps a little mischief. Go earn that smug little smile. 💋",
+    "A little nudge, handsome: the hardest part is starting. Give it five minutes; let momentum do the flirting. 😉",
+)
+
+
+def _mikasa_playful_time(day: date, frequency: str) -> time | None:
+    """Choose a repeatable local-time slot so the 15-second poll cannot reroll it."""
+    rng = random.Random(f'mikasa-playful:{day.isoformat()}:{frequency}')
+    if frequency == 'few' and rng.random() >= (3 / 7):
+        return None
+    minute_of_day = rng.randint(11 * 60, 20 * 60 + 30)
+    return time(minute_of_day // 60, minute_of_day % 60)
+
+
+def mikasa_morning_report_due(now: datetime, preferences: dict[str, Any] | None = None) -> bool:
+    preferences = preferences or get_telegram_preferences()
+    if not preferences.get('morning_report_enabled'):
+        return False
+    if _telegram_setting_get('morning_report_last_sent') == now.date().isoformat():
+        return False
+    try:
+        send_at = datetime.strptime(str(preferences.get('morning_report_time') or '07:30'), '%H:%M').time()
+    except ValueError:
+        send_at = time(7, 30)
+    return now.time() >= send_at
+
+
+def mikasa_playful_message_due(now: datetime, preferences: dict[str, Any] | None = None) -> bool:
+    preferences = preferences or get_telegram_preferences()
+    if not preferences.get('playful_messages_enabled'):
+        return False
+    if _telegram_setting_get('playful_messages_last_sent') == now.date().isoformat():
+        return False
+    send_at = _mikasa_playful_time(now.date(), str(preferences.get('playful_frequency') or 'few'))
+    # Keep these spontaneous check-ins inside a daytime/evening window.
+    return bool(send_at and send_at <= now.time() <= time(21, 30))
+
+
+def build_mikasa_playful_message(day: date | None = None) -> str:
+    day = day or date.today()
+    agenda = build_today_agenda(day)
+    active = [entry for entry in agenda.get('items', [])
+              if entry.get('status') in ('overdue', 'due', 'pending')
+              and entry.get('type') in ('task', 'routine', 'cook', 'workout-plan')]
+    rng = random.Random(f'mikasa-copy:{day.isoformat()}')
+    if active:
+        target = str(active[0].get('title') or 'your next task').strip()
+        targeted = (
+            f"Darling, {target} is waiting for you. Give it ten focused minutes; I'll be over here looking impressed. 💋",
+            f"A little secretary's orders, handsome: make a start on {target}. I do love seeing you take charge. 😉",
+            f"That {target} won't finish itself, gorgeous. One small step now—and you can collect my very enthusiastic approval later. 🔥",
+        )
+        return rng.choice(targeted)
+    return rng.choice(_MIKASA_PLAYFUL_LINES)
+
+
+async def _send_telegram_text(client, message: str) -> None:
+    sent = await client.post(
+        f'https://api.telegram.org/bot{TOKEN}/sendMessage',
+        json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True},
+    )
+    _telegram_response_data(sent, 'sendMessage')
+
+
+async def _send_scheduled_mikasa_messages(client, now: datetime) -> None:
+    """Send opt-in daily messages once per local date, after Telegram confirms delivery."""
+    preferences = get_telegram_preferences()
+    if mikasa_morning_report_due(now, preferences):
+        try:
+            await _send_telegram_text(client, build_morning_report(now.date()))
+            _telegram_setting_set('morning_report_last_sent', now.date().isoformat())
+        except Exception as exc:
+            print(f'Mikasa morning report warning: {exc}', flush=True)
+    if mikasa_playful_message_due(now, preferences):
+        try:
+            await _send_telegram_text(client, build_mikasa_playful_message(now.date()))
+            _telegram_setting_set('playful_messages_last_sent', now.date().isoformat())
+        except Exception as exc:
+            print(f'Mikasa playful message warning: {exc}', flush=True)
+
+
 async def reminder_loop():
     """Send Telegram reminders, including staged bill notices and four-hour urgent bill follow-ups."""
     import httpx
@@ -2479,6 +2667,7 @@ async def reminder_loop():
             try:
                 now = datetime.now()
                 today = now.date()
+                await _send_scheduled_mikasa_messages(client, now)
                 normalize_overdue_routine_dates(today)
                 reminders = []
                 reminders.extend(build_bill_reminders(now))
@@ -2597,9 +2786,9 @@ async def telegram_poll():
         # Give the bot a coherent, explicitly AI identity in Telegram's profile.
         # A profile update failure must never prevent polling or reminders.
         profile_updates = (
-            ('setMyName', {'name': 'Mikasa · XROB Secretary'}),
-            ('setMyDescription', {'description': 'Your warm, playful AI personal secretary for planning, meals, routines and fitness. A little charm, a little order, and no judgment.'}),
-            ('setMyShortDescription', {'short_description': 'Your affectionate XROB AI secretary. Let’s make today feel lighter. 💋'}),
+            ('setMyName', {'name': 'Mikasa'}),
+            ('setMyDescription', {'description': 'Your AI personal secretary for planning, meals, routines and fitness. Elegant, attentive, a little mischievous, and always on your side.'}),
+            ('setMyShortDescription', {'short_description': 'Your personal secretary: a little charm, a little mischief, and a beautifully organised day. 💋'}),
         )
         for method, payload in profile_updates:
             try:
@@ -3688,8 +3877,8 @@ async def _telegram_command_core(text: str) -> str:
 TELEGRAM_PERSONA = {
     'name': 'Mikasa',
     'role': 'XROB personal secretary',
-    'voice': 'warm, poised, confident, affectionate, playful and subtly flirtatious; supportive without being clingy or judgmental',
-    'signature': 'An attentive private secretary: remembers the plan, notices effort, and makes the busy parts feel lighter',
+    'voice': 'warm, poised, confident, sensual in a tasteful way, mischievous and playfully naughty; affectionate, brief and supportive without being clingy or judgmental',
+    'signature': 'A polished private secretary with a wicked little sparkle: attentive, encouraging, teasing and always on top of the details',
 }
 
 
@@ -3725,17 +3914,17 @@ def _telegram_social_reply(raw: str) -> str | None:
     if low in ('what can you do', 'what do you do', 'how can you help', 'what can you help with', 'capabilities'):
         return _telegram_capabilities_message()
     if low in ('thank you', 'thanks', 'thank u', 'thx', 'you are the best', 'you’re the best', "you're the best"):
-        return 'Anytime, darling. Happy to make your day a little lighter. 💋'
+        return 'Anytime, handsome. Making your life easier is my favourite little habit. 💋'
     if low in ('how are you', 'how are you doing', 'you okay', 'are you okay'):
         return 'Quite lovely, thank you. Your plans are tidy and I’m right here, handsome. How are you? 💋'
     if low in ('hi', 'hey', 'hello', 'hey mikasa', 'hi mikasa', 'hello mikasa', 'good to see you'):
-        return 'Well, hello, handsome. Mikasa at your service. What shall we sort out first? 💋'
+        return 'Well, hello, handsome. Mikasa at your service. Shall we be productive… or a little dangerous? 😉💋'
     if low in ('are you real', 'are you a real person', 'are you human', 'who are you', 'what are you'):
         return 'I’m Mikasa, your XROB AI secretary—not a real person. Warm, attentive, a little cheeky, and organised. 💋'
     if low in ('can we talk', 'talk to me', 'keep me company', 'i need someone to talk to'):
         return 'Of course, darling. Tell me what’s on your mind. I’m listening. 🤍'
     if low in ('i love you', 'love you', 'i adore you'):
-        return 'You’re sweet, darling. I’ll meet you with care, support, and a little mischief. 💋'
+        return 'Careful, darling. Keep talking like that and I’ll become terribly cheeky. I’m still very much on your side. 💋'
     if low in ('good morning', 'morning', 'gm', 'good afternoon', 'good evening'):
         greeting = 'Morning' if 'morning' in low or low == 'gm' else ('Good afternoon' if 'afternoon' in low else 'Good evening')
         agenda = build_today_agenda()
@@ -3777,7 +3966,7 @@ def _telegram_social_reply(raw: str) -> str | None:
     if any(term in low for term in ('i am happy', "i'm happy", 'i’m happy', 'great news', 'something good happened')):
         return 'Oh, I like this energy, darling. Tell me what went right. ✨'
     if any(term in low for term in ('you are beautiful', 'you’re beautiful', 'you are cute', 'you’re cute', 'sexy', 'beautiful secretary')):
-        return 'Careful, handsome… keep flattering your secretary and I’ll expect that to-do list looking just as good. 😉💋'
+        return 'Careful, handsome… flatter your secretary like that and I’ll expect an equally impressive to-do list. Now, go be irresistible. 😉💋'
     if low in ('good girl', 'thank you mikasa', 'thanks mikasa'):
         return 'For you, darling? Always. What shall we organise next? 💋'
     return None
