@@ -1,3 +1,10 @@
+## 0.4.24 — Mikasa bundled-loader startup fix
+
+- Fixes startup failure when the Python runtime does not include `/app` on `sys.path`. The bundled `mikasa_persona.py` is loaded from the absolute path beside `main.py`, rather than relying on a top-level module import.
+- Keeps the optional `/config/mikasa_persona.py` override. If the override is absent or invalid, XROB loads the bundled voice pack; if the bundled file is missing, the Docker image now fails during build instead of crashing only at runtime.
+- Adds regression coverage for an unavailable Python module search path and a build-time check that the persona file is copied into `/app`.
+- No database schema, command handling, Telegram scheduling, or planner behavior changes.
+
 
 ## 0.4.23 — standalone Mikasa voice pack
 
@@ -9,7 +16,7 @@
 
 ### Updating Mikasa without updating XROB
 
-1. Keep XROB Assistant **0.4.23 or newer** installed.
+1. Keep XROB Assistant **0.4.24 or newer** installed.
 2. Copy the standalone `mikasa_persona.py` into the XROB add-on's own configuration directory as `mikasa_persona.py`. The container sees that location as `/config/mikasa_persona.py` (on HAOS, this is normally the add-on folder under `/addon_configs/xrob_assistant/`, not the main Home Assistant `/config`).
 3. Restart the XROB add-on. Check `/api/health`: `mikasa_persona_source` should report `config override`, and `mikasa_persona_version` should show the voice-pack version.
 4. To return to the bundled voice, remove the override file and restart the add-on.
@@ -26,7 +33,7 @@ The standalone file controls Mikasa's personality, social copy, message template
 - Preferences and send-once markers are stored in the existing `telegram_state` table; no new database table, cloud service or external AI dependency is introduced. Telegram must be configured in the Home Assistant add-on options for scheduled messages to be delivered.
 - On mobile, the Settings save action stays accessible above the fixed bottom navigation, including narrow 320px screens.
 
-# XROB Assistant 0.4.23 · Home Assistant add-on
+# XROB Assistant 0.4.24 · Home Assistant add-on
 
 ## 0.4.21 release
 
@@ -246,7 +253,7 @@ Telegram only accepts your configured chat ID. The Telegram action engine remain
 1. Back up your Home Assistant add-on configuration and `/config/xrob_assistant.db` before upgrading.
 2. Copy this folder to your Home Assistant local add-ons directory, for example `/addons/xrob-assistant/`.
 3. Reload/check local add-ons in the Add-on Store.
-4. Install/update XROB Assistant to **0.4.23**, review the add-on options and start it.
+4. Install/update XROB Assistant to **0.4.24**, review the add-on options and start it.
 5. Open `http://HOME_ASSISTANT_IP:8090` or use the add-on Web UI button.
 
 The app keeps existing records and adds the meal source, ready-plate count, next routine date, cook-reminder and Telegram notification fields to the existing database on startup. Existing tasks, events, fitness, bills, routines, Telegram state, recipes and old meal-plan rows are preserved. The Meals page has no archive control. Back up before updating.
