@@ -19,7 +19,7 @@ ALLOWED_CHAT = os.getenv('XROB_TELEGRAM_CHAT_ID', '').strip()
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL, due_date TEXT, due_time TEXT, priority TEXT DEFAULT 'normal', status TEXT DEFAULT 'open', category TEXT DEFAULT 'general', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL, due_date TEXT, due_time TEXT, priority TEXT DEFAULT 'normal', status TEXT DEFAULT 'open', completed_at TEXT, category TEXT DEFAULT 'general', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS weights (id INTEGER PRIMARY KEY, date TEXT NOT NULL, kg REAL NOT NULL, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS workouts (id INTEGER PRIMARY KEY, date TEXT NOT NULL, name TEXT NOT NULL, duration_min INTEGER DEFAULT 0, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS workout_plan (id INTEGER PRIMARY KEY, weekday TEXT NOT NULL, name TEXT NOT NULL, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -169,6 +169,11 @@ def _migrate_legacy_bill_series(c: sqlite3.Connection) -> None:
 def init_db():
     with connect() as c:
         c.executescript(SCHEMA)
+        # Preserve task completion dates going forward. Older databases keep their
+        # existing status values; we do not guess when historic tasks were done.
+        task_columns = {r['name'] for r in c.execute('PRAGMA table_info(tasks)').fetchall()}
+        if 'completed_at' not in task_columns:
+            c.execute('ALTER TABLE tasks ADD COLUMN completed_at TEXT')
         # Add the optional task time column to databases created by earlier versions.
         recipe_columns = {r['name'] for r in c.execute('PRAGMA table_info(recipes)').fetchall()}
         if 'eating_interval_days' not in recipe_columns:
@@ -346,7 +351,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.16', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.17', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -355,7 +360,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.16','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.17','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -1378,16 +1383,12 @@ def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
             name = routine['name']
             if routine_time and current_hm >= routine_time:
                 reminders.append(('routine-time', routine['id'], today.isoformat(),
-                                  f"🔁 ROUTINE DUE\n{name}\nScheduled: {routine_time}\nWhen finished, reply: done {name}"))
+                                  f"Morning, handsome. {name} is due.\nReply: done {name}"))
             if late_time and current_hm >= late_time:
-                scheduled = f'\nScheduled: {routine_time}' if routine_time else ''
                 days_late = max(0, (today - due).days)
-                rollover_note = ('\nStill incomplete after this alert? It will move to tomorrow automatically.'
-                                 if int(routine.get('routine_rollover_after_late') or 0) else '')
-                overdue_note = (f"\nOverdue: {days_late} day{'s' if days_late != 1 else ''}"
-                                if days_late else '')
+                late_label = f" · {days_late}d overdue" if days_late else ''
                 reminders.append(('routine-late', routine['id'], today.isoformat(),
-                                  f"⚠️ ROUTINE STILL OPEN\n{name}{overdue_note}{scheduled}{rollover_note}\nReply when finished: done {name}"))
+                                  f"Still waiting on {name}, handsome{late_label}.\nReply: done {name}"))
         except Exception as exc:
             print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
     return reminders
@@ -1752,6 +1753,10 @@ def update_resource(resource: str, item_id: int, payload: Payload):
         existing_task = one('SELECT * FROM tasks WHERE id=?',(item_id,))
         if not existing_task:
             raise HTTPException(404, 'Task not found')
+        if data.get('status') == 'done' and existing_task.get('status') != 'done':
+            data['completed_at'] = date.today().isoformat()
+        elif data.get('status') == 'open':
+            data['completed_at'] = None
         if 'due_date' in data and not data.get('due_date') and existing_task.get('due_time') and 'due_time' not in data:
             data['due_time'] = None
         validate_task_schedule(data, existing_task)
@@ -2153,18 +2158,223 @@ def count_expiring_documents(today: date | None = None) -> int:
             continue
     return count
 
+def build_today_agenda(day: date | None = None) -> dict[str, Any]:
+    """Build the single source-of-truth agenda shared by the app, Telegram and Home Assistant.
+
+    Open items that are overdue remain visible until they are completed or paid;
+    date-specific records (events, meals and activity logs) appear only on their
+    actual date. This prevents each client from inventing its own definition of
+    what belongs in today's view.
+    """
+    day = day or date.today()
+    day_key = day.isoformat()
+    items: list[dict[str, Any]] = []
+
+    def add(kind: str, item_id: int | None, title: str, detail: str,
+            status: str, *, item_date: str | None = None, item_time: str | None = None) -> None:
+        items.append({
+            'type': kind, 'id': item_id, 'title': str(title or ''),
+            'detail': str(detail or ''), 'status': status,
+            'date': item_date or day_key, 'time': item_time,
+        })
+
+    def parse_agenda_date(value: Any) -> date | None:
+        try:
+            return date.fromisoformat(str(value or ''))
+        except (TypeError, ValueError):
+            return None
+
+    # Events scheduled for this date.
+    for event in rows('SELECT id,title,start_at,category FROM events WHERE substr(start_at,1,10)=? ORDER BY start_at,id', (day_key,)):
+        start_at = str(event.get('start_at') or '')
+        event_time = start_at[11:16] if len(start_at) >= 16 and start_at[10:11] == 'T' else None
+        category = f" · {event['category']}" if event.get('category') else ''
+        add('event', int(event['id']), event['title'], f'Event{category}', 'scheduled', item_time=event_time)
+
+    # Open tasks due today or earlier stay in view until marked complete.
+    for task in rows("SELECT id,title,due_date,due_time,priority FROM tasks WHERE status!='done' AND due_date IS NOT NULL AND due_date<=? ORDER BY due_date,due_time,id", (day_key,)):
+        due = parse_agenda_date(task.get('due_date'))
+        if due is None:
+            continue
+        late_days = (day - due).days
+        state = 'overdue' if late_days > 0 else 'due'
+        timing = f'Overdue {late_days}d' if late_days else 'Due today'
+        priority = str(task.get('priority') or 'normal').title()
+        add('task', int(task['id']), task['title'], f'{timing} · {priority} priority', state,
+            item_date=task['due_date'], item_time=task.get('due_time'))
+
+    # Routines include any still-open due date, even when it predates today.
+    for routine in rows('''SELECT id,name,next_due,routine_time,interval_days
+                           FROM routines WHERE next_due IS NOT NULL AND next_due<=?
+                           ORDER BY next_due,COALESCE(routine_time,'23:59'),name,id''', (day_key,)):
+        due = parse_agenda_date(routine.get('next_due'))
+        if due is None:
+            continue
+        late_days = (day - due).days
+        state = 'overdue' if late_days > 0 else 'due'
+        timing = f'Overdue {late_days}d' if late_days else 'Due today'
+        interval = max(1, int(routine.get('interval_days') or 1))
+        add('routine', int(routine['id']), routine['name'],
+            f'Routine · {timing} · every {interval}d', state,
+            item_date=routine['next_due'], item_time=routine.get('routine_time'))
+
+    # Bills enter the agenda when their 3-day Telegram reminder becomes due.
+    # Keep one active occurrence per logical series, matching the Bills page.
+    for bill in active_bill_occurrences():
+        try:
+            due = date.fromisoformat(str(bill.get('due_date') or ''))
+        except (TypeError, ValueError):
+            continue
+        days_left = (due - day).days
+        if days_left > 3:
+            continue
+        amount = float(bill.get('amount_mad') or 0)
+        if days_left < 0:
+            state, timing = 'overdue', f'Overdue {abs(days_left)}d'
+        elif days_left == 0:
+            state, timing = 'due', 'Due today'
+        else:
+            state, timing = 'upcoming', f'Due in {days_left}d'
+        add('bill', int(bill['id']), bill['name'], f'{amount:.2f} MAD · {timing}', state,
+            item_date=bill['due_date'])
+
+    # Documents appear as soon as their configured reminder window begins.
+    # Expired documents remain visible until their expiry date is corrected.
+    for document in rows('SELECT id,name,expiry_date,reminder_days FROM documents ORDER BY expiry_date,id'):
+        try:
+            expiry = date.fromisoformat(str(document.get('expiry_date') or ''))
+            lead = max(0, int(document.get('reminder_days') if document.get('reminder_days') is not None else 30))
+        except (TypeError, ValueError):
+            continue
+        days_left = (expiry - day).days
+        if days_left > lead:
+            continue
+        if days_left < 0:
+            state, timing = 'overdue', f'Expired {abs(days_left)}d ago'
+        elif days_left == 0:
+            state, timing = 'due', 'Expires today'
+        else:
+            state, timing = 'upcoming', f'Expires in {days_left}d'
+        add('document', int(document['id']), document['name'], timing, state,
+            item_date=document['expiry_date'])
+
+    # Today's meal is pending until confirmed, then remains as completed history.
+    meal = one('''SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal
+                  FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id
+                  WHERE dm.plan_date=?''', (day_key,))
+    if meal:
+        eaten = meal.get('status') == 'eaten'
+        kcal = f" · {float(meal['calories_kcal']):g} kcal" if meal.get('calories_kcal') is not None else ''
+        add('meal', int(meal['id']), meal['recipe_name'],
+            ('Meal · confirmed' if eaten else 'Meal · waiting for your check-in') + kcal,
+            'completed' if eaten else 'pending')
+
+    # An open cook reminder remains visible while the home-meal batch is empty.
+    for cook in rows('''SELECT mcr.id,mcr.due_date,r.name AS recipe_name
+                        FROM meal_cook_reminders mcr JOIN recipes r ON r.id=mcr.recipe_id
+                        WHERE mcr.status='open' AND mcr.due_date<=?
+                        ORDER BY mcr.due_date,r.name''', (day_key,)):
+        due = parse_agenda_date(cook.get('due_date'))
+        if due is None:
+            continue
+        late_days = (day - due).days
+        state = 'overdue' if late_days > 0 else 'due'
+        timing = f'Overdue {late_days}d' if late_days else 'Due today'
+        add('cook', int(cook['id']), f"Prepare {cook['recipe_name']}",
+            f'Home meal stock · {timing}', state, item_date=cook['due_date'])
+
+    # A planned workout and its matching logged session are one agenda item,
+    # not two separate obligations. Unmatched sessions remain visible as logs.
+    weekday = WEEKDAY_NAMES[day.weekday()]
+    planned_workouts = rows('SELECT id,name,notes FROM workout_plan WHERE weekday=? ORDER BY id', (weekday,))
+    logged_workouts = rows('SELECT id,name,duration_min FROM workouts WHERE date=? ORDER BY id', (day_key,))
+    consumed_workout_ids: set[int] = set()
+    def workout_key(value: Any) -> str:
+        return re.sub(r'\s+', ' ', str(value or '')).strip().casefold()
+    for planned in planned_workouts:
+        match = next((workout for workout in logged_workouts
+                      if workout_key(workout.get('name')) == workout_key(planned.get('name'))
+                      and int(workout['id']) not in consumed_workout_ids), None)
+        if match:
+            consumed_workout_ids.add(int(match['id']))
+            duration = f" · {int(match.get('duration_min') or 0)} min" if int(match.get('duration_min') or 0) > 0 else ''
+            add('workout', int(match['id']), planned['name'], f'Planned · completed{duration}', 'completed')
+        else:
+            detail = 'Workout plan' + (f" · {planned['notes']}" if planned.get('notes') else '')
+            add('workout-plan', int(planned['id']), planned['name'], detail, 'scheduled')
+
+    # Tasks completed today are kept in the daily recap. Old records with no
+    # completion timestamp remain unchanged rather than being assigned a guess.
+    for task in rows('''SELECT id,title,due_date,completed_at FROM tasks
+                       WHERE status='done' AND substr(completed_at,1,10)=?
+                       ORDER BY completed_at,id''', (day_key,)):
+        detail = 'Task completed'
+        if task.get('due_date'):
+            detail += f" · Due {task['due_date']}"
+        completed_time = str(task.get('completed_at') or '')
+        time_label = completed_time[11:16] if len(completed_time) >= 16 else None
+        add('task-done', int(task['id']), task['title'], detail, 'completed', item_time=time_label)
+
+    # Completions and fitness entries are visible as done, not mixed with open actions.
+    for log in rows('''SELECT rl.id,r.name,rl.source FROM routine_logs rl
+                       JOIN routines r ON r.id=rl.routine_id WHERE rl.completed_at=?
+                       ORDER BY r.name,rl.id''', (day_key,)):
+        source = str(log.get('source') or 'manual').replace('_', ' ').title()
+        add('routine-done', int(log['id']), log['name'], f'Routine completed · {source}', 'completed')
+
+    for workout in logged_workouts:
+        if int(workout['id']) in consumed_workout_ids:
+            continue
+        duration = f" · {int(workout.get('duration_min') or 0)} min" if int(workout.get('duration_min') or 0) > 0 else ''
+        add('workout', int(workout['id']), workout['name'], f'Gym logged{duration}', 'completed')
+
+    treadmill = one('''SELECT COUNT(*) AS sessions,COALESCE(SUM(duration_min),0) AS minutes
+                       FROM treadmill WHERE date=?''', (day_key,)) or {}
+    if int(treadmill.get('sessions') or 0):
+        minutes = round(float(treadmill.get('minutes') or 0))
+        sessions = int(treadmill['sessions'])
+        add('treadmill', None, f'Treadmill · {minutes} min',
+            f'{sessions} session' + ('' if sessions == 1 else 's') + ' logged', 'completed')
+
+    weight = one('SELECT id,kg FROM weights WHERE date=? ORDER BY id DESC LIMIT 1', (day_key,))
+    if weight:
+        add('weight', int(weight['id']), f"Weight · {float(weight['kg']):g} kg",
+            'Weigh-in logged', 'completed')
+
+    status_order = {'overdue': 0, 'due': 1, 'pending': 2, 'scheduled': 3, 'upcoming': 4, 'completed': 5}
+    items.sort(key=lambda x: (status_order.get(x['status'], 6), x.get('time') or '99:99', x['title'].casefold(), int(x.get('id') or 0)))
+    open_count = sum(1 for entry in items if entry['status'] in ('overdue', 'due', 'pending'))
+    scheduled_count = sum(1 for entry in items if entry['status'] in ('scheduled', 'upcoming'))
+    completed_count = sum(1 for entry in items if entry['status'] == 'completed')
+    return {
+        'date': day_key, 'count': len(items), 'open_count': open_count,
+        'scheduled_count': scheduled_count, 'completed_count': completed_count,
+        'items': items,
+    }
+
+
+@app.get('/api/agenda/today')
+def today_agenda_endpoint():
+    return build_today_agenda()
+
+
 @app.get('/api/summary')
 def summary():
-    today=date.today().isoformat()
+    today_date = date.today()
+    today = today_date.isoformat()
+    agenda = build_today_agenda(today_date)
     open_bills = active_bill_occurrences()
     future_bills = sorted((b for b in open_bills if b['due_date'] >= today), key=lambda b: (b['due_date'], int(b['id'])))
     overdue_bills = sorted((b for b in open_bills if b['due_date'] < today), key=lambda b: (b['due_date'], int(b['id'])), reverse=True)
     next_bill_row = (future_bills or overdue_bills)
     next_bill = ({'name': next_bill_row[0]['name'], 'due_date': next_bill_row[0]['due_date'],
                   'amount_mad': next_bill_row[0]['amount_mad']} if next_bill_row else None)
-    days_to_next_bill = (date.fromisoformat(next_bill['due_date']) - date.today()).days if next_bill else None
+    days_to_next_bill = (date.fromisoformat(next_bill['due_date']) - today_date).days if next_bill else None
     return {
       'today': today,
+      'today_agenda': agenda,
+      'today_agenda_count': agenda['count'],
+      'today_open_items': agenda['open_count'],
       'events_today':len(rows('SELECT id FROM events WHERE substr(start_at,1,10)=?',(today,))),
       'routines_due_today':one('SELECT COUNT(*) n FROM routines WHERE next_due<=?',(today,))['n'],
       'open_tasks':one("SELECT COUNT(*) n FROM tasks WHERE status!='done'")['n'],
@@ -2172,7 +2382,7 @@ def summary():
       'unpaid_bills':len(open_bills),
       'unpaid_total_mad':sum(float(b.get('amount_mad') or 0) for b in open_bills),
       'upcoming_bill':({**next_bill, 'days_left': days_to_next_bill} if next_bill else None),
-      'expiring_documents':count_expiring_documents(),
+      'expiring_documents':count_expiring_documents(today_date),
       'next_routine':one('SELECT * FROM routines ORDER BY next_due LIMIT 1'),
       'recent_treadmill':one('SELECT * FROM treadmill ORDER BY date DESC,id DESC LIMIT 1'),
       'today_meal':one('''SELECT dm.id,dm.plan_date,dm.status,r.name AS recipe_name,r.calories_kcal
@@ -2185,8 +2395,20 @@ def summary():
 @app.get('/api/ha/state')
 def ha_state():
     s=summary()
-    return {'weight_kg':s['latest_weight']['kg'] if s['latest_weight'] else None,'unpaid_bills':s['unpaid_bills'],'unpaid_total_mad':s['unpaid_total_mad'],'expiring_documents':s['expiring_documents'],'open_tasks':s['open_tasks'],'events_today':s['events_today'],'routines_due_today':s['routines_due_today'],'next_routine':s['next_routine']['name'] if s['next_routine'] else None}
-
+    return {
+        'weight_kg': s['latest_weight']['kg'] if s['latest_weight'] else None,
+        'unpaid_bills': s['unpaid_bills'],
+        'unpaid_total_mad': s['unpaid_total_mad'],
+        'expiring_documents': s['expiring_documents'],
+        'open_tasks': s['open_tasks'],
+        'events_today': s['events_today'],
+        'routines_due_today': s['routines_due_today'],
+        'next_routine': s['next_routine']['name'] if s['next_routine'] else None,
+        'today_agenda_count': s['today_agenda_count'],
+        'today_open_items': s['today_open_items'],
+        'today_agenda_date': s['today_agenda']['date'],
+        'today_agenda': s['today_agenda']['items'],
+    }
 def _telegram_response_data(response, action: str) -> dict:
     """Return a confirmed Telegram API payload, not merely an HTTP-success response."""
     response.raise_for_status()
@@ -2220,8 +2442,8 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
             if one("SELECT id FROM notification_log WHERE kind='bill-3day' AND item_id=? AND reminder_date=?",
                    (int(bill['id']), reminder_key)):
                 continue
-            message = (f"💳 BILL DUE SOON\n{bill['name']} · {amount:.2f} MAD\n"
-                       f"Due: {due_label} ({days_left} days left)\nAfter paying, reply: paid {bill['name']}")
+            message = (f"A little heads-up, handsome: {bill['name']} · {amount:.2f} MAD is due in {days_left} days ({due_label}).\n"
+                       f"Reply: paid {bill['name']}")
             reminders.append(('bill-3day', int(bill['id']), reminder_key, message))
         elif days_left <= 1:
             # Use the persisted send timestamp, not a wall-clock bucket, so the
@@ -2242,11 +2464,9 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
             elif days_left == 0:
                 due_status = 'Due today'
             else:
-                due_status = f'Overdue by {abs(days_left)} day(s)'
-            message = (f"🚨 BILL PAYMENT REMINDER\n{bill['name']} · {amount:.2f} MAD\n"
-                       f"{due_status} · due {due_label}\n"
-                       f"This reminder repeats every 4 hours until you mark the bill paid.\n"
-                       f"After paying, reply: paid {bill['name']}")
+                due_status = f'Overdue by {abs(days_left)} days'
+            message = (f"Darling, {bill['name']} · {amount:.2f} MAD: {due_status.lower()} ({due_label}).\n"
+                       f"Reply: paid {bill['name']}")
             reminders.append(('bill-4h', int(bill['id']), reminder_key, message))
     return reminders
 
@@ -2269,9 +2489,9 @@ async def reminder_loop():
                             due_at = datetime.combine(due_day, datetime.strptime(t['due_time'], '%H:%M').time())
                             if due_at <= now:
                                 reminder_key = due_at.strftime('%Y-%m-%dT%H:%M')
-                                reminders.append(('task-time', t['id'], reminder_key, f"⏰ TASK REMINDER\n{t['title']}\n{due_day.strftime('%d/%m/%y')} · {t['due_time']}\nWhen finished, reply: task done {t['title']}"))
+                                reminders.append(('task-time', t['id'], reminder_key, f"On your list, handsome: {t['title']} · {t['due_time']}.\nReply: task done {t['title']}"))
                         elif due_day <= today:
-                            reminders.append(('task', t['id'], today.isoformat(), f"📌 TASK OVERDUE\n{t['title']}\nDue: {due_day.strftime('%d/%m/%y')}\nWhen finished, reply: task done {t['title']}"))
+                            reminders.append(('task', t['id'], today.isoformat(), f"Still open, handsome: {t['title']} · due {due_day.strftime('%d/%m')}.\nReply: task done {t['title']}"))
                     except Exception:
                         continue
                 # When a home-meal batch runs out, notify the user on the due
@@ -2282,7 +2502,7 @@ async def reminder_loop():
                                   WHERE mcr.status='open' AND mcr.due_date<=?
                                   ORDER BY mcr.due_date,mcr.id""", (today.isoformat(),)):
                     reminders.append(('meal-cook', cook['id'], cook['due_date'],
-                                      f"🍳 HOME MEAL BATCH TO PREPARE\n{cook['name']}\n\nYour ready plates have run out. After cooking, update your stock with:\n/stock {cook['name']}|3"))
+                                      f"Chef’s note, handsome: {cook['name']} needs a fresh batch.\nStock: /stock {cook['name']}|3"))
                 # Meal messages follow the user's local Home Assistant timezone (TZ in run.sh).
                 # 14:00 announces the plate; 22:00 asks whether it was eaten.
                 today_meal = one("SELECT dm.id,dm.plan_date,dm.status,dm.suggestion_notified_date,dm.checkin_notified_date, r.name AS recipe_name,r.calories_kcal FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=? LIMIT 1", (today.isoformat(),))
@@ -2290,16 +2510,13 @@ async def reminder_loop():
                     kcal = f"\n{float(today_meal['calories_kcal']):g} kcal per plate" if today_meal.get('calories_kcal') is not None else ''
                     # Do not send a stale 14:00 announcement after 22:00 if the app was offline all afternoon.
                     if time(14, 0) <= now.time() < time(22, 0) and today_meal.get('suggestion_notified_date') != today.isoformat():
-                        message = (f"🍽️ TODAY'S SUGGESTED PLATE\n\n{today_meal['recipe_name']}{kcal}\n\n"
-                                   "This is your suggested plate for today. I will check with you at 22:00.")
+                        message = (f"Today’s plate, handsome: {today_meal['recipe_name']}{kcal}.\nI’ll check in tonight.")
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                         _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
                             c.execute("UPDATE daily_meals SET suggestion_notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(today_meal['id'])))
                     if now.time() >= time(22, 0) and today_meal.get('checkin_notified_date') != today.isoformat():
-                        message = (f"🌙 22:00 MEAL CHECK-IN\n\nDid you eat today's suggested plate?\n"
-                                   f"{today_meal['recipe_name']}{kcal}\n\n"
-                                   "Reply YES if you ate it, or NO to move this plate and every later plate to the next day.")
+                        message = (f"Dinner check, handsome: did you enjoy {today_meal['recipe_name']}{kcal}? Reply YES or NO.")
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                         _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
@@ -2758,6 +2975,47 @@ def _telegram_parse_treadmill(text: str) -> tuple[float, date]:
         raise ValueError()
     return duration, day
 
+
+def telegram_agenda_line(entry: dict[str, Any]) -> str:
+    """Format one shared agenda item as a short, conversational Telegram line."""
+    kind = str(entry.get('type') or '')
+    status = str(entry.get('status') or '')
+    title = str(entry.get('title') or 'Untitled')
+    detail = str(entry.get('detail') or '')
+    when = str(entry.get('time') or '')
+    prefix = f'{when} · ' if when else ''
+
+    if kind == 'task':
+        match = re.search(r'(Overdue \d+d|Due today)', detail, re.IGNORECASE)
+        timing = match.group(1) if match else ('Overdue' if status == 'overdue' else 'Due today')
+        priority = ' · High priority' if 'high priority' in detail.casefold() else (' · Urgent' if 'urgent priority' in detail.casefold() else '')
+        return f'{prefix}{title} · {timing}{priority}'
+    if kind == 'routine':
+        match = re.search(r'(Overdue \d+d|Due today)', detail, re.IGNORECASE)
+        timing = match.group(1) if match else ('Overdue' if status == 'overdue' else 'Due today')
+        return f'{prefix}{title} · {timing}'
+    if kind in ('bill', 'document'):
+        return f'{prefix}{title} · {detail}'
+    if kind == 'event':
+        return f'{prefix}{title}'
+    if kind == 'meal':
+        return f'{prefix}Meal · {title}' + (' · eaten' if status == 'completed' else '')
+    if kind == 'cook':
+        return f'{prefix}Prepare · {title.removeprefix("Prepare ")} · {detail.replace("Home meal stock · ", "")}'
+    if kind == 'workout-plan':
+        return f'{prefix}Workout · {title}'
+    if kind == 'task-done':
+        return f'✅ {title}'
+    if kind == 'routine-done':
+        return f'✅ Routine · {title}'
+    if kind == 'workout':
+        duration = re.search(r'\d+ min', detail)
+        return f'✅ Gym · {title}' + (f' · {duration.group(0)}' if duration else '')
+    if kind in ('treadmill', 'weight'):
+        return f'✅ {title}'
+    return f'{prefix}{title}' + (f' · {detail}' if detail else '')
+
+
 async def telegram_command(text: str) -> str:
     """Short, action-oriented Telegram interface for the XROB personal manager."""
     raw = text.strip()
@@ -2815,7 +3073,7 @@ async def telegram_command(text: str) -> str:
                 move_text = (f"\nIts automatic reservation on {_telegram_date_label(moved, True)} was released." if moved else '')
                 next_plan = one("SELECT MIN(plan_date) AS next_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>?", (recipe_id, today.isoformat()))
                 repeat_text = f"\nNext planned repeat: {_telegram_date_label(next_plan['next_date'], True)}." if next_plan and next_plan.get('next_date') else f"\nThe next repeat follows the every {int(selected['eating_interval_days'] or 1)} day rule when stock and an open date are available."
-                return f"✅ Today's plate selected\n\n🍽 {selected['name']}{move_text}{repeat_text}\n\nI will ask at 22:00 whether you ate it."
+                return f"✅ Today's plate selected: {selected['name']}{move_text}{repeat_text}. I'll check in tonight."
             except ValueError as exc:
                 _telegram_set_state(None)
                 return str(exc)
@@ -2851,7 +3109,7 @@ async def telegram_command(text: str) -> str:
                 kcal = f" · {float(selected['calories_kcal']):g} kcal/plate" if selected.get('calories_kcal') is not None else ''
                 next_plan = one("SELECT MIN(plan_date) AS next_date FROM daily_meals WHERE recipe_id=? AND status='pending' AND plan_date>?", (int(matched['id']), today.isoformat()))
                 repeat_text = f"Next planned repeat: {_telegram_date_label(next_plan['next_date'], True)}." if next_plan and next_plan.get('next_date') else f"The next repeat follows the every {int(selected['eating_interval_days'] or 1)} day rule when stock and an open date are available."
-                return f"✅ Today's plate selected\n\n🍽 {selected['name']}{kcal}\n\n{repeat_text} I will ask at 22:00 whether you ate it."
+                return f"✅ Today's plate selected: {selected['name']}{kcal}. {repeat_text} I'll check in tonight."
             except ValueError as exc:
                 refreshed = _telegram_available_today_meals()
                 choices = [{'id': x['id'], 'name': x['name'], 'button': f"{x['name'][:34]} · {'Home' if x['meal_source']=='home' else 'Outside'} #{x['id']}"} for x in refreshed[:16]]
@@ -3099,9 +3357,9 @@ async def telegram_command(text: str) -> str:
         except ValueError as exc:
             return str(exc)
         if eaten:
-            return '✅ Confirmed! Enjoy. Your next planned plate stays on schedule.'
+            return 'Confirmed, handsome. Marked as eaten; your next plate stays on schedule. ✨'
         delay = int(updated.get('shift_days') or 1)
-        return f"↪️ No problem. This plate moved to {_telegram_date_label(updated['plan_date'], True)}. Every later plate moved by {delay} day(s) too."
+        return f"Of course, handsome. The plate moved to {_telegram_date_label(updated['plan_date'], True)}; later plates shifted {delay} day(s)."
 
     if low.startswith('/suggestmeals') or low in ('suggest meals', 'plan meals'):
         maintain_meal_schedule()
@@ -3117,45 +3375,37 @@ async def telegram_command(text: str) -> str:
         return f"✅ Marked purchased · {matched['name']}"
     if low in ('/start', 'start', '/menu', 'menu', 'hi', 'hello', '/help', 'help', '❔ help'):
         return (
-            '👋 XROB QUICK MENU\n\n'
-            '📅 Today — see today’s agenda.\n'
-            '🍽 Meals — view today’s plate or choose a meal.\n'
-            '✅ I ate it — confirm today’s suggested plate.\n'
-            '⏭ Not today — move the plate and later plan forward safely.\n'
-            '⚖️ Add weight · 🏃 Add treadmill · 📈 Fitness week — log and review fitness.\n\n'
-            'Use /cancel to stop an unfinished entry.'
+            '✨ At your service, handsome.\n\n'
+            '📅 Today · 🍽 Meals · ✅ I ate it · ⏭ Not today\n'
+            '⚖️ Add weight · 🏃 Add treadmill · 📈 Fitness week\n\n'
+            '/cancel stops any unfinished entry.'
         )
 
     if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
-        events = rows('SELECT title,start_at FROM events WHERE substr(start_at,1,10)=? ORDER BY start_at', (today_iso,))
-        tasks = rows("SELECT title,due_time FROM tasks WHERE status!='done' AND due_date=? ORDER BY CASE WHEN due_time IS NULL THEN 1 ELSE 0 END,due_time,title", (today_iso,))
-        treadmill = one('SELECT COALESCE(SUM(duration_min),0) AS mins FROM treadmill WHERE date=?', (today_iso,))['mins']
-        gym = rows('SELECT name FROM workouts WHERE date=? ORDER BY id', (today_iso,))
-        bills_today = [b for b in active_bill_occurrences() if b['due_date'] == today_iso]
-        routines = rows('SELECT name,next_due,routine_time FROM routines WHERE next_due<=? ORDER BY next_due,COALESCE(routine_time,\'23:59\'),name', (today_iso,))
-        lines = [f'📅 TODAY · {today.strftime("%a %d/%m/%y")}', f'{len(tasks)} tasks · {len(routines)} routines · {len(events)} events']
-        for event in events:
-            lines.append(f"{event['start_at'][11:16]} · {event['title']}")
-        for task in tasks:
-            lines.append(f"{task.get('due_time') or 'Any time'} · {task['title']}")
-        if routines:
-            lines.append('')
-            lines.append('ROUTINES')
-            lines.extend((f"{routine.get('routine_time') or 'Any time'} · {routine['name']} · OVERDUE {(today-date.fromisoformat(routine['next_due'])).days}d" if routine['next_due'] < today_iso else f"{routine.get('routine_time') or 'Any time'} · {routine['name']}") for routine in routines)
-        if bills_today:
-            lines.append('')
-            lines.extend(f"💳 Due today · {bill['name']} · {float(bill['amount_mad']):.2f} MAD" for bill in bills_today)
-        activity = []
-        if treadmill:
-            activity.append(f'Treadmill {int(treadmill)} min')
-        if gym:
-            activity.append('Gym: ' + ', '.join(item['name'] for item in gym))
-        if activity:
-            lines.append('')
-            lines.append('ACTIVITY · ' + ' · '.join(activity))
-        if not (events or tasks or routines or bills_today or treadmill or gym):
-            lines.append('No plans today. Enjoy the free time!')
-        return '\n'.join(lines)
+        agenda = build_today_agenda(today)
+        lines = [f"📅 TODAY, handsome · {today.strftime('%a %d/%m')}"]
+        sections = [
+            ('YOUR TO-DO', [x for x in agenda['items'] if x['status'] in ('overdue', 'due', 'pending')]),
+            ('ON THE RADAR', [x for x in agenda['items'] if x['status'] in ('scheduled', 'upcoming')]),
+            ('DONE', [x for x in agenda['items'] if x['status'] == 'completed']),
+        ]
+        for heading, entries in sections:
+            if not entries:
+                continue
+            lines.append(f"\n{heading}")
+            for entry in entries:
+                lines.append(f"• {telegram_agenda_line(entry)}")
+        if not agenda['items']:
+            lines.append("All clear, handsome. Enjoy your day. ✨")
+        elif agenda['open_count']:
+            lines.append(f"\n{agenda['open_count']} to handle. You’ve got this. ✨")
+        result = '\n'.join(lines)
+        # Telegram messages are limited to 4096 characters; retain a clear note
+        # rather than allowing large agendas to fail delivery.
+        if len(result) > 3900:
+            kept = result[:3700].rsplit('\n', 1)[0]
+            result = kept + "\n…The rest is on your XROB dashboard."
+        return result
 
     if low in ('✅ tasks', '/tasks', 'tasks', 'my tasks', 'show tasks', 'list tasks', 'to do', 'todo'):
         tasks = rows("SELECT id,title,due_date,due_time,priority FROM tasks WHERE status!='done' ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,due_date,CASE WHEN due_time IS NULL THEN 1 ELSE 0 END,due_time,id LIMIT 12")
@@ -3313,7 +3563,7 @@ async def telegram_command(text: str) -> str:
         next_open = next((bill for bill in active_bill_occurrences()
                           if int(bill.get('series_id') or bill['id']) == series_id), None)
         next_text = f" Next bill due {_telegram_date_label(next_open['due_date'])}." if next_open else ''
-        return f"✅ Marked paid: {matched['name']} · {float(matched['amount_mad']):.2f} MAD.{next_text}"
+        return f"Paid, handsome: {matched['name']} · {float(matched['amount_mad']):.2f} MAD.{next_text}"
 
     # Bare /taskdone displays open items for convenient selection.
     if low in ('/taskdone','task done','finish task','complete task'):
@@ -3332,8 +3582,8 @@ async def telegram_command(text: str) -> str:
                 return 'Which task? ' + ', '.join(item['title'] for item in matches[:5])
             return f"I couldn't find an open task called '{query}'. Send Tasks to see open tasks."
         with connect() as c:
-            c.execute("UPDATE tasks SET status='done' WHERE id=?", (matched['id'],))
-        return f"✅ Task completed: {matched['title']}"
+            c.execute("UPDATE tasks SET status='done',completed_at=? WHERE id=?", (today_iso, matched['id']))
+        return f"Done, handsome: {matched['title']} ✓"
 
     # Add a scheduled task. Times always use 24-hour HH:MM.
     task_request = (bool(re.match(r'(?i)^/task(?:@[a-z0-9_]+)?\s+', raw)) or low.startswith('/task ') or low.startswith('task ') or low.startswith('add task ') or
