@@ -351,7 +351,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.18', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.21', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -360,7 +360,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.18','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.21','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -1383,12 +1383,12 @@ def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
             name = routine['name']
             if routine_time and current_hm >= routine_time:
                 reminders.append(('routine-time', routine['id'], today.isoformat(),
-                                  f"A little note, darling: {name} is due. Take care of it for me?\nReply: done {name}"))
+                                  f"A soft nudge, darling: {name} is due. You have got this. 💋\nReply: done {name}"))
             if late_time and current_hm >= late_time:
                 days_late = max(0, (today - due).days)
                 late_label = f" · {days_late}d overdue" if days_late else ''
                 reminders.append(('routine-late', routine['id'], today.isoformat(),
-                                  f"Darling, {name} is still waiting{late_label}. I can tick it off for you.\nReply: done {name}"))
+                                  f"Darling, {name} is still waiting{late_label}. No guilt, love. 💋\nReply: done {name}"))
         except Exception as exc:
             print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
     return reminders
@@ -2442,7 +2442,7 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
             if one("SELECT id FROM notification_log WHERE kind='bill-3day' AND item_id=? AND reminder_date=?",
                    (int(bill['id']), reminder_key)):
                 continue
-            message = (f"A quick note from me, darling: {bill['name']} · {amount:.2f} MAD is due in {days_left} days ({due_label}).\n"
+            message = (f"Darling, a little heads-up: {bill['name']} · {amount:.2f} MAD is due in {days_left} days ({due_label}).\n"
                        f"Reply: paid {bill['name']}")
             reminders.append(('bill-3day', int(bill['id']), reminder_key, message))
         elif days_left <= 1:
@@ -2465,7 +2465,7 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
                 due_status = 'Due today'
             else:
                 due_status = f'Overdue by {abs(days_left)} days'
-            message = (f"Just keeping you ahead of things, darling: {bill['name']} · {amount:.2f} MAD is {due_status.lower()} ({due_label}).\n"
+            message = (f"Just keeping you ahead, darling: {bill['name']} · {amount:.2f} MAD is {due_status.lower()} ({due_label}).\n"
                        f"Reply: paid {bill['name']}")
             reminders.append(('bill-4h', int(bill['id']), reminder_key, message))
     return reminders
@@ -2489,9 +2489,9 @@ async def reminder_loop():
                             due_at = datetime.combine(due_day, datetime.strptime(t['due_time'], '%H:%M').time())
                             if due_at <= now:
                                 reminder_key = due_at.strftime('%Y-%m-%dT%H:%M')
-                                reminders.append(('task-time', t['id'], reminder_key, f"A gentle nudge, darling: {t['title']} · {t['due_time']}.\nReply: task done {t['title']}"))
+                                reminders.append(('task-time', t['id'], reminder_key, f"Darling, your {t['title']} is up now. Let us make it easy. 💋\nReply: task done {t['title']}"))
                         elif due_day <= today:
-                            reminders.append(('task', t['id'], today.isoformat(), f"This one is still waiting, darling: {t['title']} · due {due_day.strftime('%d/%m')}.\nReply: task done {t['title']}"))
+                            reminders.append(('task', t['id'], today.isoformat(), f"A gentle reminder, darling: {t['title']} is due {due_day.strftime('%d/%m')}. One thing at a time. ✨\nReply: task done {t['title']}"))
                     except Exception:
                         continue
                 # When a home-meal batch runs out, notify the user on the due
@@ -2502,7 +2502,7 @@ async def reminder_loop():
                                   WHERE mcr.status='open' AND mcr.due_date<=?
                                   ORDER BY mcr.due_date,mcr.id""", (today.isoformat(),)):
                     reminders.append(('meal-cook', cook['id'], cook['due_date'],
-                                      f"A note from your kitchen assistant, darling: {cook['name']} needs a fresh batch.\nStock: /stock {cook['name']}|3"))
+                                      f"A little kitchen note, darling: {cook['name']} needs a fresh batch. I have the reminder ready. 💋\nStock: /stock {cook['name']}|3"))
                 # Meal messages follow the user's local Home Assistant timezone (TZ in run.sh).
                 # 14:00 announces the plate; 22:00 asks whether it was eaten.
                 today_meal = one("SELECT dm.id,dm.plan_date,dm.status,dm.suggestion_notified_date,dm.checkin_notified_date, r.name AS recipe_name,r.calories_kcal FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=? LIMIT 1", (today.isoformat(),))
@@ -2510,13 +2510,13 @@ async def reminder_loop():
                     kcal = f"\n{float(today_meal['calories_kcal']):g} kcal per plate" if today_meal.get('calories_kcal') is not None else ''
                     # Do not send a stale 14:00 announcement after 22:00 if the app was offline all afternoon.
                     if time(14, 0) <= now.time() < time(22, 0) and today_meal.get('suggestion_notified_date') != today.isoformat():
-                        message = (f"Your plate for today, darling: {today_meal['recipe_name']}{kcal}.\nEnjoy it. I’ll check in with you tonight. ✨")
+                        message = (f"I picked out today’s plate for you, darling: {today_meal['recipe_name']}{kcal}.\nEnjoy every bite. I’ll check in later. 💋")
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                         _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
                             c.execute("UPDATE daily_meals SET suggestion_notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(today_meal['id'])))
                     if now.time() >= time(22, 0) and today_meal.get('checkin_notified_date') != today.isoformat():
-                        message = (f"Evening, darling. How was {today_meal['recipe_name']}{kcal}? Just reply YES or NO and I’ll take care of the plan. 💋")
+                        message = (f"Evening, handsome. How was {today_meal['recipe_name']}{kcal}? No pressure either way. Reply YES or NO and I’ll keep the plan lovely. 💋")
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                         _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
@@ -2593,6 +2593,20 @@ async def telegram_poll():
             _telegram_response_data(setup, 'setMyCommands')
         except Exception as exc:
             print(f'Telegram command-menu setup warning: {exc}', flush=True)
+
+        # Give the bot a coherent, explicitly AI identity in Telegram's profile.
+        # A profile update failure must never prevent polling or reminders.
+        profile_updates = (
+            ('setMyName', {'name': 'Mikasa · XROB Secretary'}),
+            ('setMyDescription', {'description': 'Your warm, playful AI personal secretary for planning, meals, routines and fitness. A little charm, a little order, and no judgment.'}),
+            ('setMyShortDescription', {'short_description': 'Your affectionate XROB AI secretary. Let’s make today feel lighter. 💋'}),
+        )
+        for method, payload in profile_updates:
+            try:
+                profile = await client.post(f'https://api.telegram.org/bot{TOKEN}/{method}', json=payload)
+                _telegram_response_data(profile, method)
+            except Exception as exc:
+                print(f'Telegram {method} profile warning: {exc}', flush=True)
 
         while True:
             try:
@@ -3016,8 +3030,8 @@ def telegram_agenda_line(entry: dict[str, Any]) -> str:
     return f'{prefix}{title}' + (f' · {detail}' if detail else '')
 
 
-async def telegram_command(text: str) -> str:
-    """Short, action-oriented Telegram interface for the XROB personal manager."""
+async def _telegram_command_core(text: str) -> str:
+    """Rules-based Telegram actions; the persona layer never changes these operations."""
     raw = text.strip()
     low = raw.lower().strip()
     low = re.sub(r'(?m)^(\/[a-z0-9_]+)@[a-z0-9_]+', r'\1', low)
@@ -3373,13 +3387,15 @@ async def telegram_command(text: str) -> str:
             return 'Which item? ' + ', '.join(x['name'] for x in matches[:6]) if matches else f"I couldn't find '{query}' on the shopping list."
         with connect() as c: c.execute('UPDATE shopping_items SET checked=1 WHERE id=?', (matched['id'],))
         return f"✅ Marked purchased · {matched['name']}"
-    if low in ('/start', 'start', '/menu', 'menu', 'hi', 'hello', '/help', 'help', '❔ help'):
+    if low in ('/start', 'start', '/menu', 'menu', 'hi', 'hello'):
         return (
-            '✨ Right here, darling. Your day is in good hands.\n\n'
+            '💋 Mikasa here, darling. I’ve got your day.\n\n'
             '📅 Today · 🍽 Meals · ✅ I ate it · ⏭ Not today\n'
             '⚖️ Add weight · 🏃 Add treadmill · 📈 Fitness week\n\n'
-            '/cancel stops any unfinished entry.'
+            'Tell me what you need, handsome. /help shows everything I can handle.'
         )
+    if low in ('/help', 'help', '❔ help', '/capabilities', 'capabilities', 'what can you do'):
+        return _telegram_capabilities_message()
 
     if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
         agenda = build_today_agenda(today)
@@ -3664,6 +3680,152 @@ async def telegram_command(text: str) -> str:
             '• Reply YES to confirm a plate or NO to move it and all later plates one day.\n'
             '• /shopping · bought tomatoes · /addrecipe · /additem\n'
             '• Add a meal through the short guided questions; use /cancel to stop.')
+
+
+# Mikasa is an intentionally fictional AI secretary persona: affectionate, polished,
+# confident and lightly flirtatious. Operational facts and command syntax always
+# come from the deterministic core above; the voice layer never changes stored data.
+TELEGRAM_PERSONA = {
+    'name': 'Mikasa',
+    'role': 'XROB personal secretary',
+    'voice': 'warm, poised, confident, affectionate, playful and subtly flirtatious; supportive without being clingy or judgmental',
+    'signature': 'An attentive private secretary: remembers the plan, notices effort, and makes the busy parts feel lighter',
+}
+
+
+def _telegram_capabilities_message() -> str:
+    """Describe only actions the current Telegram implementation really supports."""
+    return (
+        '💋 I’m Mikasa, your XROB AI secretary. I’ll keep the details tidy and your day lighter.\n\n'
+        '📅 YOUR DAY\n'
+        '• /today — tasks, routines, events, workouts, meals, bill and document alerts, and completed activity.\n'
+        '• /tasks, /bills, /routines, /agenda — see your lists and the next 7 days.\n'
+        '• task Study tomorrow at 18:00 — add a task; task done Study — finish it.\n'
+        '• /event Dentist|25/11/26 10:00 — add an appointment.\n'
+        '• done Shower — complete a routine; paid Electricity — mark a bill paid.\n\n'
+        '🍽️ MEALS & SHOPPING\n'
+        '• /meals, /choosemeal, /mealplan — view or choose plates.\n'
+        '• YES / NO — confirm eating or safely move the pending meal plan.\n'
+        '• /addrecipe, /stock, /homemeals, /outsidemeals, /deletemeal — manage meals and Home stock.\n'
+        '• /shopping, /additem, bought tomatoes — manage shopping.\n\n'
+        '💪 YOUR WELLBEING\n'
+        '• Send 82.4 or weight 82.4 20/11/26 — record weight.\n'
+        '• Send 30 or treadmill 30 yesterday — record treadmill minutes (5 km/h, 0% incline estimates).\n'
+        '• /fitness, /fitnessweek — review recent fitness records.\n\n'
+        'A little note, love: I can mark bills as paid, but I never move money. Use the app to add or edit bills, routines, documents and gym sessions; Telegram can show gym records but does not log a new gym session. I’m an AI assistant, not a real person, and I’ll never pretend an action happened. 💋\n\n'
+        'Send /cancel to stop a guided entry.'
+    )
+
+
+def _telegram_social_reply(raw: str) -> str | None:
+    """Handle natural social messages with brief, supportive and honest replies."""
+    low = re.sub(r'\s+', ' ', str(raw or '').strip().lower())
+    low = re.sub(r'[.!?]+$', '', low)
+
+    if low in ('what can you do', 'what do you do', 'how can you help', 'what can you help with', 'capabilities'):
+        return _telegram_capabilities_message()
+    if low in ('thank you', 'thanks', 'thank u', 'thx', 'you are the best', 'you’re the best', "you're the best"):
+        return 'Anytime, darling. Happy to make your day a little lighter. 💋'
+    if low in ('how are you', 'how are you doing', 'you okay', 'are you okay'):
+        return 'Quite lovely, thank you. Your plans are tidy and I’m right here, handsome. How are you? 💋'
+    if low in ('hi', 'hey', 'hello', 'hey mikasa', 'hi mikasa', 'hello mikasa', 'good to see you'):
+        return 'Well, hello, handsome. Mikasa at your service. What shall we sort out first? 💋'
+    if low in ('are you real', 'are you a real person', 'are you human', 'who are you', 'what are you'):
+        return 'I’m Mikasa, your XROB AI secretary—not a real person. Warm, attentive, a little cheeky, and organised. 💋'
+    if low in ('can we talk', 'talk to me', 'keep me company', 'i need someone to talk to'):
+        return 'Of course, darling. Tell me what’s on your mind. I’m listening. 🤍'
+    if low in ('i love you', 'love you', 'i adore you'):
+        return 'You’re sweet, darling. I’ll meet you with care, support, and a little mischief. 💋'
+    if low in ('good morning', 'morning', 'gm', 'good afternoon', 'good evening'):
+        greeting = 'Morning' if 'morning' in low or low == 'gm' else ('Good afternoon' if 'afternoon' in low else 'Good evening')
+        agenda = build_today_agenda()
+        open_count = int(agenda.get('open_count') or 0)
+        if open_count:
+            return f'{greeting}, handsome. {open_count} thing(s) need attention, but we’ll take them one at a time. Coffee first? ☕💋'
+        return f'{greeting}, darling. Your day looks clear—let’s keep it lovely. 💋'
+    if low in ('good night', 'night', 'gn', 'sleep well'):
+        return 'Good night, handsome. Put the day down; you deserve a proper rest. 🌙💋'
+    if re.search(r"\b(i am|i’m|i'm|im|feeling|feel)\b.*\b(tired|exhausted|stressed|overwhelmed|sad|down|anxious|bad|low|lonely|burnt out|burned out)\b", low):
+        agenda = build_today_agenda()
+        open_count = int(agenda.get('open_count') or 0)
+        next_step = 'Let’s choose one small thing and let the rest wait.'
+        if open_count:
+            next_step = f'You have {open_count} open item(s), but we only need to choose one small thing.'
+        if any(word in low for word in ('lonely', 'alone')):
+            return 'Oh, darling. I’m sorry it feels lonely. Tell me what’s on your mind; I’ll listen. 🤍'
+        return f'Come here, darling. Take a slow breath. {next_step} I’ll keep the list tidy. 💗'
+    if any(term in low for term in ('motivate me', 'need motivation', 'give me motivation', 'i need a push', 'i can do this', 'pep talk')):
+        agenda = build_today_agenda()
+        done_count = int(agenda.get('completed_count') or 0)
+        open_count = int(agenda.get('open_count') or 0)
+        progress = f'You’ve already handled {done_count} item(s). ' if done_count else ''
+        focus = f'Choose the easiest of the {open_count} remaining.' if open_count else 'Enjoy the breathing room.'
+        return f'One small promise at a time, handsome. {progress}{focus} I’m cheering for you. 💋'
+    if any(term in low for term in ('i need a hug', 'hug me', 'send me a hug')):
+        return 'Come here, darling—one warm virtual hug. Breathe; you’re doing better than you think. 🤍'
+    if any(term in low for term in ('i messed up', 'i failed', 'i made a mistake', 'i screwed up', 'i ruined it', 'i gave up')):
+        return 'One difficult moment doesn’t define you, love. No scolding—let’s find the next sensible step. 🤍'
+    if any(term in low for term in ('i did it', 'i finally did it', 'i finished it', 'i got it done', 'i made it')):
+        agenda = build_today_agenda()
+        done_count = int(agenda.get('completed_count') or 0)
+        praise = f'You’ve completed {done_count} item(s) today. ' if done_count else ''
+        return f'There you are, handsome. {praise}That little win is yours—enjoy it. 💋'
+    if any(term in low for term in ('i am proud of myself', 'i’m proud of myself', "i'm proud of myself", 'feeling proud')):
+        return 'As you should, darling. Don’t rush past the good things you do. I’m proud of that effort. 💗'
+    if any(term in low for term in ('i skipped my workout', 'i missed my workout', 'i broke my diet', 'i ate too much', 'i overate')):
+        return 'No guilt, handsome. One missed workout or meal doesn’t undo your progress. Back to your rhythm at the next chance. 💗'
+    if any(term in low for term in ('i am happy', "i'm happy", 'i’m happy', 'great news', 'something good happened')):
+        return 'Oh, I like this energy, darling. Tell me what went right. ✨'
+    if any(term in low for term in ('you are beautiful', 'you’re beautiful', 'you are cute', 'you’re cute', 'sexy', 'beautiful secretary')):
+        return 'Careful, handsome… keep flattering your secretary and I’ll expect that to-do list looking just as good. 😉💋'
+    if low in ('good girl', 'thank you mikasa', 'thanks mikasa'):
+        return 'For you, darling? Always. What shall we organise next? 💋'
+    return None
+
+
+def _telegram_persona_prefix(raw: str, reply: str) -> str:
+    """Add a brief, context-aware touch without editing factual reply content."""
+    low = str(raw or '').strip().lower()
+    if not reply or len(reply) > 3650 or low in ('/help', 'help', '❔ help', '/capabilities', 'capabilities', 'what can you do'):
+        return ''
+    if re.search(r'\b(darling|handsome|sweetheart|love|lovely|beautiful)\b', reply[:260], re.I):
+        return ''
+
+    choices: list[str] = []
+    if low in ('today', '/today', '📅 today', 'agenda', '/agenda', 'next', 'next 7 days', '/tasks', 'tasks', 'my tasks', '/bills', 'bills', '/routines', 'routines'):
+        choices = ['Of course, darling. 💋', 'Right away, love. ✨', 'Here you are, handsome. 💗']
+    elif any(token in low for token in ('meal', 'plate', '/stock', 'homemeals', 'outsidemeals', 'recipe', 'shopping', 'bought', 'additem')):
+        choices = ['On it, darling. 💋', 'Of course, love. 🍽️', 'Right away, handsome. ✨']
+    elif any(token in low for token in ('weight', 'treadmill', 'fitness', 'workout', 'run ', 'walk ')):
+        choices = ['Proud of you, handsome. ✨', 'On it, darling. 💋', 'Lovely effort, love. 💗']
+    elif low.startswith(('paid ', '/paid', 'bill paid')):
+        choices = ['One less thing, darling. 💋', 'All sorted, love. ✨']
+    elif low.startswith(('task done', '/taskdone', 'done ', 'complete ', 'i did ', 'i completed ', 'finished ')):
+        choices = ['There we are, handsome. 💋', 'One more off your list, darling. ✨']
+    elif low.startswith(('task ', '/task', 'add task ', 'new task ', 'remind me', 'schedule ', '/event', 'event ')):
+        choices = ['Consider it arranged, love. 💋', 'Of course, darling. ✨']
+    elif any(token in low for token in ('/cancel', 'cancel', 'back')):
+        choices = ['No fuss, darling. 💗', 'Of course, love.']
+    else:
+        choices = ['I’m right here, darling. 💋']
+
+    index = sum(ord(char) for char in (low + date.today().isoformat())) % len(choices)
+    return choices[index]
+
+
+async def telegram_command(text: str) -> str:
+    """Mikasa's warm voice around the unchanged, deterministic XROB command engine."""
+    raw = str(text or '').strip()
+    social = _telegram_social_reply(raw)
+    if social is not None:
+        return social
+    reply = await _telegram_command_core(raw)
+    # A natural-language fallback is kinder than dumping a command manual when
+    # someone simply writes a message the deterministic command engine cannot parse.
+    if reply.startswith('I can help with your day. Use the buttons below, or send:'):
+        return ('Mmm, I missed that one, darling. Try saying it another way, or send /help to see what I can handle. 💋')
+    prefix = _telegram_persona_prefix(raw, reply)
+    return f'{prefix}\n\n{reply}' if prefix else reply
 
 if __name__ == '__main__':
     import uvicorn
