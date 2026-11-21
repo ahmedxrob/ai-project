@@ -192,11 +192,11 @@ async function refresh(){const requestId=++refreshSequence;try{
  if(requestId!==refreshSequence)return;
  syncCurrentDate(sum.today);
  const mealWeekStart=weekStartISO(today),mealWeekEnd=addDaysISO(mealWeekStart,6);
- const [events,tasks,weights,treadmills,workouts,workout_plan,bills,documents,routines,recipes,dailyMeals,shoppingItems,cookReminders,mealSkips]=await Promise.all([
-  'events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','documents?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000','meal_cook_reminders?limit=10000',`meal-schedule-skips?start_date=${mealWeekStart}&end_date=${mealWeekEnd}`
+ const [events,tasks,weights,treadmills,workouts,workout_plan,bills,routines,recipes,dailyMeals,shoppingItems,cookReminders,mealSkips]=await Promise.all([
+  'events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000','meal_cook_reminders?limit=10000',`meal-schedule-skips?start_date=${mealWeekStart}&end_date=${mealWeekEnd}`
  ].map(x=>api(x)));
  if(requestId!==refreshSequence)return;
- const todayAgenda=sum.today_agenda||{date:today,count:0,open_count:0,scheduled_count:0,completed_count:0,items:[]};cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,documents,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems,meal_cook_reminders:cookReminders,meal_schedule_skips:mealSkips,today_agenda:todayAgenda};const billGroups=groupBillSeries(bills);$('#api-status').textContent='API connected';
+ const todayAgenda=sum.today_agenda||{date:today,count:0,open_count:0,scheduled_count:0,completed_count:0,items:[]};const greeting=$('#overview-greeting');if(greeting)greeting.textContent='A little more clarity. A lot less juggling.';const overviewSubtitle=$('#overview-subtitle');if(overviewSubtitle){const open=Number(todayAgenda.open_count||0),done=Number(todayAgenda.completed_count||0);overviewSubtitle.textContent=open?`You have ${open} ${open===1?'thing':'things'} to take care of today${done?` â€” and ${done} already handled`:''}. Iâ€™ve brought everything together for you.`:done?`Youâ€™ve handled ${done} ${done===1?'item':'items'} today. Everything else is looking clear â€” enjoy the breathing room.`:'Your schedule, reminders and progress are all in one place. Letâ€™s keep the day feeling manageable.';}cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems,meal_cook_reminders:cookReminders,meal_schedule_skips:mealSkips,today_agenda:todayAgenda};const billGroups=groupBillSeries(bills);$('#api-status').textContent='API connected';
  const nextBill=sum.upcoming_bill;
  const billHint=nextBill?`${esc(nextBill.name)} Â· ${formatDate(nextBill.due_date)} Â· ${money(nextBill.amount_mad)}`:'No unpaid bills coming up';
  const tomorrowISO=addDaysISO(today,1);
@@ -224,120 +224,44 @@ async function refresh(){const requestId=++refreshSequence;try{
  }catch(e){if(requestId!==refreshSequence)return;$('#api-status').textContent='API unavailable';console.error(e);toast(e.message)}}
 function calendarItemsForDay(day){
  const c=cache;
- const styleType={
-  'routine':'routine','routine-done':'routine','cook':'care','workout-plan':'workout','workout':'workout',
-  'meal':'meal','bill':'bill','task':'task','task-done':'task',document:'task','event':'event',
-  'weight':'fitness','treadmill':'fitness','document':'task'
- };
  if(day===today&&Array.isArray(c.today_agenda?.items)){
-  return c.today_agenda.items.map(x=>({
-   ...x,originalType:x.type,visualType:styleType[x.type]||x.type,
-   time:x.time||null,title:x.title||'',detail:x.detail||'',status:x.status||'scheduled'
-  }));
+  const typeMap={routine:'care','routine-done':'care',cook:'care','workout-plan':'gym',workout:'gym',meal:'meal',bill:'bill',task:'task','task-done':'task',document:'task',event:'event'};
+  return c.today_agenda.items.map(x=>({type:x.type==='meal'&&x.status==='completed'?'meal-eaten':(typeMap[x.type]||x.type),sortTime:x.time||null,text:`${x.time?x.time+' ':''}${x.title}`,detail:x.detail}));
  }
  const items=[];
- const push=(x)=>items.push({...x,originalType:x.originalType||x.type,visualType:x.visualType||styleType[x.type]||x.type});
- for(const e of (c.events||[]).filter(x=>String(x.start_at||'').slice(0,10)===day)){
-  push({id:e.id,type:'event',status:'scheduled',time:e.start_at?.includes('T')?e.start_at.slice(11,16):null,title:e.title,detail:`Event${e.category?' Â· '+e.category:''}${e.end_at?.includes('T')?' Â· ends '+e.end_at.slice(11,16):''}`});
- }
- for(const t of (c.tasks||[])){
-  const completedDay=String(t.completed_at||'').slice(0,10);
-  if(t.status==='done'&&completedDay===day){push({id:t.id,type:'task-done',status:'completed',time:completedDay===day&&t.completed_at?.includes('T')?t.completed_at.slice(11,16):null,title:t.title,detail:'Task completed'});continue}
-  if(t.status!=='done'&&t.due_date===day){push({id:t.id,type:'task',status:day<today?'overdue':day===today?'due':'scheduled',time:t.due_time||null,title:t.title,detail:`Task reminder Â· ${(t.priority||'normal').toLowerCase()} priority`})}
- }
- const weight=uniqueWeightsPerDay(c.weights||[]).find(x=>x.date===day);
- if(weight)push({id:weight.id,type:'weight',status:'completed',title:`${formatKg(weight.kg)} kg`,detail:'Recorded weight'});
- const tread=(c.treadmill||[]).filter(x=>x.date===day);
- if(tread.length){const mins=tread.reduce((a,x)=>a+Number(x.duration_min||0),0);push({type:'treadmill',status:'completed',title:`Treadmill Â· ${Math.round(mins)} min`,detail:`${tread.length} session${tread.length===1?'':'s'} Â· ${Math.round(tread.reduce((a,x)=>a+Number(x.calories_kcal||0),0))} estimated kcal`})}
- const loggedWorkouts=(c.workouts||[]).filter(x=>x.date===day);
- for(const w of loggedWorkouts)push({id:w.id,type:'workout',status:'completed',title:`Gym Â· ${w.name}${Number(w.duration_min||0)>0?' Â· '+Number(w.duration_min)+' min':''}`,detail:w.notes||'Workout logged'});
- const dayDate=new Date(day+'T12:00:00'),weekday=WEEKDAY_LABELS[(dayDate.getDay()+6)%7];
- for(const planned of (c.workout_plan||[]).filter(x=>x.weekday===weekday&&!loggedWorkouts.some(w=>String(w.name||'').trim().toLowerCase()===String(x.name||'').trim().toLowerCase())))
-  push({id:planned.id,type:'workout-plan',status:'scheduled',title:planned.name,detail:`Planned workout${planned.notes?' Â· '+planned.notes:''}`});
- for(const r of (c.routines||[])){
-  if(r.next_due===day)push({id:r.id,type:'routine',status:day<today?'overdue':day===today?'due':'scheduled',time:r.routine_time||null,title:r.name,detail:`Routine Â· every ${Math.max(1,Number(r.interval_days||1))} days`});
-  if(r.last_done===day)push({id:r.id,type:'routine-done',status:'completed',title:r.name,detail:'Routine completed'});
- }
- for(const document of (c.documents||[])){
-  const expiry=String(document.expiry_date||'').slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(expiry))continue;
-  const remaining=Math.round((new Date(expiry+'T12:00:00')-new Date(day+'T12:00:00'))/86400000);
-  const lead=Math.max(0,Number(document.reminder_days??30));if(remaining>lead)continue;
-  const status=remaining<0?'overdue':remaining===0?'due':'upcoming';
-  const detail=remaining<0?`Expired ${Math.abs(remaining)}d ago`:remaining===0?'Expires today':`Expires in ${remaining}d`;
-  push({id:document.id,type:'document',status,title:document.name,detail});
- }
- for(const group of groupBillSeries(c.bills||[]).filter(x=>x.next&&x.next.due_date===day))push({id:group.next.id,type:'bill',status:day<today?'overdue':day===today?'due':'upcoming',title:group.next.name,detail:`${money(group.next.amount_mad)} Â· ${day===today?'Due today':day<today?'Payment overdue':'Payment due'}`});
- for(const m of (c.daily_meals||[]).filter(x=>x.plan_date===day))push({id:m.id,type:'meal',status:m.status==='eaten'?'completed':'pending',title:m.recipe_name||'Meal',detail:`${m.status==='eaten'?'Confirmed eaten':'Waiting for your check-in'}${m.calories_kcal!=null?' Â· '+Number(m.calories_kcal)+' kcal':''}`});
- for(const r of (c.meal_cook_reminders||[]).filter(x=>x.due_date===day&&x.status==='open'))push({id:r.id,type:'cook',status:'due',title:`Prepare ${r.recipe_name}`,detail:'Home meal stock Â· cooking needed'});
+ for(const e of (c.events||[]).filter(x=>x.start_at.slice(0,10)===day))items.push({type:'event',sortTime:e.start_at.includes('T')?e.start_at.slice(11,16):null,text:`${e.start_at.includes('T')?e.start_at.slice(11,16)+' ':''}${e.title}`,detail:`Event${e.category?' Â· '+e.category:''}`});
+ for(const t of (c.tasks||[]).filter(x=>x.status!=='done'&&x.due_date===day))items.push({type:'task',sortTime:t.due_time||null,text:`${t.due_time?t.due_time+' ':''}${t.title}`,detail:'Task reminder'});
+ const weight=uniqueWeightsPerDay(c.weights||[]).find(x=>x.date===day);if(weight)items.push({type:'weight',sortTime:null,text:`${formatKg(weight.kg)} kg`,detail:'Recorded weight'});
+ const tread=(c.treadmill||[]).filter(x=>x.date===day);if(tread.length){const mins=tread.reduce((a,x)=>a+Number(x.duration_min||0),0);items.push({type:'treadmill',sortTime:null,text:`Treadmill ${Math.round(mins)} min`,detail:`${tread.length} session${tread.length===1?'':'s'} Â· ${tread.reduce((a,x)=>a+Number(x.calories_kcal||0),0)} estimated kcal`})}
+ for(const w of (c.workouts||[]).filter(x=>x.date===day))items.push({type:'gym',sortTime:null,text:`Gym: ${w.name}${Number(w.duration_min||0)>0?' Â· '+Number(w.duration_min)+' min':''}`,detail:w.notes||'Gym workout'});
+ for(const r of (c.routines||[])){if(r.next_due===day)items.push({type:'care',sortTime:r.routine_time||null,text:`${r.routine_time?r.routine_time+' ':''}Routine: ${r.name}`,detail:`Scheduled routine Â· late reminder ${r.routine_late_time||'off'}${r.routine_late_time&&Number(r.routine_rollover_after_late)?' Â· moves to tomorrow if still incomplete':''} Â· every ${Math.max(1,Number(r.interval_days||1))} days`})}
+ for(const group of groupBillSeries(c.bills||[]).filter(x=>x.next&&x.next.due_date===day))items.push({type:'bill',sortTime:null,text:`Bill: ${group.next.name}`,detail:`${money(group.next.amount_mad)} due`});
+ for(const m of (c.daily_meals||[]).filter(x=>x.plan_date===day))items.push({type:m.status==='eaten'?'meal-eaten':'meal',sortTime:null,text:`${m.status==='eaten'?'âœ“ ':'ðŸ½ '}${m.recipe_name||'Meal'}`,detail:`Daily plate Â· ${m.status==='eaten'?'confirmed eaten':'waiting for confirmation'}${m.calories_kcal!=null?' Â· '+Number(m.calories_kcal)+' kcal':''}`});
+ for(const r of (c.meal_cook_reminders||[]).filter(x=>x.due_date===day))items.push({type:'care',sortTime:null,text:`ðŸ³ Cook: ${r.recipe_name}`,detail:'Home meal stock ran out Â· replenish ready plates'});
+ // Items with explicit times come first, sorted from earliest to latest;
+ // date-only logs follow them in a stable, predictable order.
  return items.map((item,index)=>({...item,_index:index})).sort((a,b)=>{
-  const at=a.time||'99:99',bt=b.time||'99:99';
-  return at.localeCompare(bt)||a._index-b._index;
- }).map(({_index,...item})=>item);
-}
-function plannerStatusLabel(status){return ({overdue:'Overdue',due:'Due today',pending:'To confirm',scheduled:'Scheduled',upcoming:'Coming up',completed:'Done'})[status]||'Scheduled'}
-function plannerItemAction(x){
- const id=Number(x.id);
- if(!id)return '';
- if(x.originalType==='routine'&&['due','overdue'].includes(x.status))return `<button class="mini-btn success" data-complete="${id}">Done</button>`;
- if(x.originalType==='task'&&['due','overdue'].includes(x.status))return `<button class="mini-btn success" data-taskdone="${id}">Done</button>`;
- if(x.originalType==='bill'&&x.status!=='completed')return `<button class="mini-btn" data-pay="${id}">Mark paid</button>`;
- if(x.originalType==='meal'&&x.status==='pending')return `<span class="action-group"><button class="mini-btn success" data-meal-confirm="${id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${id}" data-meal-decision="no">Move</button></span>`;
- return '';
-}
-function renderPlannerSummary(){
- const host=$('#planner-summary');if(!host)return;
- const todayItems=calendarItemsForDay(today),agenda=cache.today_agenda||{};
- let nextSeven=0;
- for(let offset=1;offset<=7;offset++){
-  const day=addDaysISO(today,offset);
-  nextSeven+=calendarItemsForDay(day).filter(x=>x.status!=='completed').length;
- }
- const open=Number(agenda.open_count??todayItems.filter(x=>['overdue','due','pending'].includes(x.status)).length);
- host.innerHTML=`<div class="planner-summary-card"><span class="planner-summary-icon">â—·</span><div><small>Today</small><b>${todayItems.length}</b><span>${todayItems.length===1?'item on your day':'items across your day'}</span></div></div><div class="planner-summary-card planner-summary-attention"><span class="planner-summary-icon">âœ¦</span><div><small>Needs attention</small><b>${open}</b><span>${open===1?'thing to take care of':'things to take care of'}</span></div></div><div class="planner-summary-card planner-summary-next"><span class="planner-summary-icon">â†—</span><div><small>Next 7 days</small><b>${nextSeven}</b><span>${nextSeven===1?'upcoming item':'upcoming items'}</span></div></div>`;
-}
-function renderPlannerUnscheduled(){
- const host=$('#planner-unscheduled-list');if(!host)return;
- const tasks=(cache.tasks||[]).filter(x=>x.status!=='done'&&!x.due_date).sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
- const count=$('#planner-unscheduled-count');if(count)count.textContent=String(tasks.length);
- if(!tasks.length){host.innerHTML='<div class="planner-unscheduled-empty">All caught up â€” every open task has a date, or your list is clear. âœ¨</div>';return}
- host.innerHTML=tasks.map(task=>`<div class="planner-unscheduled-item"><span class="planner-unscheduled-icon">â˜</span><div><b>${esc(task.title)}</b><small>${esc((task.priority||'normal').toLowerCase())} priority${task.category?' Â· '+esc(task.category):''}${task.notes?' Â· '+esc(task.notes):''}</small></div><button class="mini-btn success" data-taskdone="${Number(task.id)}">Done</button></div>`).join('');
-}
-function renderPlannerDay(items){
- const host=$('#calendar-day-detail');if(!host)return;
- const open=items.filter(x=>['overdue','due','pending'].includes(x.status)).length;
- $('#calendar-selected-label').textContent=longDateLabel(selectedCalendarDate);
- $('#planner-day-eyebrow').textContent=selectedCalendarDate===today?'TODAY':'SELECTED DAY';
- $('#planner-day-subtitle').textContent=items.length?`${items.length} ${items.length===1?'item':'items'}${open?` Â· ${open} need${open===1?'s':''} attention`:''}`:'A clear day. Add a task or event whenever you need one.';
- if(!items.length){host.innerHTML=`<div class="planner-empty-day"><span>âœ§</span><b>Nothing planned here.</b><small>Enjoy the breathing room, or add something you would like to remember.</small></div>`;return}
- const icons={event:'â—·',task:'âœ“', 'task-done':'âœ“',routine:'âœ¦','routine-done':'âœ¦',bill:'Â¤',meal:'â™¨','meal-eaten':'â™¨',cook:'âŒ‚',workout:'âœ£','workout-plan':'âœ£',weight:'â†—',treadmill:'âŒ',document:'â–¤'};
- host.innerHTML=items.map(x=>`<article class="planner-entry planner-entry-${esc(x.visualType||x.type)} planner-entry-${esc(x.status)}"><span class="planner-entry-icon">${icons[x.originalType]||'â€¢'}</span><div class="planner-entry-copy"><div class="planner-entry-title"><b>${esc(x.title)}</b><span class="planner-entry-status planner-status-${esc(x.status)}">${plannerStatusLabel(x.status)}</span></div><small>${x.time?`<strong>${esc(x.time)}</strong> Â· `:''}${esc(x.detail)}</small></div><div class="planner-entry-actions">${plannerItemAction(x)}</div></article>`).join('');
+   const at=a.sortTime||'99:99',bt=b.sortTime||'99:99';
+   return at.localeCompare(bt)||a._index-b._index;
+ }).map(({_index,sortTime,...item})=>item);
 }
 function renderCalendar(events){
- const year=calendarMonth.getFullYear(),month=calendarMonth.getMonth();
- $('#calendar-month-label').textContent=calendarMonth.toLocaleDateString(undefined,{month:'long',year:'numeric'});
- renderPlannerSummary();
- const first=new Date(year,month,1),start=new Date(year,month,1-((first.getDay()+6)%7));
- const heads=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(x=>`<div class="cal-head" role="columnheader">${x}</div>`).join('');let cells='';
+ const year=calendarMonth.getFullYear(),month=calendarMonth.getMonth();$('#calendar-month-label').textContent=calendarMonth.toLocaleDateString(undefined,{month:'long',year:'numeric'});
+ const first=new Date(year,month,1),start=new Date(year,month,1-first.getDay());const heads=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(x=>`<div class="cal-head">${x}</div>`).join('');let cells='';
  for(let i=0;i<42;i++){
-  const d=new Date(start);d.setDate(start.getDate()+i);const iso=isoDate(d),entries=calendarItemsForDay(iso);
-  const categories=[...new Set(entries.map(x=>x.visualType||x.type))].slice(0,4);
-  const dots=categories.map(type=>`<i class="planner-dot planner-dot-${esc(type)}"></i>`).join('');
-  const label=d.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'});
-  cells+=`<button type="button" class="planner-date-cell ${d.getMonth()!==month?'outside':''} ${iso===today?'today':''} ${iso===selectedCalendarDate?'selected':''} ${entries.length?'has-event':''}" data-calendar-date="${iso}" aria-pressed="${iso===selectedCalendarDate?'true':'false'}" aria-label="${esc(label)}, ${entries.length} ${entries.length===1?'item':'items'}"><span class="planner-date-top"><span class="day-number">${d.getDate()}</span>${entries.length?`<span class="planner-day-count">${entries.length}</span>`:''}</span><span class="planner-day-dots">${dots}</span></button>`;
+  const d=new Date(start);d.setDate(start.getDate()+i);const iso=isoDate(d);const entries=calendarItemsForDay(iso);const shown=entries.slice(0,4);
+  cells+=`<div class="cal-day ${d.getMonth()!==month?'outside':''} ${iso===today?'today':''} ${iso===selectedCalendarDate?'selected':''} ${entries.length?'has-event':''}" data-calendar-date="${iso}" role="button" tabindex="0" title="${formatDate(iso)} Â· ${entries.length} item${entries.length===1?'':'s'}"><div class="day-number">${d.getDate()}</div><div class="cal-day-items">${shown.map(x=>`<span class="cal-event ${x.type}" title="${esc(x.detail)}">${esc(x.text)}</span>`).join('')}${entries.length>4?`<span class="cal-more">+${entries.length-4} more</span>`:''}</div></div>`;
  }
  $('#calendar-grid').innerHTML=heads+cells;
- renderPlannerDay(calendarItemsForDay(selectedCalendarDate));
- renderPlannerUnscheduled();
+ const selectedItems=calendarItemsForDay(selectedCalendarDate);const selected=new Date(selectedCalendarDate+'T12:00:00');
+ $('#calendar-selected-label').textContent=longDateLabel(selectedCalendarDate);
+ $('#calendar-day-detail').innerHTML=selectedItems.length?selectedItems.map(x=>`<div class="calendar-detail-row"><span class="calendar-detail-dot ${x.type}"></span><div><b>${esc(x.text)}</b><small>${esc(x.detail)}</small></div></div>`).join(''):empty('Nothing scheduled or recorded on this day.');
 }
 function shiftCalendarMonth(delta){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+delta,1);selectedCalendarDate=isoDate(calendarMonth);renderCalendar(cache.events||[])}
-$('#month-prev').onclick=()=>shiftCalendarMonth(-1);$('#month-next').onclick=()=>shiftCalendarMonth(1);
-$('#month-today').onclick=()=>{calendarMonth=new Date(today+'T12:00:00');selectedCalendarDate=today;renderCalendar(cache.events||[])};
-$('#calendar-day-today').onclick=()=>{calendarMonth=new Date(today+'T12:00:00');selectedCalendarDate=today;renderCalendar(cache.events||[])};
-function selectPlannerDate(day){if(!/^\d{4}-\d{2}-\d{2}$/.test(String(day||'')))return;selectedCalendarDate=day;const chosen=new Date(day+'T12:00:00');if(chosen.getMonth()!==calendarMonth.getMonth()||chosen.getFullYear()!==calendarMonth.getFullYear())calendarMonth=new Date(chosen.getFullYear(),chosen.getMonth(),1);renderCalendar(cache.events||[])}
-$('#calendar-grid').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-calendar-date]')){e.preventDefault();selectPlannerDate(e.target.closest('[data-calendar-date]').dataset.calendarDate)}});
+$('#month-prev').onclick=()=>shiftCalendarMonth(-1);$('#month-next').onclick=()=>shiftCalendarMonth(1);$('#month-today').onclick=()=>{calendarMonth=new Date(today+'T12:00:00');selectedCalendarDate=today;renderCalendar(cache.events||[])};$('#calendar-day-today').onclick=()=>{calendarMonth=new Date(today+'T12:00:00');selectedCalendarDate=today;renderCalendar(cache.events||[])};$('#calendar-grid').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-calendar-date]')){e.preventDefault();selectedCalendarDate=e.target.closest('[data-calendar-date]').dataset.calendarDate;renderCalendar(cache.events||[])}});
 function navigate(page){$$('.page').forEach(p=>p.classList.toggle('active',p.id===page));$$('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));document.body.classList.toggle('inner-page',page!=='overview');$('#page-title').textContent=titles[page]||'XROB'}
 $('#nav').addEventListener('click',e=>{let b=e.target.closest('[data-page]');if(b)navigate(b.dataset.page)});
-document.addEventListener('click',e=>{let calendarDay=e.target.closest('[data-calendar-date]');if(calendarDay)selectPlannerDate(calendarDay.dataset.calendarDate);let go=e.target.closest('[data-go]');if(go)navigate(go.dataset.go);let del=e.target.closest('[data-delete]');if(del){let [r,id]=del.dataset.delete.split(':');if(!confirm('Delete this record? This cannot be undone.'))return;api(r+'/'+id,{method:'DELETE'}).then(()=>{toast('Deleted');refresh()}).catch(err=>toast(err.message))}let deleteMeal=e.target.closest('[data-delete-recipe]');if(deleteMeal){deleteRecipeOption(Number(deleteMeal.dataset.deleteRecipe));return}let done=e.target.closest('[data-taskdone]');if(done)api('tasks/'+done.dataset.taskdone,{method:'PATCH',body:JSON.stringify({data:{status:'done'}})}).then(()=>{toast('Task completed');refresh()}).catch(err=>toast(err.message));let pay=e.target.closest('[data-pay]');if(pay)api('bills/'+pay.dataset.pay+'/pay',{method:'POST'}).then(()=>{toast('Bill marked paid');refresh()}).catch(err=>toast(err.message));let editBill=e.target.closest('[data-edit-bill]');if(editBill){const b=(cache.bills||[]).find(x=>x.id===Number(editBill.dataset.editBill));if(b)openModal('bill',b)}let editPayment=e.target.closest('[data-edit-payment]');if(editPayment){const b=(cache.bills||[]).find(x=>x.id===Number(editPayment.dataset.editPayment));if(b)openModal('bill_payment',b)}let comp=e.target.closest('[data-complete]');if(comp)api('routines/'+comp.dataset.complete+'/complete',{method:'POST'}).then(()=>{toast('Routine completed');refresh()}).catch(err=>toast(err.message));let edit=e.target.closest('[data-edit-routine]');if(edit){const r=(cache.routines||[]).find(x=>x.id===Number(edit.dataset.editRoutine));if(r)openModal('routine',r)}let editRecord=e.target.closest('[data-edit-routine-record]');if(editRecord){const r=(cache.routines||[]).find(x=>x.id===Number(editRecord.dataset.editRoutineRecord));if(r)openModal('routine_record',{...r,completed_at:r.last_done||today})}let modal=e.target.closest('[data-modal]');if(modal){openModal(modal.dataset.modal);const preferredKind=modal.dataset.plannerKind;const kindSelect=preferredKind?$('#modal-form [name="kind"]'):null;if(kindSelect){kindSelect.value=preferredKind;kindSelect.dispatchEvent(new Event('change'))}}});
+document.addEventListener('click',e=>{let calendarDay=e.target.closest('[data-calendar-date]');if(calendarDay){selectedCalendarDate=calendarDay.dataset.calendarDate;renderCalendar(cache.events||[])}let go=e.target.closest('[data-go]');if(go)navigate(go.dataset.go);let del=e.target.closest('[data-delete]');if(del){let [r,id]=del.dataset.delete.split(':');if(!confirm('Delete this record? This cannot be undone.'))return;api(r+'/'+id,{method:'DELETE'}).then(()=>{toast('Deleted');refresh()}).catch(err=>toast(err.message))}let deleteMeal=e.target.closest('[data-delete-recipe]');if(deleteMeal){deleteRecipeOption(Number(deleteMeal.dataset.deleteRecipe));return}let done=e.target.closest('[data-taskdone]');if(done)api('tasks/'+done.dataset.taskdone,{method:'PATCH',body:JSON.stringify({data:{status:'done'}})}).then(()=>{toast('Task completed');refresh()});let pay=e.target.closest('[data-pay]');if(pay)api('bills/'+pay.dataset.pay+'/pay',{method:'POST'}).then(()=>{toast('Bill marked paid');refresh()}).catch(err=>toast(err.message));let editBill=e.target.closest('[data-edit-bill]');if(editBill){const b=(cache.bills||[]).find(x=>x.id===Number(editBill.dataset.editBill));if(b)openModal('bill',b)}let editPayment=e.target.closest('[data-edit-payment]');if(editPayment){const b=(cache.bills||[]).find(x=>x.id===Number(editPayment.dataset.editPayment));if(b)openModal('bill_payment',b)}let comp=e.target.closest('[data-complete]');if(comp)api('routines/'+comp.dataset.complete+'/complete',{method:'POST'}).then(()=>{toast('Routine completed');refresh()}).catch(err=>toast(err.message));let edit=e.target.closest('[data-edit-routine]');if(edit){const r=(cache.routines||[]).find(x=>x.id===Number(edit.dataset.editRoutine));if(r)openModal('routine',r)}let editRecord=e.target.closest('[data-edit-routine-record]');if(editRecord){const r=(cache.routines||[]).find(x=>x.id===Number(editRecord.dataset.editRoutineRecord));if(r)openModal('routine_record',{...r,completed_at:r.last_done||today})}let modal=e.target.closest('[data-modal]');if(modal)openModal(modal.dataset.modal)});
 const configs={planner:{title:'Add planner item'},bill:{title:'Add bill',resource:'bills',fields:[['name','Bill name','text',true],['amount_mad','Amount (MAD)','number',true],['due_date','Due date','date',true],['recurrence','Recurrence','select',['none','monthly','quarterly','yearly']],['notes','Notes','textarea']]},bill_payment:{title:'Edit payment record'},routine:{title:'Add routine',resource:'routines',fields:[['name','Routine name','text',true],['interval_days','Repeat every (days)','number',true],['routine_time','Routine time (24-hour)','time24'],['routine_late_time','Late reminder time (optional)','time24'],['category','Category','text'],['notes','Notes','textarea']]},routine_record:{title:'Edit last completion record',resource:'routines',fields:[['completed_at','Last completed on','date',true]]}};
 function openModal(type,existing=null){
  delete $('#modal').dataset.lockBackdrop;
