@@ -20,6 +20,34 @@ function billCountdown(bill){if(!bill)return '—';let days=Number(bill.days_lef
 function formatKg(n){return Number(n||0).toLocaleString('fr-MA',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function empty(s='Nothing here yet. Add your first record to get started.'){return `<div class="empty">${s}</div>`}
 function item(title,sub='',tag='',actions=''){return `<div class="row-item"><div class="row-main"><b>${esc(title)}</b><small>${esc(sub)}</small></div>${tag?`<span class="tag">${esc(tag)}</span>`:''}${actions?`<div class="action-group">${actions}</div>`:''}</div>`}
+function groupBillSeries(bills){
+ const grouped=new Map();
+ for(const bill of bills||[]){const key=String(bill.series_id??bill.id);if(!grouped.has(key))grouped.set(key,{seriesId:key,records:[]});grouped.get(key).records.push(bill)}
+ return [...grouped.values()].map(group=>{
+  const unpaid=group.records.filter(b=>b.status!=='paid').sort((a,b)=>a.due_date.localeCompare(b.due_date)||Number(a.id)-Number(b.id));
+  const paid=group.records.filter(b=>b.status==='paid').sort((a,b)=>String(b.paid_at||b.due_date).localeCompare(String(a.paid_at||a.due_date))||Number(b.id)-Number(a.id));
+  return {...group,unpaid,paid,next:unpaid[0]||null,latestPayment:paid[0]||null,otherUnpaid:unpaid.slice(1)};
+ }).sort((a,b)=>{
+  if(a.next&&b.next)return a.next.due_date.localeCompare(b.next.due_date)||Number(a.next.id)-Number(b.next.id);
+  if(a.next)return -1;if(b.next)return 1;
+  return String(b.latestPayment?.paid_at||b.latestPayment?.due_date||'').localeCompare(String(a.latestPayment?.paid_at||a.latestPayment?.due_date||''));
+ });
+}
+function renderBillSeriesCard(group){
+ const bill=group.next||group.latestPayment;if(!bill)return '';
+ const recurring=(bill.recurrence||'none')!=='none';
+ const countdown=group.next?billCountdown(group.next):'Paid';
+ const overdue=group.next&&countdown.startsWith('Overdue');
+ const tag=group.next?`<span class="tag ${overdue?'bad':'warn'}">${esc(overdue?countdown:`Unpaid · ${countdown}`)}</span>`:'<span class="tag good">Paid</span>';
+ const primary=group.next?`${money(group.next.amount_mad)} · Next due ${formatDate(group.next.due_date)}`:`${money(bill.amount_mad)} · Paid ${formatDate(bill.paid_at||bill.due_date)}`;
+ const lastPayment=group.next&&group.latestPayment?`<small class="bill-last-payment">Last paid ${formatDate(group.latestPayment.paid_at||group.latestPayment.due_date)} · ${money(group.latestPayment.amount_mad)}</small>`:'';
+ const actions=group.next
+  ?`<button class="mini-btn" data-edit-bill="${Number(group.next.id)}">${recurring?'Edit next bill':'Edit bill'}</button><button class="mini-btn" data-pay="${Number(group.next.id)}">Mark paid</button>${group.latestPayment?`<button class="mini-btn" data-edit-payment="${Number(group.latestPayment.id)}">Edit last payment</button>`:''}`
+  :`<button class="mini-btn" data-edit-bill="${Number(bill.id)}">Edit bill</button><button class="mini-btn" data-edit-payment="${Number(bill.id)}">Edit payment</button>`;
+ const history=group.paid.length?`<details class="bill-history"><summary>Payment history · ${group.paid.length} ${group.paid.length===1?'payment':'payments'}</summary><div class="bill-history-list">${group.paid.map(payment=>`<div class="bill-history-row"><span><b>${formatDate(payment.paid_at||payment.due_date)}</b><small>${money(payment.amount_mad)} paid · Due ${formatDate(payment.due_date)}</small></span><button class="mini-btn" data-edit-payment="${Number(payment.id)}">Edit payment</button></div>`).join('')}</div></details>`:'';
+ const extraUnpaid=group.otherUnpaid.length?`<details class="bill-history bill-review"><summary>Review ${group.otherUnpaid.length} additional unpaid occurrence${group.otherUnpaid.length===1?'':'s'}</summary><div class="bill-history-list">${group.otherUnpaid.map(other=>`<div class="bill-history-row"><span><b>Due ${formatDate(other.due_date)}</b><small>${money(other.amount_mad)} · Still unpaid</small></span><span class="action-group"><button class="mini-btn" data-edit-bill="${Number(other.id)}">Edit</button><button class="mini-btn" data-pay="${Number(other.id)}">Mark paid</button></span></div>`).join('')}</div></details>`:'';
+ return `<div class="row-item bill-series-item"><div class="row-main"><div class="bill-title-line"><b>${esc(bill.name)}</b>${tag}</div><div class="bill-primary-meta">${primary}</div>${lastPayment}${extraUnpaid}${history}</div><div class="action-group">${actions}</div></div>`;
+}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function stat(label,value,hint=''){return `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div><div class="hint">${hint}</div></div>`}
 function uniqueWeightsPerDay(weights){const byDay=new Map();for(const w of [...weights].sort((a,b)=>Number(a.id)-Number(b.id)))byDay.set(w.date,w);return [...byDay.values()].sort((a,b)=>a.date.localeCompare(b.date)||Number(a.id)-Number(b.id))}
@@ -122,7 +150,7 @@ async function refresh(){const requestId=++refreshSequence;try{
   'events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000','meal_cook_reminders?limit=10000',`meal-schedule-skips?start_date=${mealWeekStart}&end_date=${mealWeekEnd}`
  ].map(x=>api(x)));
  if(requestId!==refreshSequence)return;
- cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems,meal_cook_reminders:cookReminders,meal_schedule_skips:mealSkips};$('#api-status').textContent='API connected';
+ cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems,meal_cook_reminders:cookReminders,meal_schedule_skips:mealSkips};const billGroups=groupBillSeries(bills);$('#api-status').textContent='API connected';
  const nextBill=sum.upcoming_bill;
  const billHint=nextBill?`${esc(nextBill.name)} · ${formatDate(nextBill.due_date)} · ${money(nextBill.amount_mad)}`:'No unpaid bills coming up';
  const routinesDueToday=routines.filter(r=>r.next_due&&r.next_due<=today).length;
@@ -132,10 +160,10 @@ async function refresh(){const requestId=++refreshSequence;try{
   + routines.filter(r=>r.next_due===tomorrowISO).length
   + dailyMeals.filter(m=>m.plan_date===tomorrowISO).length
   + cookReminders.filter(r=>r.due_date===tomorrowISO&&r.status==='open').length
-  + bills.filter(b=>b.status!=='paid'&&b.due_date===tomorrowISO).length;
+  + billGroups.filter(group=>group.next&&group.next.due_date===tomorrowISO).length;
  $('#stats').innerHTML=stat('Routines',routinesDueToday,'Due or overdue')+stat('Tomorrow schedules',tomorrowSchedules,'All scheduled items')+stat('Latest weight',sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'—','Fitness log')+stat('Upcoming bills',billCountdown(nextBill),billHint);
  renderTodayMeal();
- let attention=[];tasks.filter(t=>t.status!=='done').sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999')||(a.due_time||'99:99').localeCompare(b.due_time||'99:99')).slice(0,4).forEach(t=>attention.push(item(t.title,(t.due_date?formatDate(t.due_date):'No due date')+(t.due_time?' · '+t.due_time:''),t.priority)));bills.filter(b=>b.status!=='paid').sort((a,b)=>a.due_date.localeCompare(b.due_date)).slice(0,3).forEach(b=>attention.push(item(b.name+' · '+money(b.amount_mad),'Due '+formatDate(b.due_date),'Unpaid')));$('#attention').innerHTML=attention.join('')||empty('Nothing urgent.');
+ let attention=[];tasks.filter(t=>t.status!=='done').sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999')||(a.due_time||'99:99').localeCompare(b.due_time||'99:99')).slice(0,4).forEach(t=>attention.push(item(t.title,(t.due_date?formatDate(t.due_date):'No due date')+(t.due_time?' · '+t.due_time:''),t.priority)));billGroups.filter(group=>group.next).slice(0,3).forEach(group=>attention.push(item(group.next.name+' · '+money(group.next.amount_mad),'Due '+formatDate(group.next.due_date),'Unpaid')));$('#attention').innerHTML=attention.join('')||empty('Nothing urgent.');
  $('#fitness-snapshot').innerHTML=`<div><div class="big-number">${sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'—'}</div><small class="muted">Latest weight</small></div><div><div class="big-number">${treadmills.length}</div><small class="muted">Treadmill sessions</small></div><div><div class="big-number">${workouts.length}</div><small class="muted">Gym workouts</small></div>`;
  $('#routine-snapshot').innerHTML=[...routines].sort((a,b)=>(a.next_due||'9999').localeCompare(b.next_due||'9999')).slice(0,4).map(r=>item(r.name,`Next: ${r.next_due?formatDate(r.next_due):'Not scheduled'} · ${r.routine_time||'—'} · Late ${r.routine_late_time||'off'}${r.routine_late_time&&Number(r.routine_rollover_after_late)?' · auto-moves tomorrow':''}`,r.interval_days+' day interval',`<button class="mini-btn" data-complete="${r.id}">Done</button>`)).join('')||empty();
  renderCalendar(events);
@@ -147,7 +175,7 @@ async function refresh(){const requestId=++refreshSequence;try{
  renderFitnessStats(treadmills,workouts,weights);renderHeatmap('#treadmill-activity',treadmills,'minutes');renderHeatmap('#gym-activity',workouts,'count');updateTreadmillPreview();
  $('#workout-plan-list').innerHTML=workout_plan.sort((a,b)=>['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].indexOf(a.weekday)-['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].indexOf(b.weekday)).map(w=>item(w.weekday,w.name,'Planned',`<button class="mini-btn" data-delete="workout_plan:${w.id}">Remove</button>`)).join('')||empty('No workout days planned yet.');
  $('#bill-summary').innerHTML=stat('Unpaid bills',sum.unpaid_bills,'Outstanding')+stat('Total outstanding',money(sum.unpaid_total_mad),'MAD')+stat('Open tasks',sum.open_tasks,'In Planner');
- $('#bills-list').innerHTML=[...bills].sort((a,b)=>(a.status==='paid')-(b.status==='paid')||a.due_date.localeCompare(b.due_date)).map(b=>{const paymentInfo=b.status==='paid'&&b.paid_at?` · Paid ${formatDate(b.paid_at)}`:'';const actions=`<button class="mini-btn" data-edit-bill="${b.id}">Edit bill</button>`+(b.status==='paid'?`<button class="mini-btn" data-edit-payment="${b.id}">Edit payment</button>`:`<button class="mini-btn" data-pay="${b.id}">Mark paid</button>`);return item(b.name,money(b.amount_mad)+' · Due '+formatDate(b.due_date)+paymentInfo,b.status,actions)}).join('')||empty();
+ $('#bills-list').innerHTML=billGroups.map(renderBillSeriesCard).join('')||empty('No bills yet. Add a bill to track its due date and payment history.');
  $('#routines-list').innerHTML=routines.map(r=>{const rollover=r.routine_late_time&&Number(r.routine_rollover_after_late)===1;const lateLabel=r.routine_late_time?`Late alert ${r.routine_late_time}${rollover?' · auto-moves to tomorrow if still open':''}`:'Late alert off';return item(r.name,`Last: ${r.last_done?formatDate(r.last_done):'Not recorded'} · Next: ${r.next_due?formatDate(r.next_due):'—'} · Time ${r.routine_time||'—'} · ${lateLabel}`,r.interval_days+' days',`<button class="mini-btn" data-edit-routine="${r.id}">Edit routine</button><button class="mini-btn" data-edit-routine-record="${r.id}">Edit last record</button><button class="mini-btn" data-complete="${r.id}">Done</button>`)}).join('')||empty();
  renderMeals();renderPlannerShopping();
  }catch(e){if(requestId!==refreshSequence)return;$('#api-status').textContent='API unavailable';console.error(e);toast(e.message)}}
@@ -159,7 +187,7 @@ function calendarItemsForDay(day){
  const tread=(c.treadmill||[]).filter(x=>x.date===day);if(tread.length){const mins=tread.reduce((a,x)=>a+Number(x.duration_min||0),0);items.push({type:'treadmill',sortTime:null,text:`Treadmill ${Math.round(mins)} min`,detail:`${tread.length} session${tread.length===1?'':'s'} · ${tread.reduce((a,x)=>a+Number(x.calories_kcal||0),0)} estimated kcal`})}
  for(const w of (c.workouts||[]).filter(x=>x.date===day))items.push({type:'gym',sortTime:null,text:`Gym: ${w.name}${Number(w.duration_min||0)>0?' · '+Number(w.duration_min)+' min':''}`,detail:w.notes||'Gym workout'});
  for(const r of (c.routines||[])){if(r.next_due===day)items.push({type:'care',sortTime:r.routine_time||null,text:`${r.routine_time?r.routine_time+' ':''}Routine: ${r.name}`,detail:`Scheduled routine · late reminder ${r.routine_late_time||'off'}${r.routine_late_time&&Number(r.routine_rollover_after_late)?' · moves to tomorrow if still incomplete':''} · every ${Math.max(1,Number(r.interval_days||1))} days`})}
- for(const b of (c.bills||[]).filter(x=>x.status!=='paid'&&x.due_date===day))items.push({type:'bill',sortTime:null,text:`Bill: ${b.name}`,detail:`${money(b.amount_mad)} due`});
+ for(const group of groupBillSeries(c.bills||[]).filter(x=>x.next&&x.next.due_date===day))items.push({type:'bill',sortTime:null,text:`Bill: ${group.next.name}`,detail:`${money(group.next.amount_mad)} due`});
  for(const m of (c.daily_meals||[]).filter(x=>x.plan_date===day))items.push({type:m.status==='eaten'?'meal-eaten':'meal',sortTime:null,text:`${m.status==='eaten'?'✓ ':'🍽 '}${m.recipe_name||'Meal'}`,detail:`Daily plate · ${m.status==='eaten'?'confirmed eaten':'waiting for confirmation'}${m.calories_kcal!=null?' · '+Number(m.calories_kcal)+' kcal':''}`});
  for(const r of (c.meal_cook_reminders||[]).filter(x=>x.due_date===day))items.push({type:'care',sortTime:null,text:`🍳 Cook: ${r.recipe_name}`,detail:'Home meal stock ran out · replenish ready plates'});
  // Items with explicit times come first, sorted from earliest to latest;
