@@ -1,511 +1,1020 @@
-const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const isoDate=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
-let today=isoDate(new Date());let cache={},calendarMonth=new Date(today+'T12:00:00'),mealFilter='all',refreshSequence=0;
-const titles={overview:'Good day.',calendar:'Planner',fitness:'Fitness',bills:'Bills & payments',care:'Routines',meals:'Meals',settings:'Settings & Telegram'};
-let selectedCalendarDate=today;
-function formatDate(v){if(!v)return 'â€”';const m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}/${m[2]}/${m[1].slice(-2)}`:String(v)}
-function formatDateTime(v){if(!v)return 'â€”';const s=String(v);return `${formatDate(s)}${s.includes('T')?' '+s.slice(11,16):''}`}
-function parseDateInput(v){const s=String(v||'').trim();if(!s)return '';let m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(m)return s;m=s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2}|\d{4})$/);if(!m)throw Error('Enter the date as DD/MM/YY, for example 16/11/26.');let [,dd,mm,yy]=m;let year=Number(yy);if(yy.length===2)year+=2000;const d=new Date(year,Number(mm)-1,Number(dd));if(d.getFullYear()!==year||d.getMonth()!==Number(mm)-1||d.getDate()!==Number(dd))throw Error('Please enter a valid date.');return `${year}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`}
-function displayDateInput(v=today){return formatDate(v)}
-function parseDateTimeInput(v){const s=String(v||'').trim();if(!s)return '';if(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s))return s;const m=s.match(/^(.+?)\s+(\d{1,2}):(\d{2})$/);if(!m)throw Error('Enter date and time as DD/MM/YY HH:MM.');const date=parseDateInput(m[1]),hour=Number(m[2]),minute=Number(m[3]);if(hour>23||minute>59)throw Error('Please enter a valid time.');return `${date}T${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`}
-function displayDateTimeInput(v){return v?formatDateTime(v):''}
-function updateTodayLabel(){const day=new Date(today+'T12:00:00');$('#today-label').textContent=`${day.toLocaleDateString(undefined,{weekday:'long'}).toUpperCase()} Â· ${formatDate(today)}`}
-updateTodayLabel();
-function longDateLabel(value){const d=new Date(value+'T12:00:00');return `${d.toLocaleDateString(undefined,{weekday:'long'})} Â· ${formatDate(value)}`}
-function syncCurrentDate(serverDay=null){const next=/^\d{4}-\d{2}-\d{2}$/.test(String(serverDay||''))?String(serverDay):isoDate(new Date());if(next===today){updateTodayLabel();return}const previous=today,wasViewingToday=selectedCalendarDate===previous;today=next;if(wasViewingToday){selectedCalendarDate=next;calendarMonth=new Date(next+'T12:00:00')}updateTodayLabel();$$('.date-entry').forEach(input=>{if(input.value===displayDateInput(previous))input.value=displayDateInput(today)})}
-let syncChannel=null;try{if(typeof BroadcastChannel!=='undefined')syncChannel=new BroadcastChannel('xrob-assistant-data')}catch(_error){syncChannel=null}
-let externalRefreshTimer=null;
-function queueExternalRefresh(){
- if(externalRefreshTimer)clearTimeout(externalRefreshTimer);
- externalRefreshTimer=setTimeout(()=>{externalRefreshTimer=null;refresh()},250);
+:root{--bg:#0c1220;--panel:#131d2e;--panel2:#19263a;--line:#26364d;--text:#edf3fb;--muted:#94a5bc;--accent:#70a5ff;--green:#56d6a0;--orange:#f5b96a;--red:#ff7d87}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;display:flex;min-height:100vh}.sidebar{width:238px;background:#0a101c;border-right:1px solid var(--line);padding:25px 15px;display:flex;flex-direction:column;position:fixed;inset:0 auto 0 0}.brand{display:flex;align-items:center;gap:12px;padding:0 9px 32px}.brand b{display:block;letter-spacing:2px;font-size:17px}.brand small{color:var(--muted)}.logo{width:39px;height:39px;border-radius:13px;background:linear-gradient(140deg,#79b4ff,#5574e8);display:grid;place-items:center;color:#07111f;font-weight:900;font-size:22px}nav{display:grid;gap:6px}nav button{border:0;background:transparent;color:#a9b7ca;text-align:left;padding:12px 13px;border-radius:10px;font:inherit;cursor:pointer;display:flex;gap:13px;align-items:center}nav button:hover,nav button.active{background:#1a2a43;color:white}nav button.active{box-shadow:inset 3px 0 var(--accent)}.sidefoot{margin-top:auto;color:#74869e;font-size:10px;letter-spacing:1px;line-height:2}.sidefoot span{color:var(--green)}main{margin-left:238px;width:calc(100% - 238px);max-width:1500px;padding:35px 4.5vw 70px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}.eyebrow{font-size:10px;letter-spacing:2px;color:var(--accent);font-weight:700;margin:0 0 5px}h1{font-size:30px;margin:0;font-weight:650;letter-spacing:-.8px}h2{font-size:24px;margin:0 0 4px;letter-spacing:-.5px}h3{font-size:16px;margin:0;font-weight:650}.muted{color:var(--muted);font-size:13px;margin:4px 0}.local-pill{border:1px solid #285b4b;color:var(--green);border-radius:20px;padding:7px 12px;font-size:11px}.page{display:none}.page.active{display:block}.hero{border:1px solid #304a6b;background:radial-gradient(ellipse at 85% 20%,#284a76 0%,#172b47 35%,#142033 78%);border-radius:18px;padding:27px 30px;min-height:180px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;overflow:hidden}.hero h2{font-size:28px;margin:7px 0}.hero p:last-child{color:#b5c6dc;margin:0}.hero-mark{font-size:40px;font-weight:900;letter-spacing:4px;color:#d6e7ff;opacity:.9}.hero-mark span{color:var(--green)}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin:0 0 18px}.stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:17px}.stat .label{font-size:12px;color:var(--muted)}.stat .value{font-size:25px;font-weight:700;margin-top:5px}.stat .hint{font-size:11px;color:var(--muted)}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:17px;margin:17px 0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:19px;margin-bottom:17px;min-width:0}.panel-head,.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.panel-head{margin-bottom:14px}.section-head{margin-bottom:20px}.section-head p{margin-top:4px}.primary{background:var(--accent);color:#081323;border:0;border-radius:9px;padding:10px 15px;font-weight:700;cursor:pointer}.primary:hover{filter:brightness(1.08)}.text-btn{border:0;background:none;color:var(--accent);cursor:pointer;font:inherit;font-size:12px}.rows{display:grid;gap:8px}.row-item{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid #223148}.row-item:last-child{border:0}.row-main{flex:1;min-width:0}.row-main b{display:block;font-size:13px}.row-main small{color:var(--muted);font-size:11px}.tag{font-size:10px;padding:4px 8px;border-radius:20px;background:#263850;color:#c4d7ef;white-space:nowrap}.tag.good{background:#173c34;color:var(--green)}.tag.warn{background:#48351f;color:var(--orange)}.tag.bad{background:#48262c;color:var(--red)}.mini-btn{border:1px solid var(--line);background:#1b2a40;color:#cbd9e9;border-radius:7px;padding:6px 9px;cursor:pointer;font-size:11px}.snapshot{display:flex;gap:20px;align-items:center;min-height:70px}.big-number{font-size:30px;font-weight:750}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}.form-grid .panel:last-child{grid-column:1/-1}.form{display:grid;gap:12px}.form h3{margin-bottom:3px}.form label{display:grid;gap:5px;color:#b6c5d8;font-size:12px}.form input,.form select,.form textarea{width:100%;background:#0e1726;border:1px solid #30425c;border-radius:8px;padding:10px;color:var(--text);font:inherit;font-size:13px}.form textarea{min-height:65px;resize:vertical}.input-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.code{background:#0b1422;border:1px solid var(--line);border-radius:9px;padding:13px;color:#a9c9fa;font:12px/1.8 ui-monospace,monospace;margin:12px 0}.modal{position:fixed;inset:0;background:#050a12c9;display:grid;place-items:center;padding:20px;z-index:5}.modal.hidden{display:none}.modal-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;width:min(480px,100%);max-height:90vh;overflow:auto}.icon-btn{border:0;background:none;color:var(--muted);font-size:18px;cursor:pointer}.toast{position:fixed;bottom:25px;right:25px;background:#1b3c35;color:#a5f0d1;padding:12px 17px;border:1px solid #2e6c58;border-radius:10px;opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none}.toast.show{opacity:1;transform:none}.empty{padding:22px 5px;color:var(--muted);font-size:13px}.action-group{display:flex;gap:6px;flex-wrap:wrap}@media(max-width:900px){.sidebar{width:70px;padding:20px 8px}.brand{padding:0 7px 25px}.brand>div:last-child,nav span,.sidefoot{display:none}nav button{justify-content:center;font-size:19px;padding:12px 0}main{margin-left:70px;width:calc(100% - 70px);padding:25px 20px}.stats{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){main{padding:20px 13px}.two-col,.form-grid{grid-template-columns:1fr}.form-grid .panel:last-child{grid-column:auto}.hero{padding:20px;min-height:150px}.hero-mark{display:none}.section-head{align-items:flex-start}.section-head .primary{font-size:12px;padding:9px}.stats{gap:8px}.stat{padding:12px}.stat .value{font-size:21px}header{align-items:flex-start}.header-right{display:none}}
+.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.cal-head{text-align:center;color:var(--muted);font-size:10px;padding:6px 0;text-transform:uppercase;letter-spacing:1px}.cal-day{min-height:78px;border:1px solid #25354b;border-radius:9px;background:#101a29;padding:7px;min-width:0}.cal-day.outside{opacity:.35}.cal-day.today{border-color:var(--accent);background:#172b46}.cal-day .day-number{font-size:11px;color:#c4d3e5}.cal-event{display:block;margin-top:5px;background:#29456b;color:#d9eaff;border-radius:4px;padding:3px 4px;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cal-day.has-event{background:#14243a}@media(max-width:620px){.cal-day{min-height:54px;padding:4px}.cal-event{font-size:8px;padding:2px}.cal-head{font-size:8px}}
+
+.logo{display:none}.logo-img{width:43px;height:43px;border-radius:13px;object-fit:cover;box-shadow:0 5px 18px #0005}.brand b{letter-spacing:2px}.brand small{display:block}.nav-icon{width:20px;text-align:center;font-size:17px}.fitness-fixed{display:flex;flex-wrap:wrap;gap:8px}.fitness-fixed span{padding:8px 10px;border:1px solid var(--line);background:#0e1726;border-radius:9px;font-size:11px;color:var(--muted)}.fitness-fixed b{color:var(--text);margin-left:4px}.weekly-plan{margin-top:25px}.plan-inline{grid-template-columns:1fr 1.2fr 1.2fr auto;align-items:end;margin:16px 0}.plan-inline label{display:grid;gap:5px;color:#b6c5d8;font-size:12px}.plan-inline input,.plan-inline select{width:100%;background:#0e1726;border:1px solid #30425c;border-radius:8px;padding:10px;color:var(--text);font:inherit;font-size:13px}@media(max-width:800px){.plan-inline{grid-template-columns:1fr 1fr}}@media(max-width:520px){.plan-inline{grid-template-columns:1fr}}
+/* XROB Assistant 0.1.7 fitness stats and activity view */
+:root{--bg:#050607;--panel:#1d1d1f;--panel2:#292a2d;--line:#303236;--text:#f5f6f7;--muted:#a0a1a6;--accent:#2ed35f;--green:#2ed35f;--orange:#f5b96a;--red:#ff7d87}
+body{background:var(--bg)}.sidebar{background:#08090a}.panel,.stat{background:var(--panel);border-color:#282a2d}.primary{background:var(--green);color:#051009}.eyebrow{color:var(--green)}nav button:hover,nav button.active{background:#202a23}nav button.active{box-shadow:inset 3px 0 var(--green)}.logo-img{width:46px;height:46px;border-radius:13px;object-fit:cover;box-shadow:0 0 20px #2ed35f20}.local-pill{border-color:#285b3c;color:var(--green)}
+.fitness-stats{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:18px}.fitness-stats .stat{min-height:105px}.fitness-stats .stat .value{font-size:27px}.activity-section{display:grid;grid-template-columns:1fr;gap:0}.activity-panel{overflow:hidden}.activity-panel .panel-head{margin-bottom:16px}.activity-symbol{color:var(--green);font-size:25px}.heatmap-scroll{width:100%;overflow-x:auto;padding:1px 0 8px}.heatmap-months,.heatmap-grid{display:grid;grid-template-columns:repeat(var(--weeks),12px);column-gap:4px;width:max-content}.heatmap-months{grid-template-rows:16px;margin-bottom:8px;color:var(--muted);font-size:10px}.heatmap-months span{white-space:nowrap}.heatmap-grid{grid-template-rows:repeat(7,12px);grid-auto-flow:column;row-gap:4px}.heat-cell{width:12px;height:12px;border-radius:3px;background:#2b2d30;display:block}.heat-cell.level-1,.heat-legend .level-1{background:#205b37}.heat-cell.level-2,.heat-legend .level-2{background:#238d48}.heat-cell.level-3,.heat-legend .level-3{background:#25b653}.heat-cell.level-4,.heat-legend .level-4{background:#2ed35f}.heat-legend{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.heat-legend i{width:12px;height:12px;border-radius:3px;display:inline-block;background:#2b2d30}.heatmap-footer{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:10px;color:var(--muted);font-size:10px}.fitness-fixed{gap:7px}.fitness-fixed span{background:#121416;border-color:#303236}.fitness-fixed b{color:var(--green)}.date-entry{letter-spacing:.3px}.form input:focus,.form textarea:focus,.form select:focus{outline:1px solid var(--green);border-color:var(--green)}.mini-btn:hover{border-color:var(--green);color:var(--green)}
+@media(max-width:900px){.fitness-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.fitness-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.fitness-stats .stat{min-height:92px}.fitness-stats .stat .value{font-size:22px}.heatmap-footer{align-items:flex-start;flex-direction:column}.heat-legend{font-size:10px}.logo-img{width:42px;height:42px}}
+
+/* XROB 0.1.7: full-width dashboard and weight progress */
+main{max-width:none;width:calc(100% - 238px);padding:28px clamp(18px,2.2vw,42px) 72px}
+.weight-graph-panel{margin-top:2px}.weight-chart-scroll{width:100%;overflow-x:auto;padding:4px 0}.weight-chart{display:block;width:100%;min-width:560px;height:auto;overflow:visible}.weight-grid-line{stroke:#36393c;stroke-width:1;stroke-dasharray:3 5}.weight-axis-label{fill:var(--muted);font-size:12px}.weight-area{fill:url(#weight-area)}.weight-line{fill:none;stroke:var(--green);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.weight-point{fill:var(--green);stroke:#102817;stroke-width:2}.weight-chart-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-top:4px}.weight-chart-meta b{color:var(--green)}.weight-history-scroll{max-height:390px;overflow-y:auto;padding-right:6px;overscroll-behavior:contain}.weight-history-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 9px;border-bottom:1px solid #2b2d30;font-size:13px}.weight-history-row:first-child{border-top:1px solid #2b2d30}.weight-history-row span{color:var(--muted)}.weight-history-row b{color:var(--green);font-variant-numeric:tabular-nums}.weight-history-scroll::-webkit-scrollbar{width:8px}.weight-history-scroll::-webkit-scrollbar-track{background:#111315;border-radius:8px}.weight-history-scroll::-webkit-scrollbar-thumb{background:#414448;border-radius:8px}.weight-history-scroll{scrollbar-color:#414448 #111315;scrollbar-width:thin}
+@media(max-width:900px){main{width:calc(100% - 70px);padding:24px 20px 64px}}
+@media(max-width:620px){main{width:calc(100% - 70px);padding:18px 12px 56px}.weight-chart{min-width:500px}.weight-history-scroll{max-height:320px}}
+
+/* XROB Assistant 0.1.9 â€” wider activity views, consistent histories and weight comparison */
+.activity-section{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;width:100%;margin:18px 0}
+.activity-panel{width:100%;min-width:0;padding:clamp(16px,2vw,24px)}
+.heatmap-scroll{width:100%;overflow:hidden}
+.heatmap-months,.heatmap-grid{grid-template-columns:repeat(var(--weeks),minmax(0,1fr));column-gap:clamp(2px,.35vw,5px);width:100%}
+.heatmap-grid{grid-template-rows:repeat(7,clamp(12px,1.2vw,18px));row-gap:clamp(2px,.35vw,5px)}
+.heat-cell{width:100%;height:100%;min-width:0;min-height:0;border-radius:4px}
+.heatmap-months{grid-template-rows:18px;font-size:clamp(10px,.8vw,12px)}
+.heatmap-footer{font-size:11px}
+.history-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;margin:18px 0}
+.history-card{display:flex;flex-direction:column;min-width:0;min-height:0;height:450px;max-height:none;margin:0}
+.history-card>.panel-head{min-height:28px;align-items:flex-start}
+.history-list{flex:1;min-width:0;min-height:120px;max-height:none;overflow-y:auto;overflow-x:hidden;padding-right:5px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#414448 #111315}
+.history-list::-webkit-scrollbar{width:8px}
+.history-list::-webkit-scrollbar-track{background:#111315;border-radius:8px}
+.history-list::-webkit-scrollbar-thumb{background:#414448;border-radius:8px}
+.history-entry{display:flex;justify-content:space-between;align-items:center;gap:10px;min-width:0;padding:12px 4px;border-bottom:1px solid #2b2d30;font-size:13px}
+.history-entry-main{display:flex;flex:1;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere}
+.history-entry-main b{font-size:13px;font-weight:650;color:var(--text)}
+.history-entry-main small,.history-entry-side small{font-size:11px;color:var(--muted);line-height:1.4;overflow-wrap:anywhere}
+.history-entry-side{display:flex;flex:0 0 auto;align-items:flex-end;flex-direction:column;gap:6px;max-width:44%;text-align:right;min-width:0}
+.history-entry-side strong{color:var(--green);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.history-entry-side .mini-btn{max-width:100%}
+.weight-chart-wrap{position:relative;width:100%}
+.weight-point{cursor:crosshair;outline:none;transition:r .12s ease}
+.weight-point:hover,.weight-point:focus{r:8;stroke:#d7ffe2;stroke-width:3}
+.weight-chart-tooltip{position:absolute;z-index:3;display:flex;flex-direction:column;gap:3px;min-width:112px;padding:8px 11px;border:1px solid #3e8652;border-radius:9px;background:#111a14;color:var(--text);box-shadow:0 8px 24px #0009;pointer-events:none;font-size:12px;white-space:nowrap}
+.weight-chart-tooltip[hidden]{display:none}
+.weight-chart-tooltip b{color:var(--green);font-size:14px}
+.weight-chart-tooltip span{color:var(--muted);font-size:11px}
+.weekly-average-panel{margin-top:16px;min-width:0}
+.weekly-average-summary{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:4px 0 12px;color:var(--muted);font-size:12px}
+.weekly-average-summary b{color:var(--green)}
+.weekly-average-scroll{width:100%;overflow-x:auto;overflow-y:hidden;padding:6px 2px 4px;scrollbar-width:thin;scrollbar-color:#414448 #111315}
+.weekly-average-chart{display:flex;align-items:stretch;gap:8px;width:max-content;min-width:100%;height:225px;padding:0 4px}
+.week-average-column{position:relative;display:grid;grid-template-rows:22px 1fr 18px;gap:4px;flex:0 0 43px;min-width:43px;text-align:center}
+.week-average-value{color:var(--green);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.week-average-track{display:flex;align-items:flex-end;justify-content:center;height:100%;border-bottom:1px solid #42464a;background:linear-gradient(to top,transparent 0%,#ffffff04 100%)}
+.week-average-track i{display:block;width:62%;min-height:8px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,#42eb7b,#208a47);box-shadow:0 0 12px #2ed35f20}
+.week-average-column small{font-size:9px;color:var(--muted);white-space:nowrap}
+.weekly-average-help{margin:8px 0 0;font-size:11px}
+@media(max-width:1100px){.history-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.history-card:first-child{grid-column:1/-1}}
+@media(max-width:700px){.history-grid{grid-template-columns:minmax(0,1fr)}.history-card:first-child{grid-column:auto}.history-card{height:390px}.history-list{max-height:none}.heatmap-grid{grid-template-rows:repeat(7,clamp(11px,2.8vw,15px))}.heatmap-months{font-size:9px}.weight-chart-tooltip{font-size:11px}.week-average-column{flex-basis:40px;min-width:40px}}
+
+/* XROB Assistant 0.1.13 â€” due-today overview and next-day routine follow-ups */
+.weekly-average-scroll{width:100%;overflow-x:auto;overflow-y:hidden}
+.weekly-average-chart{display:grid;grid-template-columns:repeat(var(--week-count),minmax(0,1fr));gap:clamp(5px,.8vw,12px);width:100%;height:235px;padding:0 5px}
+.week-average-column{min-width:0;width:100%;grid-template-rows:22px 1fr 30px}
+.week-average-value{font-size:clamp(9px,.8vw,12px);overflow:hidden;text-overflow:ellipsis}
+.week-average-column small{font-size:clamp(8px,.7vw,10px);overflow:hidden;text-overflow:ellipsis}
+.calendar-grid{gap:7px;grid-template-columns:repeat(7,minmax(0,1fr));width:100%}
+.cal-day{min-height:134px;padding:8px;overflow:hidden;cursor:pointer;transition:border-color .12s ease,background .12s ease}
+.cal-day.selected{border:1px solid var(--green);box-shadow:inset 0 0 0 1px #2ed35f45;background:#17241c}
+.cal-day:hover{border-color:#568767}
+.cal-day .day-number{font-size:12px;font-weight:700;margin-bottom:5px}
+.cal-day-items{display:grid;gap:3px;min-width:0}
+.cal-event{margin:0;font-size:10px;line-height:1.25;padding:3px 5px;white-space:normal;overflow-wrap:anywhere;max-height:2.6em;overflow:hidden;background:#263b55;color:#dcecff}
+.cal-event.weight{background:#243c30;color:#b9f4c9}
+.cal-event.treadmill,.cal-event.gym{background:#23402f;color:#bff5cf}
+.cal-event.task{background:#273a55;color:#c9e0ff}
+.cal-event.care{background:#463a24;color:#f6dfa9}
+.cal-event.bill{background:#482b31;color:#ffc5cb}
+.cal-more{font-size:9px;color:var(--green);padding:1px 4px}
+.calendar-day-panel{margin-top:14px}
+.calendar-day-detail{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.calendar-detail-row{display:flex;align-items:flex-start;gap:10px;padding:10px 11px;border:1px solid #303236;border-radius:10px;background:#151719;min-width:0}
+.calendar-detail-row>div{display:grid;gap:3px;min-width:0}
+.calendar-detail-row b{font-size:12px;overflow-wrap:anywhere}
+.calendar-detail-row small{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.calendar-detail-dot{width:9px;height:9px;border-radius:50%;background:#77a8e8;flex:0 0 auto;margin-top:4px}
+.calendar-detail-dot.weight,.calendar-detail-dot.treadmill,.calendar-detail-dot.gym{background:var(--green)}
+.calendar-detail-dot.care{background:#e2b767}
+.calendar-detail-dot.bill{background:#ff7d87}
+.calendar-detail-dot.task{background:#79a8ed}
+@media(max-width:900px){.cal-day{min-height:112px}.cal-event{font-size:9px}.calendar-day-detail{grid-template-columns:1fr}}
+@media(max-width:620px){.calendar-grid{gap:3px}.cal-day{min-height:96px;padding:4px}.cal-day .day-number{font-size:10px;margin-bottom:3px}.cal-event{font-size:8px;padding:2px 3px;border-radius:3px}.cal-more{font-size:8px}.cal-head{font-size:8px}.weekly-average-chart{height:210px}.week-average-column{grid-template-rows:20px 1fr 24px}}
+
+/* XROB Assistant 0.1.14 â€” responsive layouts and phone-friendly navigation */
+@media(max-width:700px){
+  html,body{width:100%;min-width:0;overflow-x:hidden}
+  body{display:block;min-height:100dvh;padding:0}
+  .sidebar{position:fixed;inset:auto 0 0 0;width:100%;height:calc(66px + env(safe-area-inset-bottom));padding:5px 4px calc(5px + env(safe-area-inset-bottom));display:flex;flex-direction:row;align-items:stretch;z-index:20;border:0;border-top:1px solid #303236;background:#090b0a;box-shadow:0 -8px 24px #0008;backdrop-filter:blur(14px)}
+  .brand,.sidefoot{display:none!important}
+  #nav{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));align-items:stretch;gap:2px;width:100%;min-width:0}
+  #nav button{min-width:0;min-height:52px;padding:5px 1px;border-radius:9px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;text-align:center;box-shadow:none}
+  #nav button span{display:block!important}
+  #nav .nav-icon{width:auto;font-size:17px;line-height:1.05}
+  #nav .nav-label{max-width:100%;font-size:clamp(7px,2.25vw,9px);line-height:1.05;white-space:normal;overflow-wrap:anywhere;letter-spacing:-.15px}
+  #nav button.active{box-shadow:inset 0 2px var(--green);background:#18231b}
+  main{display:block!important;margin:0!important;width:100%!important;max-width:none!important;min-width:0;padding:max(14px,env(safe-area-inset-top)) 12px calc(82px + env(safe-area-inset-bottom))!important}
+  header{margin-bottom:16px;gap:8px;align-items:flex-start}
+  h1{font-size:clamp(22px,6vw,29px);line-height:1.15}
+  h2{font-size:clamp(20px,5.5vw,24px)}
+  .hero{display:block;min-height:0;padding:18px;margin-bottom:14px}
+  .hero h2{font-size:24px}
+  .hero-mark{display:none}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}
+  .stat{min-width:0;padding:12px;border-radius:12px}
+  .stat .label{font-size:11px;line-height:1.25;overflow-wrap:anywhere}
+  .stat .value{font-size:clamp(18px,5vw,22px);line-height:1.2;overflow-wrap:anywhere}
+  .stat .hint{font-size:10px;line-height:1.3;overflow-wrap:anywhere}
+  .two-col,.form-grid,.history-grid{grid-template-columns:minmax(0,1fr);gap:10px}
+  .form-grid .panel:last-child{grid-column:auto}
+  .panel{padding:14px;margin-bottom:12px;border-radius:13px}
+  .panel-head,.section-head{gap:8px;flex-wrap:wrap}
+  .section-head{margin-bottom:14px;align-items:center}
+  .section-head .primary{white-space:nowrap;font-size:12px;padding:9px 11px;min-height:40px}
+  .snapshot{min-height:0;gap:14px;flex-wrap:wrap}
+  .snapshot>div{flex:1 1 82px;min-width:0}
+  .big-number{font-size:26px}
+  .row-item{align-items:flex-start;gap:8px;flex-wrap:wrap}
+  .row-main{flex:1 1 60%;min-width:0}
+  .action-group{max-width:100%;justify-content:flex-end;flex-wrap:wrap}
+  .mini-btn,.primary{min-height:38px}
+  .history-card{height:360px}
+  .history-list{max-height:none}
+  .fitness-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .weekly-average-chart{grid-template-columns:repeat(var(--week-count),42px);width:max-content;min-width:100%;height:210px}
+  .week-average-column{grid-template-rows:20px 1fr 24px}
+  .weekly-average-scroll{overflow-x:auto;max-width:100%}
+  .calendar-grid{grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;width:100%}
+  .cal-day{min-width:0;min-height:clamp(78px,22vw,92px);padding:4px;border-radius:7px}
+  .cal-day .day-number{font-size:10px;margin-bottom:3px}
+  .cal-event{font-size:7px;line-height:1.1;padding:2px;border-radius:3px;overflow-wrap:anywhere}
+  .cal-more,.cal-head{font-size:8px}
+  .calendar-day-detail{grid-template-columns:minmax(0,1fr)}
+  .plan-inline{grid-template-columns:minmax(0,1fr)}
+  .modal{padding:12px;align-items:center}
+  .modal-card{width:100%;max-width:480px;max-height:calc(100dvh - 24px);padding:16px}
+  .form input,.form select,.form textarea,.plan-inline input,.plan-inline select{font-size:16px;min-height:42px}
+  .form textarea{min-height:76px}
+  .toast{left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));text-align:center}
 }
-if(syncChannel)syncChannel.addEventListener('message',event=>{if(event.data?.type==='data-changed')queueExternalRefresh()});
-else window.addEventListener('storage',event=>{if(event.key==='xrob-assistant-data-changed')queueExternalRefresh()});
-function announceDataChange(){
- if(syncChannel){syncChannel.postMessage({type:'data-changed',at:Date.now()});return}
- try{localStorage.setItem('xrob-assistant-data-changed',String(Date.now()))}catch(_error){}
+@media(min-width:701px) and (max-width:900px){
+  main{width:calc(100% - 70px);max-width:none;padding:22px 16px 64px}
+  .two-col{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .panel{padding:16px}
 }
-async function api(path,opts={}){
- const method=String(opts.method||'GET').toUpperCase();
- const r=await fetch('/api/'+path,{cache:'no-store',headers:{'Content-Type':'application/json'},...opts});
- const d=await r.json().catch(()=>({}));
- if(!r.ok)throw Error(d.detail||'Request failed');
- if(method!=='GET'&&opts.broadcast!==false)announceDataChange();
- return d;
-}
-function toast(s){let t=$('#toast');t.textContent=s;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)}
-function money(n){return Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' MAD'}
-function billCountdown(bill){if(!bill)return 'â€”';let days=Number(bill.days_left);if(!Number.isFinite(days)&&bill.due_date){const due=new Date(String(bill.due_date).slice(0,10)+'T12:00:00'),base=new Date(today+'T12:00:00');if(Number.isFinite(due.getTime()))days=Math.round((due-base)/86400000)}if(!Number.isFinite(days))return 'Date unavailable';if(days<0)return `Overdue ${Math.abs(days)} ${Math.abs(days)===1?'day':'days'}`;if(days===0)return 'Due today';return `${days} ${days===1?'day':'days'} left`;}
-function formatKg(n){return Number(n||0).toLocaleString('fr-MA',{minimumFractionDigits:2,maximumFractionDigits:2})}
-function empty(s='Nothing here yet. Add your first record to get started.'){return `<div class="empty">${s}</div>`}
-function item(title,sub='',tag='',actions=''){return `<div class="row-item"><div class="row-main"><b>${esc(title)}</b><small>${esc(sub)}</small></div>${tag?`<span class="tag">${esc(tag)}</span>`:''}${actions?`<div class="action-group">${actions}</div>`:''}</div>`}
-function groupBillSeries(bills){
- const grouped=new Map();
- for(const bill of bills||[]){const key=String(bill.series_id??bill.id);if(!grouped.has(key))grouped.set(key,{seriesId:key,records:[]});grouped.get(key).records.push(bill)}
- return [...grouped.values()].map(group=>{
-  const unpaid=group.records.filter(b=>b.status!=='paid').sort((a,b)=>a.due_date.localeCompare(b.due_date)||Number(a.id)-Number(b.id));
-  const paid=group.records.filter(b=>b.status==='paid').sort((a,b)=>String(b.paid_at||b.due_date).localeCompare(String(a.paid_at||a.due_date))||Number(b.id)-Number(a.id));
-  return {...group,unpaid,paid,next:unpaid[0]||null,latestPayment:paid[0]||null,otherUnpaid:unpaid.slice(1)};
- }).sort((a,b)=>{
-  if(a.next&&b.next)return a.next.due_date.localeCompare(b.next.due_date)||Number(a.next.id)-Number(b.next.id);
-  if(a.next)return -1;if(b.next)return 1;
-  return String(b.latestPayment?.paid_at||b.latestPayment?.due_date||'').localeCompare(String(a.latestPayment?.paid_at||a.latestPayment?.due_date||''));
- });
-}
-function renderBillSeriesCard(group){
- const bill=group.next||group.latestPayment;if(!bill)return '';
- const recurring=(bill.recurrence||'none')!=='none';
- const countdown=group.next?billCountdown(group.next):'Paid';
- const overdue=group.next&&countdown.startsWith('Overdue');
- const tag=group.next?`<span class="tag ${overdue?'bad':'warn'}">${esc(overdue?countdown:`Unpaid Â· ${countdown}`)}</span>`:'<span class="tag good">Paid</span>';
- const primary=group.next?`${money(group.next.amount_mad)} Â· Next due ${formatDate(group.next.due_date)}`:`${money(bill.amount_mad)} Â· Paid ${formatDate(bill.paid_at||bill.due_date)}`;
- const lastPayment=group.next&&group.latestPayment?`<small class="bill-last-payment">Last paid ${formatDate(group.latestPayment.paid_at||group.latestPayment.due_date)} Â· ${money(group.latestPayment.amount_mad)}</small>`:'';
- const actions=group.next
-  ?`<button class="mini-btn" data-edit-bill="${Number(group.next.id)}">${recurring?'Edit next bill':'Edit bill'}</button><button class="mini-btn" data-pay="${Number(group.next.id)}">Mark paid</button>${group.latestPayment?`<button class="mini-btn" data-edit-payment="${Number(group.latestPayment.id)}">Edit last payment</button>`:''}`
-  :`<button class="mini-btn" data-edit-bill="${Number(bill.id)}">Edit bill</button><button class="mini-btn" data-edit-payment="${Number(bill.id)}">Edit payment</button>`;
- const history=group.paid.length?`<details class="bill-history"><summary>Payment history Â· ${group.paid.length} ${group.paid.length===1?'payment':'payments'}</summary><div class="bill-history-list">${group.paid.map(payment=>`<div class="bill-history-row"><span><b>${formatDate(payment.paid_at||payment.due_date)}</b><small>${money(payment.amount_mad)} paid Â· Due ${formatDate(payment.due_date)}</small></span><button class="mini-btn" data-edit-payment="${Number(payment.id)}">Edit payment</button></div>`).join('')}</div></details>`:'';
- const extraUnpaid=group.otherUnpaid.length?`<details class="bill-history bill-review"><summary>Review ${group.otherUnpaid.length} additional unpaid occurrence${group.otherUnpaid.length===1?'':'s'}</summary><div class="bill-history-list">${group.otherUnpaid.map(other=>`<div class="bill-history-row"><span><b>Due ${formatDate(other.due_date)}</b><small>${money(other.amount_mad)} Â· Still unpaid</small></span><span class="action-group"><button class="mini-btn" data-edit-bill="${Number(other.id)}">Edit</button><button class="mini-btn" data-pay="${Number(other.id)}">Mark paid</button></span></div>`).join('')}</div></details>`:'';
- return `<div class="row-item bill-series-item"><div class="row-main"><div class="bill-title-line"><b>${esc(bill.name)}</b>${tag}</div><div class="bill-primary-meta">${primary}</div>${lastPayment}${extraUnpaid}${history}</div><div class="action-group">${actions}</div></div>`;
-}
-function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function stat(label,value,hint=''){return `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div><div class="hint">${hint}</div></div>`}
-function uniqueWeightsPerDay(weights){const byDay=new Map();for(const w of [...weights].sort((a,b)=>Number(a.id)-Number(b.id)))byDay.set(w.date,w);return [...byDay.values()].sort((a,b)=>a.date.localeCompare(b.date)||Number(a.id)-Number(b.id))}
-function weightLatest(weights){return uniqueWeightsPerDay(weights).slice(-1)[0]}
-function estimateCalories(duration,weights){const latest=weightLatest(weights);const kg=latest?Number(latest.kg):70;return Math.round((3.5*3.5*kg/200)*Number(duration||0))}
-function updateTreadmillPreview(){const d=Number($('#treadmill-form [name="duration_min"]')?.value||0);const el=$('#treadmill-calorie-preview');if(!el)return;const kg=weightLatest(cache.weights||[]);if(d>0){el.textContent=`${estimateCalories(d,cache.weights||[])} kcal`;el.title=kg?`Estimate based on ${formatKg(kg.kg)} kg`: 'Estimate uses a 70 kg default because no weight is saved yet.'}else el.textContent='â€” kcal'}
-function weekStartISO(v){const d=new Date(v+'T12:00:00');d.setDate(d.getDate()-((d.getDay()+6)%7));return isoDate(d)}
-function addDaysISO(v,days){const d=new Date(v+'T12:00:00');d.setDate(d.getDate()+days);return isoDate(d)}
-const WEEKDAY_LABELS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-function movableHomeReservation(recipe,day,meals=cache.daily_meals||[]){
- if(recipe.meal_source==='outside')return null;
- const ready=Math.max(0,Number(recipe.plates_ready||0));
- const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(recipe.id)&&m.plan_date>=today&&m.plan_date!==day);
- if(ready>reserved.length)return null;
- return reserved.filter(m=>m.plan_date>day&&['automatic','unknown'].includes(m.assignment_source||'unknown')).sort((a,b)=>b.plan_date.localeCompare(a.plan_date))[0]||null;
-}
-function recipeCanBeAssignedForDay(recipe,day,meals=cache.daily_meals||[]){
- const weekdayIndex=(new Date(day+'T12:00:00').getDay()+6)%7;
- if((recipe.excluded_weekdays||[]).map(Number).includes(weekdayIndex))return false;
- const interval=Math.max(1,Number(recipe.eating_interval_days||1));
- const previous=meals.filter(m=>Number(m.recipe_id)===Number(recipe.id)&&m.plan_date<day&&['pending','eaten'].includes(m.status)).sort((a,b)=>b.plan_date.localeCompare(a.plan_date))[0];
- if(previous&&day<addDaysISO(previous.plan_date,interval))return false;
- const following=meals.filter(m=>Number(m.recipe_id)===Number(recipe.id)&&m.plan_date>day&&(m.status==='eaten'||(m.status==='pending'&&m.assignment_source==='manual'))).sort((a,b)=>a.plan_date.localeCompare(b.plan_date))[0];
- if(following&&addDaysISO(day,interval)>following.plan_date)return false;
- if(recipe.meal_source==='outside')return true;
- const ready=Math.max(0,Number(recipe.plates_ready||0));
- if(ready<=0)return false;
- const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(recipe.id)&&m.plan_date>=today&&m.plan_date!==day);
- if(ready>reserved.length)return true;
- return meals.some(m=>m.status==='pending'&&Number(m.recipe_id)===Number(recipe.id)&&m.plan_date>day&&['automatic','unknown'].includes(m.assignment_source||'unknown'));
-}
-function renderFitnessStats(treadmills,workouts,weights){
- const all=[...treadmills.map(x=>({date:x.date})),...workouts.map(x=>({date:x.date}))];
- const thisMonth=all.filter(x=>(x.date||'').slice(0,7)===today.slice(0,7)).length;
- const activeWeeks=new Set(all.map(x=>weekStartISO(x.date)));
- let streak=0,week=new Date(weekStartISO(today)+'T12:00:00');while(activeWeeks.has(isoDate(week))&&streak<520){streak++;week.setDate(week.getDate()-7)}
- const thisWeek=weekStartISO(today);
- const thisWeekWeights=uniqueWeightsPerDay(weights).filter(x=>x.date>=thisWeek&&x.date<=today);
- const weeklyAverage=thisWeekWeights.length?thisWeekWeights.reduce((sum,x)=>sum+Number(x.kg),0)/thisWeekWeights.length:null;
- const startISO=addDaysISO(today,-83);
- const treadmillMins=treadmills.filter(x=>x.date>=startISO&&x.date<=today).reduce((a,x)=>a+Number(x.duration_min||0),0);
- const gymCount=workouts.filter(x=>x.date>=startISO&&x.date<=today).length;
- $('#fitness-stats').innerHTML=stat('Workouts',all.length,'Treadmill + gym')+stat('This month',thisMonth,'Sessions')+stat('Week streak',streak,'Consecutive active weeks')+stat('This week avg weight',weeklyAverage===null?'â€”':`${formatKg(weeklyAverage)} kg`,`${thisWeekWeights.length} weight ${thisWeekWeights.length===1?'entry':'entries'} this week`)+stat('Treadmill avg / week',`${Math.round(treadmillMins/12)} min`,'Last 12 weeks')+stat('Gym avg / week',`${(gymCount/12).toFixed(1)}`,'Sessions Â· last 12 weeks');
-}
-function renderWeightHistory(weights){
- const sorted=[...uniqueWeightsPerDay(weights)].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id));
- $('#weight-history-count').textContent=`${sorted.length} entries`;
- $('#weight-history').innerHTML=sorted.map(w=>`<div class="history-entry"><div class="history-entry-main"><b>${formatDate(w.date)}</b><small>Recorded weight</small></div><div class="history-entry-side"><strong>${formatKg(w.kg)} kg</strong><button class="mini-btn danger-btn" data-delete="weights:${w.id}" aria-label="Delete weight record from ${formatDate(w.date)}" title="Remove this weight record">Remove</button></div></div>`).join('')||empty('No weight records yet.');
-}
-function renderWeightGraph(weights){
- const host=$('#weight-graph');if(!host)return;
- const sorted=uniqueWeightsPerDay(weights);
- if(!sorted.length){host.innerHTML=empty('Record your weight to see your progress graph.');return}
- const W=960,H=280,L=62,R=28,T=22,B=48,plotW=W-L-R,plotH=H-T-B;
- const vals=sorted.map(x=>Number(x.kg)).filter(Number.isFinite);let min=Math.min(...vals),max=Math.max(...vals);
- if(min===max){min-=0.5;max+=0.5}else{const pad=Math.max((max-min)*0.12,0.25);min-=pad;max+=pad}
- const xAt=i=>sorted.length===1?L+plotW/2:L+(i/(sorted.length-1))*plotW;
- const yAt=v=>T+((max-v)/(max-min))*plotH;
- const grid=Array.from({length:5},(_,i)=>{const value=min+(max-min)*i/4,y=yAt(value);return `<line class="weight-grid-line" x1="${L}" y1="${y}" x2="${W-R}" y2="${y}"/><text class="weight-axis-label" x="${L-10}" y="${y+4}" text-anchor="end">${value.toFixed(1)}</text>`}).join('');
- const points=sorted.map((r,i)=>`${xAt(i)},${yAt(Number(r.kg))}`).join(' ');
- const dots=sorted.map((r,i)=>`<circle class="weight-point" cx="${xAt(i)}" cy="${yAt(Number(r.kg))}" r="5.5" tabindex="0" role="img" data-date="${esc(formatDate(r.date))}" data-weight="${esc(formatKg(r.kg))}"><title>${formatDate(r.date)} Â· ${formatKg(r.kg)} kg</title></circle>`).join('');
- const tickCount=Math.min(6,sorted.length),ticks=Array.from({length:tickCount},(_,i)=>{const ix=tickCount===1?0:Math.round(i*(sorted.length-1)/(tickCount-1));return `<text class="weight-axis-label" x="${xAt(ix)}" y="${H-15}" text-anchor="middle">${formatDate(sorted[ix].date)}</text>`}).join('');
- const latest=sorted[sorted.length-1];
- host.innerHTML=`<div class="weight-chart-scroll"><div class="weight-chart-wrap"><svg class="weight-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight progress graph, ${sorted.length} records, latest ${formatKg(latest.kg)} kilograms"><defs><linearGradient id="weight-area" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="var(--green)" stop-opacity=".24"/><stop offset="100%" stop-color="var(--green)" stop-opacity="0"/></linearGradient></defs>${grid}<polygon class="weight-area" points="${L},${T+plotH} ${points} ${W-R},${T+plotH}"/><polyline class="weight-line" points="${points}"/>${dots}${ticks}</svg><div class="weight-chart-tooltip" role="status" hidden></div></div></div><div class="weight-chart-meta"><span>First: ${formatKg(sorted[0].kg)} kg Â· ${formatDate(sorted[0].date)}</span><b>Latest: ${formatKg(latest.kg)} kg Â· ${formatDate(latest.date)}</b></div>`;
- const wrap=host.querySelector('.weight-chart-wrap'),tip=host.querySelector('.weight-chart-tooltip');
- const showTip=(point,event)=>{const rect=wrap.getBoundingClientRect();const px=event&&Number.isFinite(event.clientX)?event.clientX:point.getBoundingClientRect().left+point.getBoundingClientRect().width/2;const py=event&&Number.isFinite(event.clientY)?event.clientY:point.getBoundingClientRect().top;tip.innerHTML=`<b>${point.dataset.weight} kg</b><span>${point.dataset.date}</span>`;tip.hidden=false;tip.style.left=`${Math.max(8,Math.min(rect.width-145,px-rect.left+12))}px`;tip.style.top=`${Math.max(4,Math.min(rect.height-58,py-rect.top-52))}px`};
- const hideTip=()=>{tip.hidden=true};
- wrap.querySelectorAll('.weight-point').forEach(point=>{point.addEventListener('pointerenter',e=>showTip(point,e));point.addEventListener('pointermove',e=>showTip(point,e));point.addEventListener('pointerleave',hideTip);point.addEventListener('focus',()=>showTip(point));point.addEventListener('blur',hideTip);point.addEventListener('click',e=>showTip(point,e))});
-}
-function renderWeeklyWeightAverages(weights){
- const host=$('#weekly-weight-average');if(!host)return;
- const grouped=new Map();
- for(const w of uniqueWeightsPerDay(weights)){const start=weekStartISO(w.date);if(!grouped.has(start))grouped.set(start,[]);grouped.get(start).push(Number(w.kg))}
- const weeks=[...grouped.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([start,values])=>({start,avg:values.reduce((a,b)=>a+b,0)/values.length,count:values.length}));
- if(!weeks.length){host.innerHTML=empty('Add weight records to compare weekly averages.');return}
- const min=Math.min(...weeks.map(x=>x.avg)),max=Math.max(...weeks.map(x=>x.avg)),span=max-min||1;
- const bars=weeks.map((w,i)=>{const height=38+((w.avg-min)/span)*132;const end=new Date(w.start+'T12:00:00');end.setDate(end.getDate()+6);const endISO=isoDate(end);const tip=`Week ${formatDate(w.start)}â€“${formatDate(endISO)} Â· average ${formatKg(w.avg)} kg Â· ${w.count} ${w.count===1?'entry':'entries'}`;return `<div class="week-average-column" title="${esc(tip)}" aria-label="${esc(tip)}"><span class="week-average-value">${formatKg(w.avg)}</span><div class="week-average-track"><i style="height:${height}px"></i></div><small>${i%4===0||i===weeks.length-1?formatDate(w.start):''}</small></div>`}).join('');
- const minChartWidth=Math.max(320,weeks.length*52);
- host.innerHTML=`<div class="weekly-average-summary"><span>${weeks.length} weeks with recorded weight</span><b>Latest week: ${formatKg(weeks[weeks.length-1].avg)} kg</b></div><div class="weekly-average-scroll"><div class="weekly-average-chart" style="--week-count:${weeks.length};min-width:${minChartWidth}px">${bars}</div></div><p class="muted weekly-average-help">Each bar is the average of all weigh-ins recorded during that Mondayâ€“Sunday week. The chart fills the card; older weeks remain available by horizontal scrolling.</p>`;
-}
-function renderHeatmap(id,records,kind){
- const host=$(id);if(!host)return;const values={};for(const r of records){const key=r.date;if(!key)continue;values[key]=(values[key]||0)+(kind==='minutes'?Number(r.duration_min||0):1)}
- const end=new Date(today+'T12:00:00'),start=new Date(end);start.setDate(start.getDate()-364);start.setDate(start.getDate()-start.getDay());
- const days=[];for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){const date=isoDate(d),value=values[date]||0;let level=0;if(value>0){if(kind==='minutes')level=value<30?1:value<60?2:value<90?3:4;else level=value===1?1:value===2?2:value===3?3:4}days.push({date,value,level,week:Math.floor((d-start)/86400000/7),weekday:d.getDay(),month:d.getMonth()})}
- const weeks=Math.max(...days.map(x=>x.week))+1;let monthHtml='',seen=-1;for(const day of days){if(day.month!==seen&&day.weekday===0){const label=new Date(day.date+'T12:00:00').toLocaleDateString(undefined,{month:'short'});monthHtml+=`<span style="grid-column:${day.week+1}/span 3">${label}</span>`;seen=day.month}}
- const cells=days.map(x=>`<span class="heat-cell level-${x.level}" style="grid-column:${x.week+1};grid-row:${x.weekday+1}" title="${formatDate(x.date)} Â· ${kind==='minutes'?`${x.value} min`:`${x.value} gym session${x.value===1?'':'s'}`}" aria-label="${formatDate(x.date)} ${x.value}"></span>`).join('');
- const rangeStart=isoDate(new Date(end.getTime()-364*86400000));
- const period=records.filter(x=>x.date>=rangeStart&&x.date<=today);
- const total=kind==='minutes'?period.reduce((a,x)=>a+Number(x.duration_min||0),0):period.length;
- host.innerHTML=`<div class="heatmap-scroll"><div class="heatmap-months" style="--weeks:${weeks}">${monthHtml}</div><div class="heatmap-grid" style="--weeks:${weeks}">${cells}</div></div><div class="heatmap-footer"><span>${kind==='minutes'?`${Math.round(total)} minutes trained`:`${total} gym sessions`} Â· ${period.length} entries in view</span><span class="heat-legend">Less <i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i> More</span></div>`;
-}
-function renderTodayAgenda(agenda){
- const host=$('#today-agenda');if(!host)return;
- const items=Array.isArray(agenda?.items)?agenda.items:[];
- const sections=[
-  {title:'Needs your attention',hint:'Due, overdue or waiting for confirmation',items:items.filter(x=>['overdue','due','pending'].includes(x.status))},
-  {title:'Coming up',hint:'Appointments, bill alerts and expiry reminders',items:items.filter(x=>['scheduled','upcoming'].includes(x.status))},
-  {title:'Already handled',hint:'Your completed routines and activity logs',items:items.filter(x=>x.status==='completed')}
- ];
- const actionFor=x=>{
-  const id=Number(x.id);
-  if(x.type==='routine'&&id)return `<button class="mini-btn success" data-complete="${id}">Done</button>`;
-  if(x.type==='task'&&id)return `<button class="mini-btn success" data-taskdone="${id}">Done</button>`;
-  if(x.type==='bill'&&id)return `<button class="mini-btn" data-pay="${id}">Mark paid</button>`;
-  if(x.type==='meal'&&x.status==='pending'&&id)return `<span class="action-group"><button class="mini-btn success" data-meal-confirm="${id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${id}" data-meal-decision="no">Move</button></span>`;
-  if(x.type==='cook')return `<button class="mini-btn" data-go="meals">Meals</button>`;
-  return '';
- };
- const statusLabel={overdue:'Overdue',due:'Due today',pending:'Pending',scheduled:'Scheduled',upcoming:'Soon',completed:'Done'};
- host.innerHTML=sections.filter(section=>section.items.length).map(section=>`<section class="agenda-section"><div class="agenda-section-head"><b>${esc(section.title)}</b><span>${section.items.length}</span><small>${esc(section.hint)}</small></div><div class="agenda-section-list">${section.items.map(x=>`<div class="agenda-entry agenda-${esc(x.type)} agenda-${esc(x.status)}"><span class="agenda-dot"></span><div class="agenda-entry-copy"><b>${esc(x.title)}</b><small>${x.time?`${esc(x.time)} Â· `:''}${esc(x.detail)}</small></div><span class="agenda-status agenda-status-${esc(x.status)}">${statusLabel[x.status]||esc(x.status)}</span>${actionFor(x)}</div>`).join('')}</div></section>`).join('')||`<div class="agenda-clear"><span>âœ¦</span><b>You're all clear today.</b><small>Nothing due or scheduled. Enjoy the breathing room.</small></div>`;
-}
-function renderTodayProgress(agenda){
- const host=$('#today-progress');if(!host)return;
- const entries=Array.isArray(agenda?.items)?agenda.items:[];
- const routineCount=entries.filter(x=>x.type==='routine'&&['overdue','due'].includes(x.status)).length;
- host.innerHTML=`<div class="today-progress-grid"><div><b>${Number(agenda?.open_count||0)}</b><span>To handle</span></div><div><b>${Number(agenda?.scheduled_count||0)}</b><span>Scheduled</span></div><div><b>${Number(agenda?.completed_count||0)}</b><span>Completed</span></div><div><b>${routineCount}</b><span>Routines due</span></div></div><p class="muted today-progress-note">${Number(agenda?.count||0)} total item${Number(agenda?.count||0)===1?'':'s'} across your day. Changes sync to Planner, Telegram and Home Assistant.</p>`;
+@media(max-width:360px){
+  main{padding-left:9px!important;padding-right:9px!important}
+  #nav .nav-icon{font-size:16px}
+  #nav .nav-label{font-size:7px}
+  .stats{gap:6px}
+  .stat{padding:10px}
+  .cal-day{min-height:76px;padding:3px}
+  .cal-event{font-size:6.5px}
 }
 
-async function refresh(){const requestId=++refreshSequence;try{
- // The add-on timezone is authoritative. Use the API date so iPhone, Android,
- // desktop and Telegram all interpret today and due dates in the same timezone.
- const sum=await api('summary');
- if(requestId!==refreshSequence)return;
- syncCurrentDate(sum.today);
- const mealWeekStart=weekStartISO(today),mealWeekEnd=addDaysISO(mealWeekStart,6);
- const [events,tasks,weights,treadmills,workouts,workout_plan,bills,documents,routines,recipes,dailyMeals,shoppingItems,cookReminders,mealSkips]=await Promise.all([
-  'events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','documents?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000','meal_cook_reminders?limit=10000',`meal-schedule-skips?start_date=${mealWeekStart}&end_date=${mealWeekEnd}`
- ].map(x=>api(x)));
- if(requestId!==refreshSequence)return;
- const todayAgenda=sum.today_agenda||{date:today,count:0,open_count:0,scheduled_count:0,completed_count:0,items:[]};cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,documents,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems,meal_cook_reminders:cookReminders,meal_schedule_skips:mealSkips,today_agenda:todayAgenda};const billGroups=groupBillSeries(bills);$('#api-status').textContent='API connected';
- const nextBill=sum.upcoming_bill;
- const billHint=nextBill?`${esc(nextBill.name)} Â· ${formatDate(nextBill.due_date)} Â· ${money(nextBill.amount_mad)}`:'No unpaid bills coming up';
- const tomorrowISO=addDaysISO(today,1);
- const tomorrowSchedules = events.filter(e=>String(e.start_at||'').slice(0,10)===tomorrowISO).length
-  + tasks.filter(t=>t.status!=='done'&&t.due_date===tomorrowISO).length
-  + routines.filter(r=>r.next_due===tomorrowISO).length
-  + dailyMeals.filter(m=>m.plan_date===tomorrowISO).length
-  + cookReminders.filter(r=>r.due_date===tomorrowISO&&r.status==='open').length
-  + billGroups.filter(group=>group.next&&group.next.due_date===tomorrowISO).length;
- $('#stats').innerHTML=stat("Today's items",Number(todayAgenda.count||0),`${Number(todayAgenda.open_count||0)} to handle Â· ${Number(todayAgenda.completed_count||0)} completed`)+stat('Tomorrow schedules',tomorrowSchedules,'All scheduled items')+stat('Latest weight',sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'â€”','Fitness log')+stat('Upcoming bills',billCountdown(nextBill),billHint);
- renderTodayMeal();renderTodayAgenda(todayAgenda);renderTodayProgress(todayAgenda);
- $('#fitness-snapshot').innerHTML=`<div><div class="big-number">${sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'â€”'}</div><small class="muted">Latest weight</small></div><div><div class="big-number">${treadmills.length}</div><small class="muted">Treadmill sessions</small></div><div><div class="big-number">${workouts.length}</div><small class="muted">Gym workouts</small></div>`;
- renderCalendar(events);
- renderWeightHistory(weights);renderWeightGraph(weights);renderWeeklyWeightAverages(weights);
- $('#treadmill-history-count').textContent=`${treadmills.length} sessions`;
- $('#treadmill-history').innerHTML=[...treadmills].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id)).map(t=>`<div class="history-entry"><div class="history-entry-main"><b>${Number(t.duration_min)} min Â· ${Number(t.distance_km).toFixed(2)} km</b><small>${formatDate(t.date)} Â· ${Number(t.speed_kmh||5).toFixed(0)} km/h Â· 0% incline</small></div><div class="history-entry-side"><strong>${Number(t.calories_kcal||0)} kcal</strong><small>Estimated</small><button class="mini-btn danger-btn" data-delete="treadmill:${t.id}" aria-label="Delete treadmill session from ${formatDate(t.date)}" title="Remove this treadmill session">Remove</button></div></div>`).join('')||empty();
- $('#workout-history-count').textContent=`${workouts.length} workouts`;
- $('#workout-history').innerHTML=[...workouts].sort((a,b)=>b.date.localeCompare(a.date)||Number(b.id)-Number(a.id)).map(w=>`<div class="history-entry"><div class="history-entry-main"><b>${esc(w.name)}</b><small>${formatDate(w.date)}${w.notes?' Â· '+esc(w.notes):''}</small></div><div class="history-entry-side"><span class="tag">Gym</span><button class="mini-btn" data-delete="workouts:${w.id}">Delete</button></div></div>`).join('')||empty();
- renderFitnessStats(treadmills,workouts,weights);renderHeatmap('#treadmill-activity',treadmills,'minutes');renderHeatmap('#gym-activity',workouts,'count');updateTreadmillPreview();
- $('#workout-plan-list').innerHTML=workout_plan.sort((a,b)=>['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].indexOf(a.weekday)-['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].indexOf(b.weekday)).map(w=>item(w.weekday,w.name,'Planned',`<button class="mini-btn" data-delete="workout_plan:${w.id}">Remove</button>`)).join('')||empty('No workout days planned yet.');
- $('#bill-summary').innerHTML=stat('Unpaid bills',sum.unpaid_bills,'Outstanding')+stat('Total outstanding',money(sum.unpaid_total_mad),'MAD')+stat('Open tasks',sum.open_tasks,'In Planner');
- $('#bills-list').innerHTML=billGroups.map(renderBillSeriesCard).join('')||empty('No bills yet. Add a bill to track its due date and payment history.');
- $('#routines-list').innerHTML=routines.map(r=>{const rollover=r.routine_late_time&&Number(r.routine_rollover_after_late)===1;const lateLabel=r.routine_late_time?`Late alert ${r.routine_late_time}${rollover?' Â· auto-moves to tomorrow if still open':''}`:'Late alert off';return item(r.name,`Last: ${r.last_done?formatDate(r.last_done):'Not recorded'} Â· Next: ${r.next_due?formatDate(r.next_due):'â€”'} Â· Time ${r.routine_time||'â€”'} Â· ${lateLabel}`,r.interval_days+' days',`<button class="mini-btn" data-edit-routine="${r.id}">Edit routine</button><button class="mini-btn" data-edit-routine-record="${r.id}">Edit last record</button><button class="mini-btn" data-complete="${r.id}">Done</button>`)}).join('')||empty();
- renderMeals();renderPlannerShopping();
- }catch(e){if(requestId!==refreshSequence)return;$('#api-status').textContent='API unavailable';console.error(e);toast(e.message)}}
-function calendarItemsForDay(day){
- const c=cache;
- const styleType={
-  'routine':'routine','routine-done':'routine','cook':'care','workout-plan':'workout','workout':'workout',
-  'meal':'meal','bill':'bill','task':'task','task-done':'task',document:'task','event':'event',
-  'weight':'fitness','treadmill':'fitness','document':'task'
- };
- if(day===today&&Array.isArray(c.today_agenda?.items)){
-  return c.today_agenda.items.map(x=>({
-   ...x,originalType:x.type,visualType:styleType[x.type]||x.type,
-   time:x.time||null,title:x.title||'',detail:x.detail||'',status:x.status||'scheduled'
-  }));
- }
- const items=[];
- const push=(x)=>items.push({...x,originalType:x.originalType||x.type,visualType:x.visualType||styleType[x.type]||x.type});
- for(const e of (c.events||[]).filter(x=>String(x.start_at||'').slice(0,10)===day)){
-  push({id:e.id,type:'event',status:'scheduled',time:e.start_at?.includes('T')?e.start_at.slice(11,16):null,title:e.title,detail:`Event${e.category?' Â· '+e.category:''}${e.end_at?.includes('T')?' Â· ends '+e.end_at.slice(11,16):''}`});
- }
- for(const t of (c.tasks||[])){
-  const completedDay=String(t.completed_at||'').slice(0,10);
-  if(t.status==='done'&&completedDay===day){push({id:t.id,type:'task-done',status:'completed',time:completedDay===day&&t.completed_at?.includes('T')?t.completed_at.slice(11,16):null,title:t.title,detail:'Task completed'});continue}
-  if(t.status!=='done'&&t.due_date===day){push({id:t.id,type:'task',status:day<today?'overdue':day===today?'due':'scheduled',time:t.due_time||null,title:t.title,detail:`Task reminder Â· ${(t.priority||'normal').toLowerCase()} priority`})}
- }
- const weight=uniqueWeightsPerDay(c.weights||[]).find(x=>x.date===day);
- if(weight)push({id:weight.id,type:'weight',status:'completed',title:`${formatKg(weight.kg)} kg`,detail:'Recorded weight'});
- const tread=(c.treadmill||[]).filter(x=>x.date===day);
- if(tread.length){const mins=tread.reduce((a,x)=>a+Number(x.duration_min||0),0);push({type:'treadmill',status:'completed',title:`Treadmill Â· ${Math.round(mins)} min`,detail:`${tread.length} session${tread.length===1?'':'s'} Â· ${Math.round(tread.reduce((a,x)=>a+Number(x.calories_kcal||0),0))} estimated kcal`})}
- const loggedWorkouts=(c.workouts||[]).filter(x=>x.date===day);
- for(const w of loggedWorkouts)push({id:w.id,type:'workout',status:'completed',title:`Gym Â· ${w.name}${Number(w.duration_min||0)>0?' Â· '+Number(w.duration_min)+' min':''}`,detail:w.notes||'Workout logged'});
- const dayDate=new Date(day+'T12:00:00'),weekday=WEEKDAY_LABELS[(dayDate.getDay()+6)%7];
- for(const planned of (c.workout_plan||[]).filter(x=>x.weekday===weekday&&!loggedWorkouts.some(w=>String(w.name||'').trim().toLowerCase()===String(x.name||'').trim().toLowerCase())))
-  push({id:planned.id,type:'workout-plan',status:'scheduled',title:planned.name,detail:`Planned workout${planned.notes?' Â· '+planned.notes:''}`});
- for(const r of (c.routines||[])){
-  if(r.next_due===day)push({id:r.id,type:'routine',status:day<today?'overdue':day===today?'due':'scheduled',time:r.routine_time||null,title:r.name,detail:`Routine Â· every ${Math.max(1,Number(r.interval_days||1))} days`});
-  if(r.last_done===day)push({id:r.id,type:'routine-done',status:'completed',title:r.name,detail:'Routine completed'});
- }
- for(const document of (c.documents||[])){
-  const expiry=String(document.expiry_date||'').slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(expiry))continue;
-  const remaining=Math.round((new Date(expiry+'T12:00:00')-new Date(day+'T12:00:00'))/86400000);
-  const lead=Math.max(0,Number(document.reminder_days??30));if(remaining>lead)continue;
-  const status=remaining<0?'overdue':remaining===0?'due':'upcoming';
-  const detail=remaining<0?`Expired ${Math.abs(remaining)}d ago`:remaining===0?'Expires today':`Expires in ${remaining}d`;
-  push({id:document.id,type:'document',status,title:document.name,detail});
- }
- for(const group of groupBillSeries(c.bills||[]).filter(x=>x.next&&x.next.due_date===day))push({id:group.next.id,type:'bill',status:day<today?'overdue':day===today?'due':'upcoming',title:group.next.name,detail:`${money(group.next.amount_mad)} Â· ${day===today?'Due today':day<today?'Payment overdue':'Payment due'}`});
- for(const m of (c.daily_meals||[]).filter(x=>x.plan_date===day))push({id:m.id,type:'meal',status:m.status==='eaten'?'completed':'pending',title:m.recipe_name||'Meal',detail:`${m.status==='eaten'?'Confirmed eaten':'Waiting for your check-in'}${m.calories_kcal!=null?' Â· '+Number(m.calories_kcal)+' kcal':''}`});
- for(const r of (c.meal_cook_reminders||[]).filter(x=>x.due_date===day&&x.status==='open'))push({id:r.id,type:'cook',status:'due',title:`Prepare ${r.recipe_name}`,detail:'Home meal stock Â· cooking needed'});
- return items.map((item,index)=>({...item,_index:index})).sort((a,b)=>{
-  const at=a.time||'99:99',bt=b.time||'99:99';
-  return at.localeCompare(bt)||a._index-b._index;
- }).map(({_index,...item})=>item);
-}
-function plannerStatusLabel(status){return ({overdue:'Overdue',due:'Due today',pending:'To confirm',scheduled:'Scheduled',upcoming:'Coming up',completed:'Done'})[status]||'Scheduled'}
-function plannerItemAction(x){
- const id=Number(x.id);
- if(!id)return '';
- if(x.originalType==='routine'&&['due','overdue'].includes(x.status))return `<button class="mini-btn success" data-complete="${id}">Done</button>`;
- if(x.originalType==='task'&&['due','overdue'].includes(x.status))return `<button class="mini-btn success" data-taskdone="${id}">Done</button>`;
- if(x.originalType==='bill'&&x.status!=='completed')return `<button class="mini-btn" data-pay="${id}">Mark paid</button>`;
- if(x.originalType==='meal'&&x.status==='pending')return `<span class="action-group"><button class="mini-btn success" data-meal-confirm="${id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${id}" data-meal-decision="no">Move</button></span>`;
- return '';
-}
-function renderPlannerSummary(){
- const host=$('#planner-summary');if(!host)return;
- const todayItems=calendarItemsForDay(today),agenda=cache.today_agenda||{};
- let nextSeven=0;
- for(let offset=1;offset<=7;offset++){
-  const day=addDaysISO(today,offset);
-  nextSeven+=calendarItemsForDay(day).filter(x=>x.status!=='completed').length;
- }
- const open=Number(agenda.open_count??todayItems.filter(x=>['overdue','due','pending'].includes(x.status)).length);
- host.innerHTML=`<div class="planner-summary-card"><span class="planner-summary-icon">â—·</span><div><small>Today</small><b>${todayItems.length}</b><span>${todayItems.length===1?'item on your day':'items across your day'}</span></div></div><div class="planner-summary-card planner-summary-attention"><span class="planner-summary-icon">âœ¦</span><div><small>Needs attention</small><b>${open}</b><span>${open===1?'thing to take care of':'things to take care of'}</span></div></div><div class="planner-summary-card planner-summary-next"><span class="planner-summary-icon">â†—</span><div><small>Next 7 days</small><b>${nextSeven}</b><span>${nextSeven===1?'upcoming item':'upcoming items'}</span></div></div>`;
-}
-function renderPlannerUnscheduled(){
- const host=$('#planner-unscheduled-list');if(!host)return;
- const tasks=(cache.tasks||[]).filter(x=>x.status!=='done'&&!x.due_date).sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
- const count=$('#planner-unscheduled-count');if(count)count.textContent=String(tasks.length);
- if(!tasks.length){host.innerHTML='<div class="planner-unscheduled-empty">All caught up â€” every open task has a date, or your list is clear. âœ¨</div>';return}
- host.innerHTML=tasks.map(task=>`<div class="planner-unscheduled-item"><span class="planner-unscheduled-icon">â˜</span><div><b>${esc(task.title)}</b><small>${esc((task.priority||'normal').toLowerCase())} priority${task.category?' Â· '+esc(task.category):''}${task.notes?' Â· '+esc(task.notes):''}</small></div><button class="mini-btn success" data-taskdone="${Number(task.id)}">Done</button></div>`).join('');
-}
-function renderPlannerDay(items){
- const host=$('#calendar-day-detail');if(!host)return;
- const open=items.filter(x=>['overdue','due','pending'].includes(x.status)).length;
- $('#calendar-selected-label').textContent=longDateLabel(selectedCalendarDate);
- $('#planner-day-eyebrow').textContent=selectedCalendarDate===today?'TODAY':'SELECTED DAY';
- $('#planner-day-subtitle').textContent=items.length?`${items.length} ${items.length===1?'item':'items'}${open?` Â· ${open} need${open===1?'s':''} attention`:''}`:'A clear day. Add a task or event whenever you need one.';
- if(!items.length){host.innerHTML=`<div class="planner-empty-day"><span>âœ§</span><b>Nothing planned here.</b><small>Enjoy the breathing room, or add something you would like to remember.</small></div>`;return}
- const icons={event:'â—·',task:'âœ“', 'task-done':'âœ“',routine:'âœ¦','routine-done':'âœ¦',bill:'Â¤',meal:'â™¨','meal-eaten':'â™¨',cook:'âŒ‚',workout:'âœ£','workout-plan':'âœ£',weight:'â†—',treadmill:'âŒ',document:'â–¤'};
- host.innerHTML=items.map(x=>`<article class="planner-entry planner-entry-${esc(x.visualType||x.type)} planner-entry-${esc(x.status)}"><span class="planner-entry-icon">${icons[x.originalType]||'â€¢'}</span><div class="planner-entry-copy"><div class="planner-entry-title"><b>${esc(x.title)}</b><span class="planner-entry-status planner-status-${esc(x.status)}">${plannerStatusLabel(x.status)}</span></div><small>${x.time?`<strong>${esc(x.time)}</strong> Â· `:''}${esc(x.detail)}</small></div><div class="planner-entry-actions">${plannerItemAction(x)}</div></article>`).join('');
-}
-function renderCalendar(events){
- const year=calendarMonth.getFullYear(),month=calendarMonth.getMonth();
- $('#calendar-month-label').textContent=calendarMonth.toLocaleDateString(undefined,{month:'long',year:'numeric'});
- renderPlannerSummary();
- const first=new Date(year,month,1),start=new Date(year,month,1-((first.getDay()+6)%7));
- const heads=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(x=>`<div class="cal-head" role="columnheader">${x}</div>`).join('');let cells='';
- for(let i=0;i<42;i++){
-  const d=new Date(start);d.setDate(start.getDate()+i);const iso=isoDate(d),entries=calendarItemsForDay(iso);
-  const categories=[...new Set(entries.map(x=>x.visualType||x.type))].slice(0,4);
-  const dots=categories.map(type=>`<i class="planner-dot planner-dot-${esc(type)}"></i>`).join('');
-  const label=d.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'});
-  cells+=`<button type="button" class="planner-date-cell ${d.getMonth()!==month?'outside':''} ${iso===today?'today':''} ${iso===selectedCalendarDate?'selected':''} ${entries.length?'has-event':''}" data-calendar-date="${iso}" aria-pressed="${iso===selectedCalendarDate?'true':'false'}" aria-label="${esc(label)}, ${entries.length} ${entries.length===1?'item':'items'}"><span class="planner-date-top"><span class="day-number">${d.getDate()}</span>${entries.length?`<span class="planner-day-count">${entries.length}</span>`:''}</span><span class="planner-day-dots">${dots}</span></button>`;
- }
- $('#calendar-grid').innerHTML=heads+cells;
- renderPlannerDay(calendarItemsForDay(selectedCalendarDate));
- renderPlannerUnscheduled();
-}
-function shiftCalendarMonth(delta){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+delta,1);selectedCalendarDate=isoDate(calendarMonth);renderCalendar(cache.events||[])}
-$('#month-prev').onclick=()=>shiftCalendarMonth(-1);$('#month-next').onclick=()=>shiftCalendarMonth(1);
-$('#month-today').onclick=()=>{calendarMonth=new Date(today+'T12:00:00');selectedCalendarDate=today;renderCalendar(cache.events||[])};
-$('#calendar-day-today').onclick=()=>{calendarMonth=new Date(today+'T12:00:00');selectedCalendarDate=today;renderCalendar(cache.events||[])};
-function selectPlannerDate(day){if(!/^\d{4}-\d{2}-\d{2}$/.test(String(day||'')))return;selectedCalendarDate=day;const chosen=new Date(day+'T12:00:00');if(chosen.getMonth()!==calendarMonth.getMonth()||chosen.getFullYear()!==calendarMonth.getFullYear())calendarMonth=new Date(chosen.getFullYear(),chosen.getMonth(),1);renderCalendar(cache.events||[])}
-$('#calendar-grid').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-calendar-date]')){e.preventDefault();selectPlannerDate(e.target.closest('[data-calendar-date]').dataset.calendarDate)}});
-function navigate(page){$$('.page').forEach(p=>p.classList.toggle('active',p.id===page));$$('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));document.body.classList.toggle('inner-page',page!=='overview');$('#page-title').textContent=titles[page]||'XROB'}
-$('#nav').addEventListener('click',e=>{let b=e.target.closest('[data-page]');if(b)navigate(b.dataset.page)});
-document.addEventListener('click',e=>{let calendarDay=e.target.closest('[data-calendar-date]');if(calendarDay)selectPlannerDate(calendarDay.dataset.calendarDate);let go=e.target.closest('[data-go]');if(go)navigate(go.dataset.go);let del=e.target.closest('[data-delete]');if(del){let [r,id]=del.dataset.delete.split(':');if(!confirm('Delete this record? This cannot be undone.'))return;api(r+'/'+id,{method:'DELETE'}).then(()=>{toast('Deleted');refresh()}).catch(err=>toast(err.message))}let deleteMeal=e.target.closest('[data-delete-recipe]');if(deleteMeal){deleteRecipeOption(Number(deleteMeal.dataset.deleteRecipe));return}let done=e.target.closest('[data-taskdone]');if(done)api('tasks/'+done.dataset.taskdone,{method:'PATCH',body:JSON.stringify({data:{status:'done'}})}).then(()=>{toast('Task completed');refresh()}).catch(err=>toast(err.message));let pay=e.target.closest('[data-pay]');if(pay)api('bills/'+pay.dataset.pay+'/pay',{method:'POST'}).then(()=>{toast('Bill marked paid');refresh()}).catch(err=>toast(err.message));let editBill=e.target.closest('[data-edit-bill]');if(editBill){const b=(cache.bills||[]).find(x=>x.id===Number(editBill.dataset.editBill));if(b)openModal('bill',b)}let editPayment=e.target.closest('[data-edit-payment]');if(editPayment){const b=(cache.bills||[]).find(x=>x.id===Number(editPayment.dataset.editPayment));if(b)openModal('bill_payment',b)}let comp=e.target.closest('[data-complete]');if(comp)api('routines/'+comp.dataset.complete+'/complete',{method:'POST'}).then(()=>{toast('Routine completed');refresh()}).catch(err=>toast(err.message));let edit=e.target.closest('[data-edit-routine]');if(edit){const r=(cache.routines||[]).find(x=>x.id===Number(edit.dataset.editRoutine));if(r)openModal('routine',r)}let editRecord=e.target.closest('[data-edit-routine-record]');if(editRecord){const r=(cache.routines||[]).find(x=>x.id===Number(editRecord.dataset.editRoutineRecord));if(r)openModal('routine_record',{...r,completed_at:r.last_done||today})}let modal=e.target.closest('[data-modal]');if(modal){openModal(modal.dataset.modal);const preferredKind=modal.dataset.plannerKind;const kindSelect=preferredKind?$('#modal-form [name="kind"]'):null;if(kindSelect){kindSelect.value=preferredKind;kindSelect.dispatchEvent(new Event('change'))}}});
-const configs={planner:{title:'Add planner item'},bill:{title:'Add bill',resource:'bills',fields:[['name','Bill name','text',true],['amount_mad','Amount (MAD)','number',true],['due_date','Due date','date',true],['recurrence','Recurrence','select',['none','monthly','quarterly','yearly']],['notes','Notes','textarea']]},bill_payment:{title:'Edit payment record'},routine:{title:'Add routine',resource:'routines',fields:[['name','Routine name','text',true],['interval_days','Repeat every (days)','number',true],['routine_time','Routine time (24-hour)','time24'],['routine_late_time','Late reminder time (optional)','time24'],['category','Category','text'],['notes','Notes','textarea']]},routine_record:{title:'Edit last completion record',resource:'routines',fields:[['completed_at','Last completed on','date',true]]}};
-function openModal(type,existing=null){
- delete $('#modal').dataset.lockBackdrop;
- const c=configs[type];$('#modal-title').textContent=type==='bill_payment'?`Edit payment Â· ${existing?.name||'Bill'}`:existing?'Edit '+(existing.name||'routine'):c.title;
- if(type==='planner'){
-  $('#modal-form').innerHTML=`<label>Type<select name="kind"><option value="task">Task / reminder</option><option value="event">Event / appointment</option></select></label><label>Title<input name="title" required maxlength="160" placeholder="What do you need to do?" /></label><label data-field="date">Date<input name="date" type="text" inputmode="numeric" value="${displayDateInput(selectedCalendarDate)}" placeholder="DD/MM/YY (optional for tasks)" autocomplete="off" /></label><label data-field="time">Time<input name="time" type="text" inputmode="numeric" placeholder="HH:MM (optional)" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" autocomplete="off" /></label><label data-field="end_time" hidden>End time (event only)<input name="end_time" type="text" inputmode="numeric" placeholder="HH:MM (optional)" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" autocomplete="off" /></label><label data-field="priority">Priority<select name="priority"><option>normal</option><option>high</option><option>low</option></select></label><label data-field="category">Category<input name="category" placeholder="general" /></label><label>Notes<textarea name="notes" placeholder="Optional details"></textarea></label><button class="primary">Save planner item</button>`;
-  const kind=$('#modal-form [name="kind"]');const showFields=()=>{const isEvent=kind.value==='event';$('#modal-form [data-field="end_time"]').hidden=!isEvent;$('#modal-form [data-field="priority"]').hidden=isEvent;$('#modal-form [data-field="date"]').querySelector('input').placeholder=isEvent?'DD/MM/YY (required)':'DD/MM/YY (optional)';$('#modal-form [data-field="category"]').querySelector('input').placeholder=isEvent?'personal':'general'};kind.addEventListener('change',showFields);showFields();
-  $('#modal-form').onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(e.target));const day=d.date?parseDateInput(d.date):'';for(const field of ['time','end_time'])if(d[field]&&!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(d[field]))throw Error('Enter time as 24-hour HH:MM.');let resource,payload;if(d.kind==='event'){if(!day)throw Error('Events need a date.');resource='events';payload={title:d.title.trim(),start_at:day+(d.time?'T'+d.time:''),end_at:d.end_time?day+'T'+d.end_time:null,category:d.category||'personal',notes:d.notes||''};if(payload.end_at&&payload.end_at<=payload.start_at)throw Error('End time must be after start time.')}else{resource='tasks';if(d.time&&!day)throw Error('Choose a date before setting a task reminder time.');payload={title:d.title.trim(),due_date:day||null,due_time:d.time||null,priority:d.priority||'normal',category:d.category||'general',notes:d.notes||''}}if(!payload.title)throw Error('Enter a title.');await api(resource,{method:'POST',body:JSON.stringify({data:payload})});$('#modal').classList.add('hidden');toast(d.kind==='event'?'Event saved':'Task saved');refresh()}catch(err){toast(err.message)}};
- }else if(type==='routine'){
-  const lateValue=existing?.routine_late_time||'';
-  const rolloverValue=existing?Number(existing.routine_rollover_after_late)===1:Boolean(lateValue);
-  $('#modal-form').innerHTML=`<label>Routine name<input name="name" required maxlength="160" value="${esc(existing?.name||'')}" placeholder="e.g. Read 20 pages"></label><label>Repeat every (days)<input name="interval_days" type="number" min="1" max="365" step="1" required value="${Number(existing?.interval_days||7)}"></label><div class="two-field"><label>Routine time<input name="routine_time" type="text" inputmode="numeric" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" value="${esc(existing?.routine_time||'10:00')}" placeholder="HH:MM"></label><label>Late reminder (optional)<input name="routine_late_time" type="text" inputmode="numeric" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" value="${esc(lateValue)}" placeholder="Leave blank to disable"></label></div><div class="rollover-setting" id="routine-rollover-setting" ${lateValue?'':'hidden'}><label class="rollover-toggle"><input type="checkbox" name="routine_rollover_after_late" ${rolloverValue?'checked':''}><span><b>Move to tomorrow if still incomplete</b><small>After the late Telegram reminder, an unfinished routine shifts to tomorrow. This option is only available when a late reminder is set.</small></span></label></div><label>Category<input name="category" value="${esc(existing?.category||'personal')}" placeholder="personal"></label><label>Notes<textarea name="notes" placeholder="Optional">${esc(existing?.notes||'')}</textarea></label><button class="primary">${existing?'Save changes':'Save routine'}</button>`;
-  const form=$('#modal-form'),lateInput=form.elements.routine_late_time,rolloverBox=$('#routine-rollover-setting'),rolloverInput=form.elements.routine_rollover_after_late;let rolloverTouched=false;
-  const updateRolloverVisibility=()=>{const enabled=Boolean(lateInput.value.trim());rolloverBox.hidden=!enabled;if(!enabled)rolloverInput.checked=false;else if(!rolloverTouched&&!existing)rolloverInput.checked=true};
-  lateInput.addEventListener('input',updateRolloverVisibility);rolloverInput.addEventListener('change',()=>{rolloverTouched=true});updateRolloverVisibility();
-  form.onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(form));d.interval_days=Number(d.interval_days);d.routine_late_time=d.routine_late_time.trim()||null;d.routine_rollover_after_late=d.routine_late_time&&rolloverInput.checked?1:0;if(!Number.isInteger(d.interval_days)||d.interval_days<1||d.interval_days>365)throw Error('Repeat interval must be between 1 and 365 days.');for(const field of ['routine_time','routine_late_time'])if(d[field]&&!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(d[field]))throw Error('Enter time in 24-hour HH:MM format.');if(d.routine_time&&d.routine_late_time&&d.routine_late_time<=d.routine_time)throw Error('Late reminder must be later than routine time.');const path=existing?`routines/${existing.id}`:'routines';await api(path,{method:existing?'PATCH':'POST',body:JSON.stringify({data:d})});closeModal();toast(existing?'Routine updated':'Routine saved');refresh()}catch(err){toast(err.message)}};
- }else if(type==='bill_payment'){
-  const paidAt=existing?.paid_at||'';
-  $('#modal-form').innerHTML=`<p class="muted">Correct the payment record for <b>${esc(existing?.name||'this bill')}</b>. Changing this does not create another payment or alter the due date.</p><label>Amount paid (MAD)<input name="amount_mad" type="number" min="0" step="0.01" required value="${Number(existing?.amount_mad||0)}"></label><label>Payment date and time<input name="paid_at" type="text" inputmode="numeric" autocomplete="off" placeholder="DD/MM/YY HH:MM" required value="${esc(displayDateTimeInput(paidAt))}"></label><button class="primary">Save payment record</button>`;
-  $('#modal-form').onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(e.target));const amount=Number(d.amount_mad);if(!Number.isFinite(amount)||amount<0)throw Error('Enter a valid non-negative payment amount.');const paid_at=parseDateTimeInput(d.paid_at);if(!paid_at)throw Error('Enter when the payment was made.');await api(`bills/${existing.id}`,{method:'PATCH',body:JSON.stringify({data:{amount_mad:amount,paid_at}})});closeModal();toast('Payment record updated');refresh()}catch(err){toast(err.message)}};
- }else{
-  $('#modal-form').innerHTML=c.fields.map(([n,l,t,req])=>{const v=existing?.[n]??(n==='interval_days'?'7':n==='routine_time'?'10:00':n==='routine_late_time'?'':n==='due_date'||n==='expiry_date'?today:'');if(t==='textarea')return `<label>${l}<textarea name="${n}">${esc(v)}</textarea></label>`;if(t==='select')return `<label>${l}<select name="${n}">${req.map(x=>`<option ${String(v)===x?'selected':''}>${x}</option>`).join('')}</select></label>`;const inputType=(t==='date'||t==='datetime-local'||t==='time24')?'text':t;const value=t==='date'?(v?displayDateInput(v):''):t==='datetime-local'?displayDateTimeInput(v):v;const dateAttrs=t==='date'?'inputmode="numeric" placeholder="DD/MM/YY" autocomplete="off"':t==='datetime-local'?'placeholder="DD/MM/YY HH:MM" autocomplete="off"':t==='time24'?(n==='routine_late_time'?'inputmode="numeric" placeholder="Optional Â· leave blank to disable" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" autocomplete="off"':'inputmode="numeric" placeholder="HH:MM (00:00â€“23:59)" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" autocomplete="off"'):'';return `<label>${l}<input name="${n}" type="${inputType}" ${dateAttrs} ${req===true?'required':''} ${n==='interval_days'?'min="1" step="1"':''} ${n==='amount_mad'?'step="0.01" min="0"':''} value="${esc(value)}"></label>`}).join('')+'<button class="primary">'+(existing?'Save changes':'Save')+'</button>';
-  $('#modal-form').onsubmit=async e=>{e.preventDefault();try{let d=Object.fromEntries(new FormData(e.target));for(const [n,l,t] of c.fields){if(t==='date'&&d[n])d[n]=parseDateInput(d[n]);if(t==='datetime-local'&&d[n])d[n]=parseDateTimeInput(d[n])}for(let k of ['amount_mad','reminder_days','interval_days'])if(d[k]!==undefined&&d[k]!=='')d[k]=Number(d[k]);for(const field of ['routine_time','routine_late_time'])if(d[field]&&!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(d[field]))throw Error('Enter time in 24-hour HH:MM format, from 00:00 to 23:59.');if(type==='routine'&&d.routine_time&&d.routine_late_time&&d.routine_late_time<=d.routine_time)throw Error('Late reminder time must be later than the routine time.');const path=type==='routine_record'?`routines/${existing.id}/last-record`:existing?`${c.resource}/${existing.id}`:c.resource;await api(path,{method:existing?'PATCH':'POST',body:JSON.stringify({data:d})});closeModal();toast(existing?'Changes saved':'Saved successfully');refresh()}catch(err){toast(err.message)}}
- }
- $('#modal').classList.remove('hidden');
-}
-function closeModal(){if($('#modal').dataset.lockBackdrop==='true')delete $('#modal').dataset.lockBackdrop;$('#modal').classList.add('hidden')}
-$('#modal-close').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal'){e.preventDefault();e.stopPropagation()}};
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#modal').dataset.lockBackdrop==='true'){e.preventDefault();e.stopPropagation()}});
-function bindForm(id,resource,transform=x=>x){$(id).addEventListener('submit',async e=>{e.preventDefault();try{let d=Object.fromEntries(new FormData(e.target));for(const [k,v] of Object.entries(d))if(['date','due_date','expiry_date','last_done','next_due'].includes(k)&&v)d[k]=parseDateInput(v);d=transform(d);await api(resource,{method:'POST',body:JSON.stringify({data:d})});e.target.reset();e.target.querySelectorAll('.date-entry').forEach(x=>x.value=displayDateInput(today));const successMessage=resource==='treadmill'?'Treadmill session saved':resource==='weights'?'Weight saved':'Saved successfully';toast(successMessage);refresh()}catch(err){toast(err.message)}})}
-bindForm('#plan-form','workout_plan');bindForm('#weight-form','weights',d=>{const kg=Number(String(d.kg).replace(',','.'));if(!Number.isFinite(kg)||kg<=0)throw Error('Enter a valid weight.');return {...d,kg}});bindForm('#treadmill-form','treadmill',d=>({date:d.date,duration_min:Number(d.duration_min)}));bindForm('#workout-form','workouts',d=>({name:d.name,date:d.date,notes:d.notes}));
+/* XROB Assistant 0.4.0 â€” Meal Manager */
+.meal-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 16px;border-bottom:1px solid #303236;padding-bottom:9px}
+.meal-tab,.secondary{border:1px solid var(--line);background:#14191b;color:var(--text);border-radius:9px;padding:9px 13px;font:inherit;font-size:12px;cursor:pointer}
+.meal-tab.active{border-color:#367b4a;background:#1b3022;color:#a9f5bd;box-shadow:inset 0 -2px var(--green)}
+.secondary:hover,.meal-tab:hover{border-color:#64816c}
+.meal-pane{display:none}.meal-pane.active{display:block}
+.shopping-add-form{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+.shopping-add-form label,.meal-suggest-form>label{display:grid;gap:5px;color:#bdc8c2;font-size:12px;flex:1;min-width:150px}
+.shopping-add-form input,.meal-suggest-form input,.meal-suggest-form select{width:100%;background:#0e1411;border:1px solid #35423a;border-radius:8px;padding:10px;color:var(--text);font:inherit;font-size:13px;min-height:40px}
 
-function recipeCard(r){
- const ingredients=Array.isArray(r.ingredients)?r.ingredients:[];
- const kcal=r.calories_kcal==null?'Kcal not set':`${Number(r.calories_kcal).toLocaleString()} kcal / plate`;
- const interval=Math.max(1,Number(r.eating_interval_days||1));
- const next=(cache.daily_meals||[]).filter(m=>Number(m.recipe_id)===Number(r.id)&&m.status==='pending'&&m.plan_date>=today).sort((a,b)=>a.plan_date.localeCompare(b.plan_date))[0];
- const home=r.meal_source!=='outside';
- const stock=Math.max(0,Number(r.plates_ready||0));
- const reminder=(cache.meal_cook_reminders||[]).find(x=>Number(x.recipe_id)===Number(r.id)&&x.status==='open');
- const excluded=(r.excluded_weekdays||[]).map(x=>WEEKDAY_LABELS[Number(x)]).filter(Boolean);
- const excludedLine=excluded.length?`<div class="meal-excluded-days">Not scheduled: ${excluded.map(esc).join(', ')}</div>`:'';
- const stockControl=home?`<div class="meal-stock-control"><div><small>Ready plates now</small><b>${stock}</b></div><label class="sr-only" for="meal-stock-${r.id}">Ready plates</label><input id="meal-stock-${r.id}" type="number" min="0" max="1000" step="1" value="${stock}" data-stock-input="${r.id}"><button class="mini-btn" data-stock-save="${r.id}">Update</button></div>`:`<div class="meal-outside-note">No kitchen stock tracking Â· eating outside</div>`;
- return `<article class="recipe-card ${home?'home-meal-card':'outside-meal-card'}"><div class="recipe-card-top"><span class="meal-routine-badge">${home?'ðŸ  Home':'ðŸ´ Outside'} Â· Every ${interval} day${interval===1?'':'s'}</span><span class="recipe-plates">${home?`${stock} ready`:'No stock limit'}</span></div><div class="recipe-card-heading"><h3>${esc(r.name)}</h3><span class="meal-kcal">${esc(kcal)}</span></div>${stockControl}${excludedLine}<div class="recipe-ingredients"><b>Ingredients</b><div class="ingredient-chip-list">${ingredients.map(x=>`<span class="ingredient-chip">${esc(x)}</span>`).join('')||'<span class="muted">No ingredients saved</span>'}</div></div><div class="recipe-next-line">${reminder?`<span class="recipe-next-dot"></span><b>Cooking needed Â· ${formatDate(reminder.due_date)}</b>`:next?`<span class="recipe-next-dot"></span>Next plate Â· <b>${formatDate(next.plan_date)}</b>`:'<span class="recipe-next-dot muted-dot"></span>No plate currently scheduled'}</div><div class="recipe-card-actions"><button class="mini-btn" data-edit-recipe="${r.id}">Edit meal</button><button class="mini-btn danger" data-delete-recipe="${r.id}">Delete meal</button></div></article>`;
+.recipe-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;margin:12px 0}
+.recipe-card{background:var(--panel);border:1px solid #303236;border-radius:14px;padding:16px;min-width:0;display:flex;flex-direction:column;gap:8px}
+.recipe-card-top{display:flex;justify-content:space-between;align-items:center}.recipe-card h3{font-size:16px;overflow-wrap:anywhere}.recipe-meta{font-size:11px}
+
+.recipe-card-actions{display:flex;gap:7px;margin-top:auto;padding-top:4px}
+.meal-suggest-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.meal-suggest-form .wide-label{grid-column:1/-1}.inline-check input{accent-color:var(--green)}.meal-suggest-form>.primary{grid-column:1/-1;justify-self:start}.meal-suggestion-status{margin:14px 0}
+.meal-plan-grid{display:grid;gap:7px}.meal-plan-row{display:flex;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #303236;min-width:0}.meal-plan-date{width:105px;flex:0 0 105px;display:grid;gap:2px}.meal-plan-date b{font-size:12px}.meal-plan-date small,.meal-plan-info small{font-size:11px;color:var(--muted);text-transform:capitalize}.meal-plan-info{flex:1;min-width:0;display:grid;gap:3px}.meal-plan-info b{font-size:13px;overflow-wrap:anywhere}
+.shopping-add-form{display:flex;align-items:end;gap:10px;padding:12px 0 18px;border-bottom:1px solid #303236}.shopping-add-form label{flex:1;min-width:0}.shopping-list{display:grid;gap:16px;margin-top:15px}.shopping-row{display:flex;gap:10px;align-items:center;padding:9px 2px;border-bottom:1px solid #2a2d2b;min-width:0}.shopping-row label{display:flex;align-items:center;gap:9px;flex:1;min-width:0;font-size:13px;cursor:pointer}.shopping-row input{accent-color:var(--green)}.shopping-row label span{overflow-wrap:anywhere}.shopping-row.is-checked label span{text-decoration:line-through;color:var(--muted)}.two-field{display:grid;grid-template-columns:1fr 1fr;gap:10px}.inline-check{display:flex!important;align-items:center;gap:8px!important}.inline-check input{width:auto!important}
+@media(max-width:850px){.recipe-grid{grid-template-columns:1fr}.shopping-add-form{display:grid;grid-template-columns:1fr auto}.shopping-add-form button{grid-column:auto}.meal-suggest-form{grid-template-columns:1fr}.meal-suggest-form .wide-label{grid-column:auto}.meal-suggest-form>.primary{grid-column:auto}}
+@media(max-width:700px){.shopping-add-form{display:grid;grid-template-columns:1fr auto}.shopping-add-form button{grid-column:auto}.meal-plan-row{gap:8px}.meal-plan-date{width:76px;flex-basis:76px}.meal-plan-row .mini-btn{font-size:10px;padding:5px 7px}.recipe-card{padding:13px}.meal-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.meal-tab{padding:9px 5px;font-size:11px}}
+
+.cal-event.meal{background:#453c24;color:#f5e3b6}.calendar-detail-dot.meal{background:#e2b767}
+
+
+/* XROB Assistant 0.4.2 â€” automatic meal routines and Planner shopping list */
+.meal-page-hero{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:24px 28px;margin:0 0 18px;border:1px solid #245238;border-radius:18px;background:radial-gradient(ellipse at 82% 15%,#214b32 0%,#17281f 42%,#121b17 100%);overflow:hidden}
+.meal-page-hero h3{font-size:21px;margin:6px 0;color:#effff3}
+.meal-page-hero p{max-width:680px;margin:0;color:#b7cabb;font-size:13px}
+.meal-hero-mark{font-size:48px;filter:drop-shadow(0 5px 16px #0007)}
+.meal-overview-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 18px}
+.meal-overview-stat{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid #2b3830;border-radius:12px;background:linear-gradient(145deg,#18221c,#141a17);min-width:0}
+.meal-overview-stat span{color:var(--muted);font-size:11px}
+.meal-overview-stat b{font-size:20px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meal-collection-panel{padding:20px}
+.recipe-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+.recipe-card{padding:18px;background:linear-gradient(150deg,#1b2820,#171d1a 72%);border:1px solid #2e4435;box-shadow:0 8px 22px #0002;transition:transform .16s ease,border-color .16s ease}
+.recipe-card:hover{transform:translateY(-2px);border-color:#477955}
+.recipe-card-top{gap:8px;flex-wrap:wrap}
+.meal-routine-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:20px;background:#1b3b28;color:#a5edb7;font-size:10px;font-weight:700}
+.recipe-plates{color:#b9c6bc;font-size:10px}
+.recipe-card-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin:3px 0}
+.recipe-card h3{font-size:18px;overflow-wrap:anywhere}
+.meal-kcal{flex:0 0 auto;color:#f3cb83;font-size:11px;font-weight:650}
+.recipe-ingredients{display:grid;gap:8px;margin-top:4px}
+.recipe-ingredients>b{font-size:10px;color:#9eafa3;text-transform:uppercase;letter-spacing:.7px}
+.ingredient-chip-list{display:flex;flex-wrap:wrap;gap:6px}
+.ingredient-chip{border:1px solid #304136;background:#1a251e;color:#d1dfd5;border-radius:7px;padding:4px 8px;font-size:10px;overflow-wrap:anywhere}
+.recipe-next-line{display:flex;align-items:center;gap:7px;color:#aebbb2;font-size:11px;padding-top:10px;border-top:1px solid #2b3830;margin-top:7px}
+.recipe-next-line b{color:#e4f4e8}
+.recipe-next-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px #2ed35f70}
+.recipe-next-dot.muted-dot{background:#68766b;box-shadow:none}
+.recipe-card-actions{padding-top:8px}
+.danger-btn:hover{border-color:#a34b54;color:#ff9aa2}
+.meal-empty-state{grid-column:1/-1;display:grid;justify-items:center;text-align:center;padding:36px 18px;gap:9px;border:1px dashed #3b5342;border-radius:14px;background:#151e18}
+.meal-empty-icon{font-size:35px}
+.meal-empty-state h3{font-size:17px}
+.meal-empty-state p{max-width:420px;color:var(--muted);font-size:12px;margin:0 0 5px}
+.meals-shopping-panel{margin-top:18px;padding:20px;border-color:#304234;background:linear-gradient(145deg,#19231d,#151b18)}
+.meals-shopping-panel .panel-head{align-items:flex-start}
+.meals-shopping-panel .secondary{white-space:nowrap}
+.shopping-summary{margin:10px 0 16px}
+.shopping-progress-copy{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px;margin-bottom:8px}
+.shopping-progress-copy b{font-size:12px;color:#eaf5ed}
+.shopping-progress-track{height:7px;border-radius:20px;background:#29332c;overflow:hidden}
+.shopping-progress-track span{display:block;height:100%;border-radius:20px;background:linear-gradient(90deg,#28a84e,#65e08a);transition:width .2s ease}
+.meals-shopping-panel .shopping-add-form{padding:8px 0 15px;border-bottom:1px solid #303b32}
+.meals-shopping-panel .shopping-add-form input{background:#101711;border-color:#36463a}
+.shopping-list{gap:16px;margin-top:14px}
+.shopping-group{display:grid;gap:4px}
+.shopping-group-title{display:flex;align-items:center;gap:8px;margin-bottom:4px;color:#bfcec2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.65px}
+.shopping-group-title b{margin-left:auto;color:#8f9f93;font-size:10px}
+.shopping-group-dot{width:8px;height:8px;background:#63d88a;border-radius:50%}
+.shopping-group-dot.bought{background:#7a8790}
+.shopping-row{gap:12px;padding:10px 8px;border:1px solid transparent;border-radius:9px;border-bottom-color:#2c3730;background:#111914;transition:background .15s ease,border-color .15s ease}
+.shopping-row:hover{background:#18231b;border-color:#314337}
+.shopping-row label{font-size:13px}
+.shopping-row input{width:17px;height:17px;accent-color:var(--green);flex:0 0 auto}
+.shopping-row.is-checked{opacity:.72}
+.shopping-row.is-checked label span{text-decoration:line-through;color:#819187}
+.shopping-delete{border:0;background:transparent;font-size:16px;color:#77847c}
+.shopping-footer{display:flex;justify-content:flex-end;margin-top:12px}
+.shopping-empty{display:grid;justify-items:center;text-align:center;gap:6px;padding:24px 14px;color:var(--muted)}
+.shopping-empty>span{font-size:29px}
+.shopping-empty b{font-size:13px;color:#dce8df}
+.shopping-empty small{font-size:11px;max-width:340px}
+.modal[data-lock-backdrop="true"]{cursor:default}
+.modal[data-lock-backdrop="true"] .modal-card{box-shadow:0 24px 80px #000b;border-color:#426c4c}
+@media(max-width:850px){.recipe-grid{grid-template-columns:1fr}.meal-page-hero{padding:20px}.meals-shopping-panel .panel-head{flex-direction:column;align-items:stretch}.meals-shopping-panel .secondary{align-self:flex-start}}
+@media(max-width:620px){.meal-overview-strip{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.meal-overview-stat{padding:11px 9px}.meal-overview-stat b{font-size:16px}.meal-page-hero{padding:17px}.meal-page-hero h3{font-size:18px}.meal-hero-mark{font-size:35px}.meals-shopping-panel{padding:15px}.meals-shopping-panel .shopping-add-form{grid-template-columns:1fr}.meals-shopping-panel .shopping-add-form button{width:100%}.shopping-progress-copy{font-size:10px}}
+
+/* 0.4.3 â€” Home/outside meal stock and the moved Meals workspace */
+.meals-shopping-panel,.meal-collection-panel{margin-top:16px}
+.meals-shopping-panel{padding:20px;background:linear-gradient(145deg,#17251f,#131c19);border:1px solid #304638}
+.home-meal-card{border-color:#355b42;background:linear-gradient(150deg,#1a2c21,#171d1a 78%)}
+.outside-meal-card{border-color:#3c4d62;background:linear-gradient(150deg,#1a2638,#171d25 78%)}
+.meal-stock-control{display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid #35533e;border-radius:11px;background:#101a13}
+.meal-stock-control>div{display:grid;gap:1px;margin-right:auto}.meal-stock-control small{font-size:10px;color:var(--muted)}.meal-stock-control b{font-size:20px;color:var(--green)}
+.meal-stock-control input{width:75px;min-height:36px;border:1px solid #3a5642;border-radius:8px;background:#0c130f;color:var(--text);padding:6px 8px;font:inherit;font-size:13px}
+.meal-outside-note{padding:10px 11px;border:1px solid #3a4c62;border-radius:10px;background:#111b28;color:#b8cce8;font-size:12px}
+.home-stock-field[hidden]{display:none!important}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.meals-shopping-panel .shopping-add-form{padding:12px 0 16px;border-bottom:1px solid #304237}.meals-shopping-panel .shopping-add-form input{background:#101711;border-color:#3b5041}.meals-shopping-panel .shopping-row{padding:12px 8px;border-bottom:1px solid #2c3e33}.meals-shopping-panel .shopping-row:hover{background:#1b2920;border-radius:9px}.meals-shopping-panel .shopping-progress-track{height:8px;border-radius:99px;overflow:hidden;background:#293a2e}.meals-shopping-panel .shopping-progress-track span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#45b879,#a3df86)}
+.cal-event.cook{background:#463a24;color:#f6dfa9}
+.cal-event.document{background:#3c3548;color:#e0d2f7}
+@media(max-width:700px){.meal-stock-control{flex-wrap:wrap}.meal-stock-control input{flex:0 0 76px}.meals-shopping-panel{padding:15px}}
+
+/* XROB 0.4.4 â€” unified responsive design for desktop, tablet and phone */
+:root{
+  color-scheme:dark;
+  --bg:#080b09;--panel:#121713;--panel2:#18211b;--line:#29352d;
+  --text:#f2f7f3;--muted:#a0ada4;--accent:#42d879;--green:#42d879;
+  --orange:#f2bd70;--red:#ff858d;--radius:16px;
+  --shadow-soft:0 12px 32px rgba(0,0,0,.18);
 }
-function renderMeals(){
- const recipes=cache.recipes||[];
- const home=recipes.filter(r=>r.meal_source!=='outside'), outside=recipes.filter(r=>r.meal_source==='outside');
- const ready=home.reduce((a,r)=>a+Math.max(0,Number(r.plates_ready||0)),0);
- const filtered=mealFilter==='all'?recipes:recipes.filter(r=>(r.meal_source||'home')===mealFilter);
- $('#meal-option-count').textContent=`${recipes.length} saved option${recipes.length===1?'':'s'}`;
- const shoppingLeft=(cache.shopping_items||[]).filter(x=>!Number(x.checked)).length;
- $('#meal-overview-strip').innerHTML=`<div class="meal-overview-stat"><span>Saved options</span><b>${recipes.length}</b></div><div class="meal-overview-stat"><span>Home plates ready</span><b>${ready}</b></div><div class="meal-overview-stat"><span>ðŸ›’ Shopping list items left to buy</span><b>${shoppingLeft}</b></div>`;
- $$('#meal-source-tabs [data-meal-filter]').forEach(b=>{const active=b.dataset.mealFilter===mealFilter;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));b.textContent=b.dataset.mealFilter==='all'?`All options (${recipes.length})`:b.dataset.mealFilter==='home'?'ðŸ  Home meals':'ðŸ´ Outside options'});
- const emptyText=mealFilter==='home'?['ðŸ ','No home meals yet','Add meals you cook at home. They stay visible even when no plates are ready.','ï¼‹ Add home meal']:mealFilter==='outside'?['ðŸ´','No outside meal options yet','Add dishes you can choose when you eat outside.','ï¼‹ Add outside option']:['ðŸ½ï¸','Your meal options will appear here','Add a home meal or an outside option. Saved options remain available even when home stock is zero.','ï¼‹ Add meal'];
- $('#meal-recipe-list').innerHTML=filtered.map(recipeCard).join('')||`<div class="meal-empty-state"><div class="meal-empty-icon">${emptyText[0]}</div><h3>${emptyText[1]}</h3><p>${emptyText[2]}</p><button class="primary" id="empty-add-meal" data-default-meal-source="${mealFilter==='outside'?'outside':'home'}">${emptyText[3]}</button></div>`;
- renderTodayMeal();
- renderWeeklyMealPlan();
+html{min-height:100%;scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+body{min-width:320px;min-height:100vh;min-height:100dvh;background:var(--bg);color:var(--text);}
+button,input,select,textarea{font:inherit;}
+button{touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--green);outline-offset:3px;}
+::selection{background:#2e9c58;color:#fff;}
+main{min-width:0;margin-right:auto;}
+header{gap:20px;}
+header h1{line-height:1.15;}
+.panel,.stat{border-radius:var(--radius);box-shadow:var(--shadow-soft);}
+.panel{padding:clamp(15px,2vw,22px);}
+.section-head{align-items:center;}
+.section-head>div,.panel-head>div{min-width:0;}
+.section-head h2,.panel-head h3{overflow-wrap:anywhere;}
+.primary,.secondary,.mini-btn,.icon-btn,.text-btn{transition:background-color .16s ease,border-color .16s ease,transform .16s ease,filter .16s ease;}
+.primary,.secondary{min-height:42px;border-radius:11px;padding:10px 15px;}
+.secondary{border:1px solid #3a493e;background:#1a241d;color:var(--text);font-weight:650;cursor:pointer;}
+.secondary:hover{background:#223129;border-color:#587362;}
+.mini-btn{min-height:34px;border-radius:9px;padding:7px 11px;background:#1a241d;border-color:#344338;color:#dce8df;}
+.mini-btn:hover{background:#24332a;border-color:#54745d;}
+.panel-head{align-items:center;}
+.row-item{gap:10px;}
+.row-main{overflow-wrap:anywhere;}
+.form input,.form select,.form textarea,.plan-inline input,.plan-inline select,.shopping-add-form input{min-height:42px;border-radius:10px;background:#0d130f;border-color:#354239;}
+.form textarea{min-height:88px;}
+.local-pill{white-space:nowrap;}
+.sidebar{background:rgba(8,12,9,.97);border-color:#27332b;backdrop-filter:blur(18px);}
+#nav button{transition:background-color .16s ease,color .16s ease;}
+#nav button.active{color:#f4fff6;}
+.recipe-grid{align-items:stretch;}
+.recipe-card{height:100%;border-radius:15px;}
+.meal-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 15px;padding:0;border:0;}
+.meal-tab{min-height:40px;border:1px solid #36463b;border-radius:999px;background:#141c16;color:#c5d2c8;padding:8px 15px;font:600 12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;}
+.meal-tab.active{border-color:#4aa66a;background:#1b3b27;color:#e7ffed;box-shadow:0 0 0 1px #2e7547 inset;}
+.meal-tab:hover{border-color:#5b8066;}
+.meal-empty-state{min-height:190px;align-content:center;}
+.rollover-setting{padding:12px;border:1px solid #395b42;background:#15231a;border-radius:12px;}
+.rollover-setting[hidden]{display:none!important;}
+.rollover-toggle{display:flex!important;align-items:flex-start;gap:11px!important;cursor:pointer;}
+.rollover-toggle input{width:18px!important;height:18px;min-height:18px;flex:0 0 auto;margin-top:2px;accent-color:var(--green);}
+.rollover-toggle span{display:grid;gap:4px;}
+.rollover-toggle b{font-size:13px;color:#e9f8ec;}
+.rollover-toggle small{font-size:11px;line-height:1.45;color:#a8b9ac;}
+.calendar-day-detail{min-width:0;}
+.calendar-detail-row{min-width:0;}
+.calendar-detail-row>div{min-width:0;}
+.calendar-detail-row b,.calendar-detail-row small{overflow-wrap:anywhere;}
+.toast{z-index:40;max-width:min(420px,calc(100vw - 28px));right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));box-shadow:0 12px 32px #0008;}
+.modal{overscroll-behavior:contain;}
+.modal-card{border-radius:18px;box-shadow:0 24px 70px #0009;}
+@media(min-width:1200px){
+  main{padding-left:clamp(28px,4vw,64px);padding-right:clamp(28px,4vw,64px);}
+  .recipe-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
 }
-function renderWeeklyMealPlan(){
- const host=$('#weekly-meal-plan');if(!host)return;
- const start=weekStartISO(today),end=addDaysISO(start,6);
- $('#meal-week-range').textContent=`${formatDate(start)} â€“ ${formatDate(end)}`;
- const meals=cache.daily_meals||[],recipes=cache.recipes||[],skips=new Set((cache.meal_schedule_skips||[]).map(x=>x.plan_date));
- const days=Array.from({length:7},(_,i)=>addDaysISO(start,i));
- host.innerHTML=days.map(day=>{
-  const meal=meals.find(x=>x.plan_date===day),skipped=skips.has(day),isPast=day<today,weekday=new Date(day+'T12:00:00').getDay(),weekdayIndex=(weekday+6)%7;
-  const title=longDateLabel(day),isToday=day===today;
-  const state=meal?.status==='eaten'?'<span class="weekly-state is-eaten">âœ“ Eaten</span>':meal?'<span class="weekly-state is-pending">Planned</span>':skipped?'<span class="weekly-state is-skipped">Day off</span>':'<span class="weekly-state is-empty">Not planned</span>';
-  const name=meal?esc(meal.recipe_name||'Meal'):skipped?'No meal planned':'Choose what to eat';
-  const meta=meal?`${meal.meal_source==='outside'?'ðŸ´ Outside':'ðŸ  Home'}${meal.calories_kcal==null?'':` Â· ${Number(meal.calories_kcal)} kcal`}`:skipped?'You chose to keep this day free':'No plate assigned yet';
-  let controls='';
-  if(!isPast&&meal?.status!=='eaten'){
-   const options=recipes.filter(r=>recipeCanBeAssignedForDay(r,day,meals));
-   const optionHtml=options.map(r=>{
-    const current=meal&&Number(meal.recipe_id)===Number(r.id);
-    const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(r.id)&&m.plan_date>=today&&m.plan_date!==day).length;
-    const free=Math.max(0,Number(r.plates_ready||0)-reserved);
-    const stockText=r.meal_source==='outside'?'Outside':free>0?`${free} free`:'move later reservation';
-    return `<option value="${Number(r.id)}" ${current?'selected':''}>${esc(r.name)} Â· ${stockText}</option>`;
-   }).join('');
-   const selector=options.length?`<div class="weekly-meal-editor"><label class="sr-only" for="weekly-meal-${day}">Select meal for ${esc(title)}</label><select id="weekly-meal-${day}" data-week-meal-select="${day}"><option value="">Choose a mealâ€¦</option>${optionHtml}</select><button class="mini-btn weekly-save-btn" data-week-assign="${day}">${meal?'Change':'Add meal'}</button></div>`:`<small class="weekly-no-options">No eligible meals. Add an option or update Home stock.</small>`;
-   const skipButton=skipped?`<button class="mini-btn" data-week-restore="${day}">Restore day</button>`:`<button class="mini-btn weekly-skip-btn" data-week-skip="${day}">Skip day</button>`;
-   controls=`<div class="weekly-meal-controls">${selector}${skipButton}</div>`;
+@media(min-width:701px) and (max-width:1024px){
+  .sidebar{width:78px;padding:22px 9px;}
+  .brand{padding:0 8px 28px;justify-content:center;}
+  .brand>div:last-child,.sidefoot{display:none;}
+  #nav button{justify-content:center;padding:12px 8px;}
+  #nav .nav-label{display:none;}
+  main{margin-left:78px;width:calc(100% - 78px);padding:26px 24px 56px;}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .two-col{grid-template-columns:repeat(2,minmax(0,1fr));}
+}
+@media(max-width:700px){
+  html,body{width:100%;overflow-x:hidden;}
+  body{display:block;min-height:100dvh;}
+  .sidebar{inset:auto 0 0 0;width:100%;height:calc(68px + env(safe-area-inset-bottom));padding:5px 6px calc(5px + env(safe-area-inset-bottom));border:0;border-top:1px solid #2e3a31;background:rgba(9,13,10,.94);box-shadow:0 -10px 28px #0008;z-index:30;}
+  .brand,.sidefoot{display:none!important;}
+  #nav{display:flex;align-items:stretch;gap:5px;width:100%;min-width:0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+  #nav::-webkit-scrollbar{display:none;}
+  #nav button{display:flex;flex:0 0 63px;min-width:63px;min-height:56px;flex-direction:column;justify-content:center;align-items:center;gap:4px;padding:5px 3px;border-radius:11px;text-align:center;box-shadow:none;}
+  #nav button span{display:block!important;}
+  #nav .nav-icon{width:auto;font-size:18px;line-height:1;}
+  #nav .nav-label{display:block!important;max-width:100%;font-size:9px;line-height:1.05;white-space:nowrap;letter-spacing:0;}
+  #nav button.active{background:#1a2a1e;box-shadow:inset 0 2px var(--green);}
+  main{display:block!important;margin:0!important;width:100%!important;max-width:none!important;min-width:0;padding:calc(14px + env(safe-area-inset-top)) 13px calc(88px + env(safe-area-inset-bottom))!important;}
+  header{margin:0 0 17px;gap:8px;align-items:flex-start;}
+  header .eyebrow{font-size:9px;letter-spacing:1.4px;}
+  h1{font-size:clamp(23px,6vw,29px);line-height:1.12;}
+  h2{font-size:clamp(20px,5.5vw,24px);line-height:1.2;}
+  .header-right{display:none;}
+  .section-head{align-items:flex-start;gap:10px;margin-bottom:14px;}
+  .section-head .primary{flex:0 0 auto;min-height:40px;padding:9px 11px;font-size:12px;}
+  .two-col,.form-grid,.history-grid{grid-template-columns:minmax(0,1fr);gap:10px;}
+  .form-grid .panel:last-child{grid-column:auto;}
+  .hero{min-height:0;padding:18px;margin-bottom:13px;border-radius:15px;}
+  .hero h2{font-size:23px;}
+  .hero-mark{display:none;}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px;}
+  .stat{min-width:0;padding:12px;border-radius:13px;}
+  .stat .label{font-size:10px;line-height:1.25;overflow-wrap:anywhere;}
+  .stat .value{font-size:clamp(18px,5vw,22px);line-height:1.2;overflow-wrap:anywhere;}
+  .stat .hint{font-size:10px;line-height:1.3;overflow-wrap:anywhere;}
+  .panel{padding:15px;border-radius:14px;margin-bottom:12px;}
+  .panel-head{align-items:flex-start;gap:8px;}
+  .panel-head .secondary{white-space:normal;max-width:52%;font-size:11px;padding:8px 10px;}
+  .row-item{align-items:flex-start;flex-wrap:wrap;gap:8px;padding:12px 0;}
+  .row-item .row-main{flex:1 1 100%;}
+  .row-item .tag{align-self:center;}
+  .row-item .action-group{width:100%;}
+  .row-item .action-group .mini-btn{flex:1;}
+  .form-grid{gap:10px;}
+  .form-grid .panel{padding:15px;}
+  .calendar-grid{gap:3px;}
+  .cal-head{font-size:8px;letter-spacing:0;padding:5px 0;}
+  .cal-day{min-height:82px;padding:4px;border-radius:7px;}
+  .cal-day .day-number{font-size:10px;}
+  .cal-event{font-size:7px;line-height:1.15;padding:2px 3px;margin-top:3px;}
+  .cal-more{font-size:7px;}
+  .calendar-day-panel{padding:13px;}
+  .recipe-grid{grid-template-columns:minmax(0,1fr);gap:10px;}
+  .recipe-card{padding:14px;border-radius:13px;}
+  .meal-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}
+  .meal-tab{min-width:0;min-height:42px;padding:8px 5px;font-size:10px;white-space:normal;}
+  .meal-overview-strip{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;}
+  .meal-overview-stat{min-width:0;padding:10px 8px;border-radius:11px;}
+  .meal-overview-stat span{font-size:9px;line-height:1.2;}
+  .meal-overview-stat b{font-size:16px;white-space:normal;overflow-wrap:anywhere;}
+  .shopping-add-form{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;}
+  .shopping-add-form button{width:100%;}
+  .shopping-row{padding:11px 6px;}
+  .shopping-row label{font-size:13px;}
+  .shopping-row input{width:20px;height:20px;}
+  .modal{align-items:end;padding:0;}
+  .modal-card{width:100%;max-width:none;max-height:92dvh;max-height:calc(92dvh - env(safe-area-inset-top));overflow-y:auto;border-radius:20px 20px 0 0;padding:19px 16px calc(18px + env(safe-area-inset-bottom));border-bottom:0;}
+  .modal-card .form{gap:13px;}
+  .modal-card input,.modal-card select,.modal-card textarea{font-size:16px;min-height:44px;}
+  .modal-card textarea{min-height:90px;}
+  .modal-card .primary{width:100%;min-height:46px;}
+  .toast{right:12px;bottom:calc(78px + env(safe-area-inset-bottom));left:12px;width:auto;text-align:center;}
+  .plan-inline{grid-template-columns:minmax(0,1fr);}
+  .fitness-stats{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .snapshot{gap:12px;flex-wrap:wrap;}
+}
+@media(max-width:380px){
+  main{padding-left:10px!important;padding-right:10px!important;}
+  #nav button{flex-basis:59px;min-width:59px;}
+  .meal-tab{font-size:9px;}
+  .meal-overview-stat b{font-size:14px;}
+  .section-head .primary{font-size:11px;padding:8px 9px;}
+}
+@media(hover:none){.recipe-card:hover{transform:none;}.primary:hover,.mini-btn:hover{filter:none;}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto;}*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important;scroll-behavior:auto!important;}}
+
+/* Inner pages use their own section heading; avoid duplicating the global page title. */
+body.inner-page>main>header{display:none;}
+body:not(.inner-page)>main>header{display:flex;}
+@media(max-width:700px){body.inner-page>main{padding-top:calc(15px + env(safe-area-inset-top))!important;}}
+
+
+/* 0.4.5 â€” confirmed plates are visibly green throughout the Planner. */
+.cal-event.meal-eaten{background:#173f2a!important;color:#baf5cc!important;border:1px solid #286d45}
+.calendar-detail-dot.meal-eaten{background:#35c978;box-shadow:0 0 0 3px rgba(53,201,120,.14)}
+.calendar-meal-panel{margin-top:0;margin-bottom:14px;border-color:#2e4938}
+.calendar-meal-card{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 16px;border:1px solid #3c4a39;border-radius:12px;background:linear-gradient(110deg,rgba(47,94,57,.16),rgba(23,29,24,.45))}
+.calendar-meal-card.is-eaten{border-color:#287749;background:linear-gradient(110deg,rgba(30,116,66,.28),rgba(20,45,30,.36))}
+.calendar-meal-card.is-pending{border-color:#725a2b;background:linear-gradient(110deg,rgba(125,91,31,.17),rgba(37,32,21,.34))}
+.calendar-meal-card.is-empty{border-color:var(--line);background:var(--panel2)}
+.calendar-meal-main{display:flex;align-items:center;gap:13px;min-width:0}
+.calendar-meal-icon{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border-radius:12px;background:rgba(65,82,66,.28);font-size:21px;color:#8be5aa}
+.calendar-meal-card.is-eaten .calendar-meal-icon{background:#174b30;color:#c1f8d2;font-weight:800}
+.calendar-meal-copy{display:grid;gap:5px;min-width:0}
+.calendar-meal-copy>b{font-size:16px;overflow-wrap:anywhere}
+.calendar-meal-copy>small{font-size:11px;color:var(--muted)}
+.calendar-meal-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
+.calendar-meal-empty{display:flex;align-items:center;gap:12px;color:var(--muted)}
+.calendar-meal-empty>span{font-size:24px}
+.calendar-meal-empty>div{display:grid;gap:4px}
+.calendar-meal-empty b{color:var(--text);font-size:13px}
+.calendar-meal-empty small{font-size:11px}
+.mini-btn.success{border-color:#287749;background:#17452d;color:#c2f7d2}
+.mini-btn.danger{border-color:#714047;color:#ffc0c5}
+@media(max-width:620px){.calendar-meal-card{align-items:stretch;flex-direction:column;padding:13px;gap:12px}.calendar-meal-actions{justify-content:flex-start}.calendar-meal-actions .mini-btn{flex:1}.calendar-meal-copy>b{font-size:14px}}
+
+/* ================================================================
+   XROB Assistant 0.4.8 â€” unified cross-platform design system
+   The earlier rules above preserve specialist chart layouts; this
+   final layer brings every page into one consistent visual system.
+   ================================================================ */
+:root{
+  color-scheme:dark;
+  --bg:#0a0f0b;
+  --panel:#121a14;
+  --panel2:#17221a;
+  --line:#29382d;
+  --text:#f0f6f1;
+  --muted:#9aa99d;
+  --accent:#63d48b;
+  --green:#63d48b;
+  --orange:#e7b86c;
+  --red:#f08086;
+  --surface-raised:#1b281e;
+  --surface-soft:#101711;
+  --focus:rgba(99,212,139,.32);
+  --shadow:0 12px 30px rgba(0,0,0,.18);
+}
+html{background:var(--bg);scroll-behavior:smooth}
+body{background:radial-gradient(ellipse at 82% -12%,rgba(54,117,70,.13),transparent 42%),var(--bg);color:var(--text);font-size:14px;line-height:1.55}
+button,input,select,textarea{font:inherit}
+button{touch-action:manipulation}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 0 0 4px var(--focus)}
+::selection{background:rgba(99,212,139,.28);color:#fff}
+.sidebar{width:238px;padding:24px 14px;background:rgba(8,13,9,.96);border-right:1px solid var(--line);box-shadow:8px 0 30px rgba(0,0,0,.08);backdrop-filter:blur(18px)}
+.brand{gap:11px;padding:2px 10px 30px}
+.brand b{font-size:16px;letter-spacing:2.2px}
+.brand small{font-size:11px;color:var(--muted)}
+.logo-img{width:44px;height:44px;border:1px solid #34513a;border-radius:13px;box-shadow:0 5px 18px rgba(35,117,62,.16)}
+#nav{gap:5px}
+#nav button{min-height:44px;padding:10px 12px;border:1px solid transparent;border-radius:11px;color:#aab8ad;gap:12px;font-size:13px;transition:background .16s,border-color .16s,color .16s,transform .16s}
+#nav button:hover{background:#152019;color:var(--text)}
+#nav button.active{background:linear-gradient(100deg,rgba(56,122,72,.25),rgba(27,42,31,.46));border-color:#2a4932;color:#eaffef;box-shadow:inset 3px 0 var(--green)}
+#nav .nav-icon{width:20px;font-size:17px;color:var(--green)}
+.sidefoot{color:#718076;font-size:9px;letter-spacing:1.2px}
+main{margin-left:238px;width:calc(100% - 238px);max-width:1640px;padding:30px clamp(18px,2.5vw,42px) 76px;min-width:0}
+header{margin-bottom:24px;align-items:flex-end}
+header .eyebrow,.eyebrow{color:var(--green);font-size:10px;font-weight:750;letter-spacing:1.8px}
+h1{font-size:clamp(26px,2.2vw,34px);font-weight:730;letter-spacing:-.9px;line-height:1.15}
+h2{font-size:clamp(21px,1.7vw,27px);font-weight:720;letter-spacing:-.55px;line-height:1.2}
+h3{font-size:15px;font-weight:720;letter-spacing:-.12px}
+h4{font-size:13px;font-weight:700;color:#dce9df}
+.muted{color:var(--muted);font-size:12px;line-height:1.5}
+.local-pill{display:inline-flex;align-items:center;gap:7px;background:#122018;border-color:#2c5a3a;color:#a9f0bd;font-weight:650}
+.hero{min-height:160px;padding:27px 30px;border-color:#2f5238;background:radial-gradient(ellipse at 86% 12%,rgba(72,144,87,.38),transparent 37%),linear-gradient(112deg,#18271c,#111b14 72%);box-shadow:var(--shadow)}
+.hero h2{font-size:clamp(24px,2vw,31px);color:#f2fff5}
+.hero p:last-child{color:#b5cabb}
+.hero-mark{color:#ddf9e4}
+.stats{gap:12px}
+.stat{min-width:0;padding:16px 17px;border-radius:14px;background:linear-gradient(150deg,#172119,#121915);border-color:var(--line);box-shadow:0 5px 15px rgba(0,0,0,.09)}
+.stat .label{color:#a5b4a8;font-size:11px;font-weight:650}
+.stat .value{font-size:clamp(21px,1.8vw,27px);font-weight:760;letter-spacing:-.5px;color:#f3faf4;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.stat .hint{color:#899b8d;font-size:10px;line-height:1.4;overflow-wrap:anywhere}
+.two-col{gap:15px;margin:15px 0}
+.panel{padding:20px;border:1px solid var(--line);border-radius:15px;background:linear-gradient(150deg,rgba(23,33,25,.98),rgba(17,24,19,.98));box-shadow:0 6px 20px rgba(0,0,0,.11)}
+.panel-head{align-items:center;margin-bottom:15px}
+.panel-head h3{color:#edf7ef}
+.panel-head .muted{margin-top:3px}
+.section-head{align-items:center;margin-bottom:18px}
+.section-head p{margin:5px 0 0}
+.primary,.secondary,.mini-btn,.meal-tab,.text-btn,.icon-btn{transition:background .15s,border-color .15s,color .15s,filter .15s,transform .15s}
+.primary{min-height:40px;padding:10px 15px;border:1px solid #5dca82;border-radius:10px;background:linear-gradient(180deg,#70df96,#52c77c);color:#07130a;font-size:12px;font-weight:780;box-shadow:0 4px 12px rgba(56,163,89,.12)}
+.primary:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.secondary,.mini-btn{min-height:34px;border:1px solid #35463a;border-radius:9px;background:#1a261d;color:#d7e5da;font-size:11px;font-weight:640}
+.secondary{padding:9px 13px}
+.mini-btn{padding:7px 10px}
+.secondary:hover,.mini-btn:hover{background:#223329;border-color:#4c6a53;color:#fff}
+.text-btn{color:#8fe1a9;font-weight:700}
+.text-btn:hover{color:#c4f7d2}
+.tag{background:#243329;color:#c8e1cf;border:1px solid #344b39;border-radius:20px;font-size:10px;font-weight:700}
+.tag.good{background:#173c28;color:#b9f3ca;border-color:#28643c}
+.tag.warn{background:#44351f;color:#f4d29b;border-color:#70552b}
+.tag.bad{background:#48262b;color:#ffc3c8;border-color:#714046}
+.row-item{gap:12px;padding:13px 0;border-color:#28382d}
+.row-main b{font-size:13px;color:#edf5ee}
+.row-main small{font-size:11px;color:var(--muted);line-height:1.45}
+.row-item .action-group{align-items:center}
+.snapshot{gap:22px}
+.big-number{font-variant-numeric:tabular-nums;color:#e9f8ec}
+.form-grid{gap:14px}
+.form,.plan-inline{gap:13px}
+.form label,.plan-inline label{color:#bdcbbf;font-size:11px;font-weight:650}
+.form input,.form select,.form textarea,.plan-inline input,.plan-inline select,
+input:not([type=checkbox]):not([type=radio]),select,textarea{
+  color:var(--text);background:#0d1510;border:1px solid #334438;border-radius:9px;min-height:40px;padding:9px 11px;font-size:13px;max-width:100%;
+}
+.form input::placeholder,.form textarea::placeholder,input::placeholder,textarea::placeholder{color:#718276}
+.form input:hover,.form select:hover,.form textarea:hover,select:hover,textarea:hover{border-color:#526d58}
+.form textarea,textarea{min-height:78px;resize:vertical}
+.form input[type=checkbox],input[type=checkbox]{accent-color:var(--green)}
+.form button.primary{justify-self:start}
+.code{background:#0c140f;border-color:#2c4031;border-radius:11px;color:#b9dfc3;overflow-x:auto;white-space:normal;overflow-wrap:anywhere}
+#settings ol,#settings ul{padding-left:20px;color:#c4d0c7;font-size:12px;line-height:1.8}
+#settings li{padding-left:2px;margin:4px 0}
+#settings code,.code code{color:#a9ecbc;background:#1a2b1e;padding:2px 5px;border-radius:5px}
+.empty{padding:22px 8px;color:var(--muted);font-size:12px}
+.modal{background:rgba(2,7,3,.76);backdrop-filter:blur(8px);padding:18px}
+.modal-card{width:min(520px,100%);max-height:min(90dvh,860px);padding:21px;border:1px solid #385440;border-radius:17px;background:linear-gradient(155deg,#1a261c,#111813);box-shadow:0 28px 90px rgba(0,0,0,.55)}
+.modal-card .panel-head{position:sticky;top:-21px;z-index:2;background:#19241b;padding:1px 0 13px;border-bottom:1px solid #2a3b2e}
+.icon-btn{width:38px;height:38px;border-radius:9px;border:1px solid #35483a;background:#141f17;color:#d3e1d5}
+.icon-btn:hover{background:#26362a;color:white}
+.toast{z-index:50;bottom:24px;right:24px;padding:12px 16px;border:1px solid #34764b;border-radius:11px;background:#153321;color:#c7f8d4;box-shadow:var(--shadow);font-size:12px}
+/* Planner: selected-day context sits above the calendar. */
+.calendar-day-panel{margin:0 0 14px;border-color:#314637;background:linear-gradient(130deg,#17231a,#121a15)}
+.calendar-day-panel .panel-head{margin-bottom:12px}
+.calendar-day-panel .panel-head h3{font-size:17px}
+.calendar-day-detail{grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:8px}
+.calendar-detail-row{background:#121a15;border-color:#2d3c31;border-radius:10px;padding:10px 12px}
+.calendar-detail-row b{color:#e7f3e9}
+.calendar-detail-row small{color:#9eaea2}
+.calendar-detail-dot.meal-eaten{background:#49d17c;box-shadow:0 0 0 3px rgba(73,209,124,.14)}
+.calendar-month-panel{margin-top:0}
+.calendar-grid{gap:6px}
+.cal-day{min-height:118px;border-color:#2b3a2f;background:#111a14;border-radius:10px;padding:7px;transition:border-color .12s,background .12s}
+.cal-day.outside{opacity:.38}
+.cal-day.today{border-color:#4f9d66;background:#18271c}
+.cal-day.selected{border-color:#77d697;background:#1b2d20;box-shadow:inset 0 0 0 1px rgba(99,212,139,.25)}
+.cal-day:hover{border-color:#5a8964}
+.cal-day .day-number{font-size:11px;color:#dce9df;font-variant-numeric:tabular-nums}
+.cal-event{border:1px solid transparent;border-radius:5px;font-size:9px;line-height:1.25;background:#243b2a;color:#d5f2dc}
+.cal-event.event{background:#24384c;color:#d4e7fa}
+.cal-event.task{background:#263b52;color:#d8eaff}
+.cal-event.bill{background:#472e31;color:#ffd1d4}
+.cal-event.care{background:#453921;color:#f8e1b1}
+.cal-event.meal{background:#4a3b24;color:#ffe6b4;border-color:#6a552b}
+.cal-event.meal-eaten{background:#173f2a;color:#baf5cc;border-color:#286d45}
+.cal-day-items{gap:4px}
+.cal-more{color:#a7e7b8;font-weight:700}
+/* Fitness: charts and records follow the same panel and surface rules. */
+.weight-graph-panel,.weekly-average-panel,.activity-panel,.history-card,.weekly-plan{border-color:#2d3d31}
+.weight-graph,.weight-chart-wrap{max-width:100%;overflow-x:auto}
+.weight-chart-tooltip{background:#101a13;border-color:#3d8752}
+.history-entry{border-color:#2a382e}
+.history-entry-main b{color:#eaf5ec}
+.history-entry-side strong{color:#8de5a7}
+.fitness-fixed span{background:#101a13;border-color:#304235;color:#b6c8b9;border-radius:9px}
+.fitness-fixed b{color:#e4f4e7}
+/* Meals: one primary daily-plate surface and clear option actions. */
+.meals-daily-plate-panel{margin:0 0 15px;border-color:#34513b;background:linear-gradient(135deg,rgba(34,78,44,.24),rgba(18,27,20,.98))}
+.meals-daily-plate-panel .panel-head{align-items:flex-start}
+.today-meal-card{min-width:0}
+.today-meal-main{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 15px;border:1px solid #725a2b;border-radius:12px;background:linear-gradient(110deg,rgba(125,91,31,.15),rgba(37,32,21,.28))}
+.today-meal-main.is-eaten{border-color:#287749;background:linear-gradient(110deg,rgba(30,116,66,.24),rgba(20,45,30,.3))}
+.today-meal-main h3{font-size:16px}
+.today-meal-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.meal-overview-strip{gap:10px}
+.meal-overview-stat{background:linear-gradient(145deg,#17251b,#121a15);border-color:#304638;border-radius:12px}
+.meal-overview-stat span{color:#a8b9ac}
+.meal-overview-stat b{color:#f0f8f1}
+.meal-collection-panel,.meals-shopping-panel{border-color:#304537}
+.meal-tabs{gap:7px;border-color:#2b3c30}
+.meal-tab{background:#131d16;border-color:#334539;color:#bdcbbf;border-radius:9px;font-weight:650}
+.meal-tab.active{background:#1a3522;border-color:#39774a;color:#baf4c9;box-shadow:inset 0 -2px var(--green)}
+.recipe-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
+.recipe-card{background:linear-gradient(155deg,#19251c,#121a15);border-color:#314638;border-radius:14px;min-width:0;box-shadow:0 5px 16px rgba(0,0,0,.12)}
+.recipe-card:hover{border-color:#4a7855;transform:translateY(-1px)}
+.recipe-card-heading h3{font-size:16px;color:#eff8f0}
+.recipe-plates{color:#b5efc4;background:#183523;border:1px solid #2e6340;border-radius:20px;padding:4px 8px;font-size:10px;font-weight:750}
+.meal-stock-control{background:#101912;border-color:#37563f}
+.meal-stock-control input{background:#0b120d;border-color:#38513d;color:#eff8f1;min-height:36px}
+.recipe-card-actions{display:flex;justify-content:flex-start;gap:7px;flex-wrap:wrap;margin-top:13px}
+.recipe-card-actions .mini-btn{min-height:36px}
+.recipe-card-actions .danger{background:#29191b;border-color:#714047;color:#ffc3c7}
+.recipe-ingredients{color:#c5d2c8}
+.ingredient-chip{background:#1c2b20;border-color:#354b39;color:#cde7d2}
+.recipe-next-line{border-color:#2c3b30;color:#b5c4b8}
+.meal-empty-state{background:#121c15;border-color:#3b5842}
+.meals-shopping-panel{background:linear-gradient(145deg,#17251c,#111a14);border-color:#34503a}
+.meals-shopping-panel .shopping-add-form{border-color:#304237}
+.meals-shopping-panel .shopping-add-form input{background:#0c150f;border-color:#364c3a}
+.shopping-row{border-color:#2b3c30}
+.shopping-row:hover{background:#1a2920}
+.shopping-row input{accent-color:var(--green)}
+.shopping-row.is-checked label span{color:#809286}
+.shopping-progress-track{background:#26372b}
+.shopping-progress-track span{background:linear-gradient(90deg,#42b86e,#8ae5a3)}
+.shopping-empty{border-color:#344a39;background:#121b15}
+/* Bills, routines and settings use consistent spacing and contrast. */
+#bills-list .row-item,#routines-list .row-item,#attention .row-item,#routine-snapshot .row-item{border-color:#29392e}
+#routines-list .row-item .tag{white-space:normal}
+#settings>.panel{margin-top:14px}
+#settings .two-col{align-items:start}
+#settings .two-col>.panel{height:100%}
+#settings .code{line-height:1.85}
+/* Tablet */
+@media(min-width:701px) and (max-width:1000px){
+  .sidebar{width:72px;padding:19px 8px}
+  .brand{justify-content:center;padding:0 0 22px}
+  .brand>div:last-child,.sidefoot{display:none}
+  #nav button{justify-content:center;padding:10px 5px}
+  #nav .nav-label{display:none}
+  main{margin-left:72px;width:calc(100% - 72px);padding:24px 18px 60px}
+  .two-col{gap:12px}
+  .panel{padding:17px}
+  .history-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .recipe-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+/* Phone and narrow windows */
+@media(max-width:700px){
+  body{background:var(--bg)}
+  main{padding-left:12px!important;padding-right:12px!important}
+  header{align-items:flex-start}
+  .section-head{align-items:flex-start}
+  .section-head>div{min-width:0;flex:1 1 180px}
+  .section-head .primary{white-space:normal;max-width:48%;min-height:42px}
+  .panel{padding:15px;border-radius:13px}
+  .panel-head{align-items:flex-start}
+  .panel-head .action-group{margin-left:auto}
+  .stats{gap:8px}
+  .stat{padding:12px}
+  .two-col{gap:10px}
+  .form-grid{gap:10px}
+  .row-item{align-items:flex-start}
+  .row-item .mini-btn{min-height:36px}
+  .calendar-day-panel{margin-bottom:10px}
+  .calendar-day-detail{grid-template-columns:minmax(0,1fr)}
+  .calendar-grid{gap:3px}
+  .cal-day{min-height:clamp(66px,19vw,94px);padding:4px;border-radius:7px}
+  .cal-head{font-size:8px;padding:4px 0}
+  .cal-day .day-number{font-size:10px;margin-bottom:3px}
+  .cal-event{font-size:7px;line-height:1.14;padding:2px 3px;max-height:2.4em;overflow-wrap:anywhere}
+  .calendar-detail-row{padding:10px}
+  .today-meal-main{align-items:flex-start;flex-direction:column;padding:13px;gap:11px}
+  .today-meal-actions{justify-content:flex-start;width:100%}
+  .today-meal-actions .mini-btn{flex:1;min-height:39px}
+  .meal-overview-strip{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+  .meal-overview-stat{padding:10px 8px}
+  .meal-overview-stat span{font-size:9px;line-height:1.25}
+  .meal-overview-stat b{font-size:15px;white-space:normal;overflow-wrap:anywhere}
+  .recipe-grid{grid-template-columns:minmax(0,1fr)}
+  .recipe-card{padding:14px}
+  .recipe-card-actions .mini-btn{flex:1}
+  .meal-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .meal-tab{min-height:40px;padding:8px 4px;font-size:10px;white-space:normal}
+  .meals-shopping-panel .panel-head{flex-direction:column;align-items:stretch}
+  .meals-shopping-panel .secondary{align-self:flex-start;white-space:normal}
+  .shopping-add-form{grid-template-columns:minmax(0,1fr)}
+  .shopping-add-form button{width:100%}
+  .history-grid{grid-template-columns:minmax(0,1fr)}
+  .history-card{height:360px}
+  .plan-inline{grid-template-columns:minmax(0,1fr)}
+  #settings .two-col{grid-template-columns:minmax(0,1fr)}
+  .modal-card{border-color:#385440}
+  .toast{left:12px;right:12px;bottom:calc(78px + env(safe-area-inset-bottom))}
+}
+@media(max-width:380px){
+  main{padding-left:9px!important;padding-right:9px!important}
+  #nav{grid-template-columns:repeat(7,minmax(0,1fr))}
+  #nav .nav-label{font-size:clamp(6.5px,2vw,8px)}
+  .meal-overview-stat span{font-size:8px}
+  .meal-overview-stat b{font-size:13px}
+}
+@media(hover:none){.recipe-card:hover,.primary:hover{transform:none}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+
+
+/* XROB Assistant 0.4.8 â€” full-viewport responsive workspace */
+:root{--xrob-sidebar-width:238px}
+body{width:100%;max-width:100%;overflow-x:hidden}
+main{flex:1 1 auto;width:calc(100% - var(--xrob-sidebar-width));max-width:none;margin-left:var(--xrob-sidebar-width);margin-right:0;min-width:0;padding-left:clamp(18px,2vw,38px);padding-right:clamp(18px,2vw,38px)}
+main>.page{width:100%;max-width:none;min-width:0}
+main>.page>*{min-width:0}
+.today-meal-empty{display:grid;gap:14px;min-width:0}
+.today-meal-empty-copy b{display:block;font-size:14px;color:var(--text)}
+.today-meal-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:10px;max-width:760px}
+.today-meal-picker label{grid-column:1/-1;color:var(--muted);font-size:12px;font-weight:650}
+.today-meal-picker select{width:100%;min-width:0;min-height:43px;padding:10px 12px;border:1px solid #3b5942;border-radius:10px;background:#0c150f;color:var(--text);font:inherit}
+.today-meal-picker .primary{min-height:43px;white-space:nowrap}
+.today-meal-picker .primary:disabled{opacity:.5;cursor:not-allowed}
+@media(min-width:701px) and (max-width:1000px){:root{--xrob-sidebar-width:72px}main{width:calc(100% - var(--xrob-sidebar-width));margin-left:var(--xrob-sidebar-width);max-width:none;padding-left:clamp(16px,2vw,26px);padding-right:clamp(16px,2vw,26px)}}
+@media(max-width:700px){:root{--xrob-sidebar-width:0px}body{display:block;width:100%;min-width:0}main{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding-left:max(12px,env(safe-area-inset-left))!important;padding-right:max(12px,env(safe-area-inset-right))!important}main>.page{width:100%;max-width:none}.today-meal-picker{grid-template-columns:minmax(0,1fr)}.today-meal-picker label{grid-column:auto}.today-meal-picker .primary{width:100%}}
+
+/* XROB Assistant 0.4.8 â€” viewport sizing and no-schedule meal actions */
+html{min-width:320px;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{min-height:100vh;min-height:100dvh}
+.today-meal-empty-overview{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px}
+.today-meal-empty-overview .secondary{min-height:40px;white-space:nowrap}
+@media(max-width:700px){
+  .today-meal-empty-overview{grid-template-columns:minmax(0,1fr);align-items:stretch}
+  .today-meal-empty-overview .secondary{width:100%;white-space:normal}
+}
+
+/* Weekly meal plan and weekday availability controls (0.4.9). */
+.weekly-meal-plan-panel{border-color:#36513d;background:linear-gradient(155deg,#17231a,#121a15)}
+.weekly-meal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:9px;align-items:stretch}
+.weekly-day-card{min-width:0;display:flex;flex-direction:column;gap:11px;padding:12px 10px;border:1px solid #314638;border-radius:12px;background:#111a14}
+.weekly-day-card.is-today{border-color:#65a975;box-shadow:inset 0 0 0 1px #315d3b}
+.weekly-day-card.is-past{opacity:.78}
+.weekly-day-card.is-day-off{background:#171b17;border-style:dashed}
+.weekly-day-top{display:flex;align-items:flex-start;justify-content:space-between;gap:6px;min-height:34px}
+.weekly-day-top>b{font-size:11px;line-height:1.35;color:#dce9de}
+.weekly-today-label{font-size:9px;color:#a9edbd;white-space:nowrap}
+.weekly-day-content{min-height:68px;display:flex;flex-direction:column;gap:6px}
+.weekly-meal-name{font-size:13px;font-weight:750;line-height:1.35;overflow-wrap:anywhere;color:#f1f7f1}
+.weekly-meal-meta{font-size:10px;line-height:1.4;color:#9baa9e;overflow-wrap:anywhere}
+.weekly-day-bottom{margin-top:auto;display:grid;gap:9px}
+.weekly-state{font-size:9px;font-weight:750;justify-self:start;border-radius:20px;padding:4px 7px}
+.weekly-state.is-eaten{color:#baf4cb;background:#17452a}
+.weekly-state.is-pending{color:#ffe2a7;background:#47381f}
+.weekly-state.is-skipped{color:#c5ccc6;background:#303a33}
+.weekly-state.is-empty{color:#aeb9b0;background:#273229}
+.weekly-meal-controls{display:grid;gap:6px}
+.weekly-meal-editor{display:grid;gap:6px}
+.weekly-meal-editor select{width:100%;min-width:0;min-height:36px;padding:6px 7px;border-radius:7px;border:1px solid #3c5742;background:#0d150f;color:#e8f1e9;font:11px system-ui;outline-offset:2px}
+.weekly-meal-editor .mini-btn,.weekly-meal-controls>.mini-btn{width:100%;min-height:32px}
+.weekly-save-btn{background:#1c3b27;border-color:#3c7850;color:#c3f3cf}
+.weekly-skip-btn{color:#e3c7c7;border-color:#554044;background:#241a1b}
+.weekly-no-options{font-size:10px;line-height:1.4;color:#d7b77c}
+.weekly-plan-footnote{font-size:11px;line-height:1.5;color:#91a296;margin:13px 2px 0}
+.meal-excluded-days{font-size:10px;color:#d9c08b;padding:7px 9px;border:1px solid #55482d;border-radius:8px;background:#282216}
+.weekday-exclude-field{border:1px solid #3b5140;border-radius:10px;padding:11px 12px 13px;margin:2px 0 0;min-width:0}
+.weekday-exclude-field legend{padding:0 5px;color:#d5e5d8;font-size:12px;font-weight:700}
+.weekday-exclude-field>p{font-size:11px;color:#9bad9f;margin:0 0 9px}
+.weekday-exclude-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.weekday-exclude-option{display:flex!important;align-items:center;gap:8px!important;padding:7px 9px;border:1px solid #34493a;border-radius:8px;background:#111a14;color:#d7e3d9!important;cursor:pointer}
+.weekday-exclude-option input{width:16px!important;height:16px;min-height:16px!important;margin:0;accent-color:#73c887}
+.weekday-exclude-option span{font-size:11px}
+@media(max-width:1050px){.weekly-meal-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:700px){.weekly-meal-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.weekly-day-card{padding:11px 9px}.weekly-day-content{min-height:56px}.weekly-day-top>b{font-size:10px}.weekly-meal-name{font-size:12px}.weekly-meal-meta{font-size:9px}.weekly-plan-footnote{font-size:10px}}
+
+/* 0.4.13 restores Telegram Today, Meals, I ate it, and Not today shortcuts. */
+.weekly-plan-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}
+.weekly-plan-header h3{margin:0 0 5px}
+.weekly-plan-header p{margin:0}
+.weekly-plan-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.weekly-reset-btn{min-height:38px;white-space:nowrap;border-color:#49664e;color:#d9ecdc}
+.weekly-reset-btn:disabled{opacity:.55;cursor:wait}
+@media(max-width:700px){.weekly-plan-header{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}.weekly-plan-actions{display:grid;grid-template-columns:1fr;justify-content:stretch}.weekly-reset-btn{width:100%;min-height:42px}.weekly-plan-actions .tag{justify-self:start}}
+@media(max-width:360px){.weekly-meal-grid{grid-template-columns:minmax(0,1fr)}.weekday-exclude-grid{grid-template-columns:1fr}}
+
+/* 0.4.14 â€” iPhone/iPad-safe navigation, touch controls and history actions. */
+.danger-btn{border-color:#714047;background:#24191b;color:#ffc0c5}
+.history-entry-side .mini-btn{min-height:34px;padding:7px 10px}
+@media(max-width:700px){
+  html,body{width:100%;min-width:320px;min-height:100%;overflow-x:hidden}
+  body{display:block;min-height:100vh;min-height:100dvh;padding-bottom:calc(68px + env(safe-area-inset-bottom))}
+  .sidebar{
+    position:fixed;inset:auto 0 0 0;width:100%;height:auto;min-height:calc(62px + env(safe-area-inset-bottom));
+    padding:6px max(7px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(7px,env(safe-area-inset-left));
+    display:flex;flex-direction:row;align-items:center;justify-content:center;z-index:10;
+    border-right:0;border-top:1px solid #303b35;background:#080d0a;
+    box-shadow:0 -8px 24px #0007
   }
-  return `<article class="weekly-day-card ${isToday?'is-today':''} ${isPast?'is-past':''} ${skipped?'is-day-off':''}"><div class="weekly-day-top"><b>${esc(title)}</b>${isToday?'<span class="weekly-today-label">Today</span>':''}</div><div class="weekly-day-content"><div class="weekly-meal-name">${name}</div><div class="weekly-meal-meta">${esc(meta)}</div></div><div class="weekly-day-bottom">${state}${controls}</div></article>`;
- }).join('');
+  .sidebar .brand,.sidebar .sidefoot{display:none!important}
+  #nav{width:100%;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;align-items:stretch}
+  #nav button{
+    min-width:0;min-height:48px;padding:5px 1px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;
+    border-radius:9px;text-align:center;font-size:10px;line-height:1.05
+  }
+  #nav .nav-icon{display:block!important;width:auto;font-size:17px;line-height:1.15}
+  #nav .nav-label{display:block!important;font-size:clamp(7px,2.1vw,9px);line-height:1.1;white-space:nowrap;letter-spacing:-.1px}
+  #nav button.active{box-shadow:inset 0 2px var(--green);background:#1a2820}
+  main{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding:18px max(12px,env(safe-area-inset-right)) 28px max(12px,env(safe-area-inset-left))!important;min-width:0}
+  main>.page{width:100%;max-width:none;min-width:0}
+  header{gap:8px;margin-bottom:18px}
+  h1{font-size:clamp(23px,6vw,29px)}
+  h2{font-size:21px}
+  .section-head{gap:9px}
+  .section-head .primary{max-width:48%;min-height:42px;padding:9px 10px}
+  .panel{min-width:0;padding:14px;border-radius:13px}
+  .panel-head{gap:8px;flex-wrap:wrap}
+  .row-item{flex-wrap:wrap;gap:8px}
+  .row-item .row-main{flex:1 1 100%;width:100%}
+  .row-item>.tag{margin-right:auto}
+  .row-item>.action-group{width:100%;justify-content:flex-start}
+  .history-entry{align-items:flex-start;gap:8px;padding:12px 2px}
+  .history-entry-main{flex:1 1 auto}
+  .history-entry-side{max-width:48%;gap:5px}
+  .history-entry-side .mini-btn{min-width:64px;min-height:36px}
+  .history-grid{grid-template-columns:minmax(0,1fr)}
+  .history-card{height:360px}
+  .modal{place-items:end center;padding:10px 10px calc(10px + env(safe-area-inset-bottom));}
+  .modal-card{width:100%;max-width:560px;max-height:calc(92dvh - env(safe-area-inset-bottom));padding:17px;border-radius:18px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .form input,.form select,.form textarea,.plan-inline input,.plan-inline select{font-size:16px;min-height:43px}
+  button,.mini-btn,.primary,.secondary,.text-btn{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+  .toast{left:12px;right:12px;bottom:calc(74px + env(safe-area-inset-bottom));max-width:none;text-align:center}
+}
+@media(max-width:380px){
+  #nav{gap:1px}
+  #nav button{padding-left:0;padding-right:0}
+  #nav .nav-icon{font-size:16px}
+  #nav .nav-label{font-size:7px}
+  .history-entry-side strong{font-size:11px}
+  .history-entry-side .mini-btn{min-width:58px;padding:6px 7px}
+}
+@supports(padding:max(0px)){
+  @media(max-width:700px){
+    main{padding-left:max(12px,env(safe-area-inset-left))!important;padding-right:max(12px,env(safe-area-inset-right))!important}
+  }
+}
+@media(max-width:700px){.modal{z-index:20}.toast{z-index:30}}
+
+
+/* 0.4.16 â€” recurring bills are shown once, with payment history nested below. */
+.bill-series-item{align-items:flex-start;}
+.bill-series-item .row-main{display:grid;gap:6px;}
+.bill-title-line{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+.bill-title-line .tag{white-space:normal;}
+.bill-primary-meta{font-size:12px;font-weight:650;color:var(--text);}
+.bill-last-payment{display:block;color:var(--muted);font-size:11px;}
+.bill-history{margin-top:3px;border-top:1px solid var(--line);padding-top:7px;}
+.bill-history summary{cursor:pointer;list-style:none;color:var(--accent);font-size:11px;user-select:none;}
+.bill-history summary::-webkit-details-marker{display:none;}
+.bill-history summary::after{content:'ï¼‹';margin-left:7px;color:var(--muted);}
+.bill-history[open] summary::after{content:'âˆ’';}
+.bill-history-list{display:grid;gap:7px;margin-top:9px;}
+.bill-history-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 9px;border-radius:8px;background:var(--surface,rgba(255,255,255,.025));}
+.bill-history-row span:first-child{display:grid;gap:2px;min-width:0;}
+.bill-history-row b{font-size:11px;}
+.bill-history-row small{font-size:10px;color:var(--muted);}
+.bill-review summary{color:var(--orange);}
+@media(max-width:620px){.bill-series-item{gap:10px;}.bill-series-item .row-main{flex:1 1 100%;}.bill-series-item>.action-group{width:100%;}.bill-series-item>.action-group .mini-btn{flex:1;}.bill-history-row{align-items:flex-start;}.bill-history-row .action-group{display:flex;}}
+
+/* XROB 0.4.17 â€” one shared, actionable agenda across the dashboard and Planner */
+.today-agenda-panel{min-width:0}
+.today-agenda{display:grid;gap:16px;min-width:0;overflow:visible}
+.agenda-section{display:grid;gap:8px;min-width:0}
+.agenda-section-head{display:grid;grid-template-columns:auto auto;align-items:center;justify-content:start;column-gap:9px;row-gap:2px}
+.agenda-section-head>b{font-size:12px;letter-spacing:.02em}
+.agenda-section-head>span{min-width:20px;height:20px;display:grid;place-items:center;border-radius:20px;background:#24382a;color:var(--green);font-size:10px;font-weight:800}
+.agenda-section-head>small{grid-column:1/-1;color:var(--muted);font-size:10px}
+.agenda-section-list{display:grid;gap:6px}
+.agenda-entry{display:grid;grid-template-columns:9px minmax(0,1fr) auto auto;align-items:center;gap:9px;min-width:0;padding:9px 10px;border:1px solid #2a3430;border-radius:10px;background:#111613}
+.agenda-dot{width:8px;height:8px;border-radius:50%;background:#9aa8a0}
+.agenda-entry-copy{display:grid;gap:3px;min-width:0}
+.agenda-entry-copy>b{font-size:12px;line-height:1.35;overflow-wrap:anywhere}
+.agenda-entry-copy>small{font-size:10px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
+.agenda-status{padding:4px 7px;border-radius:20px;background:#282d2a;color:#c6d0ca;font-size:9px;font-weight:750;white-space:nowrap}
+.agenda-status-overdue{background:#472b30;color:#ffb8c0}
+.agenda-status-due{background:#473a25;color:#f5d79a}
+.agenda-status-pending{background:#293846;color:#b9d8ff}
+.agenda-status-scheduled{background:#263b31;color:#b8e9c7}
+.agenda-status-upcoming{background:#273744;color:#b8dff2}
+.agenda-status-completed{background:#233b2b;color:#9be4ad}
+.agenda-overdue .agenda-dot{background:#ff7d87}
+.agenda-due .agenda-dot,.agenda-pending .agenda-dot{background:#e4bb69}
+.agenda-scheduled .agenda-dot{background:#8fcfa1}
+.agenda-upcoming .agenda-dot{background:#83b9d2}
+.agenda-completed .agenda-dot{background:var(--green)}
+.agenda-entry .mini-btn{white-space:nowrap}
+.agenda-clear{display:grid;justify-items:center;gap:5px;padding:24px 12px;text-align:center;border:1px dashed #33463a;border-radius:12px;background:#101713}
+.agenda-clear>span{color:var(--green);font-size:23px}
+.agenda-clear>b{font-size:13px}
+.agenda-clear>small{font-size:11px;color:var(--muted)}
+.today-progress-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.today-progress-grid>div{display:grid;gap:4px;padding:13px;border:1px solid #2b3930;border-radius:11px;background:#111713}
+.today-progress-grid b{color:var(--green);font-size:24px;font-variant-numeric:tabular-nums}
+.today-progress-grid span{color:var(--muted);font-size:10px}
+.today-progress-note{margin:11px 0 0;font-size:10px;line-height:1.5}
+.cal-event.workout-plan,.cal-event.gym{background:#23402f;color:#bff5cf}
+.cal-event.cook{background:#463a24;color:#f6dfa9}
+.cal-event.document{background:#3c3548;color:#e0d2f7}
+.cal-event.meal-eaten{background:#243c30;color:#b9f4c9}
+@media(max-width:760px){
+ .today-agenda{max-height:none;overflow:visible;padding-right:0}
+ .agenda-entry{grid-template-columns:8px minmax(0,1fr);align-items:start;gap:7px 9px;padding:10px}
+ .agenda-dot{margin-top:4px}
+ .agenda-entry-copy{grid-column:2}
+ .agenda-status{grid-column:2;justify-self:start}
+ .agenda-entry>.mini-btn,.agenda-entry>.action-group{grid-column:2;justify-self:start}
+ .agenda-entry .action-group{display:flex;flex-wrap:wrap}
+ .agenda-entry-copy>b{font-size:12px}
+ .today-progress-grid>div{padding:11px}
 }
 
-function renderPlannerShopping(){
- const shopping=cache.shopping_items||[];
- const open=shopping.filter(x=>!Number(x.checked)), bought=shopping.filter(x=>Number(x.checked));
- const count=shopping.length, progress=count?Math.round(bought.length/count*100):0;
- $('#meals-shopping-summary').innerHTML=`<div class="shopping-progress-copy"><b>${open.length} left to buy</b><span>${bought.length} of ${count} completed</span></div><div class="shopping-progress-track"><span style="width:${progress}%"></span></div>`;
- const row=(i)=>`<div class="shopping-row ${Number(i.checked)?'is-checked':''}"><label><input type="checkbox" data-shopping-check="${i.id}" ${Number(i.checked)?'checked':''}><span>${esc(i.name)}</span></label><button class="mini-btn shopping-delete" data-delete="shopping_items:${i.id}" aria-label="Remove ${esc(i.name)}">Ã—</button></div>`;
- const openHtml=open.map(row).join(''), boughtHtml=bought.map(row).join('');
- $('#meals-shopping-list').innerHTML=(openHtml?`<div class="shopping-group"><div class="shopping-group-title"><span class="shopping-group-dot"></span>To buy <b>${open.length}</b></div>${openHtml}</div>`:'')+(boughtHtml?`<div class="shopping-group purchased-group"><div class="shopping-group-title"><span class="shopping-group-dot bought"></span>Purchased <b>${bought.length}</b></div>${boughtHtml}</div>`:'')||`<div class="shopping-empty"><span>ðŸ›’</span><b>Your shopping list is clear</b><small>Add items here or collect ingredients from your upcoming meal routines.</small></div>`;
-}
-function renderTodayMeal(){
- const hosts=[$('#today-meal-card'),$('#meals-today-meal-card')].filter(Boolean);
- if(!hosts.length)return;
- const meal=(cache.daily_meals||[]).find(x=>x.plan_date===today);
- const meals=cache.daily_meals||[];
- const choices=(cache.recipes||[]).filter(r=>recipeCanBeAssignedForDay(r,today,meals));
- const pickerMarkup=`<div class="today-meal-empty"><div class="today-meal-empty-copy"><b>No plate selected for today</b><p class="muted">Choose a Home meal with ready plates or an Outside option. When all Home plates are reserved later in the plan, choosing one moves the latest automatic reservation to today; your manual choices are protected.</p></div><div class="today-meal-picker"><label>Select today's meal</label><select data-today-meal-choice aria-label="Select today's meal" ${choices.length?'':'disabled'}><option value="">${choices.length?'Choose a mealâ€¦':'No meals currently available'}</option>${choices.map(r=>{const reserved=meals.filter(m=>m.status==='pending'&&Number(m.recipe_id)===Number(r.id)&&m.plan_date>=today).length,free=Math.max(0,Number(r.plates_ready||0)-reserved),stock=r.meal_source==='outside'?'Outside':free>0?`${free} ready`:'move later reservation';return `<option value="${Number(r.id)}">${esc(r.name)} Â· ${stock}</option>`}).join('')}</select><button type="button" class="primary" data-select-today-meal ${choices.length?'':'disabled'}>Choose this meal</button></div>${choices.length?'':'<small class="muted">Add an Outside meal or update the stock of a Home meal in the meal options below.</small>'}</div>`;
- const markup=!meal
-  ? null
-  : (()=>{
-    const kcal=meal.calories_kcal==null?'Calories not set':`${Number(meal.calories_kcal)} kcal per plate`;
-    const state=meal.status==='eaten'?'<span class="meal-confirmed">âœ“ Confirmed eaten</span>':'<span class="meal-pending">Waiting for your 22:00 Telegram check-in</span>';
-    return `<div class="today-meal-main ${meal.status==='eaten'?'is-eaten':'is-pending'}"><div><h3>${esc(meal.recipe_name||'Meal')}</h3><p class="muted">${esc(kcal)}</p>${state}</div><div class="today-meal-actions">${meal.status==='pending'?`<button class="mini-btn success" data-meal-confirm="${meal.id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${meal.id}" data-meal-decision="no">Move to tomorrow</button><button class="mini-btn danger" data-remove-plate="${meal.id}" aria-label="Remove this pending plate">Remove plate</button>`:'<span class="tag good">Done</span>'}</div></div>`;
-  })();
- hosts.forEach(host=>{
-  const isMealsPage=host.id==='meals-today-meal-card';
-  if(!meal){
-   host.innerHTML=isMealsPage?pickerMarkup:'<div class="today-meal-empty today-meal-empty-overview"><div class="today-meal-empty-copy"><b>No plate selected for today</b><p class="muted">Choose today&#39;s meal from the Meals page.</p></div><button type="button" class="secondary" data-go="meals">Choose a meal â†—</button></div>';
-  }else host.innerHTML=markup;
-  host.classList.toggle('has-meal',Boolean(meal));
- });
-}
-async function removePlate(id){
- if(!confirm('Remove this pending plate from the schedule? It will not be marked as eaten and your ready-plate stock will stay unchanged.'))return;
- try{await api(`daily_meals/${id}`,{method:'DELETE'});toast('Plate removed from the schedule');refresh()}catch(err){toast(err.message)}
-}
-async function deleteRecipeOption(id){
- const recipe=(cache.recipes||[]).find(r=>Number(r.id)===id);
- if(!recipe)return;
- if(!confirm(`Remove â€œ${recipe.name}â€ from your meal options? Pending plates will be cancelled. Any confirmed eaten history will be kept.`))return;
- try{const result=await api(`recipes/${id}`,{method:'DELETE'});toast(result.history_preserved?'Meal option removed; eaten history kept':'Meal option deleted');refresh()}catch(err){toast(err.message)}
-}
+/* XROB 0.4.18 â€” calmer, clearer Planner workspace */
+.planner-page{display:grid;gap:15px;min-width:0}
+.planner-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;padding:3px 1px 1px}
+.planner-heading h2{margin:3px 0 5px;font-size:26px;letter-spacing:-.035em}
+.planner-heading>div:first-child>p:last-child{max-width:650px;margin:0;font-size:12px;line-height:1.55}
+.planner-primary-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto}
+.planner-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-width:0}
+.planner-summary-card{display:flex;align-items:center;gap:13px;min-width:0;padding:13px 15px;border:1px solid #29372e;border-radius:13px;background:linear-gradient(145deg,#18211b,#131916)}
+.planner-summary-card>div{display:grid;gap:2px;min-width:0}
+.planner-summary-icon{width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;border:1px solid #34493a;border-radius:11px;background:#1c3023;color:#9ce8ae;font-size:20px}
+.planner-summary-card small{color:#b6c5ba;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.planner-summary-card b{font-size:23px;line-height:1.15;font-variant-numeric:tabular-nums}
+.planner-summary-card span:last-child{color:var(--muted);font-size:10px;line-height:1.35;overflow-wrap:anywhere}
+.planner-summary-attention .planner-summary-icon{background:#332b1b;border-color:#57472d;color:#f0cb81}
+.planner-summary-next .planner-summary-icon{background:#1d2d35;border-color:#344c57;color:#9ed2e3}
+.planner-layout{display:grid;grid-template-columns:minmax(0,1.38fr) minmax(310px,.92fr);gap:13px;align-items:start;min-width:0}
+.planner-calendar-panel,.planner-day-panel{min-width:0;padding:17px}
+.planner-calendar-toolbar,.planner-day-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.planner-calendar-toolbar h3,.planner-day-heading h3{margin:0;font-size:17px;letter-spacing:-.02em}
+.planner-calendar-toolbar p,.planner-day-heading p.muted{margin:4px 0 0;font-size:10px;line-height:1.4}
+.planner-month-actions{gap:5px;flex:0 0 auto}
+.planner-month-actions .mini-btn{min-width:34px;min-height:32px}
+.planner-legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0 10px;padding:9px 0;border-top:1px solid #29332d;border-bottom:1px solid #29332d}
+.planner-legend span{display:inline-flex;align-items:center;gap:6px;color:#aab7ae;font-size:9px;white-space:nowrap}
+.planner-legend i,.planner-day-dots i{display:inline-block;width:7px;height:7px;border-radius:50%;background:#8eb2d3}
+.legend-event,.planner-dot-event{background:#8fbce9!important}
+.legend-task,.planner-dot-task{background:#d8bd79!important}
+.legend-care,.planner-dot-routine,.planner-dot-care{background:#b6a0e6!important}
+.legend-meal,.planner-dot-meal{background:#e7a96e!important}
+.legend-bill,.planner-dot-bill{background:#ed8791!important}
+.legend-fitness,.planner-dot-fitness,.planner-dot-workout{background:#76cb91!important}
+.planner-dot-document{background:#b6a0e6!important}
+.planner-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;width:100%;min-width:0}
+.planner-calendar-grid .cal-head{padding:5px 0 7px;color:#87958b;font-size:9px;font-weight:750;letter-spacing:.08em}
+.planner-date-cell{appearance:none;display:flex;flex-direction:column;justify-content:space-between;gap:9px;width:100%;min-width:0;min-height:76px;padding:8px;border:1px solid #29362e;border-radius:10px;background:#111713;color:var(--text);text-align:left;cursor:pointer;transition:border-color .15s ease,background .15s ease,transform .15s ease}
+.planner-date-cell:hover{border-color:#53735c;background:#17221a}
+.planner-date-cell:focus-visible{outline:2px solid #83ce96;outline-offset:2px}
+.planner-date-cell.outside{opacity:.34;background:#0e130f}
+.planner-date-cell.today{border-color:#4d805b;background:#17251b}
+.planner-date-cell.selected{border-color:#8bd59c;background:#1b3021;box-shadow:inset 0 0 0 1px #477b55}
+.planner-date-top{display:flex;align-items:center;justify-content:space-between;gap:4px}
+.planner-date-cell .day-number{color:#d6e0d8;font-size:11px;font-weight:650;line-height:1.2}
+.planner-date-cell.today .day-number{color:#a5efb5;font-weight:850}
+.planner-day-count{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:20px;background:#28382d;color:#c8e9d0;font-size:9px;font-weight:800;font-variant-numeric:tabular-nums}
+.planner-date-cell.selected .planner-day-count{background:#2b5938;color:#d2f6da}
+.planner-day-dots{display:flex;align-items:center;gap:4px;min-height:8px}
+.planner-day-dots i{width:6px;height:6px}
+.planner-day-column{min-width:0}
+.planner-day-panel{position:sticky;top:14px}
+.planner-day-heading{align-items:flex-start;margin-bottom:15px}
+.planner-day-heading .eyebrow{margin:0 0 5px;color:#8cc99a;font-size:9px;font-weight:800;letter-spacing:.1em}
+.planner-day-heading .text-btn{flex:0 0 auto;margin-top:2px}
+.calendar-day-detail{display:grid;gap:8px;min-width:0}
+.planner-entry{display:grid;grid-template-columns:31px minmax(0,1fr) auto;align-items:center;gap:9px;min-width:0;padding:10px;border:1px solid #2b3830;border-radius:11px;background:#111713}
+.planner-entry-icon{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;background:#203329;color:#a9e2b6;font-size:15px;font-weight:800}
+.planner-entry-event .planner-entry-icon{background:#1d2e3d;color:#a7d4fb}
+.planner-entry-task .planner-entry-icon{background:#3c3421;color:#f0d18d}
+.planner-entry-routine .planner-entry-icon,.planner-entry-care .planner-entry-icon{background:#30283e;color:#cbb7f4}
+.planner-entry-bill .planner-entry-icon{background:#40272c;color:#f4a6ae}
+.planner-entry-meal .planner-entry-icon{background:#403321;color:#f1c58c}
+.planner-entry-copy{display:grid;gap:4px;min-width:0}
+.planner-entry-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
+.planner-entry-title>b{font-size:11px;line-height:1.35;overflow-wrap:anywhere}
+.planner-entry-copy>small{color:#9eaca2;font-size:9px;line-height:1.45;overflow-wrap:anywhere}
+.planner-entry-copy>small strong{color:#d7e3da;font-size:9px;font-variant-numeric:tabular-nums}
+.planner-entry-status{display:inline-flex;align-items:center;padding:3px 6px;border-radius:20px;background:#26322a;color:#b5c9ba;font-size:8px;font-weight:800;white-space:nowrap}
+.planner-status-overdue{background:#482b30;color:#ffb8c0}
+.planner-status-due,.planner-status-pending{background:#443820;color:#f2d79d}
+.planner-status-scheduled{background:#243b2c;color:#b8e8c4}
+.planner-status-upcoming{background:#263a44;color:#b7dceb}
+.planner-status-completed{background:#20382a;color:#9fe3ad}
+.planner-entry-actions{display:flex;align-items:center;justify-content:flex-end;min-width:0}
+.planner-entry-actions .mini-btn,.planner-entry-actions .action-group{white-space:nowrap}
+.planner-empty-day{display:grid;justify-items:center;gap:7px;padding:27px 16px;border:1px dashed #34463a;border-radius:12px;background:#101713;text-align:center}
+.planner-empty-day>span{color:#9ad9a8;font-size:24px}
+.planner-empty-day>b{font-size:12px}
+.planner-empty-day>small{max-width:245px;color:var(--muted);font-size:10px;line-height:1.5}
+.planner-day-add{width:100%;margin-top:12px;padding:10px;border:1px dashed #3b5842;border-radius:10px;background:#142019;color:#b6e7c1;font:inherit;font-size:10px;font-weight:750;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.planner-day-add:hover{border-color:#6ba57a;background:#1a2b20}
+@media(max-width:1050px){.planner-layout{grid-template-columns:minmax(0,1fr)}.planner-day-panel{position:static}.planner-calendar-panel{order:0}.planner-day-column{order:1}.planner-day-panel{padding:16px}}
+@media(max-width:760px){.planner-heading{align-items:flex-start;flex-direction:column}.planner-primary-actions{width:100%}.planner-primary-actions button{flex:1}.planner-summary{gap:7px}.planner-summary-card{gap:8px;padding:10px}.planner-summary-icon{width:31px;height:31px;flex-basis:31px;font-size:16px}.planner-summary-card b{font-size:19px}.planner-summary-card small{font-size:8px}.planner-summary-card span:last-child{font-size:9px}.planner-calendar-panel{padding:12px}.planner-calendar-grid{gap:3px}.planner-date-cell{min-height:66px;padding:6px;border-radius:8px;gap:6px}.planner-calendar-grid .cal-head{font-size:8px}.planner-date-cell .day-number{font-size:10px}.planner-day-count{min-width:15px;height:15px;font-size:8px}.planner-legend{gap:8px}.planner-legend span{font-size:8px}.planner-entry{grid-template-columns:29px minmax(0,1fr);gap:8px}.planner-entry-icon{width:28px;height:28px}.planner-entry-actions{grid-column:2;justify-content:flex-start}.planner-entry-actions .mini-btn{min-height:30px}}
+@media(max-width:390px){.planner-summary-card{align-items:flex-start;flex-direction:column;gap:6px}.planner-summary-icon{width:27px;height:27px;flex-basis:27px}.planner-summary-card b{font-size:18px}.planner-month-actions .mini-btn{min-width:30px;padding:5px 8px}.planner-date-cell{min-height:58px;padding:4px}.planner-day-dots{gap:3px}.planner-day-dots i{width:5px;height:5px}.planner-legend{gap:6px}.planner-legend span{font-size:7px}}
+@media(prefers-reduced-motion:reduce){.planner-date-cell,.planner-day-add{transition:none}}
 
-function parseMealIngredients(text){
- const list=String(text||'').split(/[\n,;]+/).map(x=>x.trim().replace(/^[-â€¢]\s*/,'' )).filter(Boolean);
- const seen=new Set();return list.filter(x=>{const k=x.toLowerCase().replace(/\s+/g,' ');if(seen.has(k))return false;seen.add(k);return true;});
-}
-function openRecipeModal(existing=null,defaultSource='home'){
- $('#modal').dataset.lockBackdrop='true';
- const form=$('#modal-form');$('#modal-title').textContent=existing?'Edit meal':'Add a meal';
- const ingredients=Array.isArray(existing?.ingredients)?existing.ingredients.join('\n'):'';
- const source=existing?.meal_source||defaultSource||'home';
- const excludedDays=new Set((existing?.excluded_weekdays||[]).map(Number));
- const weekdayFields=WEEKDAY_LABELS.map((name,index)=>`<label class="weekday-exclude-option"><input type="checkbox" name="excluded_weekdays" value="${index}" ${excludedDays.has(index)?'checked':''}><span>${name}</span></label>`).join('');
- form.innerHTML=`<label>Meal type<select name="meal_source"><option value="home" ${source==='home'?'selected':''}>Home meal</option><option value="outside" ${source==='outside'?'selected':''}>Outside meal</option></select></label><label>Meal name<input name="name" required maxlength="160" value="${esc(existing?.name||'')}" placeholder="e.g. Chicken tagine"></label><label class="meal-kcal-field"><span>Kcal per plate</span><input name="calories_kcal" type="number" min="0" max="10000" step="1" value="${existing?.calories_kcal??''}" placeholder="e.g. 650"></label><div class="two-field"><label>Eat every (days)<input name="eating_interval_days" type="number" min="1" max="90" step="1" required value="${Number(existing?.eating_interval_days||1)}"><small class="muted">Choosing this meal again restarts its repeat interval from that day.</small></label><label class="home-stock-field">Plates ready now<input name="plates_ready" type="number" min="0" max="1000" step="1" value="${Number(existing?.plates_ready??existing?.batch_plates??1)}"></label></div><fieldset class="weekday-exclude-field"><legend>Don't schedule this meal on</legend><p>Use this for restaurants that close on certain days, such as Sunday.</p><div class="weekday-exclude-grid">${weekdayFields}</div></fieldset><label class="meal-ingredients-field"><span>Ingredients Â· one item per line</span><textarea name="ingredients" rows="5" placeholder="Chicken\nOnions\nTomatoes\nOlive oil">${esc(ingredients)}</textarea></label><button class="primary">${existing?'Save changes':'Save meal'}</button>`;
- const sourceSelect=form.elements.meal_source,stockField=form.querySelector('.home-stock-field'),ingredientsInput=form.elements.ingredients,ingredientsLabel=form.querySelector('.meal-ingredients-field span'),kcalLabel=form.querySelector('.meal-kcal-field span');
- const syncSource=()=>{const outside=sourceSelect.value==='outside';stockField.hidden=outside;ingredientsInput.required=!outside;ingredientsLabel.textContent=outside?'Ingredients (optional) Â· one item per line':'Ingredients Â· one item per line';kcalLabel.textContent=outside?'Kcal per plate (optional)':'Kcal per plate'};sourceSelect.addEventListener('change',syncSource);syncSource();
- form.onsubmit=async e=>{e.preventDefault();try{const f=new FormData(form);const names=parseMealIngredients(f.get('ingredients'));const outside=sourceSelect.value==='outside';if(!outside&&!names.length)throw Error('Add at least one ingredient for a Home meal.');const rawKcal=String(f.get('calories_kcal')||'').trim();const payload={name:String(f.get('name')||'').trim(),meal_source:String(f.get('meal_source')),calories_kcal:rawKcal?Number(rawKcal):null,eating_interval_days:Number(f.get('eating_interval_days')),plates_ready:sourceSelect.value==='home'?Number(f.get('plates_ready')):0,batch_plates:sourceSelect.value==='home'?Math.max(1,Number(f.get('plates_ready'))):1,ingredients_json:JSON.stringify(names),excluded_weekdays_json:JSON.stringify(f.getAll('excluded_weekdays').map(Number))};if(!payload.name)throw Error('Meal name is required.');if(!Number.isInteger(payload.eating_interval_days)||payload.eating_interval_days<1||payload.eating_interval_days>90)throw Error('Eating interval must be between 1 and 90 days.');if(sourceSelect.value==='home'&&(!Number.isInteger(payload.plates_ready)||payload.plates_ready<0||payload.plates_ready>1000))throw Error('Ready plates must be a whole number from 0 to 1000.');if(payload.calories_kcal!==null&&(!Number.isFinite(payload.calories_kcal)||payload.calories_kcal<0||payload.calories_kcal>10000))throw Error('Enter valid kcal per plate.');await api(existing?`recipes/${existing.id}`:'recipes',{method:existing?'PATCH':'POST',body:JSON.stringify({data:payload})});closeModal();toast(existing?'Meal updated':'Meal saved');refresh()}catch(err){toast(err.message)}};
- $('#modal').classList.remove('hidden');
-}
-$('#add-recipe-btn').addEventListener('click',()=>openRecipeModal());
-$('#meal-source-tabs').addEventListener('click',e=>{const b=e.target.closest('[data-meal-filter]');if(!b)return;mealFilter=b.dataset.mealFilter;renderMeals()});
-document.addEventListener('click',e=>{const emptyBtn=e.target.closest('#empty-add-meal');if(emptyBtn)openRecipeModal(null,emptyBtn.dataset.defaultMealSource||'home')});
-async function buildShoppingList(){try{const future=(cache.daily_meals||[]).filter(x=>x.plan_date>=today).map(x=>x.plan_date).sort();if(!future.length)throw Error('No upcoming meal ingredients are available yet.');const data=await api('meals/shopping-list',{method:'POST',body:JSON.stringify({data:{start_date:today,end_date:future[future.length-1]}})});toast(`${data.new_items} item(s) added to shopping list`);refresh()}catch(err){toast(err.message)}}
-$('#meals-shopping-from-plan').addEventListener('click',buildShoppingList);
-document.addEventListener('click',async e=>{const btn=e.target.closest('[data-stock-save]');if(!btn)return;const id=Number(btn.dataset.stockSave),input=document.querySelector(`[data-stock-input="${id}"]`);const qty=Number(input?.value);if(!Number.isInteger(qty)||qty<0||qty>1000){toast('Enter a whole number from 0 to 1000.');return}try{await api(`recipes/${id}/stock`,{method:'POST',body:JSON.stringify({data:{plates_ready:qty}})});toast('Ready plates updated');refresh()}catch(err){toast(err.message)}});
-$('#meals-shopping-add-form').addEventListener('submit',async e=>{e.preventDefault();try{const f=new FormData(e.target);await api('shopping_items',{method:'POST',body:JSON.stringify({data:{name:f.get('name'),source:'manual'}})});e.target.reset();toast('Item added');refresh()}catch(err){toast(err.message)}});
-$('#meals-shopping-list').addEventListener('change',async e=>{const input=e.target.closest('[data-shopping-check]');if(!input)return;try{await api(`shopping_items/${input.dataset.shoppingCheck}`,{method:'PATCH',body:JSON.stringify({data:{checked:input.checked?1:0}})});refresh()}catch(err){toast(err.message)}});
-$('#clear-bought-items').addEventListener('click',async()=>{const bought=(cache.shopping_items||[]).filter(i=>Number(i.checked));if(!bought.length){toast('No purchased items to clear');return}if(!confirm(`Remove ${bought.length} purchased item(s) from the list?`))return;try{await Promise.all(bought.map(i=>api(`shopping_items/${i.id}`,{method:'DELETE'})));toast('Purchased items cleared');refresh()}catch(err){toast(err.message)}});
-async function confirmMeal(id,decision){try{await api(`daily-meals/${id}/confirm`,{method:'POST',body:JSON.stringify({data:{decision}})});toast(decision==='yes'?'Plate confirmed':'Plate and following days moved');refresh()}catch(err){toast(err.message)}}
-document.addEventListener('click',async e=>{
- const resetWeek=e.target.closest('[data-reset-week-plan]');
- if(resetWeek){if(!confirm('Generate a fresh upcoming plan from tomorrow? This replaces pending future plates and clears future day-off markers. Todayâ€™s plate, past history and confirmed eaten plates stay; overdue plates are rolled forward normally.'))return;resetWeek.disabled=true;try{const result=await api('daily-meals/reset-week',{method:'POST',body:JSON.stringify({data:{}})});toast(`Upcoming plan refreshed Â· ${result.created} new plate(s)`);await refresh()}catch(err){toast(err.message)}finally{resetWeek.disabled=false}return}
- const weekAssign=e.target.closest('[data-week-assign]');
- if(weekAssign){const day=weekAssign.dataset.weekAssign,select=document.querySelector(`[data-week-meal-select="${day}"]`),recipeId=Number(select?.value),recipe=(cache.recipes||[]).find(r=>Number(r.id)===recipeId);if(!recipeId){toast('Choose a meal for this day first.');return}const movable=recipe?movableHomeReservation(recipe,day):null;if(movable&&!confirm(`A plate of ${recipe.name} is currently reserved for ${formatDate(movable.plan_date)}. Move that automatic reservation to ${formatDate(day)}?`))return;weekAssign.disabled=true;try{const result=await api('daily-meals/assign',{method:'POST',body:JSON.stringify({data:{plan_date:day,recipe_id:recipeId}})});const repeat=result.next_planned_date?` Â· next repeat ${formatDate(result.next_planned_date)}`:'';toast((result.reallocated_from?`Meal saved Â· moved reservation from ${formatDate(result.reallocated_from)}`:`Meal saved for ${formatDate(day)}`)+repeat);await refresh()}catch(err){toast(err.message)}finally{weekAssign.disabled=false}return}
- const weekSkip=e.target.closest('[data-week-skip]');
- if(weekSkip){const day=weekSkip.dataset.weekSkip,meal=(cache.daily_meals||[]).find(x=>x.plan_date===day);if(!confirm(meal?`Cancel the pending ${meal.recipe_name} plate for ${formatDate(day)} and leave this day free? Ready-plate stock will not be consumed.`:`Leave ${formatDate(day)} free of a meal?`))return;weekSkip.disabled=true;try{await api('daily-meals/assign',{method:'POST',body:JSON.stringify({data:{plan_date:day,recipe_id:null}})});toast('Day left free');await refresh()}catch(err){toast(err.message)}finally{weekSkip.disabled=false}return}
- const weekRestore=e.target.closest('[data-week-restore]');
- if(weekRestore){const day=weekRestore.dataset.weekRestore;weekRestore.disabled=true;try{await api('daily-meals/restore',{method:'POST',body:JSON.stringify({data:{plan_date:day}})});toast('Day restored to automatic planning');await refresh()}catch(err){toast(err.message)}finally{weekRestore.disabled=false}return}
- const choose=e.target.closest('[data-select-today-meal]');if(choose){const host=choose.closest('.today-meal-card'),select=host?.querySelector('[data-today-meal-choice]'),recipeId=Number(select?.value),recipe=(cache.recipes||[]).find(r=>Number(r.id)===recipeId);if(!recipeId){toast('Choose a meal first.');return}const movable=recipe?movableHomeReservation(recipe,today):null;if(movable&&!confirm(`A plate of ${recipe.name} is currently reserved for ${formatDate(movable.plan_date)}. Use it today and move that reservation?`))return;choose.disabled=true;try{const result=await api('daily-meals/select',{method:'POST',body:JSON.stringify({data:{recipe_id:recipeId,plan_date:today}})});const repeat=result.next_planned_date?` Â· next repeat ${formatDate(result.next_planned_date)}`:'';toast((result.reallocated_from?`Today's plate selected Â· moved a reservation from ${formatDate(result.reallocated_from)}`:`Today's plate selected Â· ${result.name}`)+repeat);await refresh()}catch(err){toast(err.message)}finally{choose.disabled=false}return}
- const edit=e.target.closest('[data-edit-recipe]');if(edit){const recipe=(cache.recipes||[]).find(r=>r.id===Number(edit.dataset.editRecipe));if(recipe)openRecipeModal(recipe)}const mealConfirmBtn=e.target.closest('[data-meal-confirm]');if(mealConfirmBtn)confirmMeal(Number(mealConfirmBtn.dataset.mealConfirm),mealConfirmBtn.dataset.mealDecision);const remove=e.target.closest('[data-remove-plate]');if(remove)removePlate(Number(remove.dataset.removePlate))
-});
-$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});window.addEventListener('focus',()=>refresh());refresh();setInterval(refresh,60000);
+/* Keep the Planner page in the same navigation visibility system as every other page. */
+.page.planner-page{display:none}
+.page.planner-page.active{display:grid}
+
+.planner-unscheduled-panel{margin-top:0}
+.planner-unscheduled-count{display:inline-grid;place-items:center;min-width:27px;height:27px;padding:0 8px;border:1px solid #34493a;border-radius:20px;background:#1c3023;color:#b8e8c4;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
+.planner-unscheduled-list{display:grid;gap:7px}
+.planner-unscheduled-item{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 11px;border:1px solid #2b3830;border-radius:10px;background:#111713}
+.planner-unscheduled-icon{color:#d8bd79;font-size:16px;text-align:center}
+.planner-unscheduled-item>div{display:grid;gap:3px;min-width:0}
+.planner-unscheduled-item b{font-size:11px;overflow-wrap:anywhere}
+.planner-unscheduled-item small{color:#9eaca2;font-size:9px;line-height:1.4;overflow-wrap:anywhere}
+.planner-unscheduled-empty{padding:13px;border:1px dashed #34463a;border-radius:10px;background:#101713;color:#aab7ae;font-size:10px;line-height:1.5}
+@media(max-width:520px){.planner-unscheduled-item{grid-template-columns:19px minmax(0,1fr);gap:8px}.planner-unscheduled-item .mini-btn{grid-column:2;justify-self:start}}
