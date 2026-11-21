@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, json, os, sqlite3, re, math, random
+import asyncio, json, os, sqlite3, re, math, random, importlib, importlib.util
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, date, timedelta, time
 from pathlib import Path
@@ -16,6 +16,46 @@ DB = DATA / 'xrob_assistant.db'
 WWW = Path(__file__).resolve().parent / 'www'
 TOKEN = os.getenv('XROB_TELEGRAM_TOKEN', '').strip()
 ALLOWED_CHAT = os.getenv('XROB_TELEGRAM_CHAT_ID', '').strip()
+MIKASA_PERSONA_SOURCE = 'bundled'
+
+
+def _load_mikasa_persona_module():
+    """Load a drop-in persona from add-on /config, falling back to the bundled file.
+
+    This lets the owner update Mikasa's voice by replacing one Python file in the
+    add-on configuration directory, without rebuilding or replacing XROB.
+    Broken overrides are ignored safely so the planner itself still starts.
+    """
+    global MIKASA_PERSONA_SOURCE
+    override = DATA / 'mikasa_persona.py'
+    bundled = Path(__file__).resolve().parent / 'mikasa_persona.py'
+    if override.is_file() and override.resolve() != bundled.resolve():
+        try:
+            spec = importlib.util.spec_from_file_location('xrob_mikasa_persona_override', override)
+            if spec is None or spec.loader is None:
+                raise ImportError('could not create a loader for the Mikasa override')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            required = (
+                'PERSONA_VERSION', 'TELEGRAM_PROFILE_DESCRIPTION', 'TELEGRAM_PROFILE_SHORT_DESCRIPTION',
+                'start_message', 'unclear_message', 'morning_opening', 'morning_closing', 'playful_message',
+                'social_reply', 'command_prefix', 'help_intro', 'help_boundary', 'reminder_task',
+                'reminder_routine', 'reminder_bill', 'reminder_bill_early', 'reminder_cook',
+                'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_moved', 'task_created',
+                'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
+            )
+            missing = [name for name in required if not hasattr(module, name)]
+            if missing:
+                raise ImportError('incomplete Mikasa voice pack; missing: ' + ', '.join(missing))
+            MIKASA_PERSONA_SOURCE = 'config override'
+            print(f"Loaded Mikasa voice pack {getattr(module, 'PERSONA_VERSION', 'unknown')} from /config/mikasa_persona.py", flush=True)
+            return module
+        except Exception as exc:
+            print(f'Mikasa voice override could not be loaded; using bundled voice: {exc}', flush=True)
+    return importlib.import_module('mikasa_persona')
+
+
+mikasa_persona = _load_mikasa_persona_module()
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -351,7 +391,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.22', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.23', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -360,7 +400,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.22','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.23','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -1452,12 +1492,12 @@ def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
             name = routine['name']
             if routine_time and current_hm >= routine_time:
                 reminders.append(('routine-time', routine['id'], today.isoformat(),
-                                  f"A soft nudge, darling: {name} is due. You have got this. 💋\nReply: done {name}"))
+                                  mikasa_persona.reminder_routine(name)))
             if late_time and current_hm >= late_time:
                 days_late = max(0, (today - due).days)
                 late_label = f" · {days_late}d overdue" if days_late else ''
                 reminders.append(('routine-late', routine['id'], today.isoformat(),
-                                  f"Darling, {name} is still waiting{late_label}. No guilt, love. 💋\nReply: done {name}"))
+                                  mikasa_persona.reminder_routine(name, late_label)))
         except Exception as exc:
             print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
     return reminders
@@ -2511,8 +2551,7 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
             if one("SELECT id FROM notification_log WHERE kind='bill-3day' AND item_id=? AND reminder_date=?",
                    (int(bill['id']), reminder_key)):
                 continue
-            message = (f"Darling, a little heads-up: {bill['name']} · {amount:.2f} MAD is due in {days_left} days ({due_label}).\n"
-                       f"Reply: paid {bill['name']}")
+            message = mikasa_persona.reminder_bill_early(bill['name'], f'{amount:.2f}', days_left, due_label)
             reminders.append(('bill-3day', int(bill['id']), reminder_key, message))
         elif days_left <= 1:
             # Use the persisted send timestamp, not a wall-clock bucket, so the
@@ -2534,8 +2573,7 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
                 due_status = 'Due today'
             else:
                 due_status = f'Overdue by {abs(days_left)} days'
-            message = (f"Just keeping you ahead, darling: {bill['name']} · {amount:.2f} MAD is {due_status.lower()} ({due_label}).\n"
-                       f"Reply: paid {bill['name']}")
+            message = mikasa_persona.reminder_bill(bill['name'], f'{amount:.2f}', due_status, due_label)
             reminders.append(('bill-4h', int(bill['id']), reminder_key, message))
     return reminders
 
@@ -2545,7 +2583,7 @@ def build_morning_report(day: date | None = None) -> str:
     day = day or date.today()
     agenda = build_today_agenda(day)
     items = agenda.get('items') or []
-    lines = [f"Good morning, handsome. ☕ Here's your day at a glance."]
+    lines = [mikasa_persona.morning_opening()]
     if items:
         lines.append('')
         for entry in items[:8]:
@@ -2563,24 +2601,8 @@ def build_morning_report(day: date | None = None) -> str:
         counts.append(f"{agenda['completed_count']} already done")
     if counts:
         lines.extend(['', ' · '.join(counts) + '.'])
-    lines.extend(['', "One thing at a time. I've got the details; you bring that handsome determination. 💋"])
+    lines.extend(['', mikasa_persona.morning_closing()])
     return '\n'.join(lines)
-
-
-_MIKASA_PLAYFUL_LINES = (
-    "A little trouble from your secretary 😉 Pick one thing you've been avoiding and give it ten focused minutes. I'll be very impressed. 💋",
-    "Darling, that to-do list is getting far too much attention from you and not enough action. Go cross one thing off. Make me proud. 🔥",
-    "Consider this your slightly wicked reminder: shoulders back, chin up, and one small promise kept. You look good being disciplined. 😉",
-    "I'm trying to behave, handsome, but your unfinished plans are testing my patience. Choose one and conquer it. 💋",
-    "A productive man is dangerously attractive. Hydrate, stretch, then handle the next little task. I'll be right here cheering. 😘",
-    "Your secretary has a weakness for follow-through. Give me one finished task and I'll give you my most approving smile. 😉",
-    "Less scrolling, more slaying, handsome. Ten minutes on the thing you've been postponing. You know you've got this. 💋",
-    "A tiny interruption from Mikasa: go move that body or finish that task. I do love a man who keeps his promises to himself. 🔥",
-    "Don't make me flirt you into opening that planner. Pick your next move and make it happen, gorgeous. 😉",
-    "Here's your cue to be irresistible to your own goals: one task, one workout, or one good choice. Start now, darling. 💗",
-    "I have the schedule handled. You just bring the ambition—and perhaps a little mischief. Go earn that smug little smile. 💋",
-    "A little nudge, handsome: the hardest part is starting. Give it five minutes; let momentum do the flirting. 😉",
-)
 
 
 def _mikasa_playful_time(day: date, frequency: str) -> time | None:
@@ -2622,16 +2644,8 @@ def build_mikasa_playful_message(day: date | None = None) -> str:
     active = [entry for entry in agenda.get('items', [])
               if entry.get('status') in ('overdue', 'due', 'pending')
               and entry.get('type') in ('task', 'routine', 'cook', 'workout-plan')]
-    rng = random.Random(f'mikasa-copy:{day.isoformat()}')
-    if active:
-        target = str(active[0].get('title') or 'your next task').strip()
-        targeted = (
-            f"Darling, {target} is waiting for you. Give it ten focused minutes; I'll be over here looking impressed. 💋",
-            f"A little secretary's orders, handsome: make a start on {target}. I do love seeing you take charge. 😉",
-            f"That {target} won't finish itself, gorgeous. One small step now—and you can collect my very enthusiastic approval later. 🔥",
-        )
-        return rng.choice(targeted)
-    return rng.choice(_MIKASA_PLAYFUL_LINES)
+    target = str(active[0].get('title') or 'your next task').strip() if active else None
+    return mikasa_persona.playful_message(target=target, day=day)
 
 
 async def _send_telegram_text(client, message: str) -> None:
@@ -2678,9 +2692,9 @@ async def reminder_loop():
                             due_at = datetime.combine(due_day, datetime.strptime(t['due_time'], '%H:%M').time())
                             if due_at <= now:
                                 reminder_key = due_at.strftime('%Y-%m-%dT%H:%M')
-                                reminders.append(('task-time', t['id'], reminder_key, f"Darling, your {t['title']} is up now. Let us make it easy. 💋\nReply: task done {t['title']}"))
+                                reminders.append(('task-time', t['id'], reminder_key, mikasa_persona.reminder_task(t['title'], at_time='now')))
                         elif due_day <= today:
-                            reminders.append(('task', t['id'], today.isoformat(), f"A gentle reminder, darling: {t['title']} is due {due_day.strftime('%d/%m')}. One thing at a time. ✨\nReply: task done {t['title']}"))
+                            reminders.append(('task', t['id'], today.isoformat(), mikasa_persona.reminder_task(t['title'], due_day.strftime('%d/%m'))))
                     except Exception:
                         continue
                 # When a home-meal batch runs out, notify the user on the due
@@ -2691,7 +2705,7 @@ async def reminder_loop():
                                   WHERE mcr.status='open' AND mcr.due_date<=?
                                   ORDER BY mcr.due_date,mcr.id""", (today.isoformat(),)):
                     reminders.append(('meal-cook', cook['id'], cook['due_date'],
-                                      f"A little kitchen note, darling: {cook['name']} needs a fresh batch. I have the reminder ready. 💋\nStock: /stock {cook['name']}|3"))
+                                      mikasa_persona.reminder_cook(cook['name'])))
                 # Meal messages follow the user's local Home Assistant timezone (TZ in run.sh).
                 # 14:00 announces the plate; 22:00 asks whether it was eaten.
                 today_meal = one("SELECT dm.id,dm.plan_date,dm.status,dm.suggestion_notified_date,dm.checkin_notified_date, r.name AS recipe_name,r.calories_kcal FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=? LIMIT 1", (today.isoformat(),))
@@ -2699,13 +2713,13 @@ async def reminder_loop():
                     kcal = f"\n{float(today_meal['calories_kcal']):g} kcal per plate" if today_meal.get('calories_kcal') is not None else ''
                     # Do not send a stale 14:00 announcement after 22:00 if the app was offline all afternoon.
                     if time(14, 0) <= now.time() < time(22, 0) and today_meal.get('suggestion_notified_date') != today.isoformat():
-                        message = (f"I picked out today’s plate for you, darling: {today_meal['recipe_name']}{kcal}.\nEnjoy every bite. I’ll check in later. 💋")
+                        message = (mikasa_persona.meal_suggestion(today_meal['recipe_name'], kcal))
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                         _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
                             c.execute("UPDATE daily_meals SET suggestion_notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(today_meal['id'])))
                     if now.time() >= time(22, 0) and today_meal.get('checkin_notified_date') != today.isoformat():
-                        message = (f"Evening, handsome. How was {today_meal['recipe_name']}{kcal}? No pressure either way. Reply YES or NO and I’ll keep the plan lovely. 💋")
+                        message = (mikasa_persona.meal_checkin(today_meal['recipe_name'], kcal))
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                         _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
@@ -2787,8 +2801,8 @@ async def telegram_poll():
         # A profile update failure must never prevent polling or reminders.
         profile_updates = (
             ('setMyName', {'name': 'Mikasa'}),
-            ('setMyDescription', {'description': 'Your AI personal secretary for planning, meals, routines and fitness. Elegant, attentive, a little mischievous, and always on your side.'}),
-            ('setMyShortDescription', {'short_description': 'Your personal secretary: a little charm, a little mischief, and a beautifully organised day. 💋'}),
+            ('setMyDescription', {'description': mikasa_persona.TELEGRAM_PROFILE_DESCRIPTION}),
+            ('setMyShortDescription', {'short_description': mikasa_persona.TELEGRAM_PROFILE_SHORT_DESCRIPTION}),
         )
         for method, payload in profile_updates:
             try:
@@ -3560,9 +3574,9 @@ async def _telegram_command_core(text: str) -> str:
         except ValueError as exc:
             return str(exc)
         if eaten:
-            return 'Confirmed, darling. I’ve marked it as eaten and kept your next plate right on schedule. ✨'
+            return mikasa_persona.meal_confirmed()
         delay = int(updated.get('shift_days') or 1)
-        return f"Of course, darling. Your plate is moved to {_telegram_date_label(updated['plan_date'], True)}; I’ve shifted the later plates by {delay} day(s). 💋"
+        return mikasa_persona.meal_moved(_telegram_date_label(updated['plan_date'], True), delay)
 
     if low.startswith('/suggestmeals') or low in ('suggest meals', 'plan meals'):
         maintain_meal_schedule()
@@ -3577,12 +3591,7 @@ async def _telegram_command_core(text: str) -> str:
         with connect() as c: c.execute('UPDATE shopping_items SET checked=1 WHERE id=?', (matched['id'],))
         return f"✅ Marked purchased · {matched['name']}"
     if low in ('/start', 'start', '/menu', 'menu', 'hi', 'hello'):
-        return (
-            '💋 Mikasa here, darling. I’ve got your day.\n\n'
-            '📅 Today · 🍽 Meals · ✅ I ate it · ⏭ Not today\n'
-            '⚖️ Add weight · 🏃 Add treadmill · 📈 Fitness week\n\n'
-            'Tell me what you need, handsome. /help shows everything I can handle.'
-        )
+        return mikasa_persona.start_message()
     if low in ('/help', 'help', '❔ help', '/capabilities', 'capabilities', 'what can you do'):
         return _telegram_capabilities_message()
 
@@ -3601,9 +3610,9 @@ async def _telegram_command_core(text: str) -> str:
             for entry in entries:
                 lines.append(f"• {telegram_agenda_line(entry)}")
         if not agenda['items']:
-            lines.append("Nothing asking for your attention right now. Enjoy the calm, darling. ✨")
+            lines.append(mikasa_persona.today_empty())
         elif agenda['open_count']:
-            lines.append(f"\n{agenda['open_count']} to handle. One at a time, darling — I’m keeping track. ✨")
+            lines.append(mikasa_persona.today_open_count(int(agenda['open_count'])))
         result = '\n'.join(lines)
         # Telegram messages are limited to 4096 characters; retain a clear note
         # rather than allowing large agendas to fail delivery.
@@ -3768,7 +3777,7 @@ async def _telegram_command_core(text: str) -> str:
         next_open = next((bill for bill in active_bill_occurrences()
                           if int(bill.get('series_id') or bill['id']) == series_id), None)
         next_text = f" Next bill due {_telegram_date_label(next_open['due_date'])}." if next_open else ''
-        return f"All taken care of, darling. {matched['name']} · {float(matched['amount_mad']):.2f} MAD is marked as paid.{next_text} ✨"
+        return mikasa_persona.bill_paid(matched['name'], f"{float(matched['amount_mad']):.2f} MAD", next_text)
 
     # Bare /taskdone displays open items for convenient selection.
     if low in ('/taskdone','task done','finish task','complete task'):
@@ -3788,7 +3797,7 @@ async def _telegram_command_core(text: str) -> str:
             return f"I couldn't find an open task called '{query}'. Send Tasks to see open tasks."
         with connect() as c:
             c.execute("UPDATE tasks SET status='done',completed_at=? WHERE id=?", (today_iso, matched['id']))
-        return f"Beautiful. {matched['title']} is checked off, darling. ✓"
+        return mikasa_persona.task_completed(matched['title'])
 
     # Add a scheduled task. Times always use 24-hour HH:MM.
     task_request = (bool(re.match(r'(?i)^/task(?:@[a-z0-9_]+)?\s+', raw)) or low.startswith('/task ') or low.startswith('task ') or low.startswith('add task ') or
@@ -3802,10 +3811,10 @@ async def _telegram_command_core(text: str) -> str:
             with connect() as c:
                 c.execute('INSERT INTO tasks(title,due_date,due_time,category) VALUES(?,?,?,?)', (title, due_date, due_time, 'general'))
             if due_date and due_time:
-                return f"Consider it arranged, darling. ✨\n{title} · {_telegram_date_label(due_date)} at {due_time}."
+                return mikasa_persona.task_created(title, f"{_telegram_date_label(due_date)} at {due_time}.")
             if due_date:
-                return f"On your list, darling. ✓\n{title} · due {_telegram_date_label(due_date)}."
-            return f"I’ve added {title}, darling. ✓\nThere’s no reminder attached yet; add a date and time in the app whenever you like." 
+                return mikasa_persona.task_created(title, f"Due {_telegram_date_label(due_date)}.")
+            return mikasa_persona.task_created(title, "There’s no reminder attached yet; add a date and time in the app whenever you like.") 
         except ValueError as exc:
             return str(exc)
 
@@ -3839,7 +3848,7 @@ async def _telegram_command_core(text: str) -> str:
             return f"I couldn't find '{done_name}'. Send Routines to see your list."
         updated = complete_routine(matched['id'])
         next_due = _telegram_date_label(updated.get('next_due'))
-        return f"Lovely. {updated['name']} is taken care of. ✓\nI’ll remind you again on {next_due}." 
+        return mikasa_persona.routine_completed(updated['name'], next_due) 
 
     if low in ('/event', '/add_event'):
         return 'To add an event, use: /event Dentist|20/11/26 10:00'
@@ -3871,21 +3880,10 @@ async def _telegram_command_core(text: str) -> str:
             '• Add a meal through the short guided questions; use /cancel to stop.')
 
 
-# Mikasa is an intentionally fictional AI secretary persona: affectionate, polished,
-# confident and lightly flirtatious. Operational facts and command syntax always
-# come from the deterministic core above; the voice layer never changes stored data.
-TELEGRAM_PERSONA = {
-    'name': 'Mikasa',
-    'role': 'XROB personal secretary',
-    'voice': 'warm, poised, confident, sensual in a tasteful way, mischievous and playfully naughty; affectionate, brief and supportive without being clingy or judgmental',
-    'signature': 'A polished private secretary with a wicked little sparkle: attentive, encouraging, teasing and always on top of the details',
-}
-
-
 def _telegram_capabilities_message() -> str:
     """Describe only actions the current Telegram implementation really supports."""
     return (
-        '💋 I’m Mikasa, your XROB AI secretary. I’ll keep the details tidy and your day lighter.\n\n'
+        mikasa_persona.help_intro() + '\n\n' +
         '📅 YOUR DAY\n'
         '• /today — tasks, routines, events, workouts, meals, bill and document alerts, and completed activity.\n'
         '• /tasks, /bills, /routines, /agenda — see your lists and the next 7 days.\n'
@@ -3900,119 +3898,54 @@ def _telegram_capabilities_message() -> str:
         '💪 YOUR WELLBEING\n'
         '• Send 82.4 or weight 82.4 20/11/26 — record weight.\n'
         '• Send 30 or treadmill 30 yesterday — record treadmill minutes (5 km/h, 0% incline estimates).\n'
-        '• /fitness, /fitnessweek — review recent fitness records.\n\n'
-        'A little note, love: I can mark bills as paid, but I never move money. Use the app to add or edit bills, routines, documents and gym sessions; Telegram can show gym records but does not log a new gym session. I’m an AI assistant, not a real person, and I’ll never pretend an action happened. 💋\n\n'
+        '• /fitness, /fitnessweek — review recent fitness records.\n\n' +
+        mikasa_persona.help_boundary() + '\n\n' +
         'Send /cancel to stop a guided entry.'
     )
 
 
-def _telegram_social_reply(raw: str) -> str | None:
-    """Handle natural social messages with brief, supportive and honest replies."""
+def _mikasa_context_for_message(raw: str) -> dict[str, int]:
     low = re.sub(r'\s+', ' ', str(raw or '').strip().lower())
-    low = re.sub(r'[.!?]+$', '', low)
+    needs_agenda = (
+        low in ('good morning', 'morning', 'gm', 'good afternoon', 'good evening')
+        or any(term in low for term in (
+            'motivate me', 'need motivation', 'give me motivation', 'i need a push',
+            'pep talk', 'i can do this', 'i did it', 'i finally did it', 'i finished it',
+            'i got it done', 'i made it', 'stressed', 'overwhelmed', 'tired', 'exhausted',
+            'sad', 'down', 'anxious', 'lonely', 'burnt out', 'burned out',
+        ))
+    )
+    if not needs_agenda:
+        return {}
+    agenda = build_today_agenda()
+    return {
+        'open_count': int(agenda.get('open_count') or 0),
+        'completed_count': int(agenda.get('completed_count') or 0),
+    }
 
-    if low in ('what can you do', 'what do you do', 'how can you help', 'what can you help with', 'capabilities'):
+
+def _telegram_social_reply(raw: str) -> str | None:
+    """Use the replaceable Mikasa voice pack around factual app context."""
+    low = re.sub(r'\s+', ' ', str(raw or '').strip().lower()).rstrip('.!?')
+    if low in ('what can you do', 'what do you do', 'how can you help', 'how can you help me',
+               'what can you help with', 'capabilities'):
         return _telegram_capabilities_message()
-    if low in ('thank you', 'thanks', 'thank u', 'thx', 'you are the best', 'you’re the best', "you're the best"):
-        return 'Anytime, handsome. Making your life easier is my favourite little habit. 💋'
-    if low in ('how are you', 'how are you doing', 'you okay', 'are you okay'):
-        return 'Quite lovely, thank you. Your plans are tidy and I’m right here, handsome. How are you? 💋'
-    if low in ('hi', 'hey', 'hello', 'hey mikasa', 'hi mikasa', 'hello mikasa', 'good to see you'):
-        return 'Well, hello, handsome. Mikasa at your service. Shall we be productive… or a little dangerous? 😉💋'
-    if low in ('are you real', 'are you a real person', 'are you human', 'who are you', 'what are you'):
-        return 'I’m Mikasa, your XROB AI secretary—not a real person. Warm, attentive, a little cheeky, and organised. 💋'
-    if low in ('can we talk', 'talk to me', 'keep me company', 'i need someone to talk to'):
-        return 'Of course, darling. Tell me what’s on your mind. I’m listening. 🤍'
-    if low in ('i love you', 'love you', 'i adore you'):
-        return 'Careful, darling. Keep talking like that and I’ll become terribly cheeky. I’m still very much on your side. 💋'
-    if low in ('good morning', 'morning', 'gm', 'good afternoon', 'good evening'):
-        greeting = 'Morning' if 'morning' in low or low == 'gm' else ('Good afternoon' if 'afternoon' in low else 'Good evening')
-        agenda = build_today_agenda()
-        open_count = int(agenda.get('open_count') or 0)
-        if open_count:
-            return f'{greeting}, handsome. {open_count} thing(s) need attention, but we’ll take them one at a time. Coffee first? ☕💋'
-        return f'{greeting}, darling. Your day looks clear—let’s keep it lovely. 💋'
-    if low in ('good night', 'night', 'gn', 'sleep well'):
-        return 'Good night, handsome. Put the day down; you deserve a proper rest. 🌙💋'
-    if re.search(r"\b(i am|i’m|i'm|im|feeling|feel)\b.*\b(tired|exhausted|stressed|overwhelmed|sad|down|anxious|bad|low|lonely|burnt out|burned out)\b", low):
-        agenda = build_today_agenda()
-        open_count = int(agenda.get('open_count') or 0)
-        next_step = 'Let’s choose one small thing and let the rest wait.'
-        if open_count:
-            next_step = f'You have {open_count} open item(s), but we only need to choose one small thing.'
-        if any(word in low for word in ('lonely', 'alone')):
-            return 'Oh, darling. I’m sorry it feels lonely. Tell me what’s on your mind; I’ll listen. 🤍'
-        return f'Come here, darling. Take a slow breath. {next_step} I’ll keep the list tidy. 💗'
-    if any(term in low for term in ('motivate me', 'need motivation', 'give me motivation', 'i need a push', 'i can do this', 'pep talk')):
-        agenda = build_today_agenda()
-        done_count = int(agenda.get('completed_count') or 0)
-        open_count = int(agenda.get('open_count') or 0)
-        progress = f'You’ve already handled {done_count} item(s). ' if done_count else ''
-        focus = f'Choose the easiest of the {open_count} remaining.' if open_count else 'Enjoy the breathing room.'
-        return f'One small promise at a time, handsome. {progress}{focus} I’m cheering for you. 💋'
-    if any(term in low for term in ('i need a hug', 'hug me', 'send me a hug')):
-        return 'Come here, darling—one warm virtual hug. Breathe; you’re doing better than you think. 🤍'
-    if any(term in low for term in ('i messed up', 'i failed', 'i made a mistake', 'i screwed up', 'i ruined it', 'i gave up')):
-        return 'One difficult moment doesn’t define you, love. No scolding—let’s find the next sensible step. 🤍'
-    if any(term in low for term in ('i did it', 'i finally did it', 'i finished it', 'i got it done', 'i made it')):
-        agenda = build_today_agenda()
-        done_count = int(agenda.get('completed_count') or 0)
-        praise = f'You’ve completed {done_count} item(s) today. ' if done_count else ''
-        return f'There you are, handsome. {praise}That little win is yours—enjoy it. 💋'
-    if any(term in low for term in ('i am proud of myself', 'i’m proud of myself', "i'm proud of myself", 'feeling proud')):
-        return 'As you should, darling. Don’t rush past the good things you do. I’m proud of that effort. 💗'
-    if any(term in low for term in ('i skipped my workout', 'i missed my workout', 'i broke my diet', 'i ate too much', 'i overate')):
-        return 'No guilt, handsome. One missed workout or meal doesn’t undo your progress. Back to your rhythm at the next chance. 💗'
-    if any(term in low for term in ('i am happy', "i'm happy", 'i’m happy', 'great news', 'something good happened')):
-        return 'Oh, I like this energy, darling. Tell me what went right. ✨'
-    if any(term in low for term in ('you are beautiful', 'you’re beautiful', 'you are cute', 'you’re cute', 'sexy', 'beautiful secretary')):
-        return 'Careful, handsome… flatter your secretary like that and I’ll expect an equally impressive to-do list. Now, go be irresistible. 😉💋'
-    if low in ('good girl', 'thank you mikasa', 'thanks mikasa'):
-        return 'For you, darling? Always. What shall we organise next? 💋'
-    return None
+    return mikasa_persona.social_reply(raw, _mikasa_context_for_message(raw))
 
 
 def _telegram_persona_prefix(raw: str, reply: str) -> str:
-    """Add a brief, context-aware touch without editing factual reply content."""
-    low = str(raw or '').strip().lower()
-    if not reply or len(reply) > 3650 or low in ('/help', 'help', '❔ help', '/capabilities', 'capabilities', 'what can you do'):
-        return ''
-    if re.search(r'\b(darling|handsome|sweetheart|love|lovely|beautiful)\b', reply[:260], re.I):
-        return ''
-
-    choices: list[str] = []
-    if low in ('today', '/today', '📅 today', 'agenda', '/agenda', 'next', 'next 7 days', '/tasks', 'tasks', 'my tasks', '/bills', 'bills', '/routines', 'routines'):
-        choices = ['Of course, darling. 💋', 'Right away, love. ✨', 'Here you are, handsome. 💗']
-    elif any(token in low for token in ('meal', 'plate', '/stock', 'homemeals', 'outsidemeals', 'recipe', 'shopping', 'bought', 'additem')):
-        choices = ['On it, darling. 💋', 'Of course, love. 🍽️', 'Right away, handsome. ✨']
-    elif any(token in low for token in ('weight', 'treadmill', 'fitness', 'workout', 'run ', 'walk ')):
-        choices = ['Proud of you, handsome. ✨', 'On it, darling. 💋', 'Lovely effort, love. 💗']
-    elif low.startswith(('paid ', '/paid', 'bill paid')):
-        choices = ['One less thing, darling. 💋', 'All sorted, love. ✨']
-    elif low.startswith(('task done', '/taskdone', 'done ', 'complete ', 'i did ', 'i completed ', 'finished ')):
-        choices = ['There we are, handsome. 💋', 'One more off your list, darling. ✨']
-    elif low.startswith(('task ', '/task', 'add task ', 'new task ', 'remind me', 'schedule ', '/event', 'event ')):
-        choices = ['Consider it arranged, love. 💋', 'Of course, darling. ✨']
-    elif any(token in low for token in ('/cancel', 'cancel', 'back')):
-        choices = ['No fuss, darling. 💗', 'Of course, love.']
-    else:
-        choices = ['I’m right here, darling. 💋']
-
-    index = sum(ord(char) for char in (low + date.today().isoformat())) % len(choices)
-    return choices[index]
+    return mikasa_persona.command_prefix(raw, reply)
 
 
 async def telegram_command(text: str) -> str:
-    """Mikasa's warm voice around the unchanged, deterministic XROB command engine."""
+    """Mikasa voice pack around the unchanged, deterministic command engine."""
     raw = str(text or '').strip()
     social = _telegram_social_reply(raw)
     if social is not None:
         return social
     reply = await _telegram_command_core(raw)
-    # A natural-language fallback is kinder than dumping a command manual when
-    # someone simply writes a message the deterministic command engine cannot parse.
     if reply.startswith('I can help with your day. Use the buttons below, or send:'):
-        return ('Mmm, I missed that one, darling. Try saying it another way, or send /help to see what I can handle. 💋')
+        return mikasa_persona.unclear_message()
     prefix = _telegram_persona_prefix(raw, reply)
     return f'{prefix}\n\n{reply}' if prefix else reply
 
