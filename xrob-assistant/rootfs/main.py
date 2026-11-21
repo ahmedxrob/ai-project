@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS workouts (id INTEGER PRIMARY KEY, date TEXT NOT NULL,
 CREATE TABLE IF NOT EXISTS workout_plan (id INTEGER PRIMARY KEY, weekday TEXT NOT NULL, name TEXT NOT NULL, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS exercises (id INTEGER PRIMARY KEY, workout_id INTEGER NOT NULL, name TEXT NOT NULL, sets INTEGER DEFAULT 0, reps TEXT DEFAULT '', weight_kg REAL DEFAULT 0, FOREIGN KEY(workout_id) REFERENCES workouts(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS treadmill (id INTEGER PRIMARY KEY, date TEXT NOT NULL, duration_min REAL DEFAULT 0, distance_km REAL DEFAULT 0, speed_kmh REAL DEFAULT 0, incline REAL DEFAULT 0, calories_kcal REAL DEFAULT 0, notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS bills (id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_mad REAL DEFAULT 0, due_date TEXT NOT NULL, recurrence TEXT DEFAULT 'none', reminder_days INTEGER DEFAULT 3, status TEXT DEFAULT 'unpaid', paid_at TEXT, notes TEXT DEFAULT '', recurrence_day INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS bills (id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_mad REAL DEFAULT 0, due_date TEXT NOT NULL, recurrence TEXT DEFAULT 'none', reminder_days INTEGER DEFAULT 3, status TEXT DEFAULT 'unpaid', paid_at TEXT, notes TEXT DEFAULT '', recurrence_day INTEGER, series_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, name TEXT NOT NULL, expiry_date TEXT NOT NULL, reminder_days INTEGER DEFAULT 30, reference TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, interval_days INTEGER DEFAULT 1, last_done TEXT, next_due TEXT, category TEXT DEFAULT 'personal', notes TEXT DEFAULT '', routine_time TEXT DEFAULT '10:00', routine_late_time TEXT DEFAULT NULL, routine_rollover_after_late INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS routine_logs (id INTEGER PRIMARY KEY, routine_id INTEGER NOT NULL, completed_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual', FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE);
@@ -91,6 +91,81 @@ def connect():
     finally:
         c.close()
 
+def _migrate_legacy_bill_series(c: sqlite3.Connection) -> None:
+    """Give each bill an identity and safely connect obvious legacy recurrence rows.
+
+    Before 0.4.16, each paid recurrence generated a new independent bill row.
+    The old rows did not store their relationship. We reconnect only unambiguous
+    adjacent occurrences whose name, amount, recurrence, anchor day and notes
+    match exactly, and where the earlier occurrence is already paid.
+    """
+    marker = c.execute("SELECT 1 FROM app_migrations WHERE name='bill_series_identity_v1'").fetchone()
+    if marker:
+        # Rows created by a previous version or imported manually may still have
+        # a NULL series id. Keep them individually addressable rather than merging.
+        c.execute('UPDATE bills SET series_id=id WHERE series_id IS NULL')
+        return
+
+    records = [dict(row) for row in c.execute('SELECT * FROM bills ORDER BY due_date,id').fetchall()]
+    for bill in records:
+        if bill.get('series_id') is None:
+            bill['series_id'] = int(bill['id'])
+            c.execute('UPDATE bills SET series_id=? WHERE id=?', (int(bill['id']), int(bill['id'])))
+
+    grouped: dict[tuple, list[dict]] = {}
+    for bill in records:
+        recurrence = (bill.get('recurrence') or 'none').lower()
+        if recurrence not in ('monthly', 'quarterly', 'yearly'):
+            continue
+        try:
+            due = date.fromisoformat(str(bill['due_date']))
+            anchor = int(bill.get('recurrence_day') or due.day)
+            amount = round(float(bill.get('amount_mad') or 0), 2)
+        except (TypeError, ValueError):
+            continue
+        signature = (
+            str(bill.get('name') or '').strip().casefold(), amount, recurrence,
+            anchor, str(bill.get('notes') or '').strip(),
+        )
+        grouped.setdefault(signature, []).append(bill)
+
+    for signature_rows in grouped.values():
+        signature_rows.sort(key=lambda item: (item['due_date'], int(item['id'])))
+        for index, current in enumerate(signature_rows):
+            if current.get('status') != 'paid':
+                continue
+            try:
+                due = date.fromisoformat(str(current['due_date']))
+                recurrence = (current.get('recurrence') or 'none').lower()
+                anchor = int(current.get('recurrence_day') or due.day)
+                expected = next_recurrence_date(due, recurrence, anchor)
+                paid_at = current.get('paid_at')
+                try:
+                    paid_day = datetime.fromisoformat(str(paid_at)).date() if paid_at else due
+                except (TypeError, ValueError):
+                    paid_day = due
+                # Legacy payment handling skipped cycles that had already passed
+                # when the user paid late. Reproduce that exact next-due rule.
+                while expected and expected <= paid_day:
+                    expected = next_recurrence_date(expected, recurrence, anchor)
+            except (TypeError, ValueError):
+                continue
+            if expected is None:
+                continue
+            candidates = [candidate for candidate in signature_rows[index + 1:]
+                          if candidate['due_date'] == expected.isoformat()
+                          and int(candidate.get('series_id') or candidate['id']) == int(candidate['id'])]
+            # Multiple matches are ambiguous, so leave them as separate bills.
+            if len(candidates) != 1:
+                continue
+            candidate = candidates[0]
+            root_id = int(current.get('series_id') or current['id'])
+            c.execute('UPDATE bills SET series_id=? WHERE id=?', (root_id, int(candidate['id'])))
+            candidate['series_id'] = root_id
+
+    c.execute("INSERT INTO app_migrations(name) VALUES('bill_series_identity_v1')")
+
+
 def init_db():
     with connect() as c:
         c.executescript(SCHEMA)
@@ -155,6 +230,10 @@ def init_db():
         bill_columns = {r['name'] for r in c.execute('PRAGMA table_info(bills)').fetchall()}
         if 'recurrence_day' not in bill_columns:
             c.execute('ALTER TABLE bills ADD COLUMN recurrence_day INTEGER')
+        if 'series_id' not in bill_columns:
+            c.execute('ALTER TABLE bills ADD COLUMN series_id INTEGER')
+        _migrate_legacy_bill_series(c)
+        c.execute('CREATE INDEX IF NOT EXISTS idx_bills_series_status_date ON bills(series_id,status,due_date,id)')
         routine_columns = {r['name'] for r in c.execute('PRAGMA table_info(routines)').fetchall()}
         if 'routine_time' not in routine_columns:
             c.execute("ALTER TABLE routines ADD COLUMN routine_time TEXT DEFAULT '10:00'")
@@ -267,7 +346,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.15', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.16', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -276,7 +355,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.15','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.16','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -1573,6 +1652,8 @@ def create_resource(resource: str, payload: Payload):
                 raise HTTPException(409, f'Weight already recorded for {pretty} ({float(existing["kg"]):.2f} kg). No new entry was added.')
         cur=c.execute(f"INSERT INTO {table} ({','.join(keys)}) VALUES ({marks})", [data[k] for k in keys])
         new_id=cur.lastrowid
+        if resource == 'bills':
+            c.execute('UPDATE bills SET series_id=? WHERE id=?', (int(new_id), int(new_id)))
     if resource == 'weights':
         auto_complete_weight_routines(weight_day)
     elif resource == 'treadmill':
@@ -1626,6 +1707,9 @@ def update_resource(resource: str, item_id: int, payload: Payload):
             data['due_date'] = validate_date_field(data.get('due_date'), 'Bill due date')
             if not data['due_date']:
                 raise HTTPException(400, 'Bill due date is required.')
+            if data['due_date'] != existing_bill['due_date']:
+                # A deliberate due-date edit also changes the recurrence anchor.
+                data['recurrence_day'] = date.fromisoformat(data['due_date']).day
         if 'recurrence' in data and data['recurrence'] not in ('none','monthly','quarterly','yearly'):
             raise HTTPException(400, 'Choose a valid bill recurrence.')
         if 'status' in data and data['status'] not in ('unpaid', 'paid'):
@@ -2005,6 +2089,22 @@ def next_recurrence_date(due: date, recurrence: str, anchor_day: int | None = No
     return None
 
 
+def active_bill_occurrences() -> list[dict]:
+    '''Return one actionable unpaid occurrence per logical bill series.
+
+    If legacy/manual data contains multiple unpaid rows in one series, the
+    earliest due occurrence is the one shown and reminded first. The others
+    remain stored and are visible in the bill's review/history details.
+    '''
+    by_series: dict[int, dict] = {}
+    for bill in rows("SELECT * FROM bills WHERE status!='paid'"):
+        series_id = int(bill.get('series_id') or bill['id'])
+        previous = by_series.get(series_id)
+        if previous is None or (bill['due_date'], int(bill['id'])) < (previous['due_date'], int(previous['id'])):
+            by_series[series_id] = bill
+    return sorted(by_series.values(), key=lambda bill: (bill['due_date'], int(bill['id'])))
+
+
 def mark_bill_paid(bill_id: int) -> dict:
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -2018,16 +2118,24 @@ def mark_bill_paid(bill_id: int) -> dict:
         due_date = date.fromisoformat(bill['due_date'])
         anchor_day = int(bill.get('recurrence_day') or due_date.day)
         recurrence = bill.get('recurrence') or 'none'
+        series_id = int(bill.get('series_id') or bill_id)
         next_due = next_recurrence_date(due_date, recurrence, anchor_day)
         # If payment is late, roll to the first cycle strictly after today.
         while next_due and next_due <= date.today():
             next_due = next_recurrence_date(next_due, recurrence, anchor_day)
-        c.execute("UPDATE bills SET status='paid',paid_at=? WHERE id=? AND status!='paid'", (now, bill_id))
+        c.execute("UPDATE bills SET status='paid',paid_at=?,series_id=? WHERE id=? AND status!='paid'",
+                  (now, series_id, bill_id))
         if next_due:
-            c.execute('INSERT INTO bills(name,amount_mad,due_date,recurrence,reminder_days,status,notes,recurrence_day) VALUES(?,?,?,?,?,?,?,?)',
-                      (bill['name'], bill['amount_mad'], next_due.isoformat(), recurrence, bill['reminder_days'], 'unpaid', bill['notes'], anchor_day))
+            # Never create a second open installment for the same logical bill.
+            existing_open = c.execute(
+                "SELECT id FROM bills WHERE series_id=? AND status!='paid' ORDER BY due_date,id LIMIT 1",
+                (series_id,),
+            ).fetchone()
+            if not existing_open:
+                c.execute("INSERT INTO bills (name,amount_mad,due_date,recurrence,reminder_days,status,notes,recurrence_day,series_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (bill['name'], bill['amount_mad'], next_due.isoformat(), recurrence,
+                     bill['reminder_days'], 'unpaid', bill['notes'], anchor_day, series_id))
     return one('SELECT * FROM bills WHERE id=?', (bill_id,))
-
 
 @app.post('/api/bills/{bill_id}/pay')
 def pay_bill(bill_id:int):
@@ -2048,7 +2156,12 @@ def count_expiring_documents(today: date | None = None) -> int:
 @app.get('/api/summary')
 def summary():
     today=date.today().isoformat()
-    next_bill = one("SELECT name,due_date,amount_mad FROM bills WHERE status!='paid' ORDER BY CASE WHEN due_date>=? THEN 0 ELSE 1 END, CASE WHEN due_date>=? THEN due_date END ASC, CASE WHEN due_date<? THEN due_date END DESC, id ASC LIMIT 1", (today, today, today))
+    open_bills = active_bill_occurrences()
+    future_bills = sorted((b for b in open_bills if b['due_date'] >= today), key=lambda b: (b['due_date'], int(b['id'])))
+    overdue_bills = sorted((b for b in open_bills if b['due_date'] < today), key=lambda b: (b['due_date'], int(b['id'])), reverse=True)
+    next_bill_row = (future_bills or overdue_bills)
+    next_bill = ({'name': next_bill_row[0]['name'], 'due_date': next_bill_row[0]['due_date'],
+                  'amount_mad': next_bill_row[0]['amount_mad']} if next_bill_row else None)
     days_to_next_bill = (date.fromisoformat(next_bill['due_date']) - date.today()).days if next_bill else None
     return {
       'today': today,
@@ -2056,8 +2169,8 @@ def summary():
       'routines_due_today':one('SELECT COUNT(*) n FROM routines WHERE next_due<=?',(today,))['n'],
       'open_tasks':one("SELECT COUNT(*) n FROM tasks WHERE status!='done'")['n'],
       'latest_weight':one('SELECT kg,date FROM weights ORDER BY date DESC,id DESC LIMIT 1'),
-      'unpaid_bills':one("SELECT COUNT(*) n FROM bills WHERE status!='paid'")['n'],
-      'unpaid_total_mad':one("SELECT COALESCE(SUM(amount_mad),0) n FROM bills WHERE status!='paid'")['n'],
+      'unpaid_bills':len(open_bills),
+      'unpaid_total_mad':sum(float(b.get('amount_mad') or 0) for b in open_bills),
       'upcoming_bill':({**next_bill, 'days_left': days_to_next_bill} if next_bill else None),
       'expiring_documents':count_expiring_documents(),
       'next_routine':one('SELECT * FROM routines ORDER BY next_due LIMIT 1'),
@@ -2092,7 +2205,7 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
     now = now or datetime.now()
     today = now.date()
     reminders: list[tuple[str, int, str, str]] = []
-    for bill in rows("SELECT * FROM bills WHERE status!='paid' ORDER BY due_date,id"):
+    for bill in active_bill_occurrences():
         try:
             due_day = date.fromisoformat(bill['due_date'])
         except (TypeError, ValueError):
@@ -3018,7 +3131,7 @@ async def telegram_command(text: str) -> str:
         tasks = rows("SELECT title,due_time FROM tasks WHERE status!='done' AND due_date=? ORDER BY CASE WHEN due_time IS NULL THEN 1 ELSE 0 END,due_time,title", (today_iso,))
         treadmill = one('SELECT COALESCE(SUM(duration_min),0) AS mins FROM treadmill WHERE date=?', (today_iso,))['mins']
         gym = rows('SELECT name FROM workouts WHERE date=? ORDER BY id', (today_iso,))
-        bills_today = rows("SELECT name,amount_mad FROM bills WHERE status!='paid' AND due_date=? ORDER BY name", (today_iso,))
+        bills_today = [b for b in active_bill_occurrences() if b['due_date'] == today_iso]
         routines = rows('SELECT name,next_due,routine_time FROM routines WHERE next_due<=? ORDER BY next_due,COALESCE(routine_time,\'23:59\'),name', (today_iso,))
         lines = [f'📅 TODAY · {today.strftime("%a %d/%m/%y")}', f'{len(tasks)} tasks · {len(routines)} routines · {len(events)} events']
         for event in events:
@@ -3062,7 +3175,7 @@ async def telegram_command(text: str) -> str:
         return '\n'.join(lines)
 
     if low in ('💳 bills', '/bills', 'bills', 'my bills', 'unpaid bills'):
-        bills = rows("SELECT id,name,amount_mad,due_date FROM bills WHERE status!='paid' ORDER BY due_date,id LIMIT 10")
+        bills = active_bill_occurrences()[:10]
         if not bills:
             return '✅ No unpaid bills.'
         lines = ['💳 UNPAID BILLS']
@@ -3158,7 +3271,7 @@ async def telegram_command(text: str) -> str:
         for task in rows("SELECT title,due_date,due_time FROM tasks WHERE status!='done' AND due_date>=? AND due_date<=?", (today_iso, end)):
             clock = task.get('due_time') or '23:59'
             items.append((task['due_date']+'T'+clock, f"{_telegram_date_label(task['due_date'])} {task.get('due_time') or 'Any time'} · {task['title']}"))
-        for bill in rows("SELECT name,due_date FROM bills WHERE status!='paid' AND due_date>=? AND due_date<=?", (today_iso, end)):
+        for bill in [b for b in active_bill_occurrences() if today_iso <= b['due_date'] <= end]:
             items.append((bill['due_date']+'T23:59', f"{_telegram_date_label(bill['due_date'])} · Bill: {bill['name']}"))
         for routine in rows('SELECT name,next_due,routine_time FROM routines WHERE next_due>=? AND next_due<=?', (today_iso, end)):
             clock = routine.get('routine_time') or '23:59'
@@ -3189,14 +3302,17 @@ async def telegram_command(text: str) -> str:
     paid_match = re.match(r'(?i)^(?:/paid(?:@[a-z0-9_]+)?|paid|bill paid)\s+(.+)$', raw)
     if paid_match:
         query = paid_match.group(1).strip()
-        bills = rows("SELECT * FROM bills WHERE status!='paid'")
+        bills = active_bill_occurrences()
         matched, matches = _telegram_match_named_item(query, bills)
         if not matched:
             if len(matches) > 1:
                 return 'Which bill? ' + ', '.join(item['name'] for item in matches[:5])
             return f"I couldn't find an unpaid bill called '{query}'. Send Bills to see the list."
-        mark_bill_paid(matched['id'])
-        next_text = f' Next bill due {_telegram_date_label(next_recurrence_date(date.fromisoformat(matched['due_date']), matched.get('recurrence') or 'none').isoformat())}.' if next_recurrence_date(date.fromisoformat(matched['due_date']), matched.get('recurrence') or 'none') else ''
+        marked = mark_bill_paid(matched['id'])
+        series_id = int(marked.get('series_id') or matched['id'])
+        next_open = next((bill for bill in active_bill_occurrences()
+                          if int(bill.get('series_id') or bill['id']) == series_id), None)
+        next_text = f" Next bill due {_telegram_date_label(next_open['due_date'])}." if next_open else ''
         return f"✅ Marked paid: {matched['name']} · {float(matched['amount_mad']):.2f} MAD.{next_text}"
 
     # Bare /taskdone displays open items for convenient selection.
