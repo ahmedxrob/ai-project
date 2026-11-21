@@ -13,7 +13,26 @@ function updateTodayLabel(){const day=new Date(today+'T12:00:00');$('#today-labe
 updateTodayLabel();
 function longDateLabel(value){const d=new Date(value+'T12:00:00');return `${d.toLocaleDateString(undefined,{weekday:'long'})} · ${formatDate(value)}`}
 function syncCurrentDate(serverDay=null){const next=/^\d{4}-\d{2}-\d{2}$/.test(String(serverDay||''))?String(serverDay):isoDate(new Date());if(next===today){updateTodayLabel();return}const previous=today,wasViewingToday=selectedCalendarDate===previous;today=next;if(wasViewingToday){selectedCalendarDate=next;calendarMonth=new Date(next+'T12:00:00')}updateTodayLabel();$$('.date-entry').forEach(input=>{if(input.value===displayDateInput(previous))input.value=displayDateInput(today)})}
-async function api(path,opts={}){let r=await fetch('/api/'+path,{cache:'no-store',headers:{'Content-Type':'application/json'},...opts});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Request failed');return d}
+let syncChannel=null;try{if(typeof BroadcastChannel!=='undefined')syncChannel=new BroadcastChannel('xrob-assistant-data')}catch(_error){syncChannel=null}
+let externalRefreshTimer=null;
+function queueExternalRefresh(){
+ if(externalRefreshTimer)clearTimeout(externalRefreshTimer);
+ externalRefreshTimer=setTimeout(()=>{externalRefreshTimer=null;refresh()},250);
+}
+if(syncChannel)syncChannel.addEventListener('message',event=>{if(event.data?.type==='data-changed')queueExternalRefresh()});
+else window.addEventListener('storage',event=>{if(event.key==='xrob-assistant-data-changed')queueExternalRefresh()});
+function announceDataChange(){
+ if(syncChannel){syncChannel.postMessage({type:'data-changed',at:Date.now()});return}
+ try{localStorage.setItem('xrob-assistant-data-changed',String(Date.now()))}catch(_error){}
+}
+async function api(path,opts={}){
+ const method=String(opts.method||'GET').toUpperCase();
+ const r=await fetch('/api/'+path,{cache:'no-store',headers:{'Content-Type':'application/json'},...opts});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok)throw Error(d.detail||'Request failed');
+ if(method!=='GET'&&opts.broadcast!==false)announceDataChange();
+ return d;
+}
 function toast(s){let t=$('#toast');t.textContent=s;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)}
 function money(n){return Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' MAD'}
 function billCountdown(bill){if(!bill)return '—';let days=Number(bill.days_left);if(!Number.isFinite(days)&&bill.due_date){const due=new Date(String(bill.due_date).slice(0,10)+'T12:00:00'),base=new Date(today+'T12:00:00');if(Number.isFinite(due.getTime()))days=Math.round((due-base)/86400000)}if(!Number.isFinite(days))return 'Date unavailable';if(days<0)return `Overdue ${Math.abs(days)} ${Math.abs(days)===1?'day':'days'}`;if(days===0)return 'Due today';return `${days} ${days===1?'day':'days'} left`;}
@@ -139,6 +158,33 @@ function renderHeatmap(id,records,kind){
  const total=kind==='minutes'?period.reduce((a,x)=>a+Number(x.duration_min||0),0):period.length;
  host.innerHTML=`<div class="heatmap-scroll"><div class="heatmap-months" style="--weeks:${weeks}">${monthHtml}</div><div class="heatmap-grid" style="--weeks:${weeks}">${cells}</div></div><div class="heatmap-footer"><span>${kind==='minutes'?`${Math.round(total)} minutes trained`:`${total} gym sessions`} · ${period.length} entries in view</span><span class="heat-legend">Less <i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i> More</span></div>`;
 }
+function renderTodayAgenda(agenda){
+ const host=$('#today-agenda');if(!host)return;
+ const items=Array.isArray(agenda?.items)?agenda.items:[];
+ const sections=[
+  {title:'Needs your attention',hint:'Due, overdue or waiting for confirmation',items:items.filter(x=>['overdue','due','pending'].includes(x.status))},
+  {title:'Coming up',hint:'Appointments, bill alerts and expiry reminders',items:items.filter(x=>['scheduled','upcoming'].includes(x.status))},
+  {title:'Already handled',hint:'Your completed routines and activity logs',items:items.filter(x=>x.status==='completed')}
+ ];
+ const actionFor=x=>{
+  const id=Number(x.id);
+  if(x.type==='routine'&&id)return `<button class="mini-btn success" data-complete="${id}">Done</button>`;
+  if(x.type==='task'&&id)return `<button class="mini-btn success" data-taskdone="${id}">Done</button>`;
+  if(x.type==='bill'&&id)return `<button class="mini-btn" data-pay="${id}">Mark paid</button>`;
+  if(x.type==='meal'&&x.status==='pending'&&id)return `<span class="action-group"><button class="mini-btn success" data-meal-confirm="${id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${id}" data-meal-decision="no">Move</button></span>`;
+  if(x.type==='cook')return `<button class="mini-btn" data-go="meals">Meals</button>`;
+  return '';
+ };
+ const statusLabel={overdue:'Overdue',due:'Due today',pending:'Pending',scheduled:'Scheduled',upcoming:'Soon',completed:'Done'};
+ host.innerHTML=sections.filter(section=>section.items.length).map(section=>`<section class="agenda-section"><div class="agenda-section-head"><b>${esc(section.title)}</b><span>${section.items.length}</span><small>${esc(section.hint)}</small></div><div class="agenda-section-list">${section.items.map(x=>`<div class="agenda-entry agenda-${esc(x.type)} agenda-${esc(x.status)}"><span class="agenda-dot"></span><div class="agenda-entry-copy"><b>${esc(x.title)}</b><small>${x.time?`${esc(x.time)} · `:''}${esc(x.detail)}</small></div><span class="agenda-status agenda-status-${esc(x.status)}">${statusLabel[x.status]||esc(x.status)}</span>${actionFor(x)}</div>`).join('')}</div></section>`).join('')||`<div class="agenda-clear"><span>✦</span><b>You're all clear today.</b><small>Nothing due or scheduled. Enjoy the breathing room.</small></div>`;
+}
+function renderTodayProgress(agenda){
+ const host=$('#today-progress');if(!host)return;
+ const entries=Array.isArray(agenda?.items)?agenda.items:[];
+ const routineCount=entries.filter(x=>x.type==='routine'&&['overdue','due'].includes(x.status)).length;
+ host.innerHTML=`<div class="today-progress-grid"><div><b>${Number(agenda?.open_count||0)}</b><span>To handle</span></div><div><b>${Number(agenda?.scheduled_count||0)}</b><span>Scheduled</span></div><div><b>${Number(agenda?.completed_count||0)}</b><span>Completed</span></div><div><b>${routineCount}</b><span>Routines due</span></div></div><p class="muted today-progress-note">${Number(agenda?.count||0)} total item${Number(agenda?.count||0)===1?'':'s'} across your day. Changes sync to Planner, Telegram and Home Assistant.</p>`;
+}
+
 async function refresh(){const requestId=++refreshSequence;try{
  // The add-on timezone is authoritative. Use the API date so iPhone, Android,
  // desktop and Telegram all interpret today and due dates in the same timezone.
@@ -150,10 +196,9 @@ async function refresh(){const requestId=++refreshSequence;try{
   'events?limit=10000','tasks?limit=10000','weights?limit=10000','treadmill?limit=10000','workouts?limit=10000','workout_plan','bills?limit=10000','routines?limit=10000','recipes?limit=10000','daily_meals?limit=10000','shopping_items?limit=10000','meal_cook_reminders?limit=10000',`meal-schedule-skips?start_date=${mealWeekStart}&end_date=${mealWeekEnd}`
  ].map(x=>api(x)));
  if(requestId!==refreshSequence)return;
- cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems,meal_cook_reminders:cookReminders,meal_schedule_skips:mealSkips};const billGroups=groupBillSeries(bills);$('#api-status').textContent='API connected';
+ const todayAgenda=sum.today_agenda||{date:today,count:0,open_count:0,scheduled_count:0,completed_count:0,items:[]};cache={events,tasks,weights,treadmill:treadmills,workouts,workout_plan,bills,routines,recipes,daily_meals:dailyMeals,shopping_items:shoppingItems,meal_cook_reminders:cookReminders,meal_schedule_skips:mealSkips,today_agenda:todayAgenda};const billGroups=groupBillSeries(bills);$('#api-status').textContent='API connected';
  const nextBill=sum.upcoming_bill;
  const billHint=nextBill?`${esc(nextBill.name)} · ${formatDate(nextBill.due_date)} · ${money(nextBill.amount_mad)}`:'No unpaid bills coming up';
- const routinesDueToday=routines.filter(r=>r.next_due&&r.next_due<=today).length;
  const tomorrowISO=addDaysISO(today,1);
  const tomorrowSchedules = events.filter(e=>String(e.start_at||'').slice(0,10)===tomorrowISO).length
   + tasks.filter(t=>t.status!=='done'&&t.due_date===tomorrowISO).length
@@ -161,11 +206,9 @@ async function refresh(){const requestId=++refreshSequence;try{
   + dailyMeals.filter(m=>m.plan_date===tomorrowISO).length
   + cookReminders.filter(r=>r.due_date===tomorrowISO&&r.status==='open').length
   + billGroups.filter(group=>group.next&&group.next.due_date===tomorrowISO).length;
- $('#stats').innerHTML=stat('Routines',routinesDueToday,'Due or overdue')+stat('Tomorrow schedules',tomorrowSchedules,'All scheduled items')+stat('Latest weight',sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'—','Fitness log')+stat('Upcoming bills',billCountdown(nextBill),billHint);
- renderTodayMeal();
- let attention=[];tasks.filter(t=>t.status!=='done').sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999')||(a.due_time||'99:99').localeCompare(b.due_time||'99:99')).slice(0,4).forEach(t=>attention.push(item(t.title,(t.due_date?formatDate(t.due_date):'No due date')+(t.due_time?' · '+t.due_time:''),t.priority)));billGroups.filter(group=>group.next).slice(0,3).forEach(group=>attention.push(item(group.next.name+' · '+money(group.next.amount_mad),'Due '+formatDate(group.next.due_date),'Unpaid')));$('#attention').innerHTML=attention.join('')||empty('Nothing urgent.');
+ $('#stats').innerHTML=stat("Today's items",Number(todayAgenda.count||0),`${Number(todayAgenda.open_count||0)} to handle · ${Number(todayAgenda.completed_count||0)} completed`)+stat('Tomorrow schedules',tomorrowSchedules,'All scheduled items')+stat('Latest weight',sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'—','Fitness log')+stat('Upcoming bills',billCountdown(nextBill),billHint);
+ renderTodayMeal();renderTodayAgenda(todayAgenda);renderTodayProgress(todayAgenda);
  $('#fitness-snapshot').innerHTML=`<div><div class="big-number">${sum.latest_weight?formatKg(sum.latest_weight.kg)+' kg':'—'}</div><small class="muted">Latest weight</small></div><div><div class="big-number">${treadmills.length}</div><small class="muted">Treadmill sessions</small></div><div><div class="big-number">${workouts.length}</div><small class="muted">Gym workouts</small></div>`;
- $('#routine-snapshot').innerHTML=[...routines].sort((a,b)=>(a.next_due||'9999').localeCompare(b.next_due||'9999')).slice(0,4).map(r=>item(r.name,`Next: ${r.next_due?formatDate(r.next_due):'Not scheduled'} · ${r.routine_time||'—'} · Late ${r.routine_late_time||'off'}${r.routine_late_time&&Number(r.routine_rollover_after_late)?' · auto-moves tomorrow':''}`,r.interval_days+' day interval',`<button class="mini-btn" data-complete="${r.id}">Done</button>`)).join('')||empty();
  renderCalendar(events);
  renderWeightHistory(weights);renderWeightGraph(weights);renderWeeklyWeightAverages(weights);
  $('#treadmill-history-count').textContent=`${treadmills.length} sessions`;
@@ -180,7 +223,12 @@ async function refresh(){const requestId=++refreshSequence;try{
  renderMeals();renderPlannerShopping();
  }catch(e){if(requestId!==refreshSequence)return;$('#api-status').textContent='API unavailable';console.error(e);toast(e.message)}}
 function calendarItemsForDay(day){
- const items=[];const c=cache;
+ const c=cache;
+ if(day===today&&Array.isArray(c.today_agenda?.items)){
+  const typeMap={routine:'care','routine-done':'care',cook:'care','workout-plan':'gym',workout:'gym',meal:'meal',bill:'bill',task:'task','task-done':'task',document:'task',event:'event'};
+  return c.today_agenda.items.map(x=>({type:x.type==='meal'&&x.status==='completed'?'meal-eaten':(typeMap[x.type]||x.type),sortTime:x.time||null,text:`${x.time?x.time+' ':''}${x.title}`,detail:x.detail}));
+ }
+ const items=[];
  for(const e of (c.events||[]).filter(x=>x.start_at.slice(0,10)===day))items.push({type:'event',sortTime:e.start_at.includes('T')?e.start_at.slice(11,16):null,text:`${e.start_at.includes('T')?e.start_at.slice(11,16)+' ':''}${e.title}`,detail:`Event${e.category?' · '+e.category:''}`});
  for(const t of (c.tasks||[]).filter(x=>x.status!=='done'&&x.due_date===day))items.push({type:'task',sortTime:t.due_time||null,text:`${t.due_time?t.due_time+' ':''}${t.title}`,detail:'Task reminder'});
  const weight=uniqueWeightsPerDay(c.weights||[]).find(x=>x.date===day);if(weight)items.push({type:'weight',sortTime:null,text:`${formatKg(weight.kg)} kg`,detail:'Recorded weight'});
@@ -384,4 +432,4 @@ document.addEventListener('click',async e=>{
  const choose=e.target.closest('[data-select-today-meal]');if(choose){const host=choose.closest('.today-meal-card'),select=host?.querySelector('[data-today-meal-choice]'),recipeId=Number(select?.value),recipe=(cache.recipes||[]).find(r=>Number(r.id)===recipeId);if(!recipeId){toast('Choose a meal first.');return}const movable=recipe?movableHomeReservation(recipe,today):null;if(movable&&!confirm(`A plate of ${recipe.name} is currently reserved for ${formatDate(movable.plan_date)}. Use it today and move that reservation?`))return;choose.disabled=true;try{const result=await api('daily-meals/select',{method:'POST',body:JSON.stringify({data:{recipe_id:recipeId,plan_date:today}})});const repeat=result.next_planned_date?` · next repeat ${formatDate(result.next_planned_date)}`:'';toast((result.reallocated_from?`Today's plate selected · moved a reservation from ${formatDate(result.reallocated_from)}`:`Today's plate selected · ${result.name}`)+repeat);await refresh()}catch(err){toast(err.message)}finally{choose.disabled=false}return}
  const edit=e.target.closest('[data-edit-recipe]');if(edit){const recipe=(cache.recipes||[]).find(r=>r.id===Number(edit.dataset.editRecipe));if(recipe)openRecipeModal(recipe)}const mealConfirmBtn=e.target.closest('[data-meal-confirm]');if(mealConfirmBtn)confirmMeal(Number(mealConfirmBtn.dataset.mealConfirm),mealConfirmBtn.dataset.mealDecision);const remove=e.target.closest('[data-remove-plate]');if(remove)removePlate(Number(remove.dataset.removePlate))
 });
-$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});refresh();setInterval(refresh,60000);
+$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});window.addEventListener('focus',()=>refresh());refresh();setInterval(refresh,60000);
