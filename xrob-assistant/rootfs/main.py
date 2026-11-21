@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, json, os, sqlite3, re, math, random, importlib, importlib.util
+import asyncio, json, os, sqlite3, re, math, random, importlib.util
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, date, timedelta, time
 from pathlib import Path
@@ -18,41 +18,84 @@ TOKEN = os.getenv('XROB_TELEGRAM_TOKEN', '').strip()
 ALLOWED_CHAT = os.getenv('XROB_TELEGRAM_CHAT_ID', '').strip()
 MIKASA_PERSONA_SOURCE = 'bundled'
 
+_MIKASA_REQUIRED_API = (
+    'PERSONA_VERSION', 'TELEGRAM_PROFILE_DESCRIPTION', 'TELEGRAM_PROFILE_SHORT_DESCRIPTION',
+    'start_message', 'unclear_message', 'morning_opening', 'morning_closing', 'playful_message',
+    'social_reply', 'command_prefix', 'help_intro', 'help_boundary', 'reminder_task',
+    'reminder_routine', 'reminder_bill', 'reminder_bill_early', 'reminder_cook',
+    'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_moved', 'task_created',
+    'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
+)
+
+
+def _load_persona_file(path: Path, module_name: str):
+    """Load and validate a persona by absolute file path, not sys.path lookup."""
+    path = Path(path).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f'Mikasa voice file is missing: {path}')
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f'could not create a Python loader for Mikasa voice file: {path}')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    missing = [name for name in _MIKASA_REQUIRED_API if not hasattr(module, name)]
+    if missing:
+        raise ImportError('incomplete Mikasa voice pack; missing: ' + ', '.join(missing))
+    return module
+
 
 def _load_mikasa_persona_module():
-    """Load a drop-in persona from add-on /config, falling back to the bundled file.
+    """Load /config's drop-in voice pack, otherwise load the bundled file directly.
 
-    This lets the owner update Mikasa's voice by replacing one Python file in the
-    add-on configuration directory, without rebuilding or replacing XROB.
-    Broken overrides are ignored safely so the planner itself still starts.
+    Avoid name-based module imports here: Home Assistant's
+    add-on launch environment is not required to put /app on sys.path. Loading
+    from the explicit file path works regardless of the process working directory
+    or Python's import search path.
     """
     global MIKASA_PERSONA_SOURCE
     override = DATA / 'mikasa_persona.py'
-    bundled = Path(__file__).resolve().parent / 'mikasa_persona.py'
-    if override.is_file() and override.resolve() != bundled.resolve():
+    app_dir = Path(__file__).resolve().parent
+    bundled_candidates = (
+        app_dir / 'mikasa_persona.py',
+        app_dir / 'rootfs' / 'mikasa_persona.py',
+        Path('/rootfs/mikasa_persona.py'),
+    )
+    bundled = next((candidate for candidate in bundled_candidates if candidate.is_file()), bundled_candidates[0])
+
+    if override.is_file() and override.resolve() not in {p.resolve() for p in bundled_candidates if p.exists()}:
         try:
-            spec = importlib.util.spec_from_file_location('xrob_mikasa_persona_override', override)
-            if spec is None or spec.loader is None:
-                raise ImportError('could not create a loader for the Mikasa override')
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            required = (
-                'PERSONA_VERSION', 'TELEGRAM_PROFILE_DESCRIPTION', 'TELEGRAM_PROFILE_SHORT_DESCRIPTION',
-                'start_message', 'unclear_message', 'morning_opening', 'morning_closing', 'playful_message',
-                'social_reply', 'command_prefix', 'help_intro', 'help_boundary', 'reminder_task',
-                'reminder_routine', 'reminder_bill', 'reminder_bill_early', 'reminder_cook',
-                'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_moved', 'task_created',
-                'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
-            )
-            missing = [name for name in required if not hasattr(module, name)]
-            if missing:
-                raise ImportError('incomplete Mikasa voice pack; missing: ' + ', '.join(missing))
+            module = _load_persona_file(override, 'xrob_mikasa_persona_override')
             MIKASA_PERSONA_SOURCE = 'config override'
-            print(f"Loaded Mikasa voice pack {getattr(module, 'PERSONA_VERSION', 'unknown')} from /config/mikasa_persona.py", flush=True)
+            print(
+                f"Loaded Mikasa voice pack {getattr(module, 'PERSONA_VERSION', 'unknown')} "
+                "from /config/mikasa_persona.py",
+                flush=True,
+            )
             return module
         except Exception as exc:
-            print(f'Mikasa voice override could not be loaded; using bundled voice: {exc}', flush=True)
-    return importlib.import_module('mikasa_persona')
+            print(
+                f'Mikasa voice override could not be loaded; using bundled voice: {exc}',
+                flush=True,
+            )
+
+    # Resolve the bundled module by known on-disk locations. This avoids a
+    # ModuleNotFoundError when /app is absent from sys.path and also tolerates
+    # source-rootfs layouts used by some local add-on build workflows.
+    if not bundled.is_file():
+        searched = ', '.join(str(path) for path in bundled_candidates)
+        raise FileNotFoundError(
+            'Bundled Mikasa voice file is missing. Expected it beside main.py or '
+            f'in a rootfs directory. Checked: {searched}. Rebuild the add-on image '
+            'from the complete XROB Assistant source package.'
+        )
+    module = _load_persona_file(bundled, 'xrob_mikasa_persona_bundled')
+    MIKASA_PERSONA_SOURCE = 'bundled'
+    print(
+        f"Loaded bundled Mikasa voice pack {getattr(module, 'PERSONA_VERSION', 'unknown')} "
+        f"from {bundled}",
+        flush=True,
+    )
+    return module
 
 
 mikasa_persona = _load_mikasa_persona_module()
@@ -391,7 +434,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.23', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.24', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -400,7 +443,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.23','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.24','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
