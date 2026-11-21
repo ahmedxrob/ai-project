@@ -1,17 +1,16 @@
-## 0.4.25 — Mikasa learning inbox
+## 0.4.26 — Mikasa responsive Telegram handling
 
-- Mikasa records plain-text messages that reach the explicit unhandled-message fallback, grouping identical messages and tracking their occurrence count.
-- Review the inbox in **Settings → Teach Mikasa from missed messages**. You can write a reply for an exact phrase, ignore an entry, reopen it or delete it.
-- Taught exact phrases are answered before Mikasa's unclear fallback, but only after the existing command engine has had first priority. Teaching adds conversational replies; it does not add or modify commands or perform actions.
-- Capture is enabled by default and can be paused in Settings. Captured text remains in the local SQLite database; no third-party AI service receives it.
-- Existing database contents and commands are preserved. The learning table is created additively at startup.
-- Settings also provides a fixed-source GitHub updater for `mikasa_persona.py`. You can check/install manually or opt into daily automatic checks. The downloaded file is validated before an atomic replacement, the previous override is backed up in `/config/backups/`, and only Mikasa's persona file is updated.
+- Routes ordinary text and captions through Mikasa, and acknowledges photos, voice notes, videos, files, stickers, locations and contact cards instead of silently skipping them. This local build does not claim to transcribe audio or analyse image/video contents.
+- Normalises Telegram command casing, spacing and trailing punctuation. Today accepts natural variations such as `TODAY!`, `what's on today?` and `show me today`, including while a guided entry is active.
+- Moves unknown-message replies into the standalone persona. Mikasa now gives a warmer, context-aware fallback instead of repeating a generic command list; internal failures also receive a truthful, in-character reply.
+- Replaces the manual teaching form with a simple missed-message log and a downloadable `mikasa-missed-messages.txt`. Repeated phrases are grouped and counted. Send that text file with a future XROB update request; you do not need to write replies or teach phrases in the app.
+- Keeps captures local in the existing SQLite database, retains the existing data and old learning records, and adds a text export endpoint. No cloud AI, new database table or new dependency is introduced.
 
+## 0.4.25 — Mikasa learning inbox (superseded)
 
-- Fixes startup failure when the Python runtime does not include `/app` on `sys.path`. The bundled `mikasa_persona.py` is loaded from the absolute path beside `main.py`, rather than relying on a top-level module import.
-- Keeps the optional `/config/mikasa_persona.py` override. If the override is absent or invalid, XROB loads the bundled voice pack; if the bundled file is missing, the Docker image now fails during build instead of crashing only at runtime.
-- Adds regression coverage for an unavailable Python module search path and a build-time check that the persona file is copied into `/app`.
-- No database schema, command handling, Telegram scheduling, or planner behavior changes.
+- Introduced local capture of messages that reached Mikasa's generic fallback, with repeated phrases grouped and counted.
+- The earlier version included a manual reply-teaching interface; 0.4.26 replaces it with a simple exportable missed-message log.
+- Retains the fixed-source GitHub persona updater and safe `/config/mikasa_persona.py` override.
 
 
 ## 0.4.23 — standalone Mikasa voice pack
@@ -24,7 +23,7 @@
 
 ### Updating Mikasa without updating XROB
 
-1. Keep XROB Assistant **0.4.25 or newer** installed.
+1. Keep XROB Assistant **0.4.26 or newer** installed.
 2. Copy the standalone `mikasa_persona.py` into the XROB add-on's own configuration directory as `mikasa_persona.py`. The container sees that location as `/config/mikasa_persona.py` (on HAOS, this is normally the add-on folder under `/addon_configs/xrob_assistant/`, not the main Home Assistant `/config`).
 3. Restart the XROB add-on. Check `/api/health`: `mikasa_persona_source` should report `config override`, and `mikasa_persona_version` should show the voice-pack version.
 4. To return to the bundled voice, remove the override file and restart the add-on.
@@ -41,7 +40,7 @@ The standalone file controls Mikasa's personality, social copy, message template
 - Preferences and send-once markers are stored in the existing `telegram_state` table; no new database table, cloud service or external AI dependency is introduced. Telegram must be configured in the Home Assistant add-on options for scheduled messages to be delivered.
 - On mobile, the Settings save action stays accessible above the fixed bottom navigation, including narrow 320px screens.
 
-# XROB Assistant 0.4.25 · Home Assistant add-on
+# XROB Assistant 0.4.26 · Home Assistant add-on
 
 ## 0.4.21 release
 
@@ -261,7 +260,7 @@ Telegram only accepts your configured chat ID. The Telegram action engine remain
 1. Back up your Home Assistant add-on configuration and `/config/xrob_assistant.db` before upgrading.
 2. Copy this folder to your Home Assistant local add-ons directory, for example `/addons/xrob-assistant/`.
 3. Reload/check local add-ons in the Add-on Store.
-4. Install/update XROB Assistant to **0.4.25**, review the add-on options and start it.
+4. Install/update XROB Assistant to **0.4.26**, review the add-on options and start it.
 5. Open `http://HOME_ASSISTANT_IP:8090` or use the add-on Web UI button.
 
 The app keeps existing records and adds the meal source, ready-plate count, next routine date, cook-reminder and Telegram notification fields to the existing database on startup. Existing tasks, events, fitness, bills, routines, Telegram state, recipes and old meal-plan rows are preserved. The Meals page has no archive control. Back up before updating.
