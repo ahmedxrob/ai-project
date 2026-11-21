@@ -267,7 +267,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.14', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.15', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -276,7 +276,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.14','database':'connected'}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.15','database':'connected'}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -1405,18 +1405,23 @@ def create_resource(resource: str, payload: Payload):
         except (TypeError, ValueError):
             raise HTTPException(400, 'Weight must be between 20 and 350 kg.')
     if resource == 'bills':
+        data['name'] = str(data.get('name') or '').strip()[:160]
+        if not data['name']:
+            raise HTTPException(400, 'Bill name is required.')
         data.setdefault('recurrence','none')
         data.setdefault('reminder_days',3)
         data['due_date'] = validate_date_field(data.get('due_date'), 'Bill due date')
+        if not data['due_date']:
+            raise HTTPException(400, 'Bill due date is required.')
         try:
             amount = float(data.get('amount_mad', 0))
             reminder_raw = float(data.get('reminder_days', 3))
             reminder_days = int(reminder_raw)
-            if amount < 0 or reminder_days < 0 or reminder_raw != reminder_days: raise ValueError()
+            if not math.isfinite(amount) or not math.isfinite(reminder_raw) or amount < 0 or reminder_days < 0 or reminder_raw != reminder_days: raise ValueError()
             data['amount_mad'] = amount
             data['reminder_days'] = reminder_days
-        except (TypeError, ValueError):
-            raise HTTPException(400, 'Bill amount and reminder days must be non-negative numbers.')
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(400, 'Bill amount and reminder days must be finite, non-negative numbers.')
     if resource == 'documents':
         data['expiry_date'] = validate_date_field(data.get('expiry_date'), 'Document expiry date')
         if not data.get('expiry_date'): raise HTTPException(400, 'Document expiry date is required.')
@@ -1608,16 +1613,46 @@ def update_resource(resource: str, item_id: int, payload: Payload):
         if 'date' in data:
             duplicate=one('SELECT id FROM weights WHERE date=? AND id!=?',(data['date'],item_id))
             if duplicate: raise HTTPException(409, 'A weight record already exists for this date.')
+    existing_bill = None
     if resource == 'bills':
-        if 'due_date' in data: data['due_date'] = validate_date_field(data.get('due_date'), 'Bill due date')
+        existing_bill = one('SELECT * FROM bills WHERE id=?', (item_id,))
+        if not existing_bill:
+            raise HTTPException(404, 'Bill not found')
+        if 'name' in data:
+            data['name'] = str(data.get('name') or '').strip()[:160]
+            if not data['name']:
+                raise HTTPException(400, 'Bill name is required.')
+        if 'due_date' in data:
+            data['due_date'] = validate_date_field(data.get('due_date'), 'Bill due date')
+            if not data['due_date']:
+                raise HTTPException(400, 'Bill due date is required.')
         if 'recurrence' in data and data['recurrence'] not in ('none','monthly','quarterly','yearly'):
             raise HTTPException(400, 'Choose a valid bill recurrence.')
+        if 'status' in data and data['status'] not in ('unpaid', 'paid'):
+            raise HTTPException(400, 'Bill status must be unpaid or paid.')
         if 'amount_mad' in data:
             try:
                 amount = float(data['amount_mad'])
-                if amount < 0: raise ValueError()
+                if not math.isfinite(amount) or amount < 0: raise ValueError()
                 data['amount_mad'] = amount
-            except (TypeError, ValueError): raise HTTPException(400, 'Bill amount must be non-negative.')
+            except (TypeError, ValueError): raise HTTPException(400, 'Bill amount must be a finite, non-negative number.')
+        if 'reminder_days' in data:
+            try:
+                raw_days = float(data['reminder_days'])
+                days = int(raw_days)
+                if not math.isfinite(raw_days) or days < 0 or raw_days != days: raise ValueError()
+                data['reminder_days'] = days
+            except (TypeError, ValueError, OverflowError): raise HTTPException(400, 'Reminder days must be a non-negative whole number.')
+        if 'paid_at' in data:
+            raw_paid_at = str(data.get('paid_at') or '').strip()
+            if not raw_paid_at:
+                data['paid_at'] = None
+            else:
+                try:
+                    paid_at = datetime.fromisoformat(raw_paid_at.replace('Z', '+00:00'))
+                    data['paid_at'] = paid_at.isoformat(timespec='minutes')
+                except (TypeError, ValueError):
+                    raise HTTPException(400, 'Payment date must be a valid date and time (YYYY-MM-DDTHH:MM).')
     if resource == 'events':
         existing_event = one('SELECT * FROM events WHERE id=?',(item_id,))
         if not existing_event:
@@ -1767,6 +1802,11 @@ def update_resource(resource: str, item_id: int, payload: Payload):
     with connect() as c:
         cur=c.execute(f"UPDATE {table} SET {','.join(k+'=?' for k in data)} WHERE id=?", [*data.values(),item_id])
         if cur.rowcount == 0: raise HTTPException(404,'Record not found')
+        if resource == 'bills' and existing_bill:
+            due_date_changed = data.get('due_date', existing_bill['due_date']) != existing_bill['due_date']
+            status_changed_to_unpaid = data.get('status', existing_bill['status']) == 'unpaid' and existing_bill['status'] != 'unpaid'
+            if due_date_changed or status_changed_to_unpaid:
+                c.execute("DELETE FROM notification_log WHERE kind IN ('bill-3day','bill-4h','bill') AND item_id=?", (item_id,))
         if previous_activity_day and data.get('date') != previous_activity_day:
             if resource == 'weights':
                 _undo_activity_routine_completion(c, 'weight', previous_activity_day)
@@ -1890,7 +1930,7 @@ def delete_resource(resource: str, item_id: int):
             remaining = c.execute('SELECT COUNT(*) FROM treadmill WHERE date=?', (activity_day,)).fetchone()[0]
             if not remaining:
                 _undo_activity_routine_completion(c, 'treadmill', activity_day)
-        reminder_kinds={'tasks':['task','task-time'],'bills':['bill'],'routines':['routine-time','routine-late']}
+        reminder_kinds={'tasks':['task','task-time'],'bills':['bill','bill-3day','bill-4h'],'routines':['routine-time','routine-late']}
         for kind in reminder_kinds.get(resource,[]):
             c.execute('DELETE FROM notification_log WHERE kind=? AND item_id=?',(kind,item_id))
     if refresh_meal_schedule:
@@ -2047,8 +2087,59 @@ def _telegram_response_data(response, action: str) -> dict:
     return data
 
 
+def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, str, str]]:
+    """Build strict bill reminders: one 3-day notice, then repeat every four hours from T-1 day until paid."""
+    now = now or datetime.now()
+    today = now.date()
+    reminders: list[tuple[str, int, str, str]] = []
+    for bill in rows("SELECT * FROM bills WHERE status!='paid' ORDER BY due_date,id"):
+        try:
+            due_day = date.fromisoformat(bill['due_date'])
+        except (TypeError, ValueError):
+            continue
+        days_left = (due_day - today).days
+        amount = float(bill.get('amount_mad') or 0)
+        due_label = due_day.strftime('%d/%m/%y')
+        if 1 < days_left <= 3:
+            # Key the first reminder to the bill's due date so a scheduler restart
+            # or repeated polling cannot send the same 3-day notice again.
+            reminder_key = due_day.isoformat()
+            if one("SELECT id FROM notification_log WHERE kind='bill-3day' AND item_id=? AND reminder_date=?",
+                   (int(bill['id']), reminder_key)):
+                continue
+            message = (f"💳 BILL DUE SOON\n{bill['name']} · {amount:.2f} MAD\n"
+                       f"Due: {due_label} ({days_left} days left)\nAfter paying, reply: paid {bill['name']}")
+            reminders.append(('bill-3day', int(bill['id']), reminder_key, message))
+        elif days_left <= 1:
+            # Use the persisted send timestamp, not a wall-clock bucket, so the
+            # interval remains at least four hours even across app restarts.
+            last = one("SELECT reminder_date FROM notification_log WHERE kind='bill-4h' AND item_id=? ORDER BY id DESC LIMIT 1",
+                       (int(bill['id']),))
+            last_sent = None
+            if last and last.get('reminder_date'):
+                try:
+                    last_sent = datetime.fromisoformat(last['reminder_date'])
+                except (TypeError, ValueError):
+                    last_sent = None
+            if last_sent is not None and now - last_sent < timedelta(hours=4):
+                continue
+            reminder_key = now.isoformat(timespec='seconds')
+            if days_left == 1:
+                due_status = 'Due tomorrow'
+            elif days_left == 0:
+                due_status = 'Due today'
+            else:
+                due_status = f'Overdue by {abs(days_left)} day(s)'
+            message = (f"🚨 BILL PAYMENT REMINDER\n{bill['name']} · {amount:.2f} MAD\n"
+                       f"{due_status} · due {due_label}\n"
+                       f"This reminder repeats every 4 hours until you mark the bill paid.\n"
+                       f"After paying, reply: paid {bill['name']}")
+            reminders.append(('bill-4h', int(bill['id']), reminder_key, message))
+    return reminders
+
+
 async def reminder_loop():
-    """Send due reminders once at their scheduled task time or once daily for date-only items."""
+    """Send Telegram reminders, including staged bill notices and four-hour urgent bill follow-ups."""
     import httpx
     async with httpx.AsyncClient(timeout=15) as client:
         while True:
@@ -2057,11 +2148,7 @@ async def reminder_loop():
                 today = now.date()
                 normalize_overdue_routine_dates(today)
                 reminders = []
-                for b in rows("SELECT * FROM bills WHERE status!='paid'"):
-                    try: remind_on = date.fromisoformat(b['due_date']) - timedelta(days=int(b.get('reminder_days') or 3))
-                    except Exception: continue
-                    if remind_on <= today:
-                        reminders.append(('bill', b['id'], today.isoformat(), f"💳 BILL REMINDER\n{b['name']} · {b['amount_mad']:.2f} MAD\nDue: {date.fromisoformat(b['due_date']).strftime('%d/%m/%y')}\nAfter paying, reply: paid {b['name']}"))
+                reminders.extend(build_bill_reminders(now))
                 for t in rows("SELECT * FROM tasks WHERE status!='done' AND due_date IS NOT NULL"):
                     try:
                         due_day = date.fromisoformat(t['due_date'])
