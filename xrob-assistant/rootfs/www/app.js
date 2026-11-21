@@ -454,6 +454,8 @@ async function loadMikasaPreferences(){
   $('#mikasa-morning-time').value=prefs.morning_report_time||'07:30';
   $('#mikasa-playful-enabled').checked=!!prefs.playful_messages_enabled;
   $('#mikasa-playful-frequency').value=prefs.playful_frequency||'few';
+  $('#mikasa-learning-enabled').checked=prefs.mikasa_learning_enabled!==false;
+  $('#mikasa-auto-update-enabled').checked=!!prefs.mikasa_auto_update_enabled;
   syncMikasaPreferenceControls();
   if(status)status.textContent=prefs.telegram_configured?`Telegram connected · ${prefs.timezone||'Local time'}`:'Save your preferences here. Telegram messages start after you configure the token and chat ID in the Home Assistant add-on options.';
  }catch(error){if(status)status.textContent=`Could not load Telegram settings: ${error.message}`}
@@ -468,12 +470,79 @@ $('#mikasa-settings-save')?.addEventListener('click',async()=>{
    morning_report_enabled:$('#mikasa-morning-enabled').checked,
    morning_report_time:$('#mikasa-morning-time').value||'07:30',
    playful_messages_enabled:$('#mikasa-playful-enabled').checked,
-   playful_frequency:$('#mikasa-playful-frequency').value||'few'
+   playful_frequency:$('#mikasa-playful-frequency').value||'few',
+   mikasa_learning_enabled:$('#mikasa-learning-enabled').checked,
+   mikasa_auto_update_enabled:$('#mikasa-auto-update-enabled').checked
   }})});
   if(status)status.textContent=result.telegram_configured?`Saved · Telegram connected · ${result.timezone||'Local time'}`:'Saved · Configure Telegram token and chat ID in the Home Assistant add-on options to receive messages.';
   toast('Mikasa message settings saved');
  }catch(error){if(status)status.textContent=error.message;toast(error.message)}
  finally{button.disabled=false;button.textContent='Save message settings'}
 });
+async function loadMikasaLearning(){
+ const host=$('#mikasa-learning-list'),status=$('#mikasa-learning-status'),badge=$('#mikasa-learning-count');
+ if(!host)return;
+ if(status)status.textContent='Loading learning inbox…';
+ try{
+  const filter=$('#mikasa-learning-filter')?.value||'open';
+  const data=await api(`mikasa/learning?status=${encodeURIComponent(filter)}&limit=100`);
+  const counts=data.counts||{new:0,learned:0,ignored:0};
+  if(badge)badge.textContent=`${counts.new||0} to review · ${counts.learned||0} learned`;
+  const items=data.items||[];
+  if(status)status.textContent=items.length?`${items.length} message pattern${items.length===1?'':'s'} · repeated messages are grouped together.`:'No messages in this view.';
+  if(!items.length){host.innerHTML='<div class="empty">Nothing to review here yet. When Mikasa genuinely doesn’t understand a message, it will appear here.</div>';return}
+  host.innerHTML=items.map(item=>{
+   const seen=Number(item.occurrences||1),state=item.status||'new';
+   const label=state==='learned'?'Learned':state==='ignored'?'Ignored':'Needs review';
+   const date=String(item.last_seen_at||'').replace('T',' ').slice(0,16);
+   return `<article class="mikasa-learning-card" data-learning-id="${Number(item.id)}"><div class="mikasa-learning-card-head"><span class="tag ${state==='learned'?'good':state==='ignored'?'':'warn'}">${label}</span><small>Seen ${seen} time${seen===1?'':'s'} · Last ${esc(date||'unknown')}</small></div><div class="mikasa-learning-sample">${esc(item.sample_text)}</div><label>What should Mikasa reply to this exact phrase?</label><textarea rows="2" data-learning-reply placeholder="Write the kind of answer you expected…">${esc(item.teaching_reply||'')}</textarea><label>Meaning or context (optional)</label><input type="text" data-learning-note maxlength="500" value="${esc(item.intent_note||'')}" placeholder="What did you mean? This note is for future improvements."><div class="mikasa-learning-actions"><button type="button" class="primary" data-learning-action="teach">${state==='learned'?'Update learned reply':'Teach Mikasa'}</button>${state!=='ignored'?'<button type="button" class="mini-btn" data-learning-action="ignore">Ignore</button>':'<button type="button" class="mini-btn" data-learning-action="reopen">Reopen</button>'}<button type="button" class="mini-btn danger" data-learning-action="delete">Delete</button></div></article>`;
+  }).join('');
+ }catch(error){if(status)status.textContent=`Could not load learning inbox: ${error.message}`}
+}
+$('#mikasa-learning-filter')?.addEventListener('change',loadMikasaLearning);
+async function loadMikasaUpdateStatus(){
+ const status=$('#mikasa-update-status');if(!status)return;
+ try{
+  const data=await api('mikasa/update-status');
+  const last=data.last_checked?` · Checked ${String(data.last_checked).replace('T',' ').slice(0,16)}`:'';
+  status.textContent=`Current Mikasa ${data.current_version||'unknown'} · ${data.source||'bundled'}${last}${data.last_result?' · '+data.last_result:''}`;
+ }catch(error){status.textContent=`Update status unavailable: ${error.message}`}
+}
+$('#mikasa-update-check')?.addEventListener('click',async()=>{
+ const button=$('#mikasa-update-check'),status=$('#mikasa-update-status');
+ button.disabled=true;button.textContent='Checking…';
+ if(status)status.textContent='Checking the trusted GitHub persona source…';
+ try{
+  const result=await api('mikasa/update',{method:'POST',body:JSON.stringify({data:{}})});
+  if(status)status.textContent=result.message||'Mikasa update check finished.';
+  toast(result.message||'Mikasa update check finished');
+ }catch(error){if(status)status.textContent=error.message;toast(error.message)}
+ finally{button.disabled=false;button.textContent='Check for updates';await loadMikasaUpdateStatus()}
+});
+$('#mikasa-learning-list')?.addEventListener('click',async event=>{
+ const button=event.target.closest('[data-learning-action]');if(!button)return;
+ const card=button.closest('[data-learning-id]');if(!card)return;
+ const id=Number(card.dataset.learningId),action=button.dataset.learningAction;
+ const reply=card.querySelector('[data-learning-reply]')?.value||'',note=card.querySelector('[data-learning-note]')?.value||'';
+ button.disabled=true;
+ try{
+  if(action==='delete'){
+   if(!confirm('Delete this saved message pattern?'))return;
+   await api(`mikasa/learning/${id}`,{method:'DELETE'});toast('Learning entry deleted');
+  }else{
+   const status=action==='teach'?'learned':action==='ignore'?'ignored':'new';
+   await api(`mikasa/learning/${id}`,{method:'PATCH',body:JSON.stringify({data:{status,teaching_reply:reply,intent_note:note}})});
+   toast(action==='teach'?'Mikasa learned a reply for this phrase':action==='ignore'?'Message ignored':'Message returned to review');
+  }
+  await loadMikasaLearning();
+ }catch(error){toast(error.message)}
+ finally{button.disabled=false}
+});
+$('#mikasa-learning-enabled')?.addEventListener('change',()=>{
+ const label=$('#mikasa-learning-status');
+ if(label)label.textContent=$('#mikasa-learning-enabled').checked?'Unclear-message capture is enabled. Save message settings to apply.':'Unclear-message capture is paused. Save message settings to apply.';
+});
 loadMikasaPreferences();
+loadMikasaLearning();
+loadMikasaUpdateStatus();
 $$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});window.addEventListener('focus',()=>refresh());refresh();setInterval(refresh,60000);
