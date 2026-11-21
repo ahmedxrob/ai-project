@@ -1382,23 +1382,13 @@ def build_routine_reminders(now: datetime) -> list[tuple[str, int, str, str]]:
             late_time = validate_clock_time(routine.get('routine_late_time'), 'Routine late reminder time')
             name = routine['name']
             if routine_time and current_hm >= routine_time:
-                openers = (
-                    f"A little reminder, handsome: it's time for {name}.\nSend `done {name}` when you've taken care of it, and I'll tick it off for you. ✨",
-                    f"Darling, {name} is due. Shall I cross it off once you're finished?\nJust reply `done {name}` and I'll handle the list.",
-                    f"Your {name} reminder is here, handsome.\nGive me a `done {name}` when it's taken care of — I'll keep everything else in order.",
-                )
                 reminders.append(('routine-time', routine['id'], today.isoformat(),
-                                  _telegram_voice_choice(openers, f"routine:{routine['id']}:{today.isoformat()}")))
+                                  f"A little note, darling: {name} is due. Take care of it for me?\nReply: done {name}"))
             if late_time and current_hm >= late_time:
                 days_late = max(0, (today - due).days)
                 late_label = f" · {days_late}d overdue" if days_late else ''
-                openers = (
-                    f"Ahem, handsome… {name} is still waiting{late_label}.\nReply `done {name}` when it's done. 😉",
-                    f"A tiny nudge, darling: {name} hasn't been ticked off{late_label}.\nReply `done {name}` when you're ready and I'll take it from there.",
-                    f"I'm keeping {name} on my radar for you{late_label}, handsome.\nJust send `done {name}` once it's done.",
-                )
                 reminders.append(('routine-late', routine['id'], today.isoformat(),
-                                  _telegram_voice_choice(openers, f"routine-late:{routine['id']}:{today.isoformat()}")))
+                                  f"Darling, {name} is still waiting{late_label}. I can tick it off for you.\nReply: done {name}"))
         except Exception as exc:
             print(f'Routine reminder skipped for {routine.get("name", routine.get("id"))}: {exc}', flush=True)
     return reminders
@@ -2452,8 +2442,8 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
             if one("SELECT id FROM notification_log WHERE kind='bill-3day' AND item_id=? AND reminder_date=?",
                    (int(bill['id']), reminder_key)):
                 continue
-            message = (f"A discreet heads-up, Darling: {bill['name']} · {amount:.2f} MAD is due in {days_left} days ({due_label}).\n"
-                       f"Once it's settled, send `paid {bill['name']}` and I'll mark it off.")
+            message = (f"A quick note from me, darling: {bill['name']} · {amount:.2f} MAD is due in {days_left} days ({due_label}).\n"
+                       f"Reply: paid {bill['name']}")
             reminders.append(('bill-3day', int(bill['id']), reminder_key, message))
         elif days_left <= 1:
             # Use the persisted send timestamp, not a wall-clock bucket, so the
@@ -2475,8 +2465,8 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
                 due_status = 'Due today'
             else:
                 due_status = f'Overdue by {abs(days_left)} days'
-            message = (f"A discreet heads-up, Darling: {bill['name']} · {amount:.2f} MAD is {due_status.lower()} ({due_label}).\n"
-                       f"Reply `paid {bill['name']}` when it's settled.")
+            message = (f"Just keeping you ahead of things, darling: {bill['name']} · {amount:.2f} MAD is {due_status.lower()} ({due_label}).\n"
+                       f"Reply: paid {bill['name']}")
             reminders.append(('bill-4h', int(bill['id']), reminder_key, message))
     return reminders
 
@@ -2499,9 +2489,9 @@ async def reminder_loop():
                             due_at = datetime.combine(due_day, datetime.strptime(t['due_time'], '%H:%M').time())
                             if due_at <= now:
                                 reminder_key = due_at.strftime('%Y-%m-%dT%H:%M')
-                                reminders.append(('task-time', t['id'], reminder_key, f"Your {t['title']} reminder just came up, handsome · {t['due_time']}.\nWhen it's done, send `task done {t['title']}` and I'll cross it off."))
+                                reminders.append(('task-time', t['id'], reminder_key, f"A gentle nudge, darling: {t['title']} · {t['due_time']}.\nReply: task done {t['title']}"))
                         elif due_day <= today:
-                            reminders.append(('task', t['id'], today.isoformat(), f"Still on our list, darling: {t['title']} · due {due_day.strftime('%d/%m')}.\nSend `task done {t['title']}` when you've handled it, and I'll take it off your hands."))
+                            reminders.append(('task', t['id'], today.isoformat(), f"This one is still waiting, darling: {t['title']} · due {due_day.strftime('%d/%m')}.\nReply: task done {t['title']}"))
                     except Exception:
                         continue
                 # When a home-meal batch runs out, notify the user on the due
@@ -2512,7 +2502,7 @@ async def reminder_loop():
                                   WHERE mcr.status='open' AND mcr.due_date<=?
                                   ORDER BY mcr.due_date,mcr.id""", (today.isoformat(),)):
                     reminders.append(('meal-cook', cook['id'], cook['due_date'],
-                                      f"Chef's note, darling: we're running low on {cook['name']}. Time for a fresh batch?\nWhen it's ready, send `/stock {cook['name']}|3` and I'll update the kitchen count."))
+                                      f"A note from your kitchen assistant, darling: {cook['name']} needs a fresh batch.\nStock: /stock {cook['name']}|3"))
                 # Meal messages follow the user's local Home Assistant timezone (TZ in run.sh).
                 # 14:00 announces the plate; 22:00 asks whether it was eaten.
                 today_meal = one("SELECT dm.id,dm.plan_date,dm.status,dm.suggestion_notified_date,dm.checkin_notified_date, r.name AS recipe_name,r.calories_kcal FROM daily_meals dm JOIN recipes r ON r.id=dm.recipe_id WHERE dm.plan_date=? LIMIT 1", (today.isoformat(),))
@@ -2520,13 +2510,13 @@ async def reminder_loop():
                     kcal = f"\n{float(today_meal['calories_kcal']):g} kcal per plate" if today_meal.get('calories_kcal') is not None else ''
                     # Do not send a stale 14:00 announcement after 22:00 if the app was offline all afternoon.
                     if time(14, 0) <= now.time() < time(22, 0) and today_meal.get('suggestion_notified_date') != today.isoformat():
-                        message = (f"Today's plate is {today_meal['recipe_name']}, handsome{(' · ' + kcal.strip()) if kcal else ''}.\nEnjoy it, darling. I'll come back for your verdict this evening. ✨")
+                        message = (f"Your plate for today, darling: {today_meal['recipe_name']}{kcal}.\nEnjoy it. I’ll check in with you tonight. ✨")
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                         _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
                             c.execute("UPDATE daily_meals SET suggestion_notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(today_meal['id'])))
                     if now.time() >= time(22, 0) and today_meal.get('checkin_notified_date') != today.isoformat():
-                        message = (f"Well, handsome — did {today_meal['recipe_name']} hit the spot{(' · ' + kcal.strip()) if kcal else ''}?\nJust reply YES if you enjoyed it, or NO and I'll move the plan along.")
+                        message = (f"Evening, darling. How was {today_meal['recipe_name']}{kcal}? Just reply YES or NO and I’ll take care of the plan. 💋")
                         sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
                         _telegram_response_data(sent, 'sendMessage')
                         with connect() as c:
@@ -2578,145 +2568,6 @@ def _telegram_bot_commands() -> list[dict[str, str]]:
         {'command': 'fitnessweek', 'description': 'Weight and treadmill summary for the last 7 days'},
         {'command': 'cancel', 'description': 'Cancel the current guided entry'},
     ]
-
-
-def _telegram_voice_choice(options: tuple[str, ...], seed: str) -> str:
-    """Pick a stable-but-varied line so recurring reminders do not sound scripted."""
-    value = sum((index + 1) * ord(char) for index, char in enumerate(str(seed)))
-    return options[value % len(options)]
-
-
-def _telegram_voice_reply(reply: str, incoming: str = '', update_id: int | None = None) -> str:
-    """Give command replies a warm, polished, lightly flirtatious secretary voice.
-
-    Keep data, dates, amounts, commands and guided-flow choices unchanged. The
-    wording is intentionally understated: affectionate, confident and helpful,
-    without adding an endearment to every single line.
-    """
-    message = str(reply or '').strip()
-    if not message:
-        return message
-    seed = f"{date.today().isoformat()}:{update_id or incoming or message[:32]}"
-
-    exact = {
-        'Cancelled. Nothing was saved.': "No worries, darling — I've cancelled that. Nothing was saved, and everything else is untouched.",
-        'No change made. The existing reservation stays where it is.': "Quite right, handsome. I've left the existing reservation exactly where it is.",
-        'No changes made. Your meal option is still available.': "No changes made, darling. Your meal is still right where it belongs.",
-        'There is no plate waiting for confirmation.': "Nothing waiting for a dinner verdict just now, handsome. I'll let you know when there is.",
-        '✅ All clear — no open tasks.': "A lovely sight: your task list is clear. Enjoy that little bit of freedom. ✨",
-        '✅ No unpaid bills.': "All bills are accounted for, darling. Not a single unpaid one on the list. ✨",
-        'No open tasks to complete.': "Nothing left on the open-task list, handsome. You're all caught up.",
-        'No routines yet. Add them in XROB Assistant.': "Your routine list is still empty, darling. Add your first one in XROB and I'll help keep it on track.",
-    }
-    if message in exact:
-        return exact[message]
-
-    # Turn terse database confirmations into the sort of note a thoughtful
-    # personal assistant would send. Capture and reuse every user-supplied
-    # title, amount, date and measurement rather than regenerating details.
-    action_rewrites = (
-        (r'^Paid, handsome: (.+?) · ([0-9,.]+ MAD)\.(.*)$',
-         lambda m: f"All settled, darling — I've marked {m.group(1)} as paid ({m.group(2)}).{m.group(3)} ✨"),
-        (r'^Done, handsome: (.+?) ✓$',
-         lambda m: f"Nicely done, handsome — {m.group(1)} is checked off. One less thing on your mind. ✨"),
-        (r'^✅ Reminder set · (.+?)\n(.+)$',
-         lambda m: f"I've put {m.group(1)} in the diary, darling. I'll give you a nudge at just the right time.\n{m.group(2)} ✨"),
-        (r'^✅ Task added · (.+?)\n(.+)$',
-         lambda m: f"Added to your planner, handsome — {m.group(1)}.\n{m.group(2)}"),
-        (r'^✅ Event added · (.+?)\n(.+)$',
-         lambda m: f"It's in your diary, darling — {m.group(1)}.\n{m.group(2)} ✨"),
-        (r'^✅ Routine done · (.+?)\nNext due: (.+?)\.?$',
-         lambda m: f"All taken care of, handsome — {m.group(1)} is checked off.\nI'll keep an eye on it; next due {m.group(2)}. ✨"),
-        (r'^✅ Weight saved · ([0-9.]+ kg) · (.+)\.$',
-         lambda m: f"Lovely, handsome — I've logged {m.group(1)} for {m.group(2)}. Consistency looks good on you. ✨"),
-        (r'^✅ Treadmill saved · (.+)$',
-         lambda m: f"Well done, handsome — your treadmill session is safely logged.\n{m.group(1)}"),
-        (r'^✅ Added to shopping list · (.+)$',
-         lambda m: f"On the list, darling — {m.group(1)}. One less thing for you to remember. ✨"),
-        (r'^ℹ️ Already on your shopping list · (.+)$',
-         lambda m: f"Already taken care of, handsome — {m.group(1)} is on your list."),
-        (r'^✅ Marked purchased · (.+)$',
-         lambda m: f"That's one less thing to think about, darling — {m.group(1)} is marked as bought. ✨"),
-        (r'^✅ Meal saved · (.+?)\n\n(.+)$',
-         lambda m: f"A lovely addition, handsome — {m.group(1)} is saved.\n\n{m.group(2)}"),
-        (r'^✅ (.+?) · (\d+) plate\(s\) ready\. The meal routine has been updated\.$',
-         lambda m: f"Perfect, darling — {m.group(1)} has {m.group(2)} ready plate{'s' if int(m.group(2)) != 1 else ''} now. I've updated the meal plan. ✨"),
-        (r'^🍳 (.+?) marked as out of stock\. A cooking reminder is set for tomorrow\.$',
-         lambda m: f"A little kitchen note, handsome — {m.group(1)} is out of stock, so I've set a cooking reminder for tomorrow. ✨"),
-        (r'^Confirmed, handsome\. Marked as eaten; your next plate stays on schedule\. ✨$',
-         lambda _m: "Perfect, darling. I've marked that plate as eaten and kept the next one right on schedule. ✨"),
-    )
-    for pattern, rewrite in action_rewrites:
-        match = re.match(pattern, message, flags=re.I | re.S)
-        if match:
-            return rewrite(match)
-
-    # Keep information screens useful, but give their headings a human lead-in.
-    list_intros = (
-        (r'^(?:🍽 DAILY PLATES|🏠 HOME MEALS|🍴 OUTSIDE MEALS)',
-         ("I've laid out the menu for you, darling — take your pick.\n\n", "A little menu update, handsome. Here are your options.\n\n")),
-        (r'^(?:🛒 SHOPPING LIST)',
-         ("Here's your shopping list, darling. I've kept everything together.\n\n", "Your little shopping checklist, handsome — all in one place.\n\n")),
-        (r'^(?:💳 UNPAID BILLS|Bills\b)',
-         ("A quick look at the bills, darling, so nothing catches you off guard.\n\n", "I've checked what is still due, handsome. Here's the list.\n\n")),
-        (r'^(?:✅ OPEN TASKS|Open tasks:|Tasks\b)',
-         ("Here's what is still on the list, handsome. We'll take it one thing at a time.\n\n", "A tidy little task review, darling.\n\n")),
-    )
-    for pattern, choices in list_intros:
-        if re.search(pattern, message, flags=re.I):
-            if not re.search(r'\b(?:handsome|darling|sweetheart)\b', message[:100], flags=re.I):
-                message = _telegram_voice_choice(choices, seed) + message
-            break
-
-    # Replace a few legacy robot-like openings while preserving the useful detail.
-    replacements = (
-        (r'^↩️ Back to the main menu\. Choose an action from the menu below, or send /help for examples\.',
-         "Back to the main menu, handsome. Pick whatever you need — I'll keep the rest in order."),
-        (r'^I could not find ', "Hmm, I couldn't find "),
-        (r'^I could not read ', "I didn't quite catch "),
-        (r'^I couldn.t find ', "I can't see "),
-        (r'^Please send ', "Just send "),
-        (r'^Please reply ', "A quick confirmation, darling: reply "),
-        (r'^Please choose ', "Choose "),
-        (r'^Enter a weight ', "Just send a weight "),
-        (r'^Enter a duration ', "Just send a duration "),
-        (r'^I could not complete that request\.', "I couldn't quite finish that for you, darling."),
-        (r'^✨ At your service, handsome\.', "Hello, handsome. You've got my attention — what shall we get in order today?"),
-        (r'^I can help with your day\.', "Of course, darling. Let's get your day in order."),
-        (r'^You are in the middle of a guided entry\.', "We're in the middle of a little setup, darling. Finish this step or send /cancel, then I'll help with your meal check-in."),
-        (r'^Enter a whole number ', "Just send a whole number "),
-        (r'^Enter a valid ', "Just send a valid "),
-    )
-    for pattern, replacement in replacements:
-        message = re.sub(pattern, replacement, message, count=1, flags=re.I)
-
-    # Natural introductions for information-heavy replies. The actual list stays intact.
-    intros = (
-        (r'^📅 TODAY', ("Here's your day, handsome — I've put the important bits up front. ✨\n\n", "Your day, neatly laid out, darling. Here's what we're working with.\n\n")),
-        (r'^🗓 NEXT 7 DAYS', ("I've had a look at the week ahead, handsome. Here it is.\n\n", "A little look ahead, darling — so nothing sneaks up on you.\n\n")),
-        (r'^(?:⚖️ Weight entry|🏃 Treadmill entry)', ("Of course, darling. Just one little detail and I'll log it for you.\n\n", "Let's get that recorded, handsome.\n\n")),
-        (r'^(?:🍽️ WHAT WOULD YOU LIKE|➕ ADD A MEAL|🍽️ ADD A HOME MEAL|🍴 ADD AN OUTSIDE MEAL)', ("Let's get this just right, handsome.\n\n", "Lovely. I'll take you through it, one easy step at a time.\n\n")),
-        (r'^(?:🛒 ADD SHOPPING ITEM|🔢 UPDATE READY PLATES|🗑 REMOVE A MEAL|🗑 REMOVE MEAL)', ("Of course, darling — let's get that sorted.\n\n", "On it, handsome.\n\n")),
-        (r'^(?:Open tasks:|Routines to check off:|Tasks\b|Bills\b|Routines\b|🛒 SHOPPING)', ("Here's the list, darling. I've kept it tidy.\n\n", "At your service, handsome — here's what I've got.\n\n")),
-    )
-    for pattern, choices in intros:
-        if re.search(pattern, message, flags=re.I):
-            # Avoid stacking voice lines onto copy that is already personal.
-            if not re.search(r'\b(?:handsome|darling|sweetheart)\b', message[:100], flags=re.I):
-                message = _telegram_voice_choice(choices, seed) + message
-            break
-
-    # Gentle reassurance and clarity for guided questions and validation errors.
-    if message.startswith('Use: '):
-        message = "Here's the format, handsome — " + message[5:]
-    elif message.startswith('That meal is no longer available'):
-        message = "That option has just been taken off today's menu, darling. " + message[message.find('.') + 1:].strip()
-    elif message.startswith('I found more than one'):
-        message = "I found a couple of close matches, handsome. Let's choose the right one:\n" + message.split(':', 1)[-1].strip()
-    elif message.startswith('I found several matches'):
-        message = "A few names are rather similar, darling. Send the full meal name so I pick the right one:\n" + message.split(':', 1)[-1].strip()
-
-    return message
 
 
 async def telegram_poll():
@@ -2776,7 +2627,6 @@ async def telegram_poll():
                     else:
                         try:
                             reply = await telegram_command(message_text)
-                            reply = _telegram_voice_reply(reply, message_text, update_id)
                         except Exception as exc:
                             print(f'Telegram command failed for update {update_id}: {exc}', flush=True)
                             reply = 'I could not complete that request. Your data was not intentionally changed by this error. Check your answer and try /help or /cancel.'
@@ -3507,9 +3357,9 @@ async def telegram_command(text: str) -> str:
         except ValueError as exc:
             return str(exc)
         if eaten:
-            return 'Confirmed, handsome. Marked as eaten; your next plate stays on schedule. ✨'
+            return 'Confirmed, darling. I’ve marked it as eaten and kept your next plate right on schedule. ✨'
         delay = int(updated.get('shift_days') or 1)
-        return f"Of course, handsome. The plate moved to {_telegram_date_label(updated['plan_date'], True)}; later plates shifted {delay} day(s)."
+        return f"Of course, darling. Your plate is moved to {_telegram_date_label(updated['plan_date'], True)}; I’ve shifted the later plates by {delay} day(s). 💋"
 
     if low.startswith('/suggestmeals') or low in ('suggest meals', 'plan meals'):
         maintain_meal_schedule()
@@ -3525,7 +3375,7 @@ async def telegram_command(text: str) -> str:
         return f"✅ Marked purchased · {matched['name']}"
     if low in ('/start', 'start', '/menu', 'menu', 'hi', 'hello', '/help', 'help', '❔ help'):
         return (
-            '✨ At your service, handsome.\n\n'
+            '✨ Right here, darling. Your day is in good hands.\n\n'
             '📅 Today · 🍽 Meals · ✅ I ate it · ⏭ Not today\n'
             '⚖️ Add weight · 🏃 Add treadmill · 📈 Fitness week\n\n'
             '/cancel stops any unfinished entry.'
@@ -3533,7 +3383,7 @@ async def telegram_command(text: str) -> str:
 
     if low in ('📅 today', '/today', 'today', 'what is today', "what's today", 'what do i have today?', 'agenda today'):
         agenda = build_today_agenda(today)
-        lines = [f"📅 TODAY, handsome · {today.strftime('%a %d/%m')}"]
+        lines = [f"📅 TODAY · {today.strftime('%a %d/%m')}"]
         sections = [
             ('YOUR TO-DO', [x for x in agenda['items'] if x['status'] in ('overdue', 'due', 'pending')]),
             ('ON THE RADAR', [x for x in agenda['items'] if x['status'] in ('scheduled', 'upcoming')]),
@@ -3546,9 +3396,9 @@ async def telegram_command(text: str) -> str:
             for entry in entries:
                 lines.append(f"• {telegram_agenda_line(entry)}")
         if not agenda['items']:
-            lines.append("All clear, handsome. Enjoy your day. ✨")
+            lines.append("Nothing asking for your attention right now. Enjoy the calm, darling. ✨")
         elif agenda['open_count']:
-            lines.append(f"\n{agenda['open_count']} to handle. You’ve got this. ✨")
+            lines.append(f"\n{agenda['open_count']} to handle. One at a time, darling — I’m keeping track. ✨")
         result = '\n'.join(lines)
         # Telegram messages are limited to 4096 characters; retain a clear note
         # rather than allowing large agendas to fail delivery.
@@ -3713,7 +3563,7 @@ async def telegram_command(text: str) -> str:
         next_open = next((bill for bill in active_bill_occurrences()
                           if int(bill.get('series_id') or bill['id']) == series_id), None)
         next_text = f" Next bill due {_telegram_date_label(next_open['due_date'])}." if next_open else ''
-        return f"Paid, handsome: {matched['name']} · {float(matched['amount_mad']):.2f} MAD.{next_text}"
+        return f"All taken care of, darling. {matched['name']} · {float(matched['amount_mad']):.2f} MAD is marked as paid.{next_text} ✨"
 
     # Bare /taskdone displays open items for convenient selection.
     if low in ('/taskdone','task done','finish task','complete task'):
@@ -3733,7 +3583,7 @@ async def telegram_command(text: str) -> str:
             return f"I couldn't find an open task called '{query}'. Send Tasks to see open tasks."
         with connect() as c:
             c.execute("UPDATE tasks SET status='done',completed_at=? WHERE id=?", (today_iso, matched['id']))
-        return f"Done, handsome: {matched['title']} ✓"
+        return f"Beautiful. {matched['title']} is checked off, darling. ✓"
 
     # Add a scheduled task. Times always use 24-hour HH:MM.
     task_request = (bool(re.match(r'(?i)^/task(?:@[a-z0-9_]+)?\s+', raw)) or low.startswith('/task ') or low.startswith('task ') or low.startswith('add task ') or
@@ -3747,10 +3597,10 @@ async def telegram_command(text: str) -> str:
             with connect() as c:
                 c.execute('INSERT INTO tasks(title,due_date,due_time,category) VALUES(?,?,?,?)', (title, due_date, due_time, 'general'))
             if due_date and due_time:
-                return f"✅ Reminder set · {title}\n{_telegram_date_label(due_date)} at {due_time}."
+                return f"Consider it arranged, darling. ✨\n{title} · {_telegram_date_label(due_date)} at {due_time}."
             if due_date:
-                return f"✅ Task added · {title}\nDue {_telegram_date_label(due_date)}."
-            return f"✅ Task added · {title}\nNo reminder set yet. Add a date/time in the app or resend with 'tomorrow at 18:00'."
+                return f"On your list, darling. ✓\n{title} · due {_telegram_date_label(due_date)}."
+            return f"I’ve added {title}, darling. ✓\nThere’s no reminder attached yet; add a date and time in the app whenever you like." 
         except ValueError as exc:
             return str(exc)
 
@@ -3784,7 +3634,7 @@ async def telegram_command(text: str) -> str:
             return f"I couldn't find '{done_name}'. Send Routines to see your list."
         updated = complete_routine(matched['id'])
         next_due = _telegram_date_label(updated.get('next_due'))
-        return f"✅ Routine done · {updated['name']}\nNext due: {next_due}."
+        return f"Lovely. {updated['name']} is taken care of. ✓\nI’ll remind you again on {next_due}." 
 
     if low in ('/event', '/add_event'):
         return 'To add an event, use: /event Dentist|20/11/26 10:00'
