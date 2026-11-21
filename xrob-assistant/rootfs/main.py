@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, json, os, sqlite3, re, math, random, importlib.util
+import asyncio, json, os, sqlite3, re, math, random, importlib.util, hashlib, unicodedata, shutil
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, date, timedelta, time
 from pathlib import Path
@@ -17,6 +17,10 @@ WWW = Path(__file__).resolve().parent / 'www'
 TOKEN = os.getenv('XROB_TELEGRAM_TOKEN', '').strip()
 ALLOWED_CHAT = os.getenv('XROB_TELEGRAM_CHAT_ID', '').strip()
 MIKASA_PERSONA_SOURCE = 'bundled'
+MIKASA_GITHUB_RAW_URL = 'https://raw.githubusercontent.com/ahmedxrob/ai-project/main/xrob-assistant/rootfs/mikasa_persona.py'
+MIKASA_GITHUB_RAW_HOST = 'raw.githubusercontent.com'
+MIKASA_UPDATE_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+_MIKASA_UPDATE_LOCK = asyncio.Lock()
 
 _MIKASA_REQUIRED_API = (
     'PERSONA_VERSION', 'TELEGRAM_PROFILE_DESCRIPTION', 'TELEGRAM_PROFILE_SHORT_DESCRIPTION',
@@ -116,6 +120,20 @@ CREATE TABLE IF NOT EXISTS notification_log (id INTEGER PRIMARY KEY, kind TEXT N
 CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS telegram_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS telegram_inbox (update_id INTEGER PRIMARY KEY, chat_id TEXT NOT NULL, reply TEXT NOT NULL, sent_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS mikasa_learning_log (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ fingerprint TEXT NOT NULL UNIQUE,
+ sample_text TEXT NOT NULL,
+ normalized_text TEXT NOT NULL,
+ occurrences INTEGER NOT NULL DEFAULT 1,
+ status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','learned','ignored')),
+ teaching_reply TEXT NOT NULL DEFAULT '',
+ intent_note TEXT NOT NULL DEFAULT '',
+ first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mikasa_learning_status_seen ON mikasa_learning_log(status,last_seen_at DESC);
 CREATE TABLE IF NOT EXISTS recipes (
  id INTEGER PRIMARY KEY, name TEXT NOT NULL, meal_type TEXT NOT NULL DEFAULT 'any', cuisine TEXT DEFAULT '',
  prep_min INTEGER DEFAULT 0, cook_min INTEGER DEFAULT 0, servings REAL DEFAULT 2, difficulty TEXT DEFAULT 'easy',
@@ -421,7 +439,7 @@ async def lifespan(app):
         maintain_meal_schedule()
     except Exception as exc:
         print(f'Initial meal schedule maintenance warning: {exc}', flush=True)
-    background = [asyncio.create_task(meal_schedule_loop())]
+    background = [asyncio.create_task(meal_schedule_loop()), asyncio.create_task(mikasa_update_loop())]
     if TOKEN and ALLOWED_CHAT:
         background.extend([asyncio.create_task(telegram_poll()), asyncio.create_task(reminder_loop())])
     elif TOKEN:
@@ -434,7 +452,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.24', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.25', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -443,7 +461,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.24','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.25','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -480,6 +498,8 @@ TELEGRAM_PREFERENCE_DEFAULTS = {
     'morning_report_time': '07:30',
     'playful_messages_enabled': '0',
     'playful_frequency': 'few',
+    'mikasa_learning_enabled': '1',
+    'mikasa_auto_update_enabled': '0',
 }
 
 
@@ -502,6 +522,8 @@ def get_telegram_preferences() -> dict[str, Any]:
         'morning_report_time': values['morning_report_time'],
         'playful_messages_enabled': values['playful_messages_enabled'] == '1',
         'playful_frequency': values['playful_frequency'],
+        'mikasa_learning_enabled': values['mikasa_learning_enabled'] == '1',
+        'mikasa_auto_update_enabled': values['mikasa_auto_update_enabled'] == '1',
         'telegram_configured': bool(TOKEN and ALLOWED_CHAT),
         'timezone': os.getenv('TZ', 'Local add-on time'),
     }
@@ -520,6 +542,8 @@ def save_telegram_settings(payload: Payload):
     for field, key in (
         ('morning_report_enabled', 'morning_report_enabled'),
         ('playful_messages_enabled', 'playful_messages_enabled'),
+        ('mikasa_learning_enabled', 'mikasa_learning_enabled'),
+        ('mikasa_auto_update_enabled', 'mikasa_auto_update_enabled'),
     ):
         if field in data:
             if not isinstance(data[field], bool):
@@ -542,6 +566,254 @@ def save_telegram_settings(payload: Payload):
     for key, value in updates.items():
         _telegram_setting_set(key, value)
     return get_telegram_preferences()
+
+
+# Mikasa voice-only GitHub updater --------------------------------------------
+def _mikasa_version_tuple(value: str) -> tuple[int, ...]:
+    match = re.search(r'(?<!\d)(\d+(?:\.\d+){1,3})(?!\d)', str(value or ''))
+    if not match:
+        raise ValueError('The persona file does not declare a numeric version.')
+    return tuple(int(part) for part in match.group(1).split('.'))
+
+
+def _mikasa_update_status() -> dict[str, Any]:
+    return {
+        'current_version': str(getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown')),
+        'source': MIKASA_PERSONA_SOURCE,
+        'auto_update_enabled': _telegram_setting_get('mikasa_auto_update_enabled', '0') == '1',
+        'last_checked': _telegram_setting_get('mikasa_update_last_checked', ''),
+        'last_result': _telegram_setting_get('mikasa_update_last_result', ''),
+        'latest_version': _telegram_setting_get('mikasa_update_latest_version', ''),
+    }
+
+
+async def _download_mikasa_persona_source() -> str:
+    """Fetch only the fixed project-owned raw GitHub file over HTTPS."""
+    parsed = urlparse(MIKASA_GITHUB_RAW_URL)
+    if parsed.scheme != 'https' or parsed.hostname != MIKASA_GITHUB_RAW_HOST:
+        raise RuntimeError('Mikasa update source is not the trusted HTTPS GitHub raw host.')
+    import httpx
+    async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+        response = await client.get(MIKASA_GITHUB_RAW_URL, headers={'Accept': 'text/plain', 'Cache-Control': 'no-cache'})
+        response.raise_for_status()
+        final_url = urlparse(str(response.url))
+        if final_url.scheme != 'https' or final_url.hostname != MIKASA_GITHUB_RAW_HOST:
+            raise RuntimeError('GitHub redirected the persona update outside the trusted raw host.')
+        if len(response.content) > 512 * 1024:
+            raise RuntimeError('The downloaded Mikasa file is unexpectedly large; update cancelled.')
+        return response.content.decode('utf-8')
+
+
+async def _check_and_install_mikasa_update() -> dict[str, Any]:
+    """Check GitHub, validate a persona, back up the override, then hot-load it."""
+    global mikasa_persona, MIKASA_PERSONA_SOURCE
+    async with _MIKASA_UPDATE_LOCK:
+        checked_at = datetime.now().astimezone().isoformat(timespec='seconds')
+        try:
+            source = await _download_mikasa_persona_source()
+            temp_path = DATA / '.mikasa_persona.download.py'
+            temp_path.write_text(source, encoding='utf-8')
+            try:
+                candidate = _load_persona_file(temp_path, 'xrob_mikasa_persona_remote_candidate')
+                remote_version = str(getattr(candidate, 'PERSONA_VERSION', '')).strip()
+                current_version = str(getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'))
+                if _mikasa_version_tuple(remote_version) <= _mikasa_version_tuple(current_version):
+                    temp_path.unlink(missing_ok=True)
+                    _telegram_setting_set('mikasa_update_last_checked', checked_at)
+                    _telegram_setting_set('mikasa_update_latest_version', remote_version)
+                    _telegram_setting_set('mikasa_update_last_result', f'Already up to date · {current_version}')
+                    return {'updated': False, 'message': f'Mikasa is already up to date ({current_version}).', **_mikasa_update_status()}
+
+                override = DATA / 'mikasa_persona.py'
+                backup_path = None
+                if override.exists():
+                    backup_dir = DATA / 'backups'
+                    backup_dir.mkdir(parents=True, exist_ok=True)
+                    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+                    backup_path = backup_dir / f'mikasa_persona-{current_version}-{stamp}.py'
+                    shutil.copy2(override, backup_path)
+                elif Path(getattr(mikasa_persona, '__xrob_source_path__', '')).is_file():
+                    backup_dir = DATA / 'backups'
+                    backup_dir.mkdir(parents=True, exist_ok=True)
+                    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+                    backup_path = backup_dir / f'mikasa_persona-bundled-{current_version}-{stamp}.py'
+                    shutil.copy2(Path(mikasa_persona.__xrob_source_path__), backup_path)
+
+                # Atomic replacement: the active file is never partially written.
+                os.replace(temp_path, override)
+                try:
+                    loaded = _load_persona_file(override, 'xrob_mikasa_persona_override')
+                except Exception:
+                    if backup_path and backup_path.exists():
+                        shutil.copy2(backup_path, override)
+                    else:
+                        override.unlink(missing_ok=True)
+                    raise
+                mikasa_persona = loaded
+                MIKASA_PERSONA_SOURCE = 'config override'
+                _telegram_setting_set('mikasa_update_last_checked', checked_at)
+                _telegram_setting_set('mikasa_update_latest_version', remote_version)
+                _telegram_setting_set('mikasa_update_last_result', f'Updated to {remote_version}')
+                return {
+                    'updated': True,
+                    'message': f'Mikasa updated to {remote_version}. Her new voice is active now.',
+                    'backup': str(backup_path) if backup_path else '',
+                    **_mikasa_update_status(),
+                }
+            finally:
+                temp_path.unlink(missing_ok=True)
+        except Exception as exc:
+            _telegram_setting_set('mikasa_update_last_checked', checked_at)
+            _telegram_setting_set('mikasa_update_last_result', f'Update failed · {str(exc)[:240]}')
+            raise HTTPException(502, f'Mikasa update failed safely: {exc}')
+
+
+@app.get('/api/mikasa/update-status')
+def read_mikasa_update_status():
+    return _mikasa_update_status()
+
+
+@app.post('/api/mikasa/update')
+async def install_mikasa_update():
+    return await _check_and_install_mikasa_update()
+
+
+async def mikasa_update_loop():
+    """Check once per day when the user has explicitly enabled auto-updates."""
+    while True:
+        try:
+            if _telegram_setting_get('mikasa_auto_update_enabled', '0') == '1':
+                last = _telegram_setting_get('mikasa_update_last_checked', '')
+                try:
+                    checked = datetime.fromisoformat(last) if last else None
+                except ValueError:
+                    checked = None
+                if checked is None or (datetime.now().astimezone() - checked.astimezone()).total_seconds() >= MIKASA_UPDATE_CHECK_INTERVAL_SECONDS:
+                    await _check_and_install_mikasa_update()
+        except Exception as exc:
+            print(f'Mikasa automatic update warning: {exc}', flush=True)
+        await asyncio.sleep(15 * 60)
+
+
+# Mikasa Learning Inbox -------------------------------------------------------
+# Unknown messages are captured only from the configured Telegram chat, after
+# the command engine reaches its explicit generic fallback. They remain local
+# in the existing SQLite database until reviewed, taught, ignored or deleted.
+MIKASA_UNKNOWN_REPLY_PREFIX = 'I can help with your day. Use the buttons below, or send:'
+MIKASA_LEARNING_MAX_TEXT = 1200
+
+
+def _normalize_mikasa_learning_text(value: str) -> str:
+    text = unicodedata.normalize('NFKC', str(value or ''))
+    text = re.sub(r'\s+', ' ', text.strip().casefold())
+    return text.strip(' .!?؛،')[:MIKASA_LEARNING_MAX_TEXT]
+
+
+def _record_mikasa_unhandled_message(raw: str) -> int | None:
+    # Save or group a message only when Mikasa reaches the unknown fallback.
+    if _telegram_setting_get('mikasa_learning_enabled', '1') != '1':
+        return None
+    sample = str(raw or '').strip()
+    if not sample:
+        return None
+    sample = sample[:MIKASA_LEARNING_MAX_TEXT]
+    normalized = _normalize_mikasa_learning_text(sample)
+    if len(normalized) < 2:
+        return None
+    fingerprint = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+    with connect() as c:
+        c.execute('''
+            INSERT INTO mikasa_learning_log(fingerprint,sample_text,normalized_text)
+            VALUES(?,?,?)
+            ON CONFLICT(fingerprint) DO UPDATE SET
+                occurrences=MIN(mikasa_learning_log.occurrences+1,999999),
+                last_seen_at=CURRENT_TIMESTAMP,
+                sample_text=CASE WHEN length(excluded.sample_text)>length(mikasa_learning_log.sample_text)
+                                 THEN excluded.sample_text ELSE mikasa_learning_log.sample_text END
+        ''', (fingerprint, sample, normalized))
+        row = c.execute('SELECT id FROM mikasa_learning_log WHERE fingerprint=?', (fingerprint,)).fetchone()
+        # Keep the inbox bounded. Taught phrases are never purged automatically.
+        c.execute('''DELETE FROM mikasa_learning_log
+                     WHERE status IN ('new','ignored') AND id NOT IN (
+                       SELECT id FROM mikasa_learning_log WHERE status IN ('new','ignored')
+                       ORDER BY last_seen_at DESC,id DESC LIMIT 500
+                     )''')
+    return int(row['id']) if row else None
+
+
+def _mikasa_learned_reply(raw: str) -> str | None:
+    # Use a taught exact phrase only after the command engine gets first refusal.
+    normalized = _normalize_mikasa_learning_text(raw)
+    if len(normalized) < 2:
+        return None
+    row = one('''SELECT teaching_reply FROM mikasa_learning_log
+                 WHERE status='learned' AND normalized_text=? AND teaching_reply<>''
+                 ORDER BY updated_at DESC,id DESC LIMIT 1''', (normalized,))
+    return str(row['teaching_reply']).strip() if row and str(row['teaching_reply']).strip() else None
+
+
+def _mikasa_learning_counts() -> dict[str, int]:
+    result = {'new': 0, 'learned': 0, 'ignored': 0}
+    with connect() as c:
+        for row in c.execute('SELECT status,COUNT(*) AS total FROM mikasa_learning_log GROUP BY status'):
+            result[str(row['status'])] = int(row['total'])
+    return result
+
+
+@app.get('/api/mikasa/learning')
+def list_mikasa_learning(status: str = 'open', limit: int = Query(100, ge=1, le=500)):
+    allowed = {'open', 'new', 'learned', 'ignored', 'all'}
+    selected = str(status or 'open').lower()
+    if selected not in allowed:
+        raise HTTPException(400, 'Choose open, new, learned, ignored or all.')
+    where = "status='new'" if selected == 'open' else ('1=1' if selected == 'all' else 'status=?')
+    params: tuple[Any, ...] = () if selected in ('open', 'all') else (selected,)
+    items = rows(f'''SELECT id,sample_text,normalized_text,occurrences,status,teaching_reply,intent_note,
+                            first_seen_at,last_seen_at,updated_at
+                     FROM mikasa_learning_log WHERE {where}
+                     ORDER BY CASE status WHEN 'new' THEN 0 WHEN 'learned' THEN 1 ELSE 2 END,
+                              last_seen_at DESC,id DESC LIMIT ?''', (*params, limit))
+    counts = _mikasa_learning_counts()
+    return {'items': items, 'counts': counts, 'total': sum(counts.values()), 'capture_enabled': _telegram_setting_get('mikasa_learning_enabled', '1') == '1'}
+
+
+@app.patch('/api/mikasa/learning/{item_id}')
+def update_mikasa_learning(item_id: int, payload: Payload):
+    current = one('SELECT * FROM mikasa_learning_log WHERE id=?', (item_id,))
+    if not current:
+        raise HTTPException(404, 'Learning entry not found.')
+    data = payload.data
+    status = str(data.get('status', current['status']) or current['status']).strip().lower()
+    if status not in ('new', 'learned', 'ignored'):
+        raise HTTPException(400, 'Status must be new, learned or ignored.')
+    reply = str(data.get('teaching_reply', current['teaching_reply']) or '').strip()
+    note = str(data.get('intent_note', current['intent_note']) or '').strip()
+    if len(reply) > 1200:
+        raise HTTPException(400, 'Mikasa’s learned reply must be 1,200 characters or fewer.')
+    if len(note) > 500:
+        raise HTTPException(400, 'The learning note must be 500 characters or fewer.')
+    if status == 'learned' and not reply:
+        raise HTTPException(400, 'Write the reply Mikasa should use before teaching this phrase.')
+    if status == 'learned':
+        duplicate = one("SELECT id FROM mikasa_learning_log WHERE status='learned' AND normalized_text=? AND id<>?", (current['normalized_text'], item_id))
+        if duplicate:
+            raise HTTPException(409, 'This exact phrase is already taught in another entry.')
+    with connect() as c:
+        c.execute('''UPDATE mikasa_learning_log
+                     SET status=?,teaching_reply=?,intent_note=?,updated_at=CURRENT_TIMESTAMP
+                     WHERE id=?''', (status, reply, note, item_id))
+    return one('''SELECT id,sample_text,normalized_text,occurrences,status,teaching_reply,intent_note,
+                         first_seen_at,last_seen_at,updated_at
+                  FROM mikasa_learning_log WHERE id=?''', (item_id,))
+
+
+@app.delete('/api/mikasa/learning/{item_id}')
+def delete_mikasa_learning(item_id: int):
+    with connect() as c:
+        cur = c.execute('DELETE FROM mikasa_learning_log WHERE id=?', (item_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(404, 'Learning entry not found.')
+    return {'deleted': True, 'id': item_id}
 
 
 @app.get('/api/{resource}')
@@ -3987,7 +4259,11 @@ async def telegram_command(text: str) -> str:
     if social is not None:
         return social
     reply = await _telegram_command_core(raw)
-    if reply.startswith('I can help with your day. Use the buttons below, or send:'):
+    if reply.startswith(MIKASA_UNKNOWN_REPLY_PREFIX):
+        learned = _mikasa_learned_reply(raw)
+        if learned:
+            return learned
+        _record_mikasa_unhandled_message(raw)
         return mikasa_persona.unclear_message()
     prefix = _telegram_persona_prefix(raw, reply)
     return f'{prefix}\n\n{reply}' if prefix else reply
