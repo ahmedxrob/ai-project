@@ -1132,24 +1132,19 @@ body{min-height:100vh;min-height:100dvh}
 }
 
 
-/* 0.4.25 — Mikasa learning inbox */
+/* 0.4.26 — Mikasa missed-message text log */
 .mikasa-learning-panel{margin-top:14px;min-width:0}
 .mikasa-learning-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:10px 0 14px}
 .mikasa-learning-toolbar .switch-control{display:inline-flex;align-items:center;gap:10px;min-width:0;color:var(--text);font-size:12px}
-.mikasa-learning-toolbar select{min-width:150px;max-width:100%}
+.mikasa-learning-toolbar .mini-btn{white-space:nowrap;max-width:100%}
 .mikasa-learning-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px;min-width:0}
 .mikasa-learning-card{display:grid;gap:9px;min-width:0;padding:13px;border:1px solid var(--line,#303236);border-radius:12px;background:var(--panel-soft,#141719)}
 .mikasa-learning-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .mikasa-learning-card-head small{color:var(--muted);font-size:10px}
 .mikasa-learning-sample{padding:10px 11px;border:1px solid #34383c;border-radius:9px;background:#101315;color:var(--text);font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
-.mikasa-learning-card label{font-size:11px;font-weight:650;color:var(--muted)}
-.mikasa-learning-card textarea,.mikasa-learning-card input{width:100%;min-width:0}
-.mikasa-learning-actions{display:flex;flex-wrap:wrap;gap:7px}
-.mikasa-learning-actions button{min-height:34px}
-.mikasa-learning-actions .danger{border-color:#74424a;color:#ffb4bc}
 .mikasa-learning-privacy{margin:12px 0 0;font-size:11px;line-height:1.5}
 @media(max-width:900px){.mikasa-learning-list{grid-template-columns:minmax(0,1fr)}}
-@media(max-width:620px){.mikasa-learning-toolbar{align-items:stretch;flex-direction:column}.mikasa-learning-toolbar select{width:100%}.mikasa-learning-card{padding:11px}.mikasa-learning-actions button{flex:1 1 auto}}
+@media(max-width:620px){.mikasa-learning-toolbar{align-items:stretch;flex-direction:column}.mikasa-learning-toolbar .mini-btn{width:100%;text-align:center}.mikasa-learning-card{padding:11px}}
 
 .mikasa-update-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid #29372f;margin:0 0 12px}
 .mikasa-update-toolbar .switch-control{display:inline-flex;align-items:center;gap:9px;color:var(--text);font-size:11px;min-width:0;flex:1 1 250px}
