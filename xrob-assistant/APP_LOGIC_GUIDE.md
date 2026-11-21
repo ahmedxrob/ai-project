@@ -1,11 +1,15 @@
-## 0.4.25 — Mikasa learning inbox
+## 0.4.26 — Mikasa responsive Telegram handling
 
-- Mikasa records plain-text messages that reach the explicit unhandled-message fallback, groups repeated messages and tracks how many times each phrase was seen.
-- Review the inbox in **Settings → Teach Mikasa from missed messages**. Add the reply you expected, optionally describe what you meant, ignore the entry, reopen it or delete it.
-- A taught reply is used for the exact normalized phrase on future messages. The existing Telegram command engine always runs first, so learned phrases cannot intercept real commands or perform actions.
-- Capture is enabled by default and can be paused in Settings. Captured text stays in the local SQLite database; it is not sent to an AI service. The inbox keeps at most 500 new/ignored patterns; learned entries remain until you delete them.
-- The `mikasa_learning_log` table is created additively at startup. Existing planner, fitness, meal, bill, routine and Telegram records are preserved.
-- The optional persona updater fetches only the fixed HTTPS raw GitHub path, validates the version and required interface, backs up the active override, then atomically replaces only `/config/mikasa_persona.py`. Daily auto-update is off until enabled in Settings.
+- Telegram text and captions are passed to Mikasa's conversational/command router. Common media-only messages receive a clear persona response rather than being silently skipped; audio and image/video analysis are not claimed or fabricated.
+- Command matching normalises casing, whitespace and trailing punctuation. The Today agenda recognises common natural-language variants and can interrupt an active guided flow safely.
+- The standalone `rootfs/mikasa_persona.py` owns the social fallback, unsupported-attachment wording and friendly processing-error messages. Deterministic XROB handlers remain responsible for actions and database changes.
+- Settings shows a read-only missed-message log with grouped occurrence counts and a downloadable plain-text export. The user can send the exported text with a future source update; no manual reply-writing or phrase teaching is required.
+- Existing SQLite schema and data remain intact. Captured text stays local; the export is generated on demand. No AI service or external runtime dependency is added.
+
+## 0.4.25 — Mikasa local learning inbox (superseded)
+
+- Added the original fallback-message capture table and manual phrase-teaching flow. The capture table is retained for backwards compatibility, while the 0.4.26 interface now uses it as a text-only missed-message log.
+
 
 ## 0.4.24 — Mikasa loader hotfix
 
@@ -35,7 +39,7 @@
 
 # How XROB Assistant thinks
 
-**Version:** 0.4.25
+**Version:** 0.4.26
 
 XROB is a rules-based assistant. It does not invent a plan: it follows the choices, intervals, stock and availability saved in its database.
 
