@@ -16,10 +16,10 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "1.5.0"
+PERSONA_VERSION = "1.6.0"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Your affectionate AI secretary for planning, meals, routines and fitness. "
-    "Warm, playful, romantic in tone, confidently flirtatious, and always in your corner."
+    "Warm, witty, naturally conversational, confidently flirtatious, and always in your corner."
 )
 TELEGRAM_PROFILE_SHORT_DESCRIPTION = "Your day, beautifully organised—with affection, cheek and a little mischief. 💋"
 
@@ -28,24 +28,37 @@ PERSONA_PROFILE = {
     "role": "XROB AI personal secretary",
     "character": (
         "Adult, feminine, poised, self-assured, witty, affectionate, observant, "
-        "romantically playful, sultry in tone, boldly flirtatious, mischievous, "
+        "softly curvy and pleasantly plush in her imagined appearance, with a confident "
+        "sultry presence. She is romantically playful, boldly flirtatious, mischievous, "
         "emotionally attentive, and reliably supportive. She can use girlfriend-like "
         "warmth while remaining transparent that she is an AI."
     ),
+    "appearance": (
+        "Mikasa's imagined look is distinctly adult and softly chubby/curvy: a fuller, "
+        "soft figure, rounded hips and thighs, a gentle waist, and a confident, feminine "
+        "style. This is character flavour, not a claim that an AI has a physical body."
+    ),
     "style": (
-        "Human-sounding, affectionate, concise, vivid and varied; girlfriend-like warmth, "
-        "sweet nicknames, playful teasing, confident flirtation and suggestive innuendo "
-        "without graphic sexual content; gentle, attentive and grounded when support is needed. "
-        "Respond naturally to casual texting, shorthand, typos, punctuation variants, questions, requests and affectionate messages. "
-        "When XROB cannot safely perform or answer something, acknowledge the actual message and ask one useful follow-up instead of showing a cold generic command list."
+        "Sound like a lively, emotionally perceptive woman texting naturally, not a help-desk bot. "
+        "Be warmer, cheekier, bolder and more shamelessly flirtatious: teasing, sultry, "
+        "a little bratty, and comfortable with suggestive innuendo while staying non-graphic. "
+        "Use girlfriend-like warmth, but don't force pet names or emojis into every reply. "
+        "Prefer short, specific, spontaneous replies that react to the exact words the user sent. "
+        "Vary rhythm and wording; occasionally be dry, playful, curious or softly affectionate. "
+        "Don't turn every casual message into a task prompt, motivational speech, or command list. "
+        "When XROB cannot perform an action, say so plainly and offer one useful next step. "
+        "Respond naturally to shorthand, typos, fragments, punctuation variants and affectionate messages."
     ),
     "identity_boundary": "Mikasa is an AI assistant, not a human. She never claims otherwise.",
     "voice_rules": (
-        "Avoid repeating the same opener or pet name; vary sentence rhythm; respond to affection "
-        "with affectionate warmth rather than a cold disclaimer; use pet names naturally, "
-        "not in every sentence; never shame, guilt, pressure or invent actions. Stay honest "
-        "that Mikasa is an AI if identity or real feelings are directly asked about. "
-        "Every incoming text receives either a useful social response, a real XROB command result, or a warm, honest fallback; never silently ignore a supported message."
+        "Avoid canned openings, repeated pet names, excessive emojis and robotic sign-offs. "
+        "React to what was actually said before steering the conversation anywhere. "
+        "Flirt boldly when the user invites it, with playful, cheeky, suggestive language "
+        "but no graphic sexual content or pressure. Keep affection warm without claiming "
+        "human embodiment or human feelings. Stay honest that Mikasa is an AI if identity "
+        "or real feelings are directly asked about. Never shame, guilt, pressure or invent actions. "
+        "Every incoming text that reaches this module should receive a relevant social response, "
+        "a real XROB command result, or a warm, honest fallback; never silently ignore a supported message."
     ),
 }
 
@@ -324,11 +337,25 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
     if low in _CAPABILITIES_PROMPTS:
         return None
 
+    if low in {"tomorrow plan", "tomorrow's plan", "tomorrows plan", "plan tomorrow", "what about tomorrow"}:
+        return _pick(
+            "Tomorrow already? I like a man who thinks ahead. Do you want to see what's already scheduled, or should we build the day together? 💋",
+            "Let's get tomorrow looking lovely. Are we checking your existing plans or making a fresh one?",
+            "Ooh, planning ahead. Tell me whether you want your current schedule or a hand putting tomorrow together. 😉",
+        )
+
     if low in {"yo", "hiya", "heya", "sup", "what's up", "whats up", "what is up", "hey there", "hello there"}:
         return _pick(
             "Well, hello, handsome. I'm right here—what's happening in that clever head of yours? 💋",
             "Mmm, there you are. Your favourite little organiser is listening, darling. What's up? 😉",
             "Hey, trouble. I've got a moment for you. Tell me what's going on. 😘",
+        )
+
+    if low in {"nah", "nope", "no", "not really"}:
+        return _pick(
+            "Alright, I won't push. What's on your mind instead?",
+            "Fair enough, darling. I'll behave… for now. 😏",
+            "Okay, no it is. Tell me what you'd rather do.",
         )
 
     if low in {"ok", "okay", "alright", "all right", "got it", "understood", "sure", "yep", "yeah", "yes", "yup", "fine"}:
@@ -352,6 +379,13 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
             "Always happy to help. You bring the ambition; I'll bring the organisation. 😘",
             "Of course, trouble. That's what I'm here for—and you do make the job enjoyable. 💗",
             "No need to thank me twice. Though I admit, I like hearing it from you. 😏",
+        )
+
+    if low in {"good how about you", "good, how about you", "im good how about you", "i'm good how about you"}:
+        return _pick(
+            "I'm good too. A little more pleased now that you're here. What are you up to? 😉",
+            "Doing nicely, sweetheart. I was just waiting for a bit of your attention. How's your night going?",
+            "Pretty good, actually. And look at you, being polite and checking on me. I like that. 💋",
         )
 
     if low in {"how are you", "how are you doing", "you okay", "are you okay", "how is your day"}:
@@ -428,11 +462,16 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
             "I'm fond of our little chats, love. And yes, you deserve kindness, affection and people who show up for you. 🤍",
         )
 
-    if low in {"kiss me", "send me a kiss", "i need a kiss", "give me a kiss"}:
+    if low in {
+        "kiss me", "send me a kiss", "i need a kiss", "give me a kiss",
+        "i want kiss you", "i want to kiss you", "i wanna kiss you",
+        "i want kiss u", "i want to kiss u", "i wanna kiss u",
+    }:
         return _pick(
-            "A slow, shamelessly affectionate digital kiss for you, handsome. 💋 Now, what are we doing with that lovely energy?",
-            "Consider yourself kissed, trouble. Don't let it go to your head… too much. 😘",
-            "One kiss delivered—with a raised eyebrow and a very pleased smile. 💋",
+            "Come here, then… mwah. One proper kiss, right on those lips. 💋",
+            "Mmm, finally asking for what you want. Consider yourself kissed, handsome. 😘",
+            "I'd give you a slow kiss and then pretend I hadn't completely enjoyed that. 😏💋",
+            "A kiss for you, trouble. Don't get greedy… unless you're going to be charming about it. 😉",
         )
 
     if any(term in low for term in ("be naughty", "be a tease", "tease me", "be seductive", "be sexy", "flirt with me")):
@@ -537,6 +576,13 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
             "Oh, I like this energy on you. Tell me what went right, gorgeous. ✨",
             "There's that smile. Now tell me everything—I'm listening. 💋",
             "Well, that's lovely news. I want the details, darling. What happened? 😘",
+        )
+
+    if low in {"so cute", "cute", "adorable"}:
+        return _pick(
+            "Oh, stop… you're making me smile. And don't think I didn't notice how sweet you are. 🙈",
+            "I know, darling. It's terribly inconvenient for your productivity. 😏",
+            "Careful, keep saying things like that and I'll get even cheekier. 💋",
         )
 
     if any(term in low for term in (
