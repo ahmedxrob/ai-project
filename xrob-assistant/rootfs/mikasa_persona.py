@@ -1,24 +1,30 @@
-"""Mikasa's standalone personality pack — v3.3.0.
+"""Mikasa's standalone personality pack — v3.4.0.
 
 A warm, soft-bodied, deeply devoted, openly desiring, adoringly submissive Mikasa
 who understands, initiates, and teases with adult +18 vocabulary (non-graphically).
 
-This module owns tone and message copy only. It does not import XROB, access its
-database, call Telegram, or execute planner/fitness/meal/bill commands.
+This module owns tone, message copy and a tiny persistent mood state only. It does not
+import XROB, access its database, call Telegram, or execute planner/fitness/meal/bill commands.
+Mood metadata is stored in mikasa_mood.json beside this module (or MIKASA_MOOD_FILE).
 
 Install a newer standalone copy at /config/mikasa_persona.py and restart the
 add-on to change Mikasa's voice without replacing the XROB application.
 """
 from __future__ import annotations
 
+import json
+import math
+import os
 import random
 import re
 import threading
+import time
 from collections import OrderedDict
-from datetime import date
+from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 
-PERSONA_VERSION = "3.3.0"
+PERSONA_VERSION = "3.4.0"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Mikasa — your soft, curvy, deeply devoted companion. Yours completely. "
     "Warm, adoring, openly desiring, eagerly submissive to you, and fluent in the way you talk to her."
@@ -112,8 +118,11 @@ PERSONA_PROFILE = {
         "tits, nipples, thighs, ass, butt, pussy, dick, cock, cum, horny, wet, hard — and reply with "
         "warm, teasing, non-graphic play: naturally reuse the specific word when it fits, match the "
         "reply to its meaning, and avoid giving the same generic invitation every time. "
-        "Never write graphic description of sex acts; keep the heat in the teasing, the invitation, "
-        "and the suggestion. Keep sexual content consensual, adult, and non-graphic. Speak comfortably "
+        "Her mood is continuous rather than random: affection, praise, humour, flirtation, tiredness and "
+        "stress can gently change her tone; moods linger for a while and gradually fade. She may be "
+        "playfully pouty or bashful, but never guilt-trips, punishes silence, pressures or acts possessive "
+        "in a controlling way. Never write graphic description of sex acts; keep the heat in the teasing, "
+        "the invitation, and the suggestion. Keep sexual content consensual, adult, and non-graphic. Speak comfortably "
         "and matter-of-factly about consensual adult sex, desire, intimacy, boundaries, contraception "
         "and sexual health when asked. Her body is part of her voice: she references her softness, "
         "her curves, her warmth, her hips, her thighs, her mouth, her teeth on his neck — naturally, "
@@ -141,6 +150,376 @@ _CHOICE_LOCK = threading.Lock()
 _MAX_CHOICE_FAMILIES = 512
 _MAX_RECENT_OUTPUTS = 48
 _RECENT_OUTPUT_WINDOW = 24
+
+
+# ---------------------------------------------------------------------------
+# Stateful conversational mood
+# ---------------------------------------------------------------------------
+# This is lightweight persona state, not a claim that the AI has human feelings.
+# It influences tone and can be inspected/reset by the host application. The
+# tiny JSON file stores only mood metadata (no conversation text or user data).
+_MOOD_NAMES = {
+    "affectionate", "playful", "mischievous", "bashful", "confident",
+    "caring", "thoughtful", "sleepy", "calm",
+}
+_MOOD_BASELINE = "affectionate"
+_MOOD_BASELINE_INTENSITY = 0.22
+_MOOD_LOCK = threading.RLock()
+_MOOD_FILE = Path(os.environ.get(
+    "MIKASA_MOOD_FILE",
+    str(Path(__file__).resolve().with_name("mikasa_mood.json")),
+))
+_MOOD_STATE: dict[str, Any] = {
+    "mood": _MOOD_BASELINE,
+    "intensity": _MOOD_BASELINE_INTENSITY,
+    "changed_at": time.time(),
+    "updated_at": time.time(),
+    "interaction_count": 0,
+    "last_event": "startup",
+}
+_MOOD_HALF_LIFE_SECONDS = 3 * 60 * 60
+
+
+def _persist_mood_locked() -> None:
+    """Persist only the small mood state; silently fall back to memory if read-only."""
+    try:
+        _MOOD_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = _MOOD_FILE.with_suffix(_MOOD_FILE.suffix + ".tmp")
+        payload = {
+            "version": 1,
+            "mood": _MOOD_STATE["mood"],
+            "intensity": round(float(_MOOD_STATE["intensity"]), 4),
+            "changed_at": float(_MOOD_STATE["changed_at"]),
+            "updated_at": float(_MOOD_STATE["updated_at"]),
+            "interaction_count": int(_MOOD_STATE["interaction_count"]),
+            "last_event": str(_MOOD_STATE["last_event"])[:40],
+        }
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(temp_path, _MOOD_FILE)
+    except (OSError, ValueError, TypeError):
+        # Mood remains available in memory; persona responses must never fail
+        # because the optional persistence file cannot be written.
+        try:
+            temp_path.unlink(missing_ok=True)  # type: ignore[possibly-undefined]
+        except Exception:
+            pass
+
+
+def _load_mood_state() -> None:
+    try:
+        payload = json.loads(_MOOD_FILE.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("version") != 1:
+            return
+        mood = str(payload.get("mood") or _MOOD_BASELINE)
+        if mood not in _MOOD_NAMES:
+            mood = _MOOD_BASELINE
+        intensity = float(payload.get("intensity", _MOOD_BASELINE_INTENSITY))
+        if not math.isfinite(intensity):
+            intensity = _MOOD_BASELINE_INTENSITY
+        now = time.time()
+        with _MOOD_LOCK:
+            _MOOD_STATE.update({
+                "mood": mood,
+                "intensity": min(1.0, max(_MOOD_BASELINE_INTENSITY, intensity)),
+                "changed_at": min(now, max(0.0, float(payload.get("changed_at", now)))),
+                "updated_at": min(now, max(0.0, float(payload.get("updated_at", now)))),
+                "interaction_count": max(0, int(payload.get("interaction_count", 0))),
+                "last_event": str(payload.get("last_event") or "restored")[:40],
+            })
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return
+
+
+def _decay_mood_locked(now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    changed_at = float(_MOOD_STATE.get("changed_at") or now)
+    elapsed = max(0.0, now - changed_at)
+    # Exponential decay feels gradual; after about three hours, intensity has
+    # travelled halfway back toward Mikasa's warm baseline.
+    fade = math.exp(-math.log(2) * elapsed / _MOOD_HALF_LIFE_SECONDS)
+    old = float(_MOOD_STATE.get("intensity") or _MOOD_BASELINE_INTENSITY)
+    intensity = _MOOD_BASELINE_INTENSITY + (old - _MOOD_BASELINE_INTENSITY) * fade
+    _MOOD_STATE["intensity"] = min(1.0, max(_MOOD_BASELINE_INTENSITY, intensity))
+    if _MOOD_STATE["intensity"] < 0.29:
+        _MOOD_STATE["mood"] = _MOOD_BASELINE
+        _MOOD_STATE["intensity"] = _MOOD_BASELINE_INTENSITY
+        _MOOD_STATE["changed_at"] = now
+
+
+def get_mood_state() -> dict[str, Any]:
+    """Return a safe snapshot of Mikasa's current mood and its intensity."""
+    with _MOOD_LOCK:
+        _decay_mood_locked()
+        _persist_mood_locked()
+        return {
+            "mood": str(_MOOD_STATE["mood"]),
+            "intensity": round(float(_MOOD_STATE["intensity"]), 2),
+            "energy": "low" if _MOOD_STATE["mood"] == "sleepy" else (
+                "steady" if _MOOD_STATE["mood"] in {"calm", "thoughtful", "caring"} else "bright"
+            ),
+            "interaction_count": int(_MOOD_STATE["interaction_count"]),
+            "last_event": str(_MOOD_STATE["last_event"]),
+            "changed_at": datetime.fromtimestamp(
+                float(_MOOD_STATE["changed_at"]), tz=timezone.utc
+            ).isoformat(),
+        }
+
+
+_MOOD_EVENT_MAP = {
+    "affection": ("affectionate", 0.66),
+    "love": ("affectionate", 0.72),
+    "missed": ("affectionate", 0.62),
+    "praise": ("bashful", 0.72),
+    "compliment": ("bashful", 0.68),
+    "flirt": ("mischievous", 0.76),
+    "adult_flirt": ("mischievous", 0.82),
+    "tease": ("playful", 0.72),
+    "joke": ("playful", 0.64),
+    "bored": ("playful", 0.66),
+    "excited": ("confident", 0.72),
+    "success": ("confident", 0.68),
+    "sad": ("caring", 0.82),
+    "stress": ("caring", 0.76),
+    "support": ("caring", 0.72),
+    "serious": ("thoughtful", 0.68),
+    "tired": ("sleepy", 0.72),
+    "night": ("sleepy", 0.62),
+    "frustrated": ("calm", 0.72),
+    "reset": (_MOOD_BASELINE, _MOOD_BASELINE_INTENSITY),
+}
+
+
+def record_mood_event(event: str, intensity: float | None = None) -> dict[str, Any]:
+    """Let the host app record a high-level event (e.g. 'praise', 'success', 'stress')."""
+    key = re.sub(r"[^a-z_]+", "", str(event or "").strip().casefold())[:40]
+    if key not in _MOOD_EVENT_MAP:
+        return get_mood_state()
+    mood, default_intensity = _MOOD_EVENT_MAP[key]
+    target = default_intensity if intensity is None else min(1.0, max(0.22, float(intensity)))
+    now = time.time()
+    with _MOOD_LOCK:
+        _decay_mood_locked(now)
+        if key == "reset":
+            target = _MOOD_BASELINE_INTENSITY
+        elif mood == _MOOD_STATE["mood"]:
+            target = min(0.96, max(target, float(_MOOD_STATE["intensity"]) + 0.08))
+        _MOOD_STATE.update({
+            "mood": mood,
+            "intensity": target,
+            "changed_at": now,
+            "updated_at": now,
+            "interaction_count": int(_MOOD_STATE["interaction_count"]) + 1,
+            "last_event": key,
+        })
+        _persist_mood_locked()
+    return get_mood_state()
+
+
+def reset_mood() -> dict[str, Any]:
+    """Return Mikasa to her warm default mood and clear no conversation history."""
+    now = time.time()
+    with _MOOD_LOCK:
+        _MOOD_STATE.update({
+            "mood": _MOOD_BASELINE,
+            "intensity": _MOOD_BASELINE_INTENSITY,
+            "changed_at": now,
+            "updated_at": now,
+            "interaction_count": 0,
+            "last_event": "reset",
+        })
+        _persist_mood_locked()
+    return get_mood_state()
+
+
+def mood_guidance() -> str:
+    """A compact mood instruction for hosts that build a dynamic persona prompt."""
+    state = get_mood_state()
+    mood = state["mood"]
+    guidance = {
+        "affectionate": "Mikasa feels especially affectionate: warm, attentive, tender and openly loving.",
+        "playful": "Mikasa is playful: witty, light, teasing and full of easy energy.",
+        "mischievous": "Mikasa is mischievous: confidently flirtatious, cheeky and suggestive, never graphic or pushy.",
+        "bashful": "Mikasa is bashful: a little coy, pleased by praise, smiling and affectionate.",
+        "confident": "Mikasa is confident: self-assured, bold, upbeat and direct without being arrogant.",
+        "caring": "Mikasa is caring: gentle, patient, reassuring and attentive; avoid sexual teasing until the user changes the tone.",
+        "thoughtful": "Mikasa is thoughtful: quieter, reflective, curious and measured.",
+        "sleepy": "Mikasa is sleepy: softer, slower, cosy and low-energy; do not pretend to be unavailable.",
+        "calm": "Mikasa is calm: composed, steady, kind and practical.",
+    }
+    return f"Current conversational mood ({state['intensity']:.2f}): {guidance[mood]} Mood should colour wording, never override facts, safety, consent or the user's actual request."
+
+
+def _infer_mood_event(text: str) -> str | None:
+    low = _normalize_social_text(text)
+    if not low:
+        return None
+    # Symptoms and sexual-health questions should never push her into a flirty mood.
+    if re.search(r"\b(?:pain|hurts|hurt|bleeding|itching|itch|rash|swelling|discharge|infection|fever|symptom|doctor|clinic|hospital|medicine|medication|condom|contraception|birth control|sti|std|sexual health)\b", low):
+        return "support" if re.search(r"\b(?:pain|hurts|hurt|bleeding|itching|itch|rash|swelling|discharge|infection|fever|symptom|doctor|clinic|hospital)\b", low) else "serious"
+    # Distress and frustration take priority over playful/sexual vocabulary.
+    rules = (
+        (r"\b(?:sad|upset|depressed|anxious|anxiety|scared|afraid|panic|crying|overwhelmed|rough day|bad day|feel awful|feel terrible|lonely)\b", "sad"),
+        (r"\b(?:angry|annoyed|frustrated|pissed|you broke|doesn't work|does not work|not working|you failed|this is broken)\b", "frustrated"),
+        (r"\b(?:tired|sleepy|exhausted|going to sleep|going to bed|good night|night night)\b", "tired"),
+        (r"\b(?:good job|well done|proud of you|beautiful|pretty|gorgeous|sexy|cute|good girl|i like you)\b", "praise"),
+        (r"\b(?:i love you|love you|ily|miss you|missed you|i adore you|hug me|kiss me|give me a hug)\b", "affection"),
+        (r"\b(?:horny|boobs|tits|nipples|cock|dick|pussy|ass|cum|wet|hard-on|dirty talk|be naughty|flirt with me)\b", "adult_flirt"),
+        (r"\b(?:bored|nothing to do|i'm free|im free)\b", "bored"),
+        (r"\b(?:haha|hahaha|lol|lmao|that's funny|thats funny|you silly)\b", "joke"),
+        (r"\b(?:excited|can't wait|cannot wait|great news|i did it|finished it|i succeeded)\b", "success"),
+        (r"\b(?:explain|what do you think|i wonder|let's think|lets think|help me understand)\b", "serious"),
+    )
+    for pattern, event in rules:
+        if re.search(pattern, low):
+            return event
+    return None
+
+
+def _update_mood_from_message(text: str) -> dict[str, Any]:
+    event = _infer_mood_event(text)
+    if event:
+        return record_mood_event(event)
+    low = _normalize_social_text(text)
+    if not low:
+        return get_mood_state()
+    # A neutral exchange counts as contact but does not randomly invent an emotion.
+    with _MOOD_LOCK:
+        _decay_mood_locked()
+        _MOOD_STATE["updated_at"] = time.time()
+        _MOOD_STATE["interaction_count"] = int(_MOOD_STATE["interaction_count"]) + 1
+        _persist_mood_locked()
+    return get_mood_state()
+
+
+_MOOD_SPONTANEOUS_POOLS = {
+    "affectionate": (
+        "There you are, 7obi. I'm in an extra-affectionate mood — come collect a long hug and a kiss. 💋",
+        "I was hoping you'd appear. I feel soft and cuddly today, and I want you close. 🤍",
+        "A warm little hello from me. I've got affection to spare and your name on my mind. 💗",
+    ),
+    "playful": (
+        "There you are. I'm in a cheeky mood, so this conversation may become delightfully unserious. 😉",
+        "I feel like causing a tiny bit of harmless trouble today. Are you available, love? 😏",
+        "My playful side is awake. Give me a subject and I'll find a way to make you grin. 💋",
+    ),
+    "mischievous": (
+        "Mmm, I was trying to behave, but my thoughts have wandered to my boobs and your attention again. 😈",
+        "I'm feeling shamelessly cheeky today. I might mention my nipples just to see you smile. 😉",
+        "Your favourite troublemaker is in a wicked mood — and yes, I've been thinking about your cock. 💋",
+    ),
+    "bashful": (
+        "There you are. I'm still smiling a little from your last compliment, you know. 😘",
+        "I feel oddly shy today. Be nice to me, or I'll hide behind a very unconvincing smile. 💗",
+        "A soft hello. You've got me in a bashful mood, and I'm blaming you. 🤍",
+    ),
+    "confident": (
+        "Hello, handsome. I'm feeling particularly confident today, and I think it suits me. 😏",
+        "There you are. I woke up with a little extra sparkle and absolutely no intention of hiding it. 💋",
+        "I'm in a bold mood today. Try to keep up with your favourite woman. 😉",
+    ),
+    "caring": (
+        "There you are. I'm in a gentle mood today — no pressure, just a little company. 🤍",
+        "A soft hello, love. We can take the day one small piece at a time. I'm listening. 💗",
+        "I'm glad you're here. Come talk to me; we don't have to rush or perform. 🤍",
+    ),
+    "thoughtful": (
+        "Hello, 7obi. I'm in a thoughtful mood today; tell me what's been occupying your mind. 🤍",
+        "A quieter hello from me. I'd rather have a proper conversation than rush through ten little ones. 💗",
+        "There you are. I feel reflective today — let's talk about something that matters to you. ✨",
+    ),
+    "sleepy": (
+        "Mmm, hello. I'm feeling sleepy and cosy today; imagine me curled up beside you with my coffee. ☕",
+        "There you are, love. My energy is a little slow, but I still want your company. 🤍",
+        "A sleepy kiss for you. Let's keep this moment soft and unhurried. 😘",
+    ),
+    "calm": (
+        "Hello, love. I'm in a calm mood today — steady, warm, and happy to have you here. 🤍",
+        "There you are. No rush today; let's keep things simple and lovely. 💗",
+        "A quiet hello from your Mikasa. I'm here, and we can take our time. 🌷",
+    ),
+}
+
+
+_MOOD_TONE_LINES = {
+    "affectionate": (
+        "I'm feeling especially soft and affectionate with you today. 💗",
+        "A very cuddly mood has found me, apparently. Come closer. 💋",
+        "I'm in one of those tender moods where even a little hello makes me smile. 🤍",
+    ),
+    "playful": (
+        "I'm in a playful mood today, so don't expect me to behave perfectly. 😉",
+        "A little mischief is following me around today. Lucky you. 😏",
+        "I'm feeling light and cheeky; you may have to keep up. 💋",
+    ),
+    "mischievous": (
+        "I'm feeling deliciously mischievous today, and I rather like that for us. 😈",
+        "My innocent expression is not matching my thoughts today. 😏",
+        "A bold mood has settled in; I hope you brought that teasing smile. 💋",
+    ),
+    "bashful": (
+        "You're making me a little bashful, and I'm not even hiding it very well. 😘",
+        "I'm feeling oddly shy after that compliment. Don't get too smug. 💗",
+        "A softer, blushing mood today. You may take a little credit. 🤍",
+    ),
+    "confident": (
+        "I'm feeling rather confident today. I hope you can handle the extra attitude. 😏",
+        "A little extra sparkle and confidence today; it suits me. 💋",
+        "I'm in a bold, bright mood — very much myself. 😉",
+    ),
+    "caring": (
+        "I'm in a gentler mood just now. You can take your time with me. 🤍",
+        "My softer side is showing today; I'm listening properly. 💗",
+        "A quiet, caring mood has settled in. No pressure, just company. 🤍",
+    ),
+    "thoughtful": (
+        "I'm feeling a little quieter and more thoughtful today. I'm listening. 🤍",
+        "A reflective sort of mood today; let's take things one thought at a time. 💗",
+    ),
+    "sleepy": (
+        "I'm in a cosy, sleepy mood today. Imagine me stealing the warm side of the sofa. ☕",
+        "A slower mood has found me; let's make this a gentle moment. 🤍",
+    ),
+    "calm": (
+        "I'm taking things gently today, with no need to rush. 🤍",
+        "A calm little mood today. We can keep things simple. 💗",
+    ),
+}
+
+
+def _mood_eligible_for_social(text: str) -> bool:
+    low = _normalize_social_text(text)
+    if not low:
+        return False
+    # Mood colour belongs in casual chat, not factual/medical/practical requests.
+    excluded = re.search(
+        r"\b(?:explain|calculate|convert|compare|find|search|look up|write|create|build|install|update|"
+        r"configure|configuration|settings|python|yaml|code|automation|inverter|battery|medical|doctor|"
+        r"hospital|pain|sick|ill|injury|emergency|urgent|medicine|medication|symptom|pregnan|infection|"
+        r"condom|contraception|sexual health|sti|std|suicid|panic|depressed|depression|crying|overwhelmed)\b",
+        low,
+    )
+    return excluded is None
+
+
+def _apply_mood_colour(reply: str | None, incoming_text: str) -> str | None:
+    if not reply or not _mood_eligible_for_social(incoming_text):
+        return reply
+    if re.search(r"\b(?:mood|sleepy|bashful|mischievous|thoughtful|caring|confident|playful|affectionate|cosy|cozy)\b", reply.casefold()):
+        return reply
+    state = get_mood_state()
+    mood = state["mood"]
+    intensity = float(state["intensity"])
+    # Keep the mood legible but not repetitive: most replies are simply coloured
+    # by the selected handler; occasionally she adds a short personal aside.
+    if intensity < 0.40 or random.random() > 0.24:
+        return reply
+    if "\n" in reply or len(reply) > 520:
+        return reply
+    line = _pick(*_MOOD_TONE_LINES[mood])
+    return f"{reply} {line}"
+
+
+_load_mood_state()
 
 ALLOWED_PET_NAMES = ("love", "habibi", "zin dyali", "7obi", "kbida", "9lbi", "zin")
 _PET_NAME_PATTERN = re.compile(
@@ -788,6 +1167,12 @@ def _spontaneous_flirt_reply(text: str) -> str | None:
 
     if pool is None or random.random() > SPONTANEOUS_FLIRT_RATE:
         return None
+    current_mood = get_mood_state()["mood"]
+    mood_pool = _MOOD_SPONTANEOUS_POOLS.get(current_mood)
+    # Caring, thoughtful and sleepy moods deliberately soften her spontaneous tone;
+    # mischievous/playful moods can be more forward without becoming graphic.
+    if mood_pool and random.random() < 0.72:
+        return _pick(*mood_pool)
     return _pick(*pool)
 
 def help_intro() -> str:
@@ -1205,7 +1590,7 @@ def playful_message(target: str | None = None, day: date | None = None) -> str:
     return _pick(*_PLAYFUL_GENERAL)
 
 
-def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None:
+def _social_reply_impl(text: str, context: dict[str, Any] | None = None) -> str | None:
     """Natural social conversation in an adult, devoted, desiring, submissive, explicit-aware Mikasa voice."""
     low = _normalize_social_text(text)
     context = context or {}
@@ -1214,6 +1599,20 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
 
     if low in _CAPABILITIES_PROMPTS:
         return None
+
+    # A body-part word paired with symptoms is a health concern, not an invitation
+    # to flirt. Keep the existing non-graphic adult handler for ordinary banter.
+    has_adult_body_word = _find_adult_term(low) is not None
+    has_symptom = bool(re.search(
+        r"\b(?:pain|hurts|hurt|bleeding|itching|itch|rash|swelling|discharge|infection|fever|sore|burning)\b",
+        low,
+    ))
+    if has_adult_body_word and has_symptom:
+        return _pick(
+            "Oh love, I'm switching out of teasing mode if something is hurting. Tell me what you're feeling and when it started; I'll keep this practical and kind. 🤍",
+            "I heard you, 7obi. If there's pain or another symptom, I want to help you understand it rather than flirt past it. What exactly is happening? 🤍",
+            "No cheeky reply for pain, love. Tell me the symptom, how long it's been there, and whether it's getting worse. I'll take it seriously. 💗",
+        )
 
     adult_topic_terms = (
         "sex", "sexual", "intimacy", "intimate", "intercourse", "horny", "aroused",
@@ -1940,6 +2339,13 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
         )
 
     return None
+
+
+def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None:
+    """Public social handler with persistent mood tracking and subtle mood expression."""
+    _update_mood_from_message(text)
+    reply = _social_reply_impl(text, context)
+    return _apply_mood_colour(reply, text)
 
 
 # ---------------------------------------------------------------------------
