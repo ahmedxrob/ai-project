@@ -1,14 +1,15 @@
-## 0.4.26 — Mikasa responsive Telegram handling
+## 0.4.27 — Mikasa owns every Telegram reply
 
 - Telegram text and captions are passed to Mikasa's conversational/command router. Common media-only messages receive a clear persona response rather than being silently skipped; audio and image/video analysis are not claimed or fabricated.
 - Command matching normalises casing, whitespace and trailing punctuation. The Today agenda recognises common natural-language variants and can interrupt an active guided flow safely.
-- The standalone `rootfs/mikasa_persona.py` owns the social fallback, unsupported-attachment wording and friendly processing-error messages. Deterministic XROB handlers remain responsible for actions and database changes.
+- The standalone `rootfs/mikasa_persona.py` owns the full Today agenda presentation, activity labels, morning briefing, command-response lead-ins, social fallback, unsupported-attachment wording and processing-error messages. Deterministic XROB handlers remain responsible for actions and database changes.
+- Every Telegram `sendMessage` goes through one outbound gateway. It applies a final persona voice guard so a new send path cannot silently ship a cold, unbranded response.
 - Settings shows a read-only missed-message log with grouped occurrence counts and a downloadable plain-text export. The user can send the exported text with a future source update; no manual reply-writing or phrase teaching is required.
 - Existing SQLite schema and data remain intact. Captured text stays local; the export is generated on demand. No AI service or external runtime dependency is added.
 
 ## 0.4.25 — Mikasa local learning inbox (superseded)
 
-- Added the original fallback-message capture table and manual phrase-teaching flow. The capture table is retained for backwards compatibility, while the 0.4.26 interface now uses it as a text-only missed-message log.
+- Added the original fallback-message capture table and manual phrase-teaching flow. The capture table is retained for backwards compatibility, while the current interface uses it as a text-only missed-message log.
 
 
 ## 0.4.24 — Mikasa loader hotfix
@@ -39,7 +40,7 @@
 
 # How XROB Assistant thinks
 
-**Version:** 0.4.26
+**Version:** 0.4.27
 
 XROB is a rules-based assistant. It does not invent a plan: it follows the choices, intervals, stock and availability saved in its database.
 
