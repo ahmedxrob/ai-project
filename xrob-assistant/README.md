@@ -1,3 +1,18 @@
+## 0.4.31 — richer Mikasa activity praise and tomorrow planning
+
+- Upgrades Mikasa Persona to **1.8.0** with larger response variations for repeated triggers. Fitness logging and treadmill-routine completion now receive duration/category-aware encouragement; weight check-ins stay neutral and praise consistent tracking rather than the number.
+- Adds a dedicated `TOMORROW` agenda route. Natural phrases such as `Tomorrow plan`, `Plan tomorrow`, `what is on tomorrow?`, `show me tomorrow plan` and `tomorrow` now display the next day's agenda using the same shared agenda builder as Today. They no longer enter the missed-message inbox.
+- Recognises short profanity such as `Fuck u` as a social/frustration message and responds calmly with playful warmth or an invitation to explain what went wrong. It is no longer treated as an unknown application command.
+- Preserves factual data, command actions, the meal and routine engines, and the local missed-message cleanup behavior. No new dependency or database schema change.
+
+## 0.4.30 — reversible meal check-ins, cleaner agenda messages and manageable missed-message log
+
+- Adds **Undo eaten** on Telegram and in both website meal views, including the completed-meal entry in Today’s agenda. Undo returns the same plate to pending, restores one Home-meal plate, clears its confirmation/check-in markers, and never shifts the meal date. Outside meals do not affect stock. **Not today** remains a separate move-forward action.
+- Adds `/undo_eaten` to Telegram command suggestions and keeps the persistent **↩️ Undo eaten** shortcut. The bot also accepts `undo meal`, `undo eaten`, `not eaten` and similar phrases.
+- Refines Mikasa Persona **1.7.0**: Today and morning briefs now contain only a short personal introduction, the untouched factual agenda lines (names, times and statuses), a compact count and a short closing. No extra conversational sentences are inserted into individual task or meal lines.
+- Adds individual **Remove** controls to missed-message records in the website. When a genuinely newer persona version is activated, unresolved (`new`) records are cleared automatically. Learned and ignored records remain intact, and checking the same version does not clear newly captured messages.
+- Preserves existing database records and the deterministic task, routine, meal, fitness and billing actions. No new external service or dependency is introduced.
+
 ## 0.4.28 — Mikasa speaks naturally in Today and ignores stale persona overrides
 
 - Routes every Telegram response and notification through one send gateway with a final Mikasa voice check. Plain command/list replies can no longer bypass her tone.
@@ -28,7 +43,7 @@
 
 ### Updating Mikasa without updating XROB
 
-1. Keep XROB Assistant **0.4.28 or newer** installed.
+1. Keep XROB Assistant **0.4.31 or newer** installed.
 2. Copy the standalone `mikasa_persona.py` into the XROB add-on's own configuration directory as `mikasa_persona.py`. The container sees that location as `/config/mikasa_persona.py` (on HAOS, this is normally the add-on folder under `/addon_configs/xrob_assistant/`, not the main Home Assistant `/config`).
 3. Restart the XROB add-on. Check `/api/health`: `mikasa_persona_source` should report `config override`, and `mikasa_persona_version` should show the voice-pack version.
 4. To return to the bundled voice, remove the override file and restart the add-on.
@@ -45,7 +60,7 @@ The standalone file controls Mikasa's personality, social copy, Today/morning co
 - Preferences and send-once markers are stored in the existing `telegram_state` table; no new database table, cloud service or external AI dependency is introduced. Telegram must be configured in the Home Assistant add-on options for scheduled messages to be delivered.
 - On mobile, the Settings save action stays accessible above the fixed bottom navigation, including narrow 320px screens.
 
-# XROB Assistant 0.4.28 · Home Assistant add-on
+# XROB Assistant 0.4.31 · Home Assistant add-on
 
 ## 0.4.21 release
 
@@ -265,7 +280,7 @@ Telegram only accepts your configured chat ID. The Telegram action engine remain
 1. Back up your Home Assistant add-on configuration and `/config/xrob_assistant.db` before upgrading.
 2. Copy this folder to your Home Assistant local add-ons directory, for example `/addons/xrob-assistant/`.
 3. Reload/check local add-ons in the Add-on Store.
-4. Install/update XROB Assistant to **0.4.28**, review the add-on options and start it.
+4. Install/update XROB Assistant to **0.4.31**, review the add-on options and start it.
 5. Open `http://HOME_ASSISTANT_IP:8090` or use the add-on Web UI button.
 
 The app keeps existing records and adds the meal source, ready-plate count, next routine date, cook-reminder and Telegram notification fields to the existing database on startup. Existing tasks, events, fitness, bills, routines, Telegram state, recipes and old meal-plan rows are preserved. The Meals page has no archive control. Back up before updating.
