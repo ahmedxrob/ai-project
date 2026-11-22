@@ -515,6 +515,54 @@ async function loadMikasaUpdateStatus(){
   status.textContent=`Current Mikasa ${data.current_version||'unknown'} · ${data.source||'bundled'}${last}${data.last_result?' · '+data.last_result:''}`;
  }catch(error){status.textContent=`Update status unavailable: ${error.message}`}
 }
+
+function humanBytes(value){
+ const bytes=Number(value);
+ if(!Number.isFinite(bytes)||bytes<0)return 'Unavailable';
+ if(bytes<1024)return `${bytes} B`;
+ const units=['KB','MB','GB','TB'];let size=bytes/1024,index=0;
+ while(size>=1024&&index<units.length-1){size/=1024;index++}
+ return `${size.toFixed(size>=100?0:1)} ${units[index]}`;
+}
+async function loadSystemDiagnostics(){
+ const host=$('#system-diagnostics'),tag=$('#system-health-tag'),backupStatus=$('#system-backup-status');
+ if(!host)return;
+ try{
+  const data=await api('system/diagnostics');
+  const healthy=data.database_status==='healthy';
+  if(tag){tag.textContent=healthy?'All systems operational':'Attention required';tag.className=`tag ${healthy?'good':'warn'}`}
+  const free=data.free_disk_bytes==null?'Unavailable':humanBytes(data.free_disk_bytes);
+  const cards=[
+   ['Application',`XROB ${esc(data.app_version)} · ${esc(data.release_channel)}`],
+   ['Mikasa',`${esc(data.persona_version)} · ${esc(data.persona_source)}`],
+   ['Database',`${healthy?'Healthy':'Check needed'} · ${esc(data.database_integrity)}`],
+   ['Database size',humanBytes(data.database_size_bytes)],
+   ['SQLite',esc(data.sqlite_version)],
+   ['Free storage',free],
+   ['Backups',`${Number(data.backup_count||0)} saved`],
+   ['Latest snapshot',esc(data.latest_backup_modified||'Not created yet')],
+   ['Telegram',data.telegram_configured?'Configured':'Not configured']
+  ];
+  host.innerHTML=cards.map(([label,value])=>`<div class="system-diagnostic-item"><small>${label}</small><b>${value}</b></div>`).join('');
+  if(backupStatus)backupStatus.textContent=data.latest_backup?`Latest snapshot: ${data.latest_backup} · ${Number(data.backup_count||0)} retained (up to 14). Stored privately on add-on disk.`:'No database backup yet. Create one before making major changes.';
+ }catch(error){
+  if(tag){tag.textContent='Status unavailable';tag.className='tag warn'}
+  host.textContent=`Could not load system diagnostics: ${error.message}`;
+  if(backupStatus)backupStatus.textContent='Backup status unavailable.';
+ }
+}
+$('#system-backup-create')?.addEventListener('click',async()=>{
+ const button=$('#system-backup-create'),status=$('#system-backup-status');
+ button.disabled=true;button.textContent='Creating backup…';
+ if(status)status.textContent='Creating a consistent SQLite snapshot…';
+ try{
+  const result=await api('system/backup',{method:'POST',body:JSON.stringify({data:{}})});
+  if(status)status.textContent=`Backup created · ${result.filename} · ${humanBytes(result.size_bytes)}`;
+  toast('Database backup created');
+  await loadSystemDiagnostics();
+ }catch(error){if(status)status.textContent=error.message;toast(error.message)}
+ finally{button.disabled=false;button.textContent='Create database backup'}
+});
 $('#mikasa-update-check')?.addEventListener('click',async()=>{
  const button=$('#mikasa-update-check'),status=$('#mikasa-update-status');
  button.disabled=true;button.textContent='Checking…';
@@ -533,4 +581,5 @@ $('#mikasa-learning-enabled')?.addEventListener('change',()=>{
 loadMikasaPreferences();
 loadMikasaLearning();
 loadMikasaUpdateStatus();
-$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();if($('#settings')?.classList.contains('active'))loadMikasaLearning()}});window.addEventListener('focus',()=>{refresh();if($('#settings')?.classList.contains('active'))loadMikasaLearning()});refresh();setInterval(refresh,60000);setInterval(()=>{if($('#settings')?.classList.contains('active'))loadMikasaLearning()},60000);
+loadSystemDiagnostics();
+$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaUpdateStatus();loadSystemDiagnostics()}}});window.addEventListener('focus',()=>{refresh();if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaUpdateStatus();loadSystemDiagnostics()}});refresh();setInterval(refresh,60000);setInterval(()=>{if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaUpdateStatus();loadSystemDiagnostics()}},60000);
