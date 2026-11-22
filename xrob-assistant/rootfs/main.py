@@ -30,6 +30,7 @@ _MIKASA_REQUIRED_API = (
     'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_moved', 'task_created',
     'fallback_reply', 'unsupported_message', 'processing_error',
     'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
+    'agenda_item_line', 'today_agenda_reply', 'morning_report', 'ensure_voice', 'command_reply',
 )
 
 
@@ -453,7 +454,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.26', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.27', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -462,7 +463,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.26','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.27','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -2923,30 +2924,9 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
 
 
 def build_morning_report(day: date | None = None) -> str:
-    """Build a compact morning briefing from the same agenda shown in the app."""
+    """Build the scheduled briefing using Mikasa's standalone presentation layer."""
     day = day or date.today()
-    agenda = build_today_agenda(day)
-    items = agenda.get('items') or []
-    lines = [mikasa_persona.morning_opening()]
-    if items:
-        lines.append('')
-        for entry in items[:8]:
-            lines.append('• ' + telegram_agenda_line(entry))
-        if len(items) > 8:
-            lines.append(f"• …and {len(items) - 8} more in /today")
-    else:
-        lines.append('Your schedule is clear today. Enjoy the breathing room.')
-    counts = []
-    if agenda.get('open_count'):
-        counts.append(f"{agenda['open_count']} to handle")
-    if agenda.get('scheduled_count'):
-        counts.append(f"{agenda['scheduled_count']} scheduled")
-    if agenda.get('completed_count'):
-        counts.append(f"{agenda['completed_count']} already done")
-    if counts:
-        lines.extend(['', ' · '.join(counts) + '.'])
-    lines.extend(['', mikasa_persona.morning_closing()])
-    return '\n'.join(lines)
+    return mikasa_persona.morning_report(build_today_agenda(day), day)
 
 
 def _mikasa_playful_time(day: date, frequency: str) -> time | None:
@@ -2992,10 +2972,19 @@ def build_mikasa_playful_message(day: date | None = None) -> str:
     return mikasa_persona.playful_message(target=target, day=day)
 
 
-async def _send_telegram_text(client, message: str) -> None:
+async def _send_telegram_text(client, message: str, *, chat_id: str | None = None,
+                             reply_markup: dict | None = None, context: str = 'notification') -> None:
+    """Single outbound Telegram gateway; persona voice is enforced before delivery."""
+    payload = {
+        'chat_id': chat_id or ALLOWED_CHAT,
+        'text': mikasa_persona.ensure_voice(message, context=context),
+        'disable_web_page_preview': True,
+    }
+    if reply_markup is not None:
+        payload['reply_markup'] = reply_markup
     sent = await client.post(
         f'https://api.telegram.org/bot{TOKEN}/sendMessage',
-        json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True},
+        json=payload,
     )
     _telegram_response_data(sent, 'sendMessage')
 
@@ -3058,14 +3047,12 @@ async def reminder_loop():
                     # Do not send a stale 14:00 announcement after 22:00 if the app was offline all afternoon.
                     if time(14, 0) <= now.time() < time(22, 0) and today_meal.get('suggestion_notified_date') != today.isoformat():
                         message = (mikasa_persona.meal_suggestion(today_meal['recipe_name'], kcal))
-                        sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
-                        _telegram_response_data(sent, 'sendMessage')
+                        await _send_telegram_text(client, message, context='notification')
                         with connect() as c:
                             c.execute("UPDATE daily_meals SET suggestion_notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(today_meal['id'])))
                     if now.time() >= time(22, 0) and today_meal.get('checkin_notified_date') != today.isoformat():
                         message = (mikasa_persona.meal_checkin(today_meal['recipe_name'], kcal))
-                        sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
-                        _telegram_response_data(sent, 'sendMessage')
+                        await _send_telegram_text(client, message, context='notification')
                         with connect() as c:
                             c.execute("UPDATE daily_meals SET checkin_notified_date=? WHERE id=? AND status='pending'", (today.isoformat(), int(today_meal['id'])))
                 reminders.extend(build_routine_reminders(now))
@@ -3075,8 +3062,7 @@ async def reminder_loop():
                         if kind == 'routine-late':
                             roll_forward_late_routine(int(item_id), date.fromisoformat(reminder_date))
                         continue
-                    sent = await client.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': ALLOWED_CHAT, 'text': message, 'disable_web_page_preview': True})
-                    _telegram_response_data(sent, 'sendMessage')
+                    await _send_telegram_text(client, message, context='notification')
                     with connect() as c:
                         c.execute('INSERT OR IGNORE INTO notification_log(kind,item_id,reminder_date) VALUES(?,?,?)', (kind, item_id, reminder_date))
                     if kind == 'routine-late':
@@ -3219,11 +3205,9 @@ async def telegram_poll():
                             c.execute('DELETE FROM telegram_inbox WHERE update_id < (SELECT COALESCE(MAX(update_id),0)-2000 FROM telegram_inbox) AND sent_at IS NOT NULL')
 
                     reply_keyboard = _telegram_context_keyboard(keyboard)
-                    sent = await client.post(
-                        f'https://api.telegram.org/bot{TOKEN}/sendMessage',
-                        json={'chat_id': chat, 'text': reply, 'reply_markup': reply_keyboard, 'disable_web_page_preview': True}
+                    await _send_telegram_text(
+                        client, reply, chat_id=chat, reply_markup=reply_keyboard, context='message'
                     )
-                    _telegram_response_data(sent, 'sendMessage')
 
                     # Persist the reply as delivered and advance the offset only
                     # after Telegram confirms delivery. A failed send reuses the
@@ -3561,43 +3545,8 @@ def _telegram_parse_treadmill(text: str) -> tuple[float, date]:
 
 
 def telegram_agenda_line(entry: dict[str, Any]) -> str:
-    """Format one shared agenda item as a short, conversational Telegram line."""
-    kind = str(entry.get('type') or '')
-    status = str(entry.get('status') or '')
-    title = str(entry.get('title') or 'Untitled')
-    detail = str(entry.get('detail') or '')
-    when = str(entry.get('time') or '')
-    prefix = f'{when} · ' if when else ''
-
-    if kind == 'task':
-        match = re.search(r'(Overdue \d+d|Due today)', detail, re.IGNORECASE)
-        timing = match.group(1) if match else ('Overdue' if status == 'overdue' else 'Due today')
-        priority = ' · High priority' if 'high priority' in detail.casefold() else (' · Urgent' if 'urgent priority' in detail.casefold() else '')
-        return f'{prefix}{title} · {timing}{priority}'
-    if kind == 'routine':
-        match = re.search(r'(Overdue \d+d|Due today)', detail, re.IGNORECASE)
-        timing = match.group(1) if match else ('Overdue' if status == 'overdue' else 'Due today')
-        return f'{prefix}{title} · {timing}'
-    if kind in ('bill', 'document'):
-        return f'{prefix}{title} · {detail}'
-    if kind == 'event':
-        return f'{prefix}{title}'
-    if kind == 'meal':
-        return f'{prefix}Meal · {title}' + (' · eaten' if status == 'completed' else '')
-    if kind == 'cook':
-        return f'{prefix}Prepare · {title.removeprefix("Prepare ")} · {detail.replace("Home meal stock · ", "")}'
-    if kind == 'workout-plan':
-        return f'{prefix}Workout · {title}'
-    if kind == 'task-done':
-        return f'✅ {title}'
-    if kind == 'routine-done':
-        return f'✅ Routine · {title}'
-    if kind == 'workout':
-        duration = re.search(r'\d+ min', detail)
-        return f'✅ Gym · {title}' + (f' · {duration.group(0)}' if duration else '')
-    if kind in ('treadmill', 'weight'):
-        return f'✅ {title}'
-    return f'{prefix}{title}' + (f' · {detail}' if detail else '')
+    """Compatibility wrapper; Mikasa's persona module owns the agenda wording."""
+    return mikasa_persona.agenda_item_line(entry)
 
 
 def _normalize_telegram_command_text(value: str) -> str:
@@ -3990,29 +3939,7 @@ async def _telegram_command_core(text: str) -> str:
 
     if _is_today_agenda_request(low):
         agenda = build_today_agenda(today)
-        lines = [f"📅 TODAY · {today.strftime('%a %d/%m')}"]
-        sections = [
-            ('YOUR TO-DO', [x for x in agenda['items'] if x['status'] in ('overdue', 'due', 'pending')]),
-            ('ON THE RADAR', [x for x in agenda['items'] if x['status'] in ('scheduled', 'upcoming')]),
-            ('DONE', [x for x in agenda['items'] if x['status'] == 'completed']),
-        ]
-        for heading, entries in sections:
-            if not entries:
-                continue
-            lines.append(f"\n{heading}")
-            for entry in entries:
-                lines.append(f"• {telegram_agenda_line(entry)}")
-        if not agenda['items']:
-            lines.append(mikasa_persona.today_empty())
-        elif agenda['open_count']:
-            lines.append(mikasa_persona.today_open_count(int(agenda['open_count'])))
-        result = '\n'.join(lines)
-        # Telegram messages are limited to 4096 characters; retain a clear note
-        # rather than allowing large agendas to fail delivery.
-        if len(result) > 3900:
-            kept = result[:3700].rsplit('\n', 1)[0]
-            result = kept + "\n…The rest is on your XROB dashboard."
-        return result
+        return mikasa_persona.today_agenda_reply(agenda, today)
 
     if low in ('✅ tasks', '/tasks', 'tasks', 'my tasks', 'show tasks', 'list tasks', 'to do', 'todo'):
         tasks = rows("SELECT id,title,due_date,due_time,priority FROM tasks WHERE status!='done' ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,due_date,CASE WHEN due_time IS NULL THEN 1 ELSE 0 END,due_time,id LIMIT 12")
@@ -4343,8 +4270,7 @@ async def telegram_command(text: str) -> str:
             return learned
         _record_mikasa_unhandled_message(raw)
         return mikasa_persona.fallback_reply(raw)
-    prefix = _telegram_persona_prefix(raw, reply)
-    return f'{prefix}\n\n{reply}' if prefix else reply
+    return mikasa_persona.command_reply(raw, reply)
 
 if __name__ == '__main__':
     import uvicorn
