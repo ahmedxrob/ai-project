@@ -1154,3 +1154,15 @@ body{min-height:100vh;min-height:100dvh}
 /* 0.4.30: per-entry missed-message removal control. */
 .mikasa-learning-delete{margin-left:auto;flex:0 0 auto}
 .mikasa-learning-card-head{align-items:center}
+
+
+/* XROB 1.0 operational diagnostics and backup controls */
+.system-diagnostics-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:14px 0;}
+.system-diagnostic-item{min-width:0;padding:12px;border:1px solid var(--line,#2e3a31);border-radius:12px;background:rgba(255,255,255,.025);}
+.system-diagnostic-item small{display:block;margin-bottom:5px;color:var(--muted,#9aa79b);font-size:11px;}
+.system-diagnostic-item b{display:block;font-size:13px;line-height:1.35;overflow-wrap:anywhere;}
+.system-backup-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line,#2e3a31);}
+.system-backup-actions .muted{flex:1 1 100%;font-size:11px;}
+.system-backup-actions a.is-disabled{pointer-events:none;opacity:.45;}
+.mikasa-learning-toolbar{align-items:center;}
+@media(max-width:700px){.system-diagnostics-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.system-diagnostic-item{padding:10px}.system-backup-actions>*{flex:1 1 100%;text-align:center}}
