@@ -1150,3 +1150,7 @@ body{min-height:100vh;min-height:100dvh}
 .mikasa-update-toolbar .switch-control{display:inline-flex;align-items:center;gap:9px;color:var(--text);font-size:11px;min-width:0;flex:1 1 250px}
 .mikasa-update-toolbar small{flex:1 1 100%;font-size:10px;line-height:1.45;overflow-wrap:anywhere}
 @media(max-width:620px){.mikasa-update-toolbar{align-items:stretch;flex-direction:column}.mikasa-update-toolbar button{width:100%}}
+
+/* 0.4.30: per-entry missed-message removal control. */
+.mikasa-learning-delete{margin-left:auto;flex:0 0 auto}
+.mikasa-learning-card-head{align-items:center}
