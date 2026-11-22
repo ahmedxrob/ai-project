@@ -1,7 +1,9 @@
-## 0.4.27 — Mikasa owns every Telegram reply
+## 0.4.28 — Mikasa speaks naturally in Today and ignores stale persona overrides
 
 - Routes every Telegram response and notification through one send gateway with a final Mikasa voice check. Plain command/list replies can no longer bypass her tone.
-- Moves the complete Today digest and morning briefing wording, section labels, activity line formatting and closing acknowledgement into `rootfs/mikasa_persona.py`. Today now reads like Mikasa speaking to you, not a raw `DONE` report.
+- Rewrites the Today reply as a conversational message: routine, task, meal, cooking, event, bill, document and activity entries become complete sentences with their saved names, times and statuses preserved. It no longer prints database-style headings such as `YOUR TO-DO` or generic bullet labels.
+- Moves the Today and morning-briefing wording into `rootfs/mikasa_persona.py`. Each message type has its own editable wording, so future voice improvements do not require changing the task engine.
+- At startup, compares the valid persona versions in the bundle and `/config/mikasa_persona.py`. An older override can no longer hide a newer bundled voice; same-version and newer user overrides still take priority.
 - Keeps command execution and factual records in XROB, but makes `mikasa_persona.py` the single place to improve response wording and personality. The missed-message export remains text-only; no manual answer-writing is required.
 - Routes ordinary text and captions through Mikasa, and acknowledges photos, voice notes, videos, files, stickers, locations and contact cards instead of silently skipping them. This local build does not claim to transcribe audio or analyse image/video contents.
 - Normalises Telegram command casing, spacing and trailing punctuation. Today accepts natural variations such as `TODAY!`, `what's on today?` and `show me today`, including while a guided entry is active.
@@ -26,12 +28,12 @@
 
 ### Updating Mikasa without updating XROB
 
-1. Keep XROB Assistant **0.4.27 or newer** installed.
+1. Keep XROB Assistant **0.4.28 or newer** installed.
 2. Copy the standalone `mikasa_persona.py` into the XROB add-on's own configuration directory as `mikasa_persona.py`. The container sees that location as `/config/mikasa_persona.py` (on HAOS, this is normally the add-on folder under `/addon_configs/xrob_assistant/`, not the main Home Assistant `/config`).
 3. Restart the XROB add-on. Check `/api/health`: `mikasa_persona_source` should report `config override`, and `mikasa_persona_version` should show the voice-pack version.
 4. To return to the bundled voice, remove the override file and restart the add-on.
 
-The standalone file controls Mikasa's personality, social copy, message templates and reminder tone. XROB continues to own factual data, command parsing, database operations and Telegram delivery.
+The standalone file controls Mikasa's personality, social copy, Today/morning composition, per-item agenda wording and reminder tone. XROB continues to own factual data, command parsing, database operations and Telegram delivery. A user override is kept active when its version is equal to or newer than the bundled persona; an older override is ignored until replaced with a newer one.
 
 ## 0.4.22 — compact Overview and scheduled Mikasa messages
 
@@ -43,7 +45,7 @@ The standalone file controls Mikasa's personality, social copy, message template
 - Preferences and send-once markers are stored in the existing `telegram_state` table; no new database table, cloud service or external AI dependency is introduced. Telegram must be configured in the Home Assistant add-on options for scheduled messages to be delivered.
 - On mobile, the Settings save action stays accessible above the fixed bottom navigation, including narrow 320px screens.
 
-# XROB Assistant 0.4.27 · Home Assistant add-on
+# XROB Assistant 0.4.28 · Home Assistant add-on
 
 ## 0.4.21 release
 
@@ -263,7 +265,7 @@ Telegram only accepts your configured chat ID. The Telegram action engine remain
 1. Back up your Home Assistant add-on configuration and `/config/xrob_assistant.db` before upgrading.
 2. Copy this folder to your Home Assistant local add-ons directory, for example `/addons/xrob-assistant/`.
 3. Reload/check local add-ons in the Add-on Store.
-4. Install/update XROB Assistant to **0.4.27**, review the add-on options and start it.
+4. Install/update XROB Assistant to **0.4.28**, review the add-on options and start it.
 5. Open `http://HOME_ASSISTANT_IP:8090` or use the add-on Web UI button.
 
 The app keeps existing records and adds the meal source, ready-plate count, next routine date, cook-reminder and Telegram notification fields to the existing database on startup. Existing tasks, events, fitness, bills, routines, Telegram state, recipes and old meal-plan rows are preserved. The Meals page has no archive control. Back up before updating.
