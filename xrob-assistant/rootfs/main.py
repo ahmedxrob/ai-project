@@ -30,7 +30,7 @@ _MIKASA_REQUIRED_API = (
     'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_unconfirmed', 'meal_undo_unavailable', 'meal_moved', 'task_created',
     'fallback_reply', 'unsupported_message', 'processing_error',
     'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
-    'agenda_item_line', 'agenda_conversation_line', 'today_agenda_reply', 'morning_report', 'ensure_voice', 'command_reply',
+    'agenda_item_line', 'agenda_conversation_line', 'today_agenda_reply', 'tomorrow_agenda_reply', 'morning_report', 'ensure_voice', 'command_reply',
 )
 
 
@@ -474,7 +474,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.30', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.31', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -483,7 +483,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.30','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.31','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -3650,6 +3650,26 @@ def _is_today_agenda_request(low: str) -> bool:
     ))
 
 
+def _is_tomorrow_agenda_request(low: str) -> bool:
+    """Accept natural short requests for the next day's plan."""
+    aliases = {
+        'tomorrow', 'tomorrow plan', 'plan tomorrow', 'tomorrow agenda',
+        'agenda tomorrow', 'tomorrow schedule', 'schedule tomorrow',
+        "tomorrow's plan", 'tomorrows plan', "tomorrow's agenda", 'tomorrows agenda',
+        "what's tomorrow", 'whats tomorrow', 'what is tomorrow',
+        "what's on tomorrow", 'whats on tomorrow', 'what is on tomorrow',
+        'what do i have tomorrow', 'what is my plan tomorrow', 'my plan tomorrow',
+        'show tomorrow', 'show me tomorrow', 'show tomorrow plan', 'show me tomorrow plan',
+        'tomorrow please', 'please tomorrow',
+    }
+    if low in aliases:
+        return True
+    return bool(re.fullmatch(
+        r'(?:please )?(?:(?:show|tell) me )?(?:tomorrow(?:s)?(?: agenda| schedule| plan)?|my (?:agenda|schedule|plan) tomorrow)',
+        low,
+    ))
+
+
 async def _telegram_command_core(text: str) -> str:
     """Rules-based Telegram actions; the persona layer never changes these operations."""
     raw = text.strip()
@@ -3687,6 +3707,7 @@ async def _telegram_command_core(text: str) -> str:
         or low.startswith(('weight ', 'treadmill ', 'task ', 'paid ', 'done ', *meal_interrupt_prefixes))
         or (low in meal_menu_commands and not guided_yes_no_reply and not guided_confirmation_reply)
         or (_is_today_agenda_request(low) and not guided_yes_no_reply and not guided_confirmation_reply)
+        or (_is_tomorrow_agenda_request(low) and not guided_yes_no_reply and not guided_confirmation_reply)
         or (low in ('⚖️ add weight', '🏃 add treadmill', '📈 fitness week', 'fitness week', 'week') and not guided_yes_no_reply and not guided_confirmation_reply)
     )
     meal_checkin_inputs = ('✅ ate it', '✅ i ate it', 'ate it', 'i ate it', 'yes', 'y', '/yes', '/eaten', '⏭ not today', 'not today', 'no', 'n', '/no', '/skip')
@@ -3904,7 +3925,7 @@ async def _telegram_command_core(text: str) -> str:
             return reply
         except (TypeError, ValueError):
             return 'I could not read that item. Send a simple item name, for example rice or tomatoes. Send /cancel to stop.'
-    if state and low not in ('yes', 'y', 'no', 'n') and (low.startswith('/') or _is_today_agenda_request(low) or low in ('✅ tasks','tasks','💳 bills','bills','🔁 routines','routines','🏃 fitness','fitness','📈 fitness week','fitness week','week','⚖️ add weight','🏃 add treadmill','❔ help','help') or low in meal_menu_commands or low.startswith(('weight ','log weight ','treadmill ','run ','walk ','task ','paid ','done ', *meal_interrupt_prefixes))):
+    if state and low not in ('yes', 'y', 'no', 'n') and (low.startswith('/') or _is_today_agenda_request(low) or _is_tomorrow_agenda_request(low) or low in ('✅ tasks','tasks','💳 bills','bills','🔁 routines','routines','🏃 fitness','fitness','📈 fitness week','fitness week','week','⚖️ add weight','🏃 add treadmill','❔ help','help') or low in meal_menu_commands or low.startswith(('weight ','log weight ','treadmill ','run ','walk ','task ','paid ','done ', *meal_interrupt_prefixes))):
         _telegram_set_state(None)
         state = None
     if low in ('⚖️ add weight', 'add weight', '/weight', 'weight'):
@@ -4028,6 +4049,11 @@ async def _telegram_command_core(text: str) -> str:
         return mikasa_persona.start_message()
     if low in ('/help', 'help', '❔ help', '/capabilities', 'capabilities', 'what can you do'):
         return _telegram_capabilities_message()
+
+    if _is_tomorrow_agenda_request(low):
+        tomorrow = today + timedelta(days=1)
+        agenda = build_today_agenda(tomorrow)
+        return mikasa_persona.tomorrow_agenda_reply(agenda, tomorrow)
 
     if _is_today_agenda_request(low):
         agenda = build_today_agenda(today)
