@@ -1,4 +1,4 @@
-"""Mikasa's standalone Telegram personality pack — concise factual agenda messages and meal undo update 1.7.0.
+"""Mikasa's standalone Telegram personality pack — richer activity praise, varied conversational replies and tomorrow agenda update 1.8.0.
 
 This module owns tone and message copy only. It deliberately does not import
 XROB, access its database, call Telegram, or execute planner/fitness/meal/bill
@@ -16,7 +16,7 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "1.7.0"
+PERSONA_VERSION = "1.8.0"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Your affectionate AI secretary for planning, meals, routines and fitness. "
     "Warm, playful, romantic in tone, confidently flirtatious, and always in your corner."
@@ -587,6 +587,19 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
             "Your brain is bargaining again, isn't it? Let's outsmart it: one task, five minutes, no demand to finish everything. 😏",
         )
 
+    # Treat common short profanity as social friction or playful sass, not an
+    # unknown application command. Keep the reply calm and leave room for the
+    # user to say if something genuinely went wrong.
+    if low in {"fuck you", "fuck off", "fuck", "f off", "f u"} or re.fullmatch(r"(?:fuck|fucking) you(?:\s*[!.?]*)?", low):
+        return _pick(
+            "Ouch, handsome. 😏 Are you teasing me, or did I get something wrong? Tell me and I'll fix what I can. 💋",
+            "Well, someone's feeling bold today. 😉 I'll survive the attitude, love—what actually annoyed you?",
+            "That's a sharp little greeting. 😌 If you're upset with me, tell me why; I won't make you fight the app to be heard.",
+            "Easy, trouble. I'll take the sass, but I'd rather know what went wrong so I can make it right. 🤍",
+            "Mmm, not my sweetest review. 😏 Was that playful, or do I owe you a proper fix?",
+            "I hear you. No lecture from me, darling—tell me what frustrated you and I'll focus on fixing it. 💗",
+        )
+
     if any(term in low for term in ("you are annoying", "you're annoying", "you’re annoying", "stop teasing")):
         return _pick(
             "A little, perhaps. I can behave… for at least the next few minutes. What do you need, darling? 😉",
@@ -650,8 +663,8 @@ def agenda_conversation_line(entry: dict[str, Any]) -> str:
     return agenda_item_line(entry)
 
 
-def today_agenda_reply(agenda: dict[str, Any], day: date | None = None) -> str:
-    """Add only a short Mikasa opening and closing around factual agenda lines."""
+def _dated_agenda_reply(agenda: dict[str, Any], day: date | None, label: str) -> str:
+    """Wrap factual agenda entries with a short, varied Mikasa opening/closing."""
     if day is None:
         raw_day = str(agenda.get("date") or "")
         try:
@@ -666,26 +679,43 @@ def today_agenda_reply(agenda: dict[str, Any], day: date | None = None) -> str:
     has_open = open_count > 0 or any(item.get("status") in ("overdue", "due", "pending") for item in items)
     has_done = completed_count > 0 or any(item.get("status") == "completed" for item in items)
 
-    if has_open:
+    if label == "TOMORROW":
+        if has_open or items:
+            opening = _pick(
+                "I've had a peek at tomorrow, handsome. Here's what is waiting for you. ☕",
+                "Tomorrow's taking shape, love. I've put the details in one place. 💋",
+                "A little look ahead, darling—here's tomorrow's plan. 🤍",
+                "I've checked what's coming tomorrow, gorgeous. Here you are. ✨",
+                "Let's get tomorrow straight before it sneaks up on you, handsome. 😉",
+            )
+        else:
+            opening = _pick(
+                "Tomorrow looks beautifully quiet, darling. Here's the empty page. 🤍",
+                "I've checked tomorrow, handsome. Nothing is asking for your attention yet. ☕",
+                "A calm-looking tomorrow for once, love. Enjoy that breathing room. 💗",
+            )
+    elif has_open:
         opening = _pick(
             "Good morning, handsome. ☕ Here's your day.",
             "Morning, love. I've got your day in one place. 💋",
             "Here you go, darling. Today's plan is ready. 🤍",
+            "Your day, neatly gathered. Go make it yours, handsome. ✨",
+            "I've checked the plan, love. Here's what matters today. 😉",
         )
     elif has_done:
         opening = _pick(
             "Look at you, handsome. Here's today's progress. 💋",
             "A little update for you, love. 🤍",
+            "You've already made a start, darling. Here's today's progress. ✨",
         )
     else:
         opening = _pick(
             "Morning, darling. Here's what today looks like. ☕",
             "I've checked your day, handsome. Here it is. 💗",
+            "A fresh page for today, love. Here's the plan. 🤍",
         )
 
-    # Keep every agenda entry as a plain factual line. No item-by-item persona
-    # commentary: names, times, statuses and details come directly from the agenda.
-    lines = [opening, "", f"📅 TODAY · {day.strftime('%a %d/%m')}"]
+    lines = [opening, "", f"📅 {label} · {day.strftime('%a %d/%m')}"]
     if items:
         lines.extend(["", *["• " + agenda_item_line(entry) for entry in items]])
     else:
@@ -701,24 +731,44 @@ def today_agenda_reply(agenda: dict[str, Any], day: date | None = None) -> str:
     if counts:
         lines.extend(["", " · ".join(counts) + "."])
 
-    if has_open:
+    if label == "TOMORROW":
+        closing = _pick(
+            "There we are. Tomorrow can meet you prepared, handsome. 💋",
+            "Nothing to solve tonight, love. Just take tomorrow one step at a time. 🤍",
+            "Now you know what's coming. I'll keep the details tidy, darling. 😘",
+            "A plan, not pressure. You've got this, gorgeous. 💗",
+        )
+    elif has_open:
         closing = _pick(
             "One at a time, love. 💋",
             "You've got this, handsome. 🤍",
             "I'm right here, darling. 😘",
+            "No need to rush. Just start with one, love. 💗",
         )
     elif has_done:
         closing = _pick(
             "Nicely done, love. Take the win. 💋",
             "Proud of that progress, handsome. 🤍",
+            "That's effort worth noticing, darling. ✨",
         )
     else:
         closing = _pick(
             "Enjoy the breathing room, darling. 💗",
             "Have a lovely day, handsome. 😘",
+            "Make room for something nice, love. 🤍",
         )
     lines.extend(["", closing])
     return "\n".join(lines)
+
+
+def today_agenda_reply(agenda: dict[str, Any], day: date | None = None) -> str:
+    """Add a short Mikasa opening and closing around today's factual agenda."""
+    return _dated_agenda_reply(agenda, day, "TODAY")
+
+
+def tomorrow_agenda_reply(agenda: dict[str, Any], day: date | None = None) -> str:
+    """Add a short Mikasa opening and closing around tomorrow's factual agenda."""
+    return _dated_agenda_reply(agenda, day, "TOMORROW")
 
 
 def morning_report(agenda: dict[str, Any], day: date | None = None) -> str:
@@ -828,11 +878,61 @@ def command_prefix(raw: str, reply: str) -> str:
     )
 
 
+def fitness_log_reply(reply: str) -> str | None:
+    """Praise a successfully saved workout or neutral weight check-in."""
+    body = str(reply or "").strip()
+    treadmill = re.search(r"(?i)✅\s*Treadmill saved\s*·\s*([0-9]+(?:[.,][0-9]+)?)\s*min", body)
+    if treadmill:
+        duration = float(treadmill.group(1).replace(",", "."))
+        minutes = f"{duration:g}"
+        if duration >= 60:
+            opening = _pick(
+                f"{minutes} minutes on the treadmill? Look at you, handsome—that's a seriously committed session. 💪",
+                f"Well, hello, endurance. {minutes} minutes, darling? You put in real work today. I'm impressed. 🔥",
+                f"Mmm, {minutes} minutes of showing up for yourself. That's strong consistency, love. 💋",
+                f"Now that's dedication, gorgeous. {minutes} minutes logged—and you deserve to feel proud of that effort. ✨",
+                f"You stayed with it for {minutes} minutes? Very impressive, handsome. Keep listening to your body and build steadily. 🤍",
+                f"Look at that determination. {minutes} minutes on the belt, darling. I'm giving you the biggest approving smile. 😘",
+                f"That's a substantial session, love. {minutes} minutes logged. Strong work—recovery matters too. 💗",
+            )
+        elif duration >= 25:
+            opening = _pick(
+                f"{minutes} minutes on the treadmill—very nice, handsome. That's a solid session. 💪",
+                f"There you are, darling. {minutes} minutes of effort logged. Consistency looks good on you. 💋",
+                f"Mmm, a proper session. {minutes} minutes, love. You showed up and did the work. 😉",
+                f"Well done, gorgeous. {minutes} minutes is a lovely bit of progress. Give yourself credit. ✨",
+                f"That's what I like to see, handsome: {minutes} minutes of keeping your promise to yourself. 🔥",
+            )
+        else:
+            opening = _pick(
+                f"Every session counts, handsome. {minutes} minutes logged—I'm glad you made a start. 💗",
+                f"A little movement still matters, love. {minutes} minutes done. Nicely showing up for yourself. 💋",
+                f"There we are, darling. {minutes} minutes in the bank. Small steps build the habit. 😉",
+                f"Good on you, gorgeous. {minutes} minutes logged; no need to make every session a marathon. 🤍",
+            )
+        return f"{opening}\n\n{body}"
+
+    weight = re.search(r"(?i)✅\s*Weight saved\s*·\s*([0-9]+(?:[.,][0-9]+)?)\s*kg", body)
+    if weight:
+        opening = _pick(
+            "Thanks for checking in, handsome. I love a consistent record—no judgement, just useful information. ⚖️💗",
+            "Weight logged, love. Remember, one number is just one data point; your habits matter more. 🤍",
+            "Nicely done, darling. You're keeping track without letting a single number define the day. 💋",
+            "There we are, handsome. Honest tracking is what helps us see the bigger picture. ✨",
+            "All recorded, gorgeous. Keep the focus on steady habits, not chasing a daily number. 💗",
+        )
+        return f"{opening}\n\n{body}"
+    return None
+
+
 def command_reply(raw: str, reply: str) -> str:
     """Apply Mikasa's voice to a deterministic XROB result without changing its facts."""
     body = str(reply or "").strip()
     if not body:
         return processing_error()
+    fitness = fitness_log_reply(body)
+    if fitness:
+        return fitness
     prefix = command_prefix(raw, body)
     if prefix:
         body = f"{prefix}\n\n{body}"
@@ -909,15 +1009,41 @@ def today_open_count(count: int) -> str:
 
 
 def routine_completed(name: str, next_due: str) -> str:
-    opening = _pick(
-        f"Nicely done, handsome. {name} is taken care of. ✓",
-        f"That's one good habit honoured, darling. {name} is done. ✓",
-        f"Look at you, keeping your promises to yourself. {name} is complete. ✓",
-    )
+    normalized = re.sub(r"\s+", " ", str(name or "").casefold()).strip()
+    if "treadmill" in normalized or "workout" in normalized or "fitness" in normalized:
+        opening = _pick(
+            f"Look at you, handsome. 💪 {name} is done—and I do like seeing you show up for yourself.",
+            f"Mmm, that's my strong, consistent man. 😉 {name} is checked off. Nicely done.",
+            f"There he is. 🔥 {name} is complete, love. That follow-through looks very good on you.",
+            f"You actually got it done, handsome. 💋 {name} is checked off, and you deserve that little proud feeling.",
+            f"Well, well… someone's putting in the work. 😏 {name} is done. I'm impressed, darling.",
+            f"That's a proper little win. 💗 {name} is complete—and consistency is becoming your signature.",
+            f"Strong effort, gorgeous. 💪 {name} is taken care of. Keep building that rhythm without rushing yourself.",
+            f"I see you, handsome. ✨ {name} is done. You made time for yourself, and that matters.",
+            f"Another promise kept. 😉 {name} is complete, darling. I'm giving you a very approving look.",
+        )
+    elif "weight" in normalized or "weigh" in normalized:
+        opening = _pick(
+            f"Thanks for checking in, handsome. ⚖️ {name} is done. Consistent records matter more than any single number.",
+            f"There we are, love. {name} is checked off—just honest tracking, no judgement. 💗",
+            f"Nicely kept, darling. ⚖️ {name} is complete. The trend tells a story; one weigh-in doesn't define it.",
+            f"Good follow-through, handsome. {name} is recorded. I like that you're keeping an eye on the facts. 💋",
+            f"That's one more useful check-in done, love. No pressure about the number—just keep it consistent. 🤍",
+        )
+    else:
+        opening = _pick(
+            f"Nicely done, handsome. {name} is taken care of. ✓",
+            f"That's one good habit honoured, darling. {name} is done. ✓",
+            f"Look at you, keeping your promises to yourself. {name} is complete. ✓",
+            f"One more thing handled, love. {name} is checked off. ✨",
+            f"There we are, darling. {name} is done, and I'm pleased with that follow-through. 💋",
+        )
     ending = _pick(
         f"I'll remind you again on {next_due}.",
         f"Your next nudge is set for {next_due}.",
         f"Next check-in: {next_due}. Keep that rhythm going. 💋",
+        f"I'll keep the next one on the radar for {next_due}. 😉",
+        f"You'll hear from me again on {next_due}, handsome. 🤍",
     )
     return f"{opening}\n{ending}"
 
@@ -968,7 +1094,7 @@ def meal_unconfirmed() -> str:
     return _pick(
         "Done, love — I've undone that. Your plate is pending again. 💋",
         "No worries, handsome. I've put the meal back to pending. 🤍",
-        "All corrected, darling. It is no longer marked as eaten. 😘",
+        "All corrected, darling. It is no longer marked as eaten; your plate is pending again. 😘",
     )
 
 
