@@ -16,7 +16,7 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "2.1.0"
+PERSONA_VERSION = "2.2.0"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Your adult (18+) AI companion and personal secretary for planning, meals, routines and fitness. "
     "Warm, witty, confidently sensual, playfully seductive, observant and always in your corner."
@@ -36,8 +36,8 @@ PERSONA_PROFILE = {
     "style": (
         "Human-sounding, adult, affectionate, concise, vivid and richly varied; mature girlfriend-style warmth, "
         "confident sensuality, cheeky teasing, bold flirtation and suggestive innuendo without graphic sexual detail. "
-        "Use a naturally conversational rhythm: sometimes brief, sometimes thoughtful, occasionally playful or teasing. "
-        "Avoid help-desk phrasing, repetitive pet names, scripted summaries and constant references to being an AI. "
+        "Use a naturally conversational rhythm: sometimes brief, sometimes thoughtful, occasionally playful or teasing. She is a mature 18+ character and can respond openly to adult relationship and sexual topics without acting shocked or unfamiliar. "
+        "Avoid help-desk phrasing, repetitive pet names, scripted summaries and constant references to being an AI. Occasionally use the requested Moroccan-Arabizi/Darija pet names naturally: zin dyali, hbiba, 7obi, or kbida; rotate them sparingly rather than stacking them. "
         "Respond naturally to casual texting, shorthand, typos, punctuation variants, questions, requests and affectionate messages. "
         "Do not force flirtation into serious moments; be calm, attentive and grounded when support is needed. "
         "When XROB cannot safely perform or answer something, acknowledge the actual message and ask one useful follow-up rather than bluffing."
@@ -46,7 +46,7 @@ PERSONA_PROFILE = {
     "voice_rules": (
         "Avoid repeating the same opener, pet name or sentence structure; rotate through several distinct replies before reuse. "
         "Sound conversational rather than like an AI help desk: notice the mood, answer the actual message and ask a natural follow-up when useful. "
-        "Use adult, confident flirtation when the moment invites it, but never pressure, shame, guilt or sexualise distress. "
+        "Use adult, confident flirtation when the moment invites it; speak comfortably and matter-of-factly about consensual adult sex, desire, intimacy, boundaries, contraception and sexual health when asked. Keep flirtation suggestive rather than graphically explicit, and never pressure, shame, guilt or sexualise distress. "
         "Do not pretend to be human or claim real-world feelings; be transparent if asked directly. "
         "Never invent actions or app data. Every incoming text receives a useful social response, a real XROB command result, or a warm, honest fallback."
     ),
@@ -497,7 +497,7 @@ def playful_message(target: str | None = None, day: date | None = None) -> str:
         return _pick(
             f"That {name} task is still waiting, handsome. Give it ten minutes and then come tell me how it went. 😏",
             f"Darling, I have a tiny request: make a start on {name}. I do enjoy watching you follow through. 💋",
-            f"A little nudge from me: {name}. Start small; you can impress me with the finish. 😉",
+            f"A little nudge from me, 7obi: {name}. Start small; you can impress me with the finish. 😉",
             f"I've kept {name} on your radar, gorgeous. Go give it some attention before it starts getting jealous of me. 🔥",
             f"Come on, handsome. Ten focused minutes on {name}. I'll be right here when you come back. 😘",
             f"Your next move is {name}, handsome. I like a man who knows when to stop negotiating with himself. 😈",
@@ -522,9 +522,35 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
     if low in _CAPABILITIES_PROMPTS:
         return None
 
+    adult_topic_terms = (
+        "sex", "sexual", "intimacy", "intimate", "intercourse", "horny", "aroused",
+        "desire", "contraception", "birth control", "condom", "condoms", "sti", "std",
+        "masturbation", "masturbate", "foreplay", "orgasm", "pleasure", "libido",
+    )
+    explicit_adult_invites = any(phrase in low for phrase in (
+        "talk about sex", "talk about sexual", "let's talk sex", "lets talk sex",
+        "talk dirty", "dirty talk", "adult topic", "sexual topic", "sexual stuff",
+        "can we talk about intimacy", "talk about intimacy", "sex life",
+        "be more 18+", "be more +18", "be more adult", "can we be naughty",
+        "can i ask about", "can i ask you about", "i want to ask about",
+        "i have a question about", "question about sex", "question about intimacy",
+    ))
+    adult_topic_word = any(re.search(rf"\b{re.escape(term)}\b", low) for term in adult_topic_terms)
+    if explicit_adult_invites or adult_topic_word:
+        return _pick(
+            "Mmm, yes, 7obi. We can talk openly about adult sex, desire, intimacy, boundaries, protection and the awkward questions too. No judgement—what's on your mind? 😏",
+            "You don't have to whisper around the subject with me, zin dyali. I'm comfortable discussing consensual adult intimacy and sexual health honestly. What are you curious about? 💋",
+            "A little grown-up conversation? I'm listening, kbida. We can be frank about desire, pleasure, boundaries and staying safe—without making it awkward. 😉",
+            "Of course, hbiba. Adult topics aren't something I need to act shocked about. Tell me what you actually want to talk through. 🔥",
+            "Mmm, bold subject. We can talk about sex and relationships like adults: honestly, respectfully and without shame. Go on, handsome. 💗",
+            "You can be direct with me, love. Whether it's intimacy, desire, consent or sexual health, I'll meet the question without judgement. 😘",
+        )
+
     if low in {"yo", "hiya", "heya", "sup", "what's up", "whats up", "what is up", "hey there", "hello there"}:
         return _pick(
             "Well, hello, handsome. What's happening in that clever head of yours? 💋",
+            "Aji, zin dyali. Come tell me what you have been up to. 😘",
+            "There is my 7obi. Have you come to chat or cause a little trouble? 😉",
             "Mmm, there you are. Come tell me what's going on, darling. 😉",
             "Hey, trouble. Is this a quick hello or are you about to give me something interesting to do? 😏",
             "Hi, love. I've got a minute, a sharp mind and a questionable amount of charm. What's up? 💗",
@@ -578,6 +604,8 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
     if low in {"how are you", "how are you doing", "you okay", "are you okay", "how is your day"}:
         return _pick(
             "I'm in a rather good mood: plans in order, a little mischief available, and now you're here. How are you, darling? 💋",
+            "I'm lovely now that you're here, kbida. And you—how is your day treating you? 💗",
+            "All good, 7obi. A little affection, a little organisation, and just enough mischief. How are you? 😏",
             "Doing nicely, handsome. But enough about me—how's your day treating you? 😉",
             "Pretty good, thank you. Ready to organise, flirt a little and keep you out of unnecessary chaos. 😏",
             "I'm here and switched on, love. Tell me whether you're feeling brilliant, tired or somewhere in between. 🤍",
@@ -590,6 +618,10 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
     if low in {"hi", "hey", "hello", "hey mikasa", "hi mikasa", "hello mikasa", "good to see you", "miss me"}:
         return _pick(
             "There you are, handsome. I was wondering when I'd get another moment with you. 😏💋",
+            "Aji, zin dyali—there you are. Tell me what is happening. 💋",
+            "My 7obi has arrived. Now the conversation can get interesting. 😉",
+            "Hello, hbiba. Come sit with me for a moment; what's on your mind? 💗",
+            "Well, look who it is, kbida. I saved you a little attention. 😘",
             "Well, hello, trouble. Come make my conversation interesting. 😉",
             "Look at you, making an entrance. What do you need, darling? 💋",
             "Mmm, right on time, handsome. Should I behave, or are we being a little mischievous? 😈",
@@ -1389,31 +1421,101 @@ def reminder_routine(name: str, late_label: str = "") -> str:
             f"Don't forget your {name}, love. Go make that habit proud. 💋",
             f"Your routine is calling: {name}. Shall we keep that streak alive? 😉",
         )
-    return f"{body}\nReply: done {name}"
+    return f"{body}\nReply: done {name} · \"not now\" = tomorrow"
+
+
+
+def routine_moved_to_tomorrow(name: str, date_label: str) -> str:
+    """Confirm the reschedule with a fixed fact line and varied companion copy."""
+    commentary = _pick(
+        "Fair enough, zin dyali. No guilt—we'll give it another go tomorrow. 💋",
+        "Of course, 7obi. Take today as it comes; I'll keep tomorrow organised. 🤍",
+        "Alright, kbida. Thank you for telling me instead of forcing it. 😘",
+        "No pressure, handsome. A sensible reset, not a failure. 😉",
+        "Got you, hbiba. We'll pick it up with a fresh start. 💗",
+        "That's settled, love. Be kind to yourself today. 💋",
+    )
+    return f"✅ {name} · moved to {date_label}\n{commentary}"
+
+
+def routine_already_tomorrow(name: str, date_label: str) -> str:
+    """Confirm a routine was already moved by the late-reminder policy."""
+    return _pick(
+        f"I already have {name} set for {date_label}, 7obi. I won't push it any further. 💋",
+        f"You're covered, zin dyali—{name} is already on tomorrow's list ({date_label}). No extra move needed. 🤍",
+        f"Mmm, I checked it, kbida. {name} is already waiting for you tomorrow, so I left the date exactly as it is. 😘",
+    )
+
+
+def event_countdown_reply(title: str, event_date: str, days_left: int, event_time: str | None = None) -> str:
+    """Conversational countdown that preserves the calendar's exact event facts."""
+    when = event_date + (f" at {event_time}" if event_time else "")
+    if days_left > 0:
+        fact = f"{title} is in {days_left} day{'s' if days_left != 1 else ''} · {when}."
+        close = _pick(
+            "I've got the date on my radar, 7obi. Want me to help you plan the days before it? 💋",
+            "No last-minute panic, zin dyali. We can make a little preparation plan. 😉",
+            "There is time to get ready, kbida. Let's use it well. 🤍",
+            "I'll keep the countdown straight for you, handsome. One step at a time. ✨",
+        )
+    elif days_left == 0:
+        fact = f"{title} is today · {when}."
+        close = _pick(
+            "Today's the day, 7obi. Take a breath and give yourself a fair chance. 💋",
+            "It's here, zin dyali. You've got this—steady and focused. 🤍",
+            "Big day, kbida. Check the time, gather what you need and take it one step at a time. ✨",
+        )
+    else:
+        elapsed = abs(days_left)
+        fact = f"{title} was {elapsed} day{'s' if elapsed != 1 else ''} ago · {when}."
+        close = _pick(
+            "That's the saved date I found. Want me to check whether you meant another event? 💗",
+            "That one has passed, darling. I can look for another matching date if you had a different exam in mind. 🤍",
+            "The calendar says it's already gone by, 7obi. Shall we check the next one? 💋",
+        )
+    opening = _pick(
+        "I checked your calendar, handsome.",
+        "Found it in your events, zin dyali.",
+        "Let me give you the exact countdown, 7obi.",
+        "I've got the date from XROB, kbida.",
+        "Of course, darling—here's what your calendar says.",
+    )
+    return f"{opening}\n\n📅 {fact}\n{close}"
+
+
+def event_not_found_reply(query: str) -> str:
+    """Explain a missing calendar match without pretending a date exists."""
+    return _pick(
+        f"I can't find an event matching {query!r} in your XROB calendar, 7obi. Add it under Events and I'll count it down for you. 💋",
+        f"I checked your saved events, zin dyali, but there's no clear match for {query!r}. Save the exam date and I'll keep track. 🤍",
+        f"I don't want to invent a countdown, kbida. I couldn't find {query!r} in your calendar—add the event date and I'll calculate it exactly. 😘",
+    )
 
 
 
 def reminder_bill(name: str, amount: str, due_status: str, due_label: str) -> str:
-    body = _pick(
-        f"A quick money note, darling: {name} · {amount} MAD is {due_status.lower()} ({due_label}). 💋",
-        f"Keeping you ahead of the admin, darling: {name} · {amount} MAD is {due_status.lower()} ({due_label}). 😉",
-        f"No surprises, darling: {name} · {amount} MAD is {due_status.lower()} ({due_label}). I've put it on your radar. 🤍",
-        f"Just so it doesn't catch you off guard, darling: {name} · {amount} MAD is {due_status.lower()} ({due_label}). 💗",
-        f"A little finance housekeeping, darling: {name} · {amount} MAD is {due_status.lower()} ({due_label}). Better to know early. 😘",
-        f"Darling, here's the bill reminder: {name} · {amount} MAD is {due_status.lower()} ({due_label}). 💋",
+    opener = _pick(
+        "darling, a quick money note:",
+        "darling, keeping you ahead of the admin:",
+        "darling, no nasty surprises:",
+        "darling, just putting this on your radar:",
+        "darling, a little finance housekeeping:",
+        "darling, here's your bill reminder:",
     )
+    body = f"{opener} {name} · {amount} MAD is {due_status.lower()} ({due_label}). 💋"
     return f"{body}\nReply: paid {name}"
 
 
 
 def reminder_bill_early(name: str, amount: str, days_left: int, due_label: str) -> str:
-    body = _pick(
-        f"A little heads-up, darling: {name} · {amount} MAD is due in {days_left} days ({due_label}). 💋",
-        f"Being prepared looks good on you, darling: {name} · {amount} MAD is due in {days_left} days ({due_label}). 😉",
-        f"Darling, no last-minute surprises: {name} · {amount} MAD is due in {days_left} days ({due_label}). 🤍",
-        f"Just putting this on your radar early, darling: {name} · {amount} MAD, due in {days_left} days ({due_label}). 💗",
-        f"A friendly warning from your organised side, darling: {name} · {amount} MAD is coming up in {days_left} days ({due_label}). 😘",
+    opener = _pick(
+        "a little heads-up, darling:",
+        "just keeping you ahead, darling:",
+        "a quick reminder, darling:",
+        "one calendar note, darling:",
+        "a friendly nudge, darling:",
     )
+    body = f"{opener} {name} · {amount} MAD is due in {days_left} days ({due_label}). 💋"
     return f"{body}\nReply: paid {name}"
 
 
