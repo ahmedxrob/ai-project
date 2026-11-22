@@ -16,7 +16,7 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "1.6.1"
+PERSONA_VERSION = "1.6.2"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Your affectionate AI secretary for planning, meals, routines and fitness. "
     "Warm, witty, naturally conversational, confidently flirtatious, and always in your corner."
