@@ -1,4 +1,4 @@
-## 0.4.27 — Mikasa owns every Telegram reply
+## 0.4.28 — Mikasa speaks naturally in Today and ignores stale persona overrides
 
 - Telegram text and captions are passed to Mikasa's conversational/command router. Common media-only messages receive a clear persona response rather than being silently skipped; audio and image/video analysis are not claimed or fabricated.
 - Command matching normalises casing, whitespace and trailing punctuation. The Today agenda recognises common natural-language variants and can interrupt an active guided flow safely.
@@ -40,7 +40,7 @@
 
 # How XROB Assistant thinks
 
-**Version:** 0.4.27
+**Version:** 0.4.28
 
 XROB is a rules-based assistant. It does not invent a plan: it follows the choices, intervals, stock and availability saved in its database.
 
@@ -73,7 +73,8 @@ XROB is a rules-based assistant. It does not invent a plan: it follows the choic
 
 11. **One daily agenda is the source of truth.** `build_today_agenda(day)` returns open overdue/due tasks and routines, bills from their 3-day alert window onward, documents from their configured expiry reminder window onward, today's events and workout plan, today's meal and cook alerts, and completed routine/fitness logs. It returns `overdue`, `due`, `pending`, `scheduled`, `upcoming`, and `completed` states with shared counts. The dashboard, current-day Planner, Telegram `/today`, and Home Assistant sensors all consume this result; clients do not independently decide what belongs in today's list. Invalid legacy date values are skipped per record, so one malformed row cannot break the full agenda response.
 12. **Changes propagate between clients.** A successful web-app write broadcasts a change to other open tabs, which refresh their shared data. The app also refreshes on tab focus/visibility and periodically, so actions made through Telegram or Home Assistant are reflected without requiring a manual reload. The server timezone remains authoritative for the date.
-13. **Telegram is concise and action-first.** Reminders use one brief personal-secretary voice and include the exact reply command when an action is available. The Today command uses short human-readable lines grouped into Your to-do, On the radar, and Done, and is capped below Telegram's message-length limit. A logged gym session satisfies the matching planned workout so it is not shown twice.
+13. **Telegram Today is composed by Mikasa.** The agenda data still comes from `build_today_agenda(day)`, but the persona file turns each task, routine, meal, cook reminder, event, bill, document and activity record into a complete conversational sentence. The reply preserves saved titles, times, values and statuses; it does not emit raw database headings such as `YOUR TO-DO`. Morning briefings use the same sentence renderer. A logged gym session satisfies the matching planned workout so it is not shown twice.
+14. **The newest valid persona wins.** On startup, XROB compares the bundled voice and `/config/mikasa_persona.py`. A same-version or newer user override remains active, but an older override cannot silently mask a newer release. The persona file controls wording only; command execution and saved facts remain in `main.py`.
 
 ## Telegram reliability
 
@@ -81,7 +82,8 @@ Telegram's main menu contains **Today**, **Meals**, **I ate it**, **Not today**,
 
 ## Where to check
 
-- `rootfs/main.py` — scheduling rules, validation, stock and Telegram actions.
+- `rootfs/main.py` — scheduling rules, validation, stock and Telegram actions; selects the newest valid bundled/config persona.
+- `rootfs/mikasa_persona.py` — all persona wording, including natural Today and morning agenda composition.
 - `rootfs/www/app.js` — displays the data and sends user actions; it does not decide the schedule.
 - `/config/xrob_assistant.db` — saved meals, daily plates, skips, task completion dates and Telegram delivery state.
 - `tests/test_meal_scheduling.py` — meal repeat, stock, weekday, manual-choice and Telegram regression tests.
