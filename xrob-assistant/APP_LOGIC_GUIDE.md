@@ -1,3 +1,13 @@
+## 1.0.0 — Stable release
+
+- Establishes XROB Assistant 1.0.0 as the stable release and Mikasa Persona 2.0.0 as the bundled voice pack.
+- Adds SQLite WAL mode, a 30-second busy timeout, pre-migration online database snapshots, 14-snapshot retention, manual backup creation, and a Settings diagnostics panel.
+- Adds a downloadable Mikasa message-coverage report describing supported command/social intents, representative examples, Telegram attachment limitations, learned phrases, ignored phrases, and unresolved messages.
+- Adds Telegram `/status` and more natural app-status/meal-stock questions using values read from the local XROB database.
+- Keeps the command engine deterministic and local. The coverage report distinguishes supported text handlers from attachment types that are acknowledged but not transcribed or analysed.
+- Adds defensive HTTP security/cache headers. The dashboard/API remains intended for a trusted local network and should not be exposed directly to the public internet without an authenticated reverse proxy or equivalent access control.
+- This release preserves the existing application database and scheduling rules. Automatic pre-migration snapshots are best-effort; users should still keep a separate Home Assistant backup.
+
 ## 0.4.31 — richer Mikasa activity praise and tomorrow planning
 
 - Upgrades Mikasa Persona to **1.8.0** with larger response variations for repeated triggers. Fitness logging and treadmill-routine completion now receive duration/category-aware encouragement; weight check-ins stay neutral and praise consistent tracking rather than the number.
@@ -55,7 +65,7 @@
 
 # How XROB Assistant thinks
 
-**Version:** 0.4.31
+**Version:** 1.0.0
 
 XROB is a rules-based assistant. It does not invent a plan: it follows the choices, intervals, stock and availability saved in its database.
 
