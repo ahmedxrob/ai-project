@@ -1,4 +1,4 @@
-"""Mikasa's standalone Telegram personality pack — responsive update 1.3.0.
+"""Mikasa's standalone Telegram personality pack — conversational output update 1.4.0.
 
 This module owns tone and message copy only. It deliberately does not import
 XROB, access its database, call Telegram, or execute planner/fitness/meal/bill
@@ -16,7 +16,7 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "1.3.0"
+PERSONA_VERSION = "1.4.0"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Your affectionate AI secretary for planning, meals, routines and fitness. "
     "Warm, playful, romantic in tone, confidently flirtatious, and always in your corner."
@@ -203,7 +203,7 @@ def fallback_reply(text: str) -> str:
     return _pick(
         "Mmm, I caught your message, darling, but I don't want to guess what you meant. Give me one more clue and I'll give you a proper answer. 💋",
         "I'm listening, handsome. That one needs a little more context from you—what would you like me to do with it? 😉",
-        "You've got my attention, trouble. I haven't quite found the meaning yet. Say a little more and I'll meet you there. 😘",
+        "You've got my attention, trouble. I haven't quite found the meaning yet. Give me a little more context and I'll meet you there. 😘",
         "I see your message, darling. Help me understand the point you're making, and I'll take it from there. 🤍",
     )
 
@@ -605,21 +605,195 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
     return None
 
 
+def agenda_item_line(entry: dict[str, Any]) -> str:
+    """Render one factual XROB agenda item in Mikasa's compact Telegram voice."""
+    kind = str(entry.get("type") or "")
+    status = str(entry.get("status") or "")
+    title = str(entry.get("title") or "Untitled")
+    detail = str(entry.get("detail") or "")
+    when = str(entry.get("time") or "")
+    prefix = f"{when} · " if when else ""
+
+    if kind == "task":
+        match = re.search(r"(Overdue \d+d|Due today)", detail, re.IGNORECASE)
+        timing = match.group(1) if match else ("Overdue" if status == "overdue" else "Due today")
+        priority = " · High priority" if "high priority" in detail.casefold() else (" · Urgent" if "urgent priority" in detail.casefold() else "")
+        return f"{prefix}{title} · {timing}{priority}"
+    if kind == "routine":
+        match = re.search(r"(Overdue \d+d|Due today)", detail, re.IGNORECASE)
+        timing = match.group(1) if match else ("Overdue" if status == "overdue" else "Due today")
+        return f"{prefix}{title} · {timing}"
+    if kind in ("bill", "document"):
+        return f"{prefix}{title} · {detail}"
+    if kind == "event":
+        return f"{prefix}{title}"
+    if kind == "meal":
+        return f"{prefix}🍽️ Meal · {title}" + (" · eaten" if status == "completed" else " · awaiting check-in")
+    if kind == "cook":
+        return f"{prefix}Prepare · {title.removeprefix('Prepare ')} · {detail.replace('Home meal stock · ', '')}"
+    if kind == "workout-plan":
+        return f"{prefix}Workout · {title}"
+    if kind == "task-done":
+        return f"✅ {title}"
+    if kind == "routine-done":
+        return f"✅ Routine · {title}"
+    if kind == "workout":
+        duration = re.search(r"\d+ min", detail)
+        return f"✅ Gym · {title}" + (f" · {duration.group(0)}" if duration else "")
+    if kind == "treadmill":
+        return f"🏃 {title}"
+    if kind == "weight":
+        return f"⚖️ {title}"
+    return f"{prefix}{title}" + (f" · {detail}" if detail else "")
+
+
+def today_agenda_reply(agenda: dict[str, Any], day: date | None = None) -> str:
+    """Build the complete, personal Today reply; XROB supplies only factual agenda data."""
+    if day is None:
+        raw_day = str(agenda.get("date") or "")
+        try:
+            day = date.fromisoformat(raw_day)
+        except ValueError:
+            day = date.today()
+    items = list(agenda.get("items") or [])
+    open_items = [item for item in items if item.get("status") in ("overdue", "due", "pending")]
+    upcoming_items = [item for item in items if item.get("status") in ("scheduled", "upcoming")]
+    completed_items = [item for item in items if item.get("status") == "completed"]
+    open_count = int(agenda.get("open_count", len(open_items)) or 0)
+    completed_count = int(agenda.get("completed_count", len(completed_items)) or 0)
+
+    if completed_count and not open_count:
+        opening = _pick(
+            "Mmm, look at you, handsome — you've already made some lovely progress. Here's your little day recap. 💋",
+            "Well, someone's been getting things done. I've gathered today's wins for you, darling. 😘",
+            "A quick look at your day, gorgeous — and I do like what I'm seeing. ✨",
+        )
+    elif completed_count:
+        opening = _pick(
+            "You've already made a start, handsome. Here's what you've handled and what still needs a little attention. 💋",
+            "Let's take stock, darling: a few wins are in, and I've kept the remaining bits together for you. 😉",
+            "I checked your day for you, gorgeous. Some things are done; we'll take the rest one at a time. 🤍",
+        )
+    elif open_count:
+        opening = _pick(
+            "I've had a look at your day, darling. Here's what needs your attention, without the fuss. 💋",
+            "Come here, handsome — I've lined up today's details so you don't have to keep them all in your head. 😉",
+            "Your day, neatly gathered. Let's see what deserves your attention first, gorgeous. ✨",
+        )
+    else:
+        opening = _pick(
+            "A little check-in, darling: your day looks beautifully quiet so far. 💗",
+            "I've checked in on your day, handsome. Nothing is asking for your attention right now. ✨",
+        )
+
+    lines = [opening, "", f"📅 TODAY · {day.strftime('%a %d/%m')}"]
+    sections = (
+        ("STILL ON YOUR LIST", open_items),
+        ("ON THE RADAR", upcoming_items),
+        ("ALREADY HANDLED", completed_items),
+    )
+    for heading, entries in sections:
+        if not entries:
+            continue
+        lines.append(f"\n{heading}")
+        for entry in entries:
+            lines.append("• " + agenda_item_line(entry))
+
+    if not items:
+        lines.extend(["", today_empty()])
+    elif open_count:
+        lines.extend(["", today_open_count(open_count).strip()])
+    elif completed_count:
+        lines.extend(["", _pick(
+            "That's a satisfying little list of wins. I'm proud of your follow-through, handsome. 💋",
+            "Look at that progress, darling. Take the win — you've earned it. 😘",
+            "Nicely done. Keep that steady rhythm; it suits you rather well. 😉",
+        )])
+    elif upcoming_items:
+        lines.extend(["", _pick(
+            "Nothing urgent to chase right now. I'll keep the upcoming bits in view, darling. 💋",
+            "You're up to date for the moment, handsome. I'll keep an eye on what's next. ✨",
+        )])
+    return "\n".join(lines)
+
+
+def morning_report(agenda: dict[str, Any], day: date | None = None) -> str:
+    """Create the scheduled morning briefing through the same persona-owned agenda renderer."""
+    day = day or date.today()
+    items = list(agenda.get("items") or [])
+    lines = [morning_opening()]
+    if items:
+        lines.append("")
+        for entry in items[:8]:
+            lines.append("• " + agenda_item_line(entry))
+        if len(items) > 8:
+            lines.append(f"• …and {len(items) - 8} more in /today")
+    else:
+        lines.append("Your schedule is clear today. Enjoy the breathing room, darling.")
+    counts = []
+    if agenda.get("open_count"):
+        counts.append(f"{int(agenda['open_count'])} to handle")
+    if agenda.get("scheduled_count"):
+        counts.append(f"{int(agenda['scheduled_count'])} scheduled")
+    if agenda.get("completed_count"):
+        counts.append(f"{int(agenda['completed_count'])} already handled")
+    if counts:
+        lines.extend(["", " · ".join(counts) + "."])
+    lines.extend(["", morning_closing()])
+    return "\n".join(lines)
+
+
+def _already_has_mikasa_voice(reply: str) -> bool:
+    """Avoid stacking a second persona opener onto a persona-written reply."""
+    sample = str(reply or "")[:500].casefold()
+    if re.search(r"\b(darling|handsome|sweetheart|gorgeous|trouble|lovely|love)\b", sample):
+        return True
+    if any(marker in sample for marker in ("💋", "😘", "😉", "😏", "💗", "🤍", "✨")):
+        return True
+    return False
+
+
+def ensure_voice(reply: str, context: str = "message") -> str:
+    """Final persona guard for every outgoing Telegram text, including future send paths."""
+    body = str(reply or "").strip()
+    if not body or _already_has_mikasa_voice(body):
+        return body
+    if context == "notification":
+        opening = _pick(
+            "A little note from me, darling —",
+            "Just keeping you in the loop, handsome —",
+            "I've got a quick update for you, gorgeous —",
+        )
+    else:
+        opening = _pick(
+            "Of course, darling — I've got that for you.",
+            "Right here, handsome. I've gathered the details.",
+            "Coming right up, gorgeous — I've kept it all together for you.",
+        )
+    return f"{opening}\n\n{body}"
+
+
 def command_prefix(raw: str, reply: str) -> str:
-    """Give action confirmations a human touch without dressing up data lists."""
+    """Compose a warm Mikasa lead-in for every plain command/list response."""
     low = _clean(raw)
-    if not reply or len(reply) > 3650:
+    body = str(reply or "").strip()
+    if not body or len(body) > 3900 or _already_has_mikasa_voice(body):
         return ""
     if low in {"/help", "help", "❔ help", "/capabilities", "capabilities", "what can you do"}:
         return ""
-    if low in {
-        "today", "/today", "📅 today", "agenda", "/agenda", "next", "next 7 days",
-        "/tasks", "tasks", "my tasks", "/bills", "bills", "/routines", "routines",
-        "/meals", "meals", "/mealplan", "/shopping", "shopping", "/fitness", "/fitnessweek",
-    }:
-        return ""
-    if re.search(r"\b(darling|handsome|sweetheart|love|gorgeous|beautiful|trouble)\b", reply[:260], re.I):
-        return ""
+
+    if low in {"today", "/today", "📅 today", "agenda", "/agenda", "next", "next 7 days"}:
+        return _pick(
+            "Mmm, let me lay out your day, handsome. 💋",
+            "I've got today's picture for you, darling. 😉",
+            "Here we are, gorgeous — your day at a glance. ✨",
+        )
+    if low in {"/tasks", "tasks", "my tasks", "/bills", "bills", "/routines", "routines", "/meals", "meals", "/mealplan", "/shopping", "shopping", "/fitness", "/fitnessweek"}:
+        return _pick(
+            "I've gathered the details for you, darling. 💋",
+            "Of course, handsome — here's the latest. 😉",
+            "I kept this list tidy for you, gorgeous. ✨",
+        )
 
     if low.startswith(("paid ", "/paid", "bill paid", "task done", "/taskdone", "done ", "complete ", "i did ", "i completed ", "finished ")):
         return _pick(
@@ -644,7 +818,23 @@ def command_prefix(raw: str, reply: str) -> str:
         )
     if any(token in low for token in ("/cancel", "cancel", "back")):
         return _pick("Of course. No fuss, handsome. 🤍", "Done, darling. We can leave that one alone. 💋")
-    return ""
+
+    return _pick(
+        "Of course, darling — I've got that for you. 💋",
+        "Right here, handsome. I've gathered the details. 😉",
+        "Coming right up, gorgeous — I kept it all together for you. ✨",
+    )
+
+
+def command_reply(raw: str, reply: str) -> str:
+    """Apply Mikasa's voice to a deterministic XROB result without changing its facts."""
+    body = str(reply or "").strip()
+    if not body:
+        return processing_error()
+    prefix = command_prefix(raw, body)
+    if prefix:
+        body = f"{prefix}\n\n{body}"
+    return ensure_voice(body)
 
 
 def reminder_task(name: str, due_label: str | None = None, at_time: str | None = None) -> str:
