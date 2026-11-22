@@ -172,6 +172,7 @@ function renderTodayAgenda(agenda){
   if(x.type==='task'&&id)return `<button class="mini-btn success" data-taskdone="${id}">Done</button>`;
   if(x.type==='bill'&&id)return `<button class="mini-btn" data-pay="${id}">Mark paid</button>`;
   if(x.type==='meal'&&x.status==='pending'&&id)return `<span class="action-group"><button class="mini-btn success" data-meal-confirm="${id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${id}" data-meal-decision="no">Move</button></span>`;
+  if(x.type==='meal'&&x.status==='completed'&&id)return `<button class="mini-btn" data-meal-confirm="${id}" data-meal-decision="undo">Undo eaten</button>`;
   if(x.type==='cook')return `<button class="mini-btn" data-go="meals">Meals</button>`;
   return '';
  };
@@ -378,7 +379,7 @@ function renderTodayMeal(){
     ? (eaten?'<span class="meal-confirmed">✓ Confirmed eaten</span>':'<span class="meal-pending">Waiting for your 22:00 Telegram check-in</span>')
     : (eaten?'<span class="meal-confirmed">✓ Enjoyed</span>':'<span class="meal-pending">Your 22:00 check-in is ready</span>');
    const actions=eaten
-    ? (isMealsPage?'<span class="tag good">Done</span>':'<span class="tag good">Done for today</span>')
+    ? `<span class="tag good">Done</span><button class="mini-btn" data-meal-confirm="${meal.id}" data-meal-decision="undo">Undo eaten</button>`
     : isMealsPage
      ? `<button class="mini-btn success" data-meal-confirm="${meal.id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${meal.id}" data-meal-decision="no">Move to tomorrow</button><button class="mini-btn danger" data-remove-plate="${meal.id}" aria-label="Remove this pending plate">Remove plate</button>`
      : `<button class="mini-btn success" data-meal-confirm="${meal.id}" data-meal-decision="yes">I ate it</button><button class="mini-btn" data-meal-confirm="${meal.id}" data-meal-decision="no">Not today</button>`;
@@ -424,7 +425,10 @@ document.addEventListener('click',async e=>{const btn=e.target.closest('[data-st
 $('#meals-shopping-add-form').addEventListener('submit',async e=>{e.preventDefault();try{const f=new FormData(e.target);await api('shopping_items',{method:'POST',body:JSON.stringify({data:{name:f.get('name'),source:'manual'}})});e.target.reset();toast('Item added');refresh()}catch(err){toast(err.message)}});
 $('#meals-shopping-list').addEventListener('change',async e=>{const input=e.target.closest('[data-shopping-check]');if(!input)return;try{await api(`shopping_items/${input.dataset.shoppingCheck}`,{method:'PATCH',body:JSON.stringify({data:{checked:input.checked?1:0}})});refresh()}catch(err){toast(err.message)}});
 $('#clear-bought-items').addEventListener('click',async()=>{const bought=(cache.shopping_items||[]).filter(i=>Number(i.checked));if(!bought.length){toast('No purchased items to clear');return}if(!confirm(`Remove ${bought.length} purchased item(s) from the list?`))return;try{await Promise.all(bought.map(i=>api(`shopping_items/${i.id}`,{method:'DELETE'})));toast('Purchased items cleared');refresh()}catch(err){toast(err.message)}});
-async function confirmMeal(id,decision){try{await api(`daily-meals/${id}/confirm`,{method:'POST',body:JSON.stringify({data:{decision}})});toast(decision==='yes'?'Plate confirmed':'Plate and following days moved');refresh()}catch(err){toast(err.message)}}
+async function confirmMeal(id,decision){
+ if(decision==='undo'&&!confirm('Undo the eaten confirmation? The plate will return to pending and Home-meal stock will be restored.'))return;
+ try{await api(`daily-meals/${id}/confirm`,{method:'POST',body:JSON.stringify({data:{decision}})});toast(decision==='yes'?'Plate confirmed':decision==='undo'?'Eaten confirmation undone · plate restored':'Plate and following days moved');refresh()}catch(err){toast(err.message)}
+}
 document.addEventListener('click',async e=>{
  const resetWeek=e.target.closest('[data-reset-week-plan]');
  if(resetWeek){if(!confirm('Generate a fresh upcoming plan from tomorrow? This replaces pending future plates and clears future day-off markers. Today’s plate, past history and confirmed eaten plates stay; overdue plates are rolled forward normally.'))return;resetWeek.disabled=true;try{const result=await api('daily-meals/reset-week',{method:'POST',body:JSON.stringify({data:{}})});toast(`Upcoming plan refreshed · ${result.created} new plate(s)`);await refresh()}catch(err){toast(err.message)}finally{resetWeek.disabled=false}return}
@@ -435,6 +439,7 @@ document.addEventListener('click',async e=>{
  const weekRestore=e.target.closest('[data-week-restore]');
  if(weekRestore){const day=weekRestore.dataset.weekRestore;weekRestore.disabled=true;try{await api('daily-meals/restore',{method:'POST',body:JSON.stringify({data:{plan_date:day}})});toast('Day restored to automatic planning');await refresh()}catch(err){toast(err.message)}finally{weekRestore.disabled=false}return}
  const choose=e.target.closest('[data-select-today-meal]');if(choose){const host=choose.closest('.today-meal-card'),select=host?.querySelector('[data-today-meal-choice]'),recipeId=Number(select?.value),recipe=(cache.recipes||[]).find(r=>Number(r.id)===recipeId);if(!recipeId){toast('Choose a meal first.');return}const movable=recipe?movableHomeReservation(recipe,today):null;if(movable&&!confirm(`A plate of ${recipe.name} is currently reserved for ${formatDate(movable.plan_date)}. Use it today and move that reservation?`))return;choose.disabled=true;try{const result=await api('daily-meals/select',{method:'POST',body:JSON.stringify({data:{recipe_id:recipeId,plan_date:today}})});const repeat=result.next_planned_date?` · next repeat ${formatDate(result.next_planned_date)}`:'';toast((result.reallocated_from?`Today's plate selected · moved a reservation from ${formatDate(result.reallocated_from)}`:`Today's plate selected · ${result.name}`)+repeat);await refresh()}catch(err){toast(err.message)}finally{choose.disabled=false}return}
+ const learningDelete=e.target.closest('[data-delete-learning]');if(learningDelete){deleteMikasaLearning(Number(learningDelete.dataset.deleteLearning));return}
  const edit=e.target.closest('[data-edit-recipe]');if(edit){const recipe=(cache.recipes||[]).find(r=>r.id===Number(edit.dataset.editRecipe));if(recipe)openRecipeModal(recipe)}const mealConfirmBtn=e.target.closest('[data-meal-confirm]');if(mealConfirmBtn)confirmMeal(Number(mealConfirmBtn.dataset.mealConfirm),mealConfirmBtn.dataset.mealDecision);const remove=e.target.closest('[data-remove-plate]');if(remove)removePlate(Number(remove.dataset.removePlate))
 });
 function syncMikasaPreferenceControls(){
@@ -493,9 +498,14 @@ async function loadMikasaLearning(){
   host.innerHTML=items.map(item=>{
    const seen=Number(item.occurrences||1);
    const date=String(item.last_seen_at||'').replace('T',' ').slice(0,16);
-   return `<article class="mikasa-learning-card"><div class="mikasa-learning-card-head"><span class="tag warn">Missed message</span><small>Seen ${seen} time${seen===1?'':'s'} · Last ${esc(date||'unknown')}</small></div><div class="mikasa-learning-sample">${esc(item.sample_text)}</div></article>`;
+   return `<article class="mikasa-learning-card"><div class="mikasa-learning-card-head"><span class="tag warn">Missed message</span><small>Seen ${seen} time${seen===1?'':'s'} · Last ${esc(date||'unknown')}</small><button type="button" class="mini-btn danger mikasa-learning-delete" data-delete-learning="${Number(item.id)}" aria-label="Delete this missed message">Remove</button></div><div class="mikasa-learning-sample">${esc(item.sample_text)}</div></article>`;
   }).join('');
  }catch(error){if(status)status.textContent=`Could not load missed-message log: ${error.message}`}
+}
+async function deleteMikasaLearning(id){
+ if(!confirm('Remove this missed message from Mikasa’s log?'))return;
+ try{await api(`mikasa/learning/${id}`,{method:'DELETE'});toast('Missed message removed');await loadMikasaLearning()}
+ catch(error){toast(error.message)}
 }
 async function loadMikasaUpdateStatus(){
  const status=$('#mikasa-update-status');if(!status)return;
