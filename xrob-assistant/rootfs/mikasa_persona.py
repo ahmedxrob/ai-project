@@ -1,4 +1,4 @@
-"""Mikasa's standalone Telegram personality pack — natural agenda conversation update 1.6.1.
+"""Mikasa's standalone Telegram personality pack — natural agenda conversation update 1.6.2.
 
 This module owns tone and message copy only. It deliberately does not import
 XROB, access its database, call Telegram, or execute planner/fitness/meal/bill
