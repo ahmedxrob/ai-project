@@ -1,6 +1,8 @@
 from __future__ import annotations
 import asyncio, json, os, sqlite3, re, math, random, importlib.util, hashlib, unicodedata, shutil
 from contextlib import asynccontextmanager, contextmanager
+import threading
+import time as clock
 from datetime import datetime, date, timedelta, time
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,8 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+APP_VERSION = '1.0.0'
+APP_RELEASE_CHANNEL = 'stable'
 DATA = Path(os.getenv('XROB_DATA_DIR', '/config'))
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / 'xrob_assistant.db'
@@ -21,6 +25,11 @@ MIKASA_GITHUB_RAW_URL = 'https://raw.githubusercontent.com/ahmedxrob/ai-project/
 MIKASA_GITHUB_RAW_HOST = 'raw.githubusercontent.com'
 MIKASA_UPDATE_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 _MIKASA_UPDATE_LOCK = asyncio.Lock()
+_DATABASE_BACKUP_LOCK = threading.Lock()
+_MANUAL_BACKUP_LOCK = threading.Lock()
+_LAST_MANUAL_BACKUP_AT = 0.0
+MANUAL_BACKUP_COOLDOWN_SECONDS = 60
+DATABASE_BACKUP_RETENTION = 14
 
 _MIKASA_REQUIRED_API = (
     'PERSONA_VERSION', 'TELEGRAM_PROFILE_DESCRIPTION', 'TELEGRAM_PROFILE_SHORT_DESCRIPTION',
@@ -29,7 +38,7 @@ _MIKASA_REQUIRED_API = (
     'reminder_routine', 'reminder_bill', 'reminder_bill_early', 'reminder_cook',
     'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_unconfirmed', 'meal_undo_unavailable', 'meal_moved', 'task_created',
     'fallback_reply', 'unsupported_message', 'processing_error',
-    'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
+    'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed', 'app_status_reply',
     'agenda_item_line', 'agenda_conversation_line', 'today_agenda_reply', 'tomorrow_agenda_reply', 'morning_report', 'ensure_voice', 'command_reply',
 )
 
@@ -197,10 +206,16 @@ CREATE TRIGGER IF NOT EXISTS weights_no_duplicate_date_update BEFORE UPDATE OF d
 
 @contextmanager
 def connect():
-    c = sqlite3.connect(DB, timeout=15)
+    # WAL allows dashboard reads to continue while reminder/Telegram writes are
+    # committed. A generous busy timeout prevents short concurrent writes from
+    # surfacing as user-facing database errors.
+    c = sqlite3.connect(DB, timeout=30)
     c.row_factory = sqlite3.Row
     c.execute('PRAGMA foreign_keys=ON')
-    c.execute('PRAGMA busy_timeout=15000')
+    c.execute('PRAGMA busy_timeout=30000')
+    c.execute('PRAGMA synchronous=NORMAL')
+    c.execute('PRAGMA temp_store=MEMORY')
+    c.execute('PRAGMA cache_size=-4000')
     try:
         yield c
     except Exception:
@@ -286,7 +301,92 @@ def _migrate_legacy_bill_series(c: sqlite3.Connection) -> None:
     c.execute("INSERT INTO app_migrations(name) VALUES('bill_series_identity_v1')")
 
 
+
+def _database_backup_files() -> list[Path]:
+    backup_dir = DB.parent / 'backups'
+    if not backup_dir.is_dir():
+        return []
+    return sorted(backup_dir.glob('xrob_assistant-*.db'), key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def _create_database_backup(*, force: bool = False) -> Path | None:
+    """Create a consistent SQLite snapshot using the online backup API.
+
+    Automatic startup snapshots are limited to one per local day. Manual
+    snapshots are always new. The newest 14 snapshots are retained.
+    """
+    if not DB.is_file() or DB.stat().st_size <= 0:
+        return None
+    backup_dir = DB.parent / 'backups'
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    with _DATABASE_BACKUP_LOCK:
+        existing = _database_backup_files()
+        today_key = datetime.now().astimezone().strftime('%Y%m%d')
+        todays = next((item for item in existing if item.name.startswith(f'xrob_assistant-{today_key}-')), None)
+        if todays and not force:
+            # Refresh today's snapshot when the live database has changed since
+            # the previous one; a restart must never reuse a stale pre-migration copy.
+            try:
+                database_mtime = DB.stat().st_mtime
+                wal_path = Path(str(DB) + '-wal')
+                if wal_path.is_file():
+                    database_mtime = max(database_mtime, wal_path.stat().st_mtime)
+                if todays.stat().st_mtime >= database_mtime:
+                    return todays
+            except OSError:
+                pass
+
+        stamp = datetime.now().astimezone().strftime('%Y%m%d-%H%M%S-%f')
+        target = backup_dir / f'xrob_assistant-{stamp}.db'
+        temporary = backup_dir / f'.{target.name}.tmp'
+        source = sqlite3.connect(str(DB), timeout=30)
+        destination = sqlite3.connect(str(temporary), timeout=30)
+        try:
+            source.execute('PRAGMA busy_timeout=30000')
+            source.backup(destination, pages=256, sleep=0.05)
+            check = destination.execute('PRAGMA quick_check').fetchone()
+            if not check or str(check[0]).lower() != 'ok':
+                raise RuntimeError('The database backup did not pass SQLite quick_check.')
+            destination.commit()
+        finally:
+            destination.close()
+            source.close()
+        os.replace(temporary, target)
+
+        # Keep a bounded history. If pruning fails, retain the new good backup
+        # and log a warning rather than failing the user's main operation.
+        try:
+            for stale in _database_backup_files()[DATABASE_BACKUP_RETENTION:]:
+                stale.unlink(missing_ok=True)
+        except OSError as exc:
+            print(f'Database backup retention warning: {exc}', flush=True)
+        return target
+
+
+def _latest_database_backup() -> Path | None:
+    files = _database_backup_files()
+    return files[0] if files else None
+
+
+def _enable_database_wal() -> None:
+    connection = sqlite3.connect(str(DB), timeout=30)
+    try:
+        connection.execute('PRAGMA busy_timeout=30000')
+        mode = connection.execute('PRAGMA journal_mode=WAL').fetchone()
+        if not mode or str(mode[0]).lower() != 'wal':
+            print('SQLite WAL mode is unavailable; continuing with the database default.', flush=True)
+    finally:
+        connection.close()
+
 def init_db():
+    # Snapshot existing user data before schema migrations. A failed backup is
+    # non-fatal, but is always visible in the add-on log.
+    try:
+        if DB.is_file() and DB.stat().st_size > 0:
+            _create_database_backup(force=False)
+        _enable_database_wal()
+    except Exception as exc:
+        print(f'Pre-startup database backup/WAL warning: {exc}', flush=True)
     with connect() as c:
         c.executescript(SCHEMA)
         # Preserve task completion dates going forward. Older databases keep their
@@ -474,18 +574,107 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.31', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version=APP_VERSION, lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
+
+@app.middleware('http')
+async def add_security_and_cache_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('Referrer-Policy', 'same-origin')
+    response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    response.headers.setdefault(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+    )
+    if request.url.path == '/' or request.url.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @app.get('/')
-def home(): return FileResponse(WWW/'index.html')
+def home():
+    return FileResponse(WWW/'index.html', headers={'Cache-Control': 'no-store'})
+
+
 @app.get('/api/health')
 def health():
     try:
-        with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.31','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
-    except Exception as exc:
-        raise HTTPException(503, f'Database check failed: {exc}')
+        with connect() as c:
+            c.execute('SELECT 1').fetchone()
+        return {
+            'status': 'ok', 'app': 'XROB Assistant', 'version': APP_VERSION,
+            'release_channel': APP_RELEASE_CHANNEL, 'database': 'connected',
+            'sqlite_version': sqlite3.sqlite_version,
+            'mikasa_persona_version': getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),
+            'mikasa_persona_source': MIKASA_PERSONA_SOURCE,
+        }
+    except Exception:
+        raise HTTPException(503, 'Database check failed. See the add-on log for details.')
+
+
+@app.get('/api/system/diagnostics')
+def system_diagnostics():
+    """Safe operational diagnostics; never returns bot tokens or private records."""
+    database_ok = False
+    integrity = 'not checked'
+    try:
+        with connect() as c:
+            result = c.execute('PRAGMA quick_check').fetchone()
+            integrity = str(result[0]) if result else 'unknown'
+            database_ok = integrity.lower() == 'ok'
+    except Exception:
+        integrity = 'failed — inspect add-on logs'
+    backup = _latest_database_backup()
+    try:
+        db_size = DB.stat().st_size if DB.exists() else 0
+    except OSError:
+        db_size = 0
+    try:
+        free_bytes = shutil.disk_usage(DB.parent).free
+    except OSError:
+        free_bytes = None
+    return {
+        'app_version': APP_VERSION,
+        'release_channel': APP_RELEASE_CHANNEL,
+        'persona_version': str(getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown')),
+        'persona_source': MIKASA_PERSONA_SOURCE,
+        'database_status': 'healthy' if database_ok else 'needs_attention',
+        'database_integrity': integrity,
+        'database_size_bytes': db_size,
+        'sqlite_version': sqlite3.sqlite_version,
+        'backup_count': len(_database_backup_files()),
+        'latest_backup': backup.name if backup else None,
+        'latest_backup_modified': datetime.fromtimestamp(backup.stat().st_mtime).astimezone().isoformat(timespec='minutes') if backup else None,
+        'free_disk_bytes': free_bytes,
+        'telegram_configured': bool(TOKEN and ALLOWED_CHAT),
+    }
+
+
+@app.post('/api/system/backup')
+def create_database_backup():
+    global _LAST_MANUAL_BACKUP_AT
+    try:
+        with _MANUAL_BACKUP_LOCK:
+            now = clock.monotonic()
+            elapsed = now - _LAST_MANUAL_BACKUP_AT
+            if _LAST_MANUAL_BACKUP_AT and elapsed < MANUAL_BACKUP_COOLDOWN_SECONDS:
+                retry_after = max(1, int(MANUAL_BACKUP_COOLDOWN_SECONDS - elapsed))
+                raise HTTPException(429, f'Please wait {retry_after} seconds before creating another manual backup.')
+            backup = _create_database_backup(force=True)
+            if backup is None:
+                raise HTTPException(409, 'The database has not been created yet.')
+            _LAST_MANUAL_BACKUP_AT = now
+        return {'created': True, 'filename': backup.name, 'size_bytes': backup.stat().st_size}
+    except HTTPException:
+        raise
+    except Exception:
+        print('Manual database backup failed.', flush=True)
+        raise HTTPException(500, 'Database backup failed. See the add-on log for details.')
+
 
 @app.post('/api/daily-meals/restore')
 def restore_daily_meal_day(payload: Payload):
@@ -726,7 +915,34 @@ async def mikasa_update_loop():
 # the command engine reaches its explicit generic fallback. They remain local
 # in the existing SQLite database until reviewed, taught, ignored or deleted.
 MIKASA_UNKNOWN_REPLY_PREFIX = 'I can help with your day. Use the buttons below, or send:'
+
 MIKASA_LEARNING_MAX_TEXT = 1200
+
+# This report is intentionally explicit: it documents actual deterministic
+# routes, social intents and attachment limitations in this release. Examples
+# are representative phrases, not a promise to understand arbitrary wording.
+MIKASA_CAPABILITY_CATALOG = [
+    ('Daily planning', ['/today', 'today please', "what's on today", 'tomorrow plan', '/tomorrow', '/week', 'next 7 days', 'what needs my attention', 'what did I finish today']),
+    ('Tasks', ['task Study tomorrow at 18:00', 'task done Study', '/tasks', 'what are my tasks', 'done Buy groceries']),
+    ('Events and appointments', ['/event Dentist|23/11/26 10:00', '/agenda', 'show my agenda', 'what appointments do I have']),
+    ('Routines', ['/routines', 'what are my routines', 'done Shower', 'complete treadmill check']),
+    ('Fitness and weight', ['weight 82.4', 'treadmill 30', 'treadmill 30 yesterday', '/fitness', '/fitnessweek', 'fitness stats', 'what is my current weight']),
+    ('Meals and cooking', ['/meals', '/choosemeal', '/mealplan', "what's for dinner", 'YES', 'NO', 'undo eaten', '/undo_eaten', '/addrecipe', '/stock Chicken|3', '/homemeals', '/outsidemeals']),
+    ('Shopping', ['/shopping', '/additem', 'bought tomatoes']),
+    ('Bills and documents', ['/bills', 'what do I owe', 'paid Electricity', '/documents', 'what documents are expiring']),
+    ('App awareness', ['/status', 'app status', 'my progress', 'how am I doing', 'how are my meals', 'what is left today']),
+    ('Social conversation', ['hello / good morning', 'thank you', 'I love you', 'I need a hug', 'motivate me', 'I am stressed', 'Fuck u', 'are you a real person']),
+    ('Settings and help', ['/help', 'what can you do', 'cancel', 'back']),
+]
+
+MIKASA_ATTACHMENT_CAPABILITIES = [
+    ('Text and captions', 'Parsed and routed through the normal Mikasa command/social handler.'),
+    ('Photos and images', 'Acknowledged; image contents are not analysed in this local release.'),
+    ('Voice notes and audio', 'Acknowledged; audio is not transcribed in this local release.'),
+    ('Videos and animations', 'Acknowledged; video contents are not analysed in this local release.'),
+    ('Documents and files', 'Acknowledged; file contents are not opened or extracted from Telegram.'),
+    ('Stickers, locations, contacts and other supported Telegram message types', 'Acknowledged; Mikasa asks what you want her to do with the item.'),
+]
 
 
 def _normalize_mikasa_learning_text(value: str) -> str:
@@ -846,6 +1062,75 @@ def export_mikasa_missed_messages():
     return PlainTextResponse(
         '\n'.join(lines).rstrip() + '\n',
         headers={'Content-Disposition': 'attachment; filename="mikasa-missed-messages.txt"'},
+    )
+
+
+@app.get('/api/mikasa/coverage.txt')
+def export_mikasa_coverage_report():
+    """Export a versioned map of supported intents, known limitations and missed text."""
+    counts = _mikasa_learning_counts()
+    missed = rows("""SELECT sample_text,occurrences,first_seen_at,last_seen_at
+                    FROM mikasa_learning_log WHERE status='new'
+                    ORDER BY last_seen_at DESC,id DESC LIMIT 500""")
+    learned = rows("""SELECT sample_text,occurrences,updated_at FROM mikasa_learning_log
+                     WHERE status='learned' ORDER BY updated_at DESC,id DESC LIMIT 200""")
+    ignored = rows("""SELECT sample_text,occurrences,updated_at FROM mikasa_learning_log
+                     WHERE status='ignored' ORDER BY updated_at DESC,id DESC LIMIT 200""")
+    lines = [
+        'XROB ASSISTANT — MIKASA MESSAGE COVERAGE REPORT',
+        f'App version: {APP_VERSION} ({APP_RELEASE_CHANNEL})',
+        f'Persona version: {getattr(mikasa_persona, "PERSONA_VERSION", "unknown")}',
+        f'Generated: {datetime.now().astimezone().isoformat(timespec="seconds")}',
+        '',
+        'HOW TO READ THIS REPORT',
+        'The examples below are verified command/social patterns and representative natural-language aliases.',
+        'They are not an exhaustive list of every sentence Mikasa can interpret.',
+        'XROB uses deterministic local handlers; it does not run a general-purpose cloud AI model.',
+        '',
+        'SUPPORTED APP INTENTS AND EXAMPLES',
+    ]
+    for name, examples in MIKASA_CAPABILITY_CATALOG:
+        lines.append(f'[{name}]')
+        lines.extend(f'  - {example}' for example in examples)
+        lines.append('')
+    lines.extend(['TELEGRAM ATTACHMENT HANDLING'])
+    for name, description in MIKASA_ATTACHMENT_CAPABILITIES:
+        lines.append(f'- {name}: {description}')
+    lines.extend([
+        '',
+        'LOCAL MESSAGE COVERAGE COUNTS',
+        f'- Unresolved messages needing review: {counts.get("new", 0)}',
+        f'- Learned exact phrases: {counts.get("learned", 0)}',
+        f'- Ignored phrases: {counts.get("ignored", 0)}',
+        '',
+        'UNRESOLVED MESSAGES TO IMPROVE',
+    ])
+    if missed:
+        for index, item in enumerate(missed, 1):
+            lines.append(f'{index}. Seen {max(1, int(item.get("occurrences") or 1))} time(s) · last {item.get("last_seen_at") or "unknown"}')
+            lines.extend('   ' + part for part in str(item.get('sample_text') or '').splitlines())
+    else:
+        lines.append('None currently recorded.')
+    lines.extend(['', 'ALREADY LEARNED EXACT PHRASES'])
+    if learned:
+        lines.extend(f'- {item.get("sample_text")} (seen {max(1, int(item.get("occurrences") or 1))} time(s))' for item in learned)
+    else:
+        lines.append('None.')
+    lines.extend(['', 'INTENTIONALLY IGNORED PHRASES'])
+    if ignored:
+        lines.extend(f'- {item.get("sample_text")}' for item in ignored)
+    else:
+        lines.append('None.')
+    lines.extend([
+        '',
+        'NOTES',
+        '- Only text messages that reach Mikasa’s explicit unhandled fallback enter the unresolved list.',
+        '- Messages with captions are handled as text. Media without captions may be acknowledged but not analysed.',
+        '- User data and this report are stored locally in the XROB add-on configuration directory.',
+    ])
+    return PlainTextResponse(
+        '\n'.join(lines).rstrip() + '\n',
+        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.0.txt"'},
     )
 
 
@@ -3167,6 +3452,8 @@ def _telegram_bot_commands() -> list[dict[str, str]]:
         {'command': 'start', 'description': 'Open the XROB quick menu'},
         {'command': 'help', 'description': 'Show available actions'},
         {'command': 'today', 'description': 'Show today agenda'},
+        {'command': 'tomorrow', 'description': 'Show tomorrow agenda'},
+        {'command': 'status', 'description': 'Show your XROB progress and app status'},
         {'command': 'meals', 'description': "Show today's plate or choose a meal"},
         {'command': 'yes', 'description': 'Confirm you ate the suggested plate'},
         {'command': 'undo_eaten', 'description': 'Undo an accidental eaten confirmation'},
@@ -3678,6 +3965,9 @@ async def _telegram_command_core(text: str) -> str:
     today = date.today()
     today_iso = today.isoformat()
 
+    if low in {'/status', 'status', 'app status', 'xrob status', 'my progress', 'progress'}:
+        return mikasa_persona.app_status_reply(_mikasa_app_status_context())
+
     # Guided input flows. They survive restarts and can be cancelled with /cancel.
     state = _telegram_get_state()
     conversation_active = bool(state)
@@ -4059,7 +4349,7 @@ async def _telegram_command_core(text: str) -> str:
         agenda = build_today_agenda(today)
         return mikasa_persona.today_agenda_reply(agenda, today)
 
-    if low in ('✅ tasks', '/tasks', 'tasks', 'my tasks', 'show tasks', 'list tasks', 'to do', 'todo'):
+    if low in ('✅ tasks', '/tasks', 'tasks', 'my tasks', 'show tasks', 'list tasks', 'to do', 'todo', 'what are my tasks', 'what tasks do i have', 'show my tasks', 'what tasks are open', 'my open tasks'):
         tasks = rows("SELECT id,title,due_date,due_time,priority FROM tasks WHERE status!='done' ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,due_date,CASE WHEN due_time IS NULL THEN 1 ELSE 0 END,due_time,id LIMIT 12")
         if not tasks:
             return '✅ All clear — no open tasks.'
@@ -4076,7 +4366,7 @@ async def _telegram_command_core(text: str) -> str:
         lines.append('Finish one: task done TASK NAME')
         return '\n'.join(lines)
 
-    if low in ('💳 bills', '/bills', 'bills', 'my bills', 'unpaid bills'):
+    if low in ('💳 bills', '/bills', 'bills', 'my bills', 'unpaid bills', 'what bills are due', 'show my bills', 'what do i owe', 'how much do i owe', 'show unpaid bills', 'what bills do i have', 'list my bills'):
         bills = active_bill_occurrences()[:10]
         if not bills:
             return '✅ No unpaid bills.'
@@ -4095,7 +4385,27 @@ async def _telegram_command_core(text: str) -> str:
         lines.append('After paying: paid BILL NAME')
         return '\n'.join(lines)
 
-    if low in ('🔁 routines', '🧴 personal care', 'care', 'personal care', '/care', 'routines', 'my routines', '/routines'):
+    if low in ('/documents', 'documents', 'document status', 'show my documents', 'what documents are expiring', 'any documents expiring'):
+        documents = rows('SELECT id,name,expiry_date,reminder_days,reference FROM documents ORDER BY expiry_date,id LIMIT 20')
+        if not documents:
+            return 'No documents are saved yet. Add expiry dates in the Documents section of XROB Assistant.'
+        lines = ['📄 DOCUMENTS & EXPIRY DATES']
+        for document in documents:
+            try:
+                expiry = date.fromisoformat(document['expiry_date'])
+                days = (expiry - today).days
+                label = 'EXPIRED' if days < 0 else ('DUE TODAY' if days == 0 else f'in {days}d')
+            except (TypeError, ValueError):
+                label = 'DATE NEEDS CHECK'
+            try:
+                expiry_label = date.fromisoformat(document['expiry_date']).strftime('%d/%m/%y')
+            except (TypeError, ValueError):
+                expiry_label = 'date not set'
+            reference = f" · {document['reference']}" if document.get('reference') else ''
+            lines.append(f"• {document['name']} · {expiry_label} · {label}{reference}")
+        return '\n'.join(lines)
+
+    if low in ('🔁 routines', '🧴 personal care', 'care', 'personal care', '/care', 'routines', 'my routines', '/routines', 'what are my routines', 'show my routines', 'what routines are due', 'list my routines'):
         routines = rows("SELECT id,name,next_due,interval_days,routine_time,routine_late_time,routine_rollover_after_late,last_done FROM routines ORDER BY CASE WHEN next_due<=? THEN 0 ELSE 1 END,next_due,COALESCE(routine_time,'23:59'),name LIMIT 15", (today_iso,))
         if not routines:
             return 'No routines yet. Add them in XROB Assistant.'
@@ -4116,7 +4426,7 @@ async def _telegram_command_core(text: str) -> str:
         lines.append('Complete: done ROUTINE NAME')
         return '\n'.join(lines)
 
-    if low in ('🏃 fitness', '/fitness', 'fitness', 'activity', 'my fitness', 'workouts'):
+    if low in ('🏃 fitness', '/fitness', 'fitness', 'activity', 'my fitness', 'workouts', 'how is my fitness', 'show my fitness progress', 'fitness stats', 'my fitness progress', 'how is my workout progress', 'what is my current weight', 'how much do i weigh', 'when did i last weigh in'):
         weight = one('SELECT kg,date FROM weights ORDER BY date DESC,id DESC LIMIT 1')
         treadmill = one('SELECT COALESCE(SUM(duration_min),0) AS mins,COALESCE(SUM(distance_km),0) AS km,COALESCE(SUM(calories_kcal),0) AS kcal FROM treadmill WHERE date=?', (today_iso,))
         gym = rows('SELECT name FROM workouts WHERE date=? ORDER BY id', (today_iso,))
@@ -4165,7 +4475,7 @@ async def _telegram_command_core(text: str) -> str:
         lines.append('Quick log: tap Add weight or Add treadmill.')
         return '\n'.join(lines)
 
-    if low in ('📆 next 7 days', 'next', 'next 7 days', 'agenda', '/agenda'):
+    if low in ('📆 next 7 days', 'next', 'next 7 days', 'agenda', '/agenda', 'show my agenda', 'show my calendar', 'what appointments do i have', 'what is on this week'):
         end = (today + timedelta(days=7)).isoformat()
         items: list[tuple[str, str]] = []
         for event in rows('SELECT title,start_at FROM events WHERE substr(start_at,1,10)>=? AND substr(start_at,1,10)<=?', (today_iso, end)):
@@ -4324,7 +4634,9 @@ def _telegram_capabilities_message() -> str:
         mikasa_persona.help_intro() + '\n\n' +
         '📅 YOUR DAY\n'
         '• /today — tasks, routines, events, workouts, meals, bill and document alerts, and completed activity.\n'
-        '• /tasks, /bills, /routines, /agenda — see your lists and the next 7 days.\n'
+        '• /tomorrow — tomorrow’s agenda; /status — app progress, latest fitness records, meal stock and bills.\n'
+        '• /tasks, /bills, /routines, /documents, /agenda — see your saved lists and expiry dates.\n'
+        '• You can also ask naturally: what are my tasks, what do I owe, what is left today, or what did I finish today.\n'
         '• task Study tomorrow at 18:00 — add a task; task done Study — finish it.\n'
         '• /event Dentist|25/11/26 10:00 — add an appointment.\n'
         '• done Shower — complete a routine; paid Electricity — mark a bill paid.\n\n'
@@ -4341,6 +4653,74 @@ def _telegram_capabilities_message() -> str:
         'Send /cancel to stop a guided entry.'
     )
 
+
+
+def _mikasa_app_status_context() -> dict[str, Any]:
+    """Collect a compact, factual snapshot from XROB's own records."""
+    data = summary()
+    home = one("SELECT COALESCE(SUM(plates_ready),0) AS plates FROM recipes WHERE is_active=1 AND meal_source='home'") or {}
+    agenda = data.get('today_agenda') or {}
+    agenda_items = list(agenda.get('items') or [])
+    today = str(data.get('today') or date.today().isoformat())
+    return {
+        'open_count': int(data.get('today_open_items') or 0),
+        'completed_count': int(agenda.get('completed_count') or 0),
+        'unpaid_bills': int(data.get('unpaid_bills') or 0),
+        'unpaid_total_mad': round(float(data.get('unpaid_total_mad') or 0), 2),
+        'upcoming_bill': data.get('upcoming_bill'),
+        'expiring_documents': int(data.get('expiring_documents') or 0),
+        'events_today': int(data.get('events_today') or 0),
+        'open_tasks': int(data.get('open_tasks') or 0),
+        'routines_due_today': int(data.get('routines_due_today') or 0),
+        'next_routine': data.get('next_routine'),
+        'latest_weight': data.get('latest_weight'),
+        'recent_treadmill': data.get('recent_treadmill'),
+        'today_meal': data.get('today_meal'),
+        'next_meal': data.get('next_meal'),
+        'home_plates_ready': int(home.get('plates') or 0),
+        'today_agenda_date': today,
+        'agenda_items': agenda_items,
+    }
+
+
+def _mikasa_app_status_focus(raw: str) -> str | None:
+    low = _normalize_telegram_command_text(raw)
+    focus_aliases = {
+        'meals': {
+            'how are my meals', 'meal stock', 'how much food do i have', 'what is for dinner',
+            "what's for dinner", 'what am i eating today', 'what is my meal today',
+            'show my meal plan', 'what is my next meal', 'whats my next meal',
+        },
+        'open': {
+            'what is left today', "what's left today", 'what do i have left', 'what needs my attention',
+            'what should i focus on', 'show open items', 'what is still open',
+        },
+        'completed': {
+            'what did i finish today', 'what have i completed today', 'show todays progress',
+            "what's done today", 'what did i get done', 'show completed today',
+        },
+    }
+    for focus, aliases in focus_aliases.items():
+        if low in aliases:
+            return focus
+    return None
+
+
+def _is_mikasa_status_request(raw: str) -> bool:
+    low = _normalize_telegram_command_text(raw)
+    aliases = {
+        '/status', 'status', 'app status', 'xrob status', 'my progress', 'progress',
+        'how am i doing', 'how am i doing today', 'give me my status',
+        'show my progress', 'show me my progress', 'app overview', 'my app overview',
+        'how am i doing with everything', 'how are things going', 'give me an overview',
+        'show me my app status', 'how are my meals', 'meal stock', 'how much food do i have',
+    }
+    return low in aliases
+
+
+def _is_mikasa_next_step_request(raw: str) -> bool:
+    low = _normalize_telegram_command_text(raw)
+    return low in {'what should i do next', 'what do i do next', 'what next', 'what is next', "what's next", 'next step'}
 
 def _mikasa_context_for_message(raw: str) -> dict[str, int]:
     low = re.sub(r'\s+', ' ', str(raw or '').strip().lower())
@@ -4363,11 +4743,17 @@ def _mikasa_context_for_message(raw: str) -> dict[str, int]:
 
 
 def _telegram_social_reply(raw: str) -> str | None:
-    """Use the replaceable Mikasa voice pack around factual app context."""
+    """Route social messages and app-aware questions without guessing facts."""
     low = re.sub(r'\s+', ' ', str(raw or '').strip().lower()).rstrip('.!?')
     if low in ('what can you do', 'what do you do', 'how can you help', 'how can you help me',
                'what can you help with', 'capabilities'):
         return _telegram_capabilities_message()
+    focus = _mikasa_app_status_focus(raw)
+    if focus or _is_mikasa_status_request(raw):
+        context = _mikasa_app_status_context()
+        return mikasa_persona.app_status_reply(context, focus=focus)
+    if _is_mikasa_next_step_request(raw):
+        return mikasa_persona.today_agenda_reply(build_today_agenda())
     return mikasa_persona.social_reply(raw, _mikasa_context_for_message(raw))
 
 
