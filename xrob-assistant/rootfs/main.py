@@ -27,7 +27,7 @@ _MIKASA_REQUIRED_API = (
     'start_message', 'unclear_message', 'morning_opening', 'morning_closing', 'playful_message',
     'social_reply', 'command_prefix', 'help_intro', 'help_boundary', 'reminder_task',
     'reminder_routine', 'reminder_bill', 'reminder_bill_early', 'reminder_cook',
-    'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_moved', 'task_created',
+    'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_unconfirmed', 'meal_undo_unavailable', 'meal_moved', 'task_created',
     'fallback_reply', 'unsupported_message', 'processing_error',
     'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
     'agenda_item_line', 'agenda_conversation_line', 'today_agenda_reply', 'morning_report', 'ensure_voice', 'command_reply',
@@ -454,6 +454,9 @@ TABLES = {
 @asynccontextmanager
 async def lifespan(app):
     init_db()
+    cleared = _clear_resolved_mikasa_learning(str(getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown')))
+    if cleared:
+        print(f'Cleared {cleared} unresolved Mikasa message(s) after persona update.', flush=True)
     try:
         maintain_meal_schedule()
     except Exception as exc:
@@ -471,7 +474,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.28', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.30', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -480,7 +483,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.28','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.30','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
@@ -672,10 +675,14 @@ async def _check_and_install_mikasa_update() -> dict[str, Any]:
                 MIKASA_PERSONA_SOURCE = 'config override'
                 _telegram_setting_set('mikasa_update_last_checked', checked_at)
                 _telegram_setting_set('mikasa_update_latest_version', remote_version)
+                cleared_messages = _clear_resolved_mikasa_learning(remote_version)
                 _telegram_setting_set('mikasa_update_last_result', f'Updated to {remote_version}')
+                if cleared_messages:
+                    _telegram_setting_set('mikasa_update_last_result', f'Updated to {remote_version} · cleared {cleared_messages} resolved message(s)')
                 return {
                     'updated': True,
-                    'message': f'Mikasa updated to {remote_version}. Her new voice is active now.',
+                    'cleared_missed_messages': cleared_messages,
+                    'message': f'Mikasa updated to {remote_version}. Her new voice is active now. Cleared {cleared_messages} resolved missed-message entries.',
                     'backup': str(backup_path) if backup_path else '',
                     **_mikasa_update_status(),
                 }
@@ -777,6 +784,24 @@ def _mikasa_learning_counts() -> dict[str, int]:
         for row in c.execute('SELECT status,COUNT(*) AS total FROM mikasa_learning_log GROUP BY status'):
             result[str(row['status'])] = int(row['total'])
     return result
+
+
+def _clear_resolved_mikasa_learning(persona_version: str) -> int:
+    """Clear unresolved messages whenever a genuinely new persona version is activated.
+
+    Learned and ignored records are retained; only the open missed-message inbox is
+    cleared because those patterns were supplied for the persona improvement.
+    """
+    version = str(persona_version or 'unknown').strip()
+    previous = _telegram_setting_get('mikasa_learning_persona_version', '')
+    if not version or version == previous:
+        return 0
+    with connect() as c:
+        cur = c.execute("DELETE FROM mikasa_learning_log WHERE status='new'")
+        deleted = int(cur.rowcount or 0)
+        c.execute("INSERT INTO telegram_state(key,value) VALUES('setting:mikasa_learning_persona_version',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (version,))
+    return deleted
 
 
 @app.get('/api/mikasa/learning')
@@ -1506,6 +1531,32 @@ def _confirm_daily_meal(meal_id: int, eaten: bool) -> dict:
         return {**dict(updated), 'shift_days': 0 if eaten else delta}
 
 
+def _undo_daily_meal_confirmation(meal_id: int) -> dict:
+    """Undo an accidental eaten confirmation without moving the planned plate."""
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        meal = c.execute(
+            '''SELECT dm.*,r.meal_source,r.plates_ready FROM daily_meals dm
+               JOIN recipes r ON r.id=dm.recipe_id WHERE dm.id=?''',
+            (meal_id,),
+        ).fetchone()
+        if not meal:
+            raise ValueError('Meal not found.')
+        if meal['status'] != 'eaten':
+            raise ValueError('This plate is not marked as eaten, so there is nothing to undo.')
+        recipe_id = int(meal['recipe_id'])
+        c.execute("""UPDATE daily_meals
+                     SET status='pending',confirmed_at=NULL,notified_date=NULL,
+                         suggestion_notified_date=NULL,checkin_notified_date=NULL
+                     WHERE id=? AND status='eaten'""", (meal_id,))
+        if meal['meal_source'] == 'home':
+            c.execute('UPDATE recipes SET plates_ready=MIN(1000,COALESCE(plates_ready,0)+1) WHERE id=?', (recipe_id,))
+            c.execute("UPDATE meal_cook_reminders SET status='done' WHERE recipe_id=? AND status='open'", (recipe_id,))
+        _recalculate_recipe_due(c, recipe_id)
+        updated = c.execute('SELECT * FROM daily_meals WHERE id=?', (meal_id,)).fetchone()
+        return {**dict(updated), 'undone': True}
+
+
 @app.post('/api/recipes/{recipe_id}/stock')
 def update_recipe_stock(recipe_id: int, payload: Payload):
     try:
@@ -1686,9 +1737,15 @@ def generate_daily_meals(payload: Payload):
 
 @app.post('/api/daily-meals/{meal_id}/confirm')
 def confirm_daily_meal(meal_id: int, payload: Payload):
-    decision = str(payload.data.get('decision') or '').lower()
+    decision = str(payload.data.get('decision') or '').strip().lower()
+    if decision in ('undo', 'not_eaten', 'cancel_eaten'):
+        try:
+            return _undo_daily_meal_confirmation(meal_id)
+        except ValueError as exc:
+            status = 404 if str(exc) == 'Meal not found.' else 409
+            raise HTTPException(status, str(exc))
     if decision not in ('yes', 'no', 'eaten', 'not_today'):
-        raise HTTPException(400, 'Decision must be yes or no.')
+        raise HTTPException(400, 'Decision must be yes, no or undo.')
     try:
         return _confirm_daily_meal(meal_id, decision in ('yes', 'eaten'))
     except ValueError as exc:
@@ -3094,6 +3151,7 @@ def _telegram_main_keyboard() -> dict:
         'keyboard': [
             [{'text': '📅 Today'}, {'text': '🍽 Meals'}],
             [{'text': '✅ I ate it'}, {'text': '⏭ Not today'}],
+            [{'text': '↩️ Undo eaten'}],
             [{'text': '⚖️ Add weight'}, {'text': '🏃 Add treadmill'}],
             [{'text': '📈 Fitness week'}],
         ],
@@ -3111,6 +3169,7 @@ def _telegram_bot_commands() -> list[dict[str, str]]:
         {'command': 'today', 'description': 'Show today agenda'},
         {'command': 'meals', 'description': "Show today's plate or choose a meal"},
         {'command': 'yes', 'description': 'Confirm you ate the suggested plate'},
+        {'command': 'undo_eaten', 'description': 'Undo an accidental eaten confirmation'},
         {'command': 'no', 'description': 'Move the plate and later plan forward'},
         {'command': 'choosemeal', 'description': 'Choose or replace today’s plate'},
         {'command': 'weight', 'description': 'Start guided weight entry'},
@@ -3613,6 +3672,7 @@ async def _telegram_command_core(text: str) -> str:
         '🍽 today plate','🍽 today meals','🍽 meals','today plate','today meals','meals','/meals',
         '🗓 meal plan','🗓 7-day meals','🗓 upcoming meals','upcoming meals','meal plan','/mealplan',
         '✅ ate it','✅ i ate it','ate it','i ate it','⏭ not today','not today','yes','y','/yes','/eaten','no','n','/no','/skip',
+        '↩️ undo eaten','undo eaten','undo meal','undo my meal','not eaten','i did not eat it',"i didn't eat it","i haven't eaten it",'/undo_eaten',
         '🛒 shopping list','shopping list','shopping','/shopping','➕ add recipe','add recipe','➕ add meal','add meal','/addrecipe',
         '🏠 home meals','home meals','/homemeals','🍴 outside meals','outside meals','/outsidemeals',
         '🔢 update plates','update plates','/stock','🗑 remove meal','remove meal','delete meal','/deletemeal','➕ add grocery','add grocery','/additem',
@@ -3922,6 +3982,21 @@ async def _telegram_command_core(text: str) -> str:
         return _telegram_meal_text(today,7)
     if low in ('🛒 shopping list','shopping list','shopping','/shopping','/groceries'):
         return _telegram_shopping_text()
+    # Undo an accidental meal confirmation without shifting the plate to another day.
+    undo_meal_inputs = (
+        '↩️ undo eaten','undo eaten','undo meal','undo my meal','not eaten',
+        'i did not eat it', "i didn't eat it", "i haven't eaten it", '/undo_eaten',
+    )
+    if low in undo_meal_inputs:
+        eaten_today = one("SELECT id FROM daily_meals WHERE plan_date=? AND status='eaten' ORDER BY id DESC LIMIT 1", (today_iso,))
+        if not eaten_today:
+            return mikasa_persona.meal_undo_unavailable()
+        try:
+            _undo_daily_meal_confirmation(int(eaten_today['id']))
+        except ValueError:
+            return mikasa_persona.meal_undo_unavailable()
+        return mikasa_persona.meal_unconfirmed()
+
     # The pending plate confirmation is intentionally a simple YES / NO reply.
     if not conversation_active and low in ('✅ ate it','✅ i ate it','ate it','yes','y','/yes','/eaten','i ate it','⏭ not today','not today','no','n','/no','/skip'):
         pending = one("SELECT id,plan_date FROM daily_meals WHERE status='pending' AND plan_date<=? ORDER BY plan_date,id LIMIT 1", (today_iso,))
