@@ -1,3 +1,18 @@
+## 0.4.31 — richer Mikasa activity praise and tomorrow planning
+
+- Upgrades Mikasa Persona to **1.8.0** with larger response variations for repeated triggers. Fitness logging and treadmill-routine completion now receive duration/category-aware encouragement; weight check-ins stay neutral and praise consistent tracking rather than the number.
+- Adds a dedicated `TOMORROW` agenda route. Natural phrases such as `Tomorrow plan`, `Plan tomorrow`, `what is on tomorrow?`, `show me tomorrow plan` and `tomorrow` now display the next day's agenda using the same shared agenda builder as Today. They no longer enter the missed-message inbox.
+- Recognises short profanity such as `Fuck u` as a social/frustration message and responds calmly with playful warmth or an invitation to explain what went wrong. It is no longer treated as an unknown application command.
+- Preserves factual data, command actions, the meal and routine engines, and the local missed-message cleanup behavior. No new dependency or database schema change.
+
+## 0.4.30 — reversible meal check-ins, cleaner agenda messages and manageable missed-message log
+
+- Adds **Undo eaten** on Telegram and in both website meal views, including the completed-meal entry in Today’s agenda. Undo returns the same plate to pending, restores one Home-meal plate, clears its confirmation/check-in markers, and never shifts the meal date. Outside meals do not affect stock. **Not today** remains a separate move-forward action.
+- Adds `/undo_eaten` to Telegram command suggestions and keeps the persistent **↩️ Undo eaten** shortcut. The bot also accepts `undo meal`, `undo eaten`, `not eaten` and similar phrases.
+- Refines Mikasa Persona **1.7.0**: Today and morning briefs now contain only a short personal introduction, the untouched factual agenda lines (names, times and statuses), a compact count and a short closing. No extra conversational sentences are inserted into individual task or meal lines.
+- Adds individual **Remove** controls to missed-message records in the website. When a genuinely newer persona version is activated, unresolved (`new`) records are cleared automatically. Learned and ignored records remain intact, and checking the same version does not clear newly captured messages.
+- Preserves existing database records and the deterministic task, routine, meal, fitness and billing actions. No new external service or dependency is introduced.
+
 ## 0.4.28 — Mikasa speaks naturally in Today and ignores stale persona overrides
 
 - Telegram text and captions are passed to Mikasa's conversational/command router. Common media-only messages receive a clear persona response rather than being silently skipped; audio and image/video analysis are not claimed or fabricated.
@@ -40,7 +55,7 @@
 
 # How XROB Assistant thinks
 
-**Version:** 0.4.28
+**Version:** 0.4.31
 
 XROB is a rules-based assistant. It does not invent a plan: it follows the choices, intervals, stock and availability saved in its database.
 
@@ -63,6 +78,7 @@ XROB is a rules-based assistant. It does not invent a plan: it follows the choic
 | Mark a day free | Keep the day free and rebuild later suggestions around it. |
 | Restore a day | Rebuild the upcoming plan; fill the restored date only when a meal is due and available. |
 | Confirm “I ate it” | Keep the date as history; subtract one Home plate. |
+| Undo “I ate it” | Return the same date to pending; restore one Home plate, without shifting the meal plan. |
 | Reply “NO / Not today” | Move the pending sequence forward without overwriting closed, skipped or occupied dates. |
 | Reset the upcoming plan | Rebuild pending plans from tomorrow; keep today, past dates and eaten history unchanged. |
 
@@ -73,12 +89,12 @@ XROB is a rules-based assistant. It does not invent a plan: it follows the choic
 
 11. **One daily agenda is the source of truth.** `build_today_agenda(day)` returns open overdue/due tasks and routines, bills from their 3-day alert window onward, documents from their configured expiry reminder window onward, today's events and workout plan, today's meal and cook alerts, and completed routine/fitness logs. It returns `overdue`, `due`, `pending`, `scheduled`, `upcoming`, and `completed` states with shared counts. The dashboard, current-day Planner, Telegram `/today`, and Home Assistant sensors all consume this result; clients do not independently decide what belongs in today's list. Invalid legacy date values are skipped per record, so one malformed row cannot break the full agenda response.
 12. **Changes propagate between clients.** A successful web-app write broadcasts a change to other open tabs, which refresh their shared data. The app also refreshes on tab focus/visibility and periodically, so actions made through Telegram or Home Assistant are reflected without requiring a manual reload. The server timezone remains authoritative for the date.
-13. **Telegram Today is composed by Mikasa.** The agenda data still comes from `build_today_agenda(day)`, but the persona file turns each task, routine, meal, cook reminder, event, bill, document and activity record into a complete conversational sentence. The reply preserves saved titles, times, values and statuses; it does not emit raw database headings such as `YOUR TO-DO`. Morning briefings use the same sentence renderer. A logged gym session satisfies the matching planned workout so it is not shown twice.
+13. **Telegram Today is composed by Mikasa.** The agenda data still comes from `build_today_agenda(day)`. The persona file adds only a short opening and closing; each agenda entry between them remains a factual line with its saved title, time, value and status. Morning briefings use the same compact factual renderer. A logged gym session satisfies the matching planned workout so it is not shown twice.
 14. **The newest valid persona wins.** On startup, XROB compares the bundled voice and `/config/mikasa_persona.py`. A same-version or newer user override remains active, but an older override cannot silently mask a newer release. The persona file controls wording only; command execution and saved facts remain in `main.py`.
 
 ## Telegram reliability
 
-Telegram's main menu contains **Today**, **Meals**, **I ate it**, **Not today**, **Add weight**, **Add treadmill** and **Fitness week**. Today opens the agenda; Meals shows today's plate or opens the selector when no plate is assigned. The two check-in actions call the same confirmation and interval-safe rollover logic as the website. Fitness week reports weight, treadmill and gym activity only; it does not combine bills, routines or meals. The bot accepts commands only from the configured chat ID. Replies are queued before sending, and an update is marked delivered only after Telegram confirms it. Failed connections retry with a capped delay instead of polling rapidly.
+Telegram's main menu contains **Today**, **Meals**, **I ate it**, **Not today**, **Undo eaten**, **Add weight**, **Add treadmill** and **Fitness week**. Today opens the agenda; Meals shows today's plate or opens the selector when no plate is assigned. Undo eaten reverses an accidental confirmation, restores Home stock and leaves the planned date unchanged; Not today remains the action that moves a pending plate forward. Fitness week reports weight, treadmill and gym activity only; it does not combine bills, routines or meals. The bot accepts commands only from the configured chat ID. Replies are queued before sending, and an update is marked delivered only after Telegram confirms it. Failed connections retry with a capped delay instead of polling rapidly.
 
 ## Where to check
 
@@ -95,7 +111,7 @@ If no meal is eligible, a day can remain empty. XROB does not invent meals, exce
 
 ## Telegram buttons
 
-The persistent menu keeps the quick actions people use every day: **Today**, **Meals**, **I ate it**, **Not today**, **Add weight**, **Add treadmill**, and **Fitness week**. Meal actions call the same scheduler and confirmation functions as the website. “Not today” moves the pending plate and later pending sequence forward without breaking repeat intervals or closed-day rules.
+The persistent menu keeps the quick actions people use every day: **Today**, **Meals**, **I ate it**, **Not today**, **Undo eaten**, **Add weight**, **Add treadmill**, and **Fitness week**. Meal actions call the same scheduler and confirmation functions as the website. “Undo eaten” restores the current plate and Home stock after an accidental confirmation; “Not today” moves the pending plate and later pending sequence forward without breaking repeat intervals or closed-day rules.
 
 ## Bills and payment reminders
 
@@ -114,7 +130,7 @@ The Telegram command engine remains rules-based. A voice wrapper adds brief, con
 ### Telegram capability boundaries
 
 - **Planning:** show the shared Today agenda, tasks, bills, routines and the next seven days; create tasks and events; complete tasks and routines; record bills as paid (no money is transferred).
-- **Meals:** show the current plate and upcoming plan; choose or replace today's plate; confirm eating or move the pending sequence; list home/outside meals; add/remove meal options; update home stock; maintain the shopping list.
+- **Meals:** show the current plate and upcoming plan; choose or replace today's plate; confirm eating, undo an accidental confirmation, or move the pending sequence; list home/outside meals; add/remove meal options; update home stock; maintain the shopping list.
 - **Fitness:** log weight and treadmill sessions; show current-day and seven-day fitness summaries, including gym records created in the web app.
 - **Alerts:** proactive task, routine, bill, meal and home-cooking reminders. Today also includes due-soon document alerts and workout-plan information.
 - **Web-app-only actions:** adding/editing bills, routines, documents and gym sessions is done in the dashboard. Telegram does not execute payments, bank actions or gym-session entry.
