@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-APP_VERSION = '1.0.0'
+APP_VERSION = '1.0.1'
 APP_RELEASE_CHANNEL = 'stable'
 DATA = Path(os.getenv('XROB_DATA_DIR', '/config'))
 DATA.mkdir(parents=True, exist_ok=True)
@@ -35,7 +35,7 @@ _MIKASA_REQUIRED_API = (
     'PERSONA_VERSION', 'TELEGRAM_PROFILE_DESCRIPTION', 'TELEGRAM_PROFILE_SHORT_DESCRIPTION',
     'start_message', 'unclear_message', 'morning_opening', 'morning_closing', 'playful_message',
     'social_reply', 'command_prefix', 'help_intro', 'help_boundary', 'reminder_task',
-    'reminder_routine', 'reminder_bill', 'reminder_bill_early', 'reminder_cook',
+    'reminder_routine', 'routine_moved_to_tomorrow', 'routine_already_tomorrow', 'event_countdown_reply', 'event_not_found_reply', 'reminder_bill', 'reminder_bill_early', 'reminder_cook',
     'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_unconfirmed', 'meal_undo_unavailable', 'meal_moved', 'task_created',
     'fallback_reply', 'unsupported_message', 'processing_error',
     'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed', 'app_status_reply',
@@ -924,7 +924,7 @@ MIKASA_LEARNING_MAX_TEXT = 1200
 MIKASA_CAPABILITY_CATALOG = [
     ('Daily planning', ['/today', 'today please', "what's on today", 'tomorrow plan', '/tomorrow', '/week', 'next 7 days', 'what needs my attention', 'what did I finish today']),
     ('Tasks', ['task Study tomorrow at 18:00', 'task done Study', '/tasks', 'what are my tasks', 'done Buy groceries']),
-    ('Events and appointments', ['/event Dentist|23/11/26 10:00', '/agenda', 'show my agenda', 'what appointments do I have']),
+    ('Events and appointments', ['/event Dentist|23/11/26 10:00', '/agenda', 'show my agenda', 'what appointments do I have', 'how many days left for exams']),
     ('Routines', ['/routines', 'what are my routines', 'done Shower', 'complete treadmill check']),
     ('Fitness and weight', ['weight 82.4', 'treadmill 30', 'treadmill 30 yesterday', '/fitness', '/fitnessweek', 'fitness stats', 'what is my current weight']),
     ('Meals and cooking', ['/meals', '/choosemeal', '/mealplan', "what's for dinner", 'YES', 'NO', 'undo eaten', '/undo_eaten', '/addrecipe', '/stock Chicken|3', '/homemeals', '/outsidemeals']),
@@ -1130,7 +1130,7 @@ def export_mikasa_coverage_report():
     ])
     return PlainTextResponse(
         '\n'.join(lines).rstrip() + '\n',
-        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.0.txt"'},
+        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.1.txt"'},
     )
 
 
@@ -3424,6 +3424,8 @@ async def reminder_loop():
                     await _send_telegram_text(client, message, context='notification')
                     with connect() as c:
                         c.execute('INSERT OR IGNORE INTO notification_log(kind,item_id,reminder_date) VALUES(?,?,?)', (kind, item_id, reminder_date))
+                    if kind in ('routine-time', 'routine-late'):
+                        _telegram_record_routine_offer(int(item_id))
                     if kind == 'routine-late':
                         roll_forward_late_routine(int(item_id), date.fromisoformat(reminder_date))
             except Exception as e:
@@ -3679,6 +3681,202 @@ def _telegram_get_flow() -> dict | None:
 
 def _telegram_set_flow(flow: str, step: str, data: dict | None = None) -> None:
     _telegram_set_state(json.dumps({'flow': flow, 'step': step, 'data': data or {}}, ensure_ascii=False))
+
+
+def _telegram_pending_routine_offers(now: datetime | None = None) -> list[dict[str, Any]]:
+    """Return recent routine reminders that the user may accept or defer."""
+    now = now or datetime.now()
+    row = one("SELECT value FROM telegram_state WHERE key='mikasa_pending_routine_offers'")
+    try:
+        offers = json.loads(row['value']) if row and row.get('value') else []
+    except (TypeError, ValueError, json.JSONDecodeError):
+        offers = []
+    if not isinstance(offers, list):
+        offers = []
+    fresh = []
+    for offer in offers:
+        if not isinstance(offer, dict):
+            continue
+        try:
+            sent_at = datetime.fromisoformat(str(offer.get('sent_at') or ''))
+            if timedelta(0) <= now - sent_at <= timedelta(hours=36):
+                fresh.append(offer)
+        except (TypeError, ValueError):
+            continue
+    if fresh != offers:
+        _telegram_save_pending_routine_offers(fresh)
+    return fresh
+
+
+def _telegram_save_pending_routine_offers(offers: list[dict[str, Any]]) -> None:
+    with connect() as c:
+        if offers:
+            c.execute(
+                "INSERT INTO telegram_state(key,value) VALUES('mikasa_pending_routine_offers',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (json.dumps(offers[-20:], ensure_ascii=False),),
+            )
+        else:
+            c.execute("DELETE FROM telegram_state WHERE key='mikasa_pending_routine_offers'")
+
+
+def _telegram_record_routine_offer(routine_id: int, now: datetime | None = None) -> bool:
+    """Remember a delivered routine reminder so a natural refusal has a safe target."""
+    now = now or datetime.now()
+    routine = one('SELECT id,name,next_due FROM routines WHERE id=?', (int(routine_id),))
+    if not routine:
+        return False
+    offers = [offer for offer in _telegram_pending_routine_offers(now)
+              if int(offer.get('routine_id') or 0) != int(routine_id)]
+    offers.append({
+        'routine_id': int(routine['id']),
+        'name': str(routine['name']),
+        'reminder_day': now.date().isoformat(),
+        'sent_at': now.isoformat(timespec='seconds'),
+    })
+    _telegram_save_pending_routine_offers(offers)
+    return True
+
+
+def _is_routine_decline_message(text: str) -> bool:
+    low = _normalize_telegram_command_text(text)
+    patterns = (
+        r"^(?:no[, ]*)?(?:i\s+)?(?:do not|don't|dont)\s+want\s+to(?:\s+do\s+.+)?$",
+        r"^(?:no[, ]*)?(?:i\s+)?(?:don't|dont|do not)\s+feel\s+like\s+(?:it|doing\s+it|that)$",
+        r"^(?:not now|not today|maybe tomorrow|tomorrow instead|move it to tomorrow|do it tomorrow|skip (?:this|that|the routine|it))$",
+        r"^(?:no[, ]*)?(?:i\s+)?can't\s+(?:do\s+)?(?:it|that|this)(?:\s+today)?$",
+    )
+    return any(re.fullmatch(pattern, low) for pattern in patterns)
+
+
+def _telegram_decline_pending_routine(text: str) -> str:
+    """Move the referenced/currently offered due routine to tomorrow, never a random future item."""
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    offers = _telegram_pending_routine_offers()
+    due = rows('SELECT id,name,next_due FROM routines WHERE next_due IS NOT NULL AND next_due<=? ORDER BY next_due,name',
+               (today.isoformat(),))
+    if not due:
+        for offer in reversed(offers):
+            already = one('SELECT id,name,next_due FROM routines WHERE id=?', (int(offer.get('routine_id') or 0),))
+            if already and already.get('next_due') == tomorrow.isoformat():
+                remaining = [item for item in offers if int(item.get('routine_id') or 0) != int(already['id'])]
+                _telegram_save_pending_routine_offers(remaining)
+                return mikasa_persona.routine_already_tomorrow(str(already['name']), _telegram_date_label(tomorrow.isoformat(), True))
+        return "Nothing due is waiting to be postponed, love. I haven't changed any routine. 🤍"
+
+    low = _normalize_telegram_command_text(text)
+    named_query = low
+    for pattern in (
+        r"^(?:no[, ]*)?(?:i\s+)?(?:do not|don't|dont)\s+want\s+to(?:\s+do\s+)?",
+        r"^(?:no[, ]*)?(?:i\s+)?(?:don't|dont|do not)\s+feel\s+like\s+",
+        r"^(?:not now|not today|maybe tomorrow|tomorrow instead|move it to tomorrow|do it tomorrow|skip)\s*",
+        r"^(?:no[, ]*)?(?:i\s+)?can't\s+(?:do\s+)?",
+    ):
+        named_query = re.sub(pattern, '', named_query).strip()
+    named_query = re.sub(r"^(?:the|this|that|it|my)\s+", '', named_query).strip()
+    named_query = re.sub(r"\s+(?:today|tomorrow|please)$", '', named_query).strip()
+
+    selected = None
+    if named_query and named_query not in {'it', 'that', 'this', 'routine'}:
+        selected, matches = _telegram_match_named_item(named_query, due, 'name')
+        if not selected and len(matches) > 1:
+            return 'Which routine, 7obi? ' + ', '.join(item['name'] for item in matches[:6])
+
+    if selected is None and offers:
+        for offer in reversed(offers):
+            candidate = next((item for item in due if int(item['id']) == int(offer.get('routine_id') or 0)), None)
+            if candidate:
+                selected = candidate
+                break
+
+    if selected is None and not offers:
+        if len(due) == 1:
+            selected = due[0]
+        elif len(due) > 1:
+            return 'Of course, zin dyali. Which routine should I move to tomorrow? ' + ', '.join(item['name'] for item in due[:6])
+
+    if selected is None:
+        return "I couldn't match that to a routine that's currently due, kbida. Nothing has been changed. 🤍"
+
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        current = c.execute('SELECT name,next_due FROM routines WHERE id=?', (int(selected['id']),)).fetchone()
+        if not current or not current['next_due'] or current['next_due'] > today.isoformat():
+            return "That routine has already been handled or rescheduled, 7obi. I left it unchanged. 💗"
+        changed = c.execute('UPDATE routines SET next_due=? WHERE id=? AND next_due=?',
+                            (tomorrow.isoformat(), int(selected['id']), current['next_due']))
+        if changed.rowcount != 1:
+            return "That routine changed while I was checking. I left the newer schedule untouched, love. 🤍"
+    remaining = [offer for offer in offers if int(offer.get('routine_id') or 0) != int(selected['id'])]
+    _telegram_save_pending_routine_offers(remaining)
+    return mikasa_persona.routine_moved_to_tomorrow(str(current['name']), _telegram_date_label(tomorrow.isoformat(), True))
+
+
+def _mikasa_event_countdown_query(raw: str) -> str | None:
+    """Extract an event name from natural countdown questions."""
+    low = _normalize_telegram_command_text(raw)
+    patterns = (
+        r"(?:how\s+(?:many|much)\s+days?\s+(?:are\s+)?(?:left|remaining|remain)\s+(?:for|until|before)\s+)(?P<name>.+)$",
+        r"(?:how\s+(?:many|much)\s+days?\s+(?:until|before|to)\s+)(?P<name>.+)$",
+        r"(?:days?\s+(?:left|remaining|remain)\s+(?:for|until|before)\s+)(?P<name>.+)$",
+        r"(?:how\s+long\s+(?:until|before)\s+)(?P<name>.+)$",
+        r"(?:when\s+(?:is|are)\s+(?:my\s+)?)(?P<name>.+)$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, low)
+        if match:
+            query = match.group('name').strip(' .?!')
+            query = re.sub(r"^(?:my|the)\s+", '', query).strip()
+            query = re.sub(r"\s+(?:event|appointment)$", '', query).strip()
+            if query:
+                return query
+    return None
+
+
+def _mikasa_event_countdown_reply(raw: str, today: date | None = None) -> str | None:
+    """Look up a saved event and return its exact calendar-day countdown."""
+    query = _mikasa_event_countdown_query(raw)
+    if not query:
+        return None
+    today = today or date.today()
+    wanted_tokens = _telegram_name_key(query).split()
+    wanted_tokens = [token[:-1] if len(token) > 3 and token.endswith('s') else token for token in wanted_tokens]
+    wanted = ' '.join(wanted_tokens)
+    matches: list[tuple[int, str, dict[str, Any], date, str | None]] = []
+    for event in rows('SELECT id,title,start_at FROM events ORDER BY start_at,id'):
+        try:
+            start_raw = str(event.get('start_at') or '')
+            event_day = date.fromisoformat(start_raw[:10])
+            event_time = start_raw[11:16] if len(start_raw) >= 16 else None
+            title_key = _telegram_name_key(event.get('title'))
+            title_tokens = [token[:-1] if len(token) > 3 and token.endswith('s') else token for token in title_key.split()]
+            title_normalized = ' '.join(title_tokens)
+            title_set, wanted_set = set(title_tokens), set(wanted_tokens)
+            if not wanted_set:
+                continue
+            if title_normalized == wanted:
+                score = 100
+            elif wanted in title_normalized or title_normalized in wanted:
+                score = 90
+            elif wanted_set.issubset(title_set):
+                score = 80 + len(wanted_set)
+            elif title_set.intersection(wanted_set) and len(wanted_set) == 1:
+                score = 60
+            else:
+                continue
+            matches.append((score, str(event.get('title') or query), event, event_day, event_time))
+        except (TypeError, ValueError):
+            continue
+    if not matches:
+        return mikasa_persona.event_not_found_reply(query)
+    # Prefer the strongest name match, then the nearest upcoming occurrence.
+    matches.sort(key=lambda item: (-item[0], 0 if item[3] >= today else 1,
+                                   item[3] if item[3] >= today else -item[3].toordinal(), int(item[2]['id'])))
+    _, title, _event, event_day, event_time = matches[0]
+    return mikasa_persona.event_countdown_reply(
+        title, event_day.strftime('%a %d/%m/%Y'), (event_day - today).days, event_time
+    )
 
 
 def _telegram_context_keyboard(default_keyboard: dict) -> dict:
@@ -4312,6 +4510,8 @@ async def _telegram_command_core(text: str) -> str:
     if not conversation_active and low in ('✅ ate it','✅ i ate it','ate it','yes','y','/yes','/eaten','i ate it','⏭ not today','not today','no','n','/no','/skip'):
         pending = one("SELECT id,plan_date FROM daily_meals WHERE status='pending' AND plan_date<=? ORDER BY plan_date,id LIMIT 1", (today_iso,))
         if not pending:
+            if _is_routine_decline_message(low):
+                return _telegram_decline_pending_routine(raw)
             return 'There is no plate waiting for confirmation.'
         eaten = low in ('✅ ate it','✅ i ate it','ate it','yes','y','/yes','/eaten','i ate it')
         try:
@@ -4322,6 +4522,9 @@ async def _telegram_command_core(text: str) -> str:
             return mikasa_persona.meal_confirmed()
         delay = int(updated.get('shift_days') or 1)
         return mikasa_persona.meal_moved(_telegram_date_label(updated['plan_date'], True), delay)
+
+    if _is_routine_decline_message(low):
+        return _telegram_decline_pending_routine(raw)
 
     if low.startswith('/suggestmeals') or low in ('suggest meals', 'plan meals'):
         maintain_meal_schedule()
@@ -4638,8 +4841,9 @@ def _telegram_capabilities_message() -> str:
         '• /tasks, /bills, /routines, /documents, /agenda — see your saved lists and expiry dates.\n'
         '• You can also ask naturally: what are my tasks, what do I owe, what is left today, or what did I finish today.\n'
         '• task Study tomorrow at 18:00 — add a task; task done Study — finish it.\n'
-        '• /event Dentist|25/11/26 10:00 — add an appointment.\n'
-        '• done Shower — complete a routine; paid Electricity — mark a bill paid.\n\n'
+        '• /event Dentist|25/11/26 10:00 — add an appointment; ask how many days until Exams for a countdown.\n'
+        '• done Shower — complete a routine; paid Electricity — mark a bill paid.\n'
+        '• Reply not now to a routine reminder to move that routine to tomorrow.\n\n'
         '🍽️ MEALS & SHOPPING\n'
         '• /meals, /choosemeal, /mealplan — view or choose plates.\n'
         '• YES / NO — confirm eating or safely move the pending meal plan.\n'
@@ -4745,6 +4949,9 @@ def _mikasa_context_for_message(raw: str) -> dict[str, int]:
 def _telegram_social_reply(raw: str) -> str | None:
     """Route social messages and app-aware questions without guessing facts."""
     low = re.sub(r'\s+', ' ', str(raw or '').strip().lower()).rstrip('.!?')
+    countdown = _mikasa_event_countdown_reply(raw)
+    if countdown is not None:
+        return countdown
     if low in ('what can you do', 'what do you do', 'how can you help', 'how can you help me',
                'what can you help with', 'capabilities'):
         return _telegram_capabilities_message()
