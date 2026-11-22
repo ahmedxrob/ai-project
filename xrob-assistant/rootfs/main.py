@@ -30,7 +30,7 @@ _MIKASA_REQUIRED_API = (
     'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_moved', 'task_created',
     'fallback_reply', 'unsupported_message', 'processing_error',
     'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed',
-    'agenda_item_line', 'today_agenda_reply', 'morning_report', 'ensure_voice', 'command_reply',
+    'agenda_item_line', 'agenda_conversation_line', 'today_agenda_reply', 'morning_report', 'ensure_voice', 'command_reply',
 )
 
 
@@ -50,13 +50,21 @@ def _load_persona_file(path: Path, module_name: str):
     return module
 
 
-def _load_mikasa_persona_module():
-    """Load /config's drop-in voice pack, otherwise load the bundled file directly.
+def _persona_version_order(value: Any) -> tuple[int, int, int, int]:
+    """Return a comparable four-part version; unknown legacy labels sort first."""
+    match = re.search(r'(?<!\d)(\d+(?:\.\d+){1,3})(?!\d)', str(value or ''))
+    if not match:
+        return (0, 0, 0, 0)
+    parts = tuple(int(part) for part in match.group(1).split('.'))
+    return (parts + (0, 0, 0, 0))[:4]
 
-    Avoid name-based module imports here: Home Assistant's
-    add-on launch environment is not required to put /app on sys.path. Loading
-    from the explicit file path works regardless of the process working directory
-    or Python's import search path.
+
+def _load_mikasa_persona_module():
+    """Load the newest valid persona from /config or the bundled application.
+
+    A stale /config/mikasa_persona.py must not silently shadow a newer voice
+    shipped with an app update. A same-version or newer config override remains
+    preferred, so user edits are still supported.
     """
     global MIKASA_PERSONA_SOURCE
     override = DATA / 'mikasa_persona.py'
@@ -66,42 +74,51 @@ def _load_mikasa_persona_module():
         app_dir / 'rootfs' / 'mikasa_persona.py',
         Path('/rootfs/mikasa_persona.py'),
     )
-    bundled = next((candidate for candidate in bundled_candidates if candidate.is_file()), bundled_candidates[0])
+    bundled_path = next((candidate for candidate in bundled_candidates if candidate.is_file()), None)
+    bundled_module = None
+    override_module = None
+
+    if bundled_path is not None:
+        try:
+            bundled_module = _load_persona_file(bundled_path, 'xrob_mikasa_persona_bundled')
+        except Exception as exc:
+            print(f'Bundled Mikasa voice could not be loaded: {exc}', flush=True)
 
     if override.is_file() and override.resolve() not in {p.resolve() for p in bundled_candidates if p.exists()}:
         try:
-            module = _load_persona_file(override, 'xrob_mikasa_persona_override')
-            MIKASA_PERSONA_SOURCE = 'config override'
-            print(
-                f"Loaded Mikasa voice pack {getattr(module, 'PERSONA_VERSION', 'unknown')} "
-                "from /config/mikasa_persona.py",
-                flush=True,
-            )
-            return module
+            override_module = _load_persona_file(override, 'xrob_mikasa_persona_override')
         except Exception as exc:
-            print(
-                f'Mikasa voice override could not be loaded; using bundled voice: {exc}',
-                flush=True,
-            )
+            print(f'Mikasa voice override could not be loaded; using bundled voice: {exc}', flush=True)
 
-    # Resolve the bundled module by known on-disk locations. This avoids a
-    # ModuleNotFoundError when /app is absent from sys.path and also tolerates
-    # source-rootfs layouts used by some local add-on build workflows.
-    if not bundled.is_file():
-        searched = ', '.join(str(path) for path in bundled_candidates)
-        raise FileNotFoundError(
-            'Bundled Mikasa voice file is missing. Expected it beside main.py or '
-            f'in a rootfs directory. Checked: {searched}. Rebuild the add-on image '
-            'from the complete XROB Assistant source package.'
+    if override_module is not None and bundled_module is not None:
+        override_version = getattr(override_module, 'PERSONA_VERSION', 'unknown')
+        bundled_version = getattr(bundled_module, 'PERSONA_VERSION', 'unknown')
+        if _persona_version_order(override_version) >= _persona_version_order(bundled_version):
+            MIKASA_PERSONA_SOURCE = 'config override'
+            print(f'Loaded Mikasa voice pack {override_version} from /config/mikasa_persona.py', flush=True)
+            return override_module
+        print(
+            f'Ignoring stale Mikasa config voice {override_version}; bundled version '
+            f'{bundled_version} is newer.',
+            flush=True,
         )
-    module = _load_persona_file(bundled, 'xrob_mikasa_persona_bundled')
-    MIKASA_PERSONA_SOURCE = 'bundled'
-    print(
-        f"Loaded bundled Mikasa voice pack {getattr(module, 'PERSONA_VERSION', 'unknown')} "
-        f"from {bundled}",
-        flush=True,
+
+    if bundled_module is not None:
+        MIKASA_PERSONA_SOURCE = 'bundled'
+        print(f'Loaded bundled Mikasa voice pack {getattr(bundled_module, "PERSONA_VERSION", "unknown")} from {bundled_path}', flush=True)
+        return bundled_module
+
+    if override_module is not None:
+        MIKASA_PERSONA_SOURCE = 'config override'
+        print(f'Loaded Mikasa voice pack {getattr(override_module, "PERSONA_VERSION", "unknown")} from /config/mikasa_persona.py', flush=True)
+        return override_module
+
+    searched = ', '.join(str(path) for path in bundled_candidates)
+    raise FileNotFoundError(
+        'No valid Mikasa voice file was found. Expected a complete persona beside '
+        f'main.py, in a rootfs directory, or at {override}. Checked: {searched}'
     )
-    return module
+
 
 
 mikasa_persona = _load_mikasa_persona_module()
@@ -454,7 +471,7 @@ async def lifespan(app):
         if background:
             await asyncio.gather(*background, return_exceptions=True)
 
-app = FastAPI(title='XROB Assistant API', version='0.4.27', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='XROB Assistant API', version='0.4.28', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WWW), name='static')
 
 @app.get('/')
@@ -463,7 +480,7 @@ def home(): return FileResponse(WWW/'index.html')
 def health():
     try:
         with connect() as c: c.execute('SELECT 1').fetchone()
-        return {'status':'ok','app':'XROB Assistant','version':'0.4.27','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
+        return {'status':'ok','app':'XROB Assistant','version':'0.4.28','database':'connected','mikasa_persona_version':getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown'),'mikasa_persona_source':MIKASA_PERSONA_SOURCE}
     except Exception as exc:
         raise HTTPException(503, f'Database check failed: {exc}')
 
