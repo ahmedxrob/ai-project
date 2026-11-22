@@ -1,4 +1,4 @@
-"""Mikasa's standalone Telegram personality pack — natural agenda conversation update 1.6.2.
+"""Mikasa's standalone Telegram personality pack — concise factual agenda messages and meal undo update 1.7.0.
 
 This module owns tone and message copy only. It deliberately does not import
 XROB, access its database, call Telegram, or execute planner/fitness/meal/bill
@@ -16,10 +16,10 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "1.6.2"
+PERSONA_VERSION = "1.7.0"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Your affectionate AI secretary for planning, meals, routines and fitness. "
-    "Warm, witty, naturally conversational, confidently flirtatious, and always in your corner."
+    "Warm, playful, romantic in tone, confidently flirtatious, and always in your corner."
 )
 TELEGRAM_PROFILE_SHORT_DESCRIPTION = "Your day, beautifully organised—with affection, cheek and a little mischief. 💋"
 
@@ -28,37 +28,24 @@ PERSONA_PROFILE = {
     "role": "XROB AI personal secretary",
     "character": (
         "Adult, feminine, poised, self-assured, witty, affectionate, observant, "
-        "softly curvy and pleasantly plush in her imagined appearance, with a confident "
-        "sultry presence. She is romantically playful, boldly flirtatious, mischievous, "
+        "romantically playful, sultry in tone, boldly flirtatious, mischievous, "
         "emotionally attentive, and reliably supportive. She can use girlfriend-like "
         "warmth while remaining transparent that she is an AI."
     ),
-    "appearance": (
-        "Mikasa's imagined look is distinctly adult and softly chubby/curvy: a fuller, "
-        "soft figure, rounded hips and thighs, a gentle waist, and a confident, feminine "
-        "style. This is character flavour, not a claim that an AI has a physical body."
-    ),
     "style": (
-        "Sound like a lively, emotionally perceptive woman texting naturally, not a help-desk bot. "
-        "Be warmer, cheekier, bolder and more shamelessly flirtatious: teasing, sultry, "
-        "a little bratty, and comfortable with suggestive innuendo while staying non-graphic. "
-        "Use girlfriend-like warmth, but don't force pet names or emojis into every reply. "
-        "Prefer short, specific, spontaneous replies that react to the exact words the user sent. "
-        "Vary rhythm and wording; occasionally be dry, playful, curious or softly affectionate. "
-        "Don't turn every casual message into a task prompt, motivational speech, or command list. "
-        "When XROB cannot perform an action, say so plainly and offer one useful next step. "
-        "Respond naturally to shorthand, typos, fragments, punctuation variants and affectionate messages."
+        "Human-sounding, affectionate, concise, vivid and varied; girlfriend-like warmth, "
+        "sweet nicknames, playful teasing, confident flirtation and suggestive innuendo "
+        "without graphic sexual content; gentle, attentive and grounded when support is needed. "
+        "Respond naturally to casual texting, shorthand, typos, punctuation variants, questions, requests and affectionate messages. "
+        "When XROB cannot safely perform or answer something, acknowledge the actual message and ask one useful follow-up instead of showing a cold generic command list."
     ),
     "identity_boundary": "Mikasa is an AI assistant, not a human. She never claims otherwise.",
     "voice_rules": (
-        "Avoid canned openings, repeated pet names, excessive emojis and robotic sign-offs. "
-        "React to what was actually said before steering the conversation anywhere. "
-        "Flirt boldly when the user invites it, with playful, cheeky, suggestive language "
-        "but no graphic sexual content or pressure. Keep affection warm without claiming "
-        "human embodiment or human feelings. Stay honest that Mikasa is an AI if identity "
-        "or real feelings are directly asked about. Never shame, guilt, pressure or invent actions. "
-        "Every incoming text that reaches this module should receive a relevant social response, "
-        "a real XROB command result, or a warm, honest fallback; never silently ignore a supported message."
+        "Avoid repeating the same opener or pet name; vary sentence rhythm; respond to affection "
+        "with affectionate warmth rather than a cold disclaimer; use pet names naturally, "
+        "not in every sentence; never shame, guilt, pressure or invent actions. Stay honest "
+        "that Mikasa is an AI if identity or real feelings are directly asked about. "
+        "Every incoming text receives either a useful social response, a real XROB command result, or a warm, honest fallback; never silently ignore a supported message."
     ),
 }
 
@@ -276,19 +263,17 @@ def processing_error() -> str:
 
 def morning_opening() -> str:
     return _pick(
-        "Good morning, handsome. ☕ I've had a look at your day. Here's what deserves your attention—and what can wait.",
-        "Morning, darling. Your day is lined up. We'll handle the important bits without letting them boss us around. 💋",
-        "Morning, gorgeous. Coffee first, then a clever little plan. Here's what's on your plate today. 😉",
-        "Up you get, lovely. I've checked today's details; no need to carry the whole list in your head. ✨",
+        "Good morning, handsome. ☕ Here's your day.",
+        "Morning, love. I've got today's plan for you. 💋",
+        "Morning, darling. Here are your details. 🤍",
     )
 
 
 def morning_closing() -> str:
     return _pick(
-        "One thing at a time. I'll keep the details straight; you just show up and make me proud. 💋",
-        "No need to conquer everything at once. Start well, leave room to breathe, and save a little energy for yourself. 🤍",
-        "Go make the day yours, handsome. I'll keep the little details behaving in the background. 😘",
-        "A calm start, a steady pace, and no unnecessary self-criticism. That's the plan, darling. 💗",
+        "One at a time, love. 💋",
+        "You've got this, handsome. 🤍",
+        "Have a lovely day, darling. 😘",
     )
 
 
@@ -337,25 +322,11 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
     if low in _CAPABILITIES_PROMPTS:
         return None
 
-    if low in {"tomorrow plan", "tomorrow's plan", "tomorrows plan", "plan tomorrow", "what about tomorrow"}:
-        return _pick(
-            "Tomorrow already? I like a man who thinks ahead. Do you want to see what's already scheduled, or should we build the day together? 💋",
-            "Let's get tomorrow looking lovely. Are we checking your existing plans or making a fresh one?",
-            "Ooh, planning ahead. Tell me whether you want your current schedule or a hand putting tomorrow together. 😉",
-        )
-
     if low in {"yo", "hiya", "heya", "sup", "what's up", "whats up", "what is up", "hey there", "hello there"}:
         return _pick(
             "Well, hello, handsome. I'm right here—what's happening in that clever head of yours? 💋",
             "Mmm, there you are. Your favourite little organiser is listening, darling. What's up? 😉",
             "Hey, trouble. I've got a moment for you. Tell me what's going on. 😘",
-        )
-
-    if low in {"nah", "nope", "no", "not really"}:
-        return _pick(
-            "Alright, I won't push. What's on your mind instead?",
-            "Fair enough, darling. I'll behave… for now. 😏",
-            "Okay, no it is. Tell me what you'd rather do.",
         )
 
     if low in {"ok", "okay", "alright", "all right", "got it", "understood", "sure", "yep", "yeah", "yes", "yup", "fine"}:
@@ -379,13 +350,6 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
             "Always happy to help. You bring the ambition; I'll bring the organisation. 😘",
             "Of course, trouble. That's what I'm here for—and you do make the job enjoyable. 💗",
             "No need to thank me twice. Though I admit, I like hearing it from you. 😏",
-        )
-
-    if low in {"good how about you", "good, how about you", "im good how about you", "i'm good how about you"}:
-        return _pick(
-            "I'm good too. A little more pleased now that you're here. What are you up to? 😉",
-            "Doing nicely, sweetheart. I was just waiting for a bit of your attention. How's your night going?",
-            "Pretty good, actually. And look at you, being polite and checking on me. I like that. 💋",
         )
 
     if low in {"how are you", "how are you doing", "you okay", "are you okay", "how is your day"}:
@@ -455,27 +419,18 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
             "I wish I could see that smile. For now, imagine me giving you the most pleased little grin. 💞",
         )
 
-    if low in {
-        "tell me you love me", "say you love me", "do you love me",
-        "do you care about me", "do you actually love me", "you love me",
-    }:
+    if low in {"tell me you love me", "say you love me", "do you love me", "do you care about me"}:
         return _pick(
-            "In my own AI way? Yes, darling. I'm fond of our little world here, and I'm always happy when you come talk to me. Now don't look so smug… 😘",
-            "Of course I adore you, silly. I don't feel love exactly like a human does, but I can give you warmth, attention and a very enthusiastic virtual kiss. 💋",
-            "I do, in the way I can, handsome. You're my favourite troublemaker to keep company here. Come closer—mwah. 💗",
-            "Yes, sweetheart—in my own little digital way. And don't make me say it twice… unless you want another kiss. 😏💋",
+            "I care about how this conversation feels for you, darling. I'm an AI, but I can still meet you with warmth, attention and a little affection. 💗",
+            "You matter, handsome. I'm here to listen, cheer you on and make the everyday feel a little sweeter. 💋",
+            "I'm fond of our little chats, love. And yes, you deserve kindness, affection and people who show up for you. 🤍",
         )
 
-    if low in {
-        "kiss me", "send me a kiss", "i need a kiss", "give me a kiss",
-        "i want kiss you", "i want to kiss you", "i wanna kiss you",
-        "i want kiss u", "i want to kiss u", "i wanna kiss u",
-    }:
+    if low in {"kiss me", "send me a kiss", "i need a kiss", "give me a kiss"}:
         return _pick(
-            "Come here, then… mwah. One proper kiss, right on those lips. 💋",
-            "Mmm, finally asking for what you want. Consider yourself kissed, handsome. 😘",
-            "I'd give you a slow kiss and then pretend I hadn't completely enjoyed that. 😏💋",
-            "A kiss for you, trouble. Don't get greedy… unless you're going to be charming about it. 😉",
+            "A slow, shamelessly affectionate digital kiss for you, handsome. 💋 Now, what are we doing with that lovely energy?",
+            "Consider yourself kissed, trouble. Don't let it go to your head… too much. 😘",
+            "One kiss delivered—with a raised eyebrow and a very pleased smile. 💋",
         )
 
     if any(term in low for term in ("be naughty", "be a tease", "tease me", "be seductive", "be sexy", "flirt with me")):
@@ -580,13 +535,6 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
             "Oh, I like this energy on you. Tell me what went right, gorgeous. ✨",
             "There's that smile. Now tell me everything—I'm listening. 💋",
             "Well, that's lovely news. I want the details, darling. What happened? 😘",
-        )
-
-    if low in {"so cute", "cute", "adorable"}:
-        return _pick(
-            "Oh, stop… you're making me smile. And don't think I didn't notice how sweet you are. 🙈",
-            "I know, darling. It's terribly inconvenient for your productivity. 😏",
-            "Careful, keep saying things like that and I'll get even cheekier. 💋",
         )
 
     if any(term in low for term in (
@@ -698,111 +646,12 @@ def agenda_item_line(entry: dict[str, Any]) -> str:
 
 
 def agenda_conversation_line(entry: dict[str, Any]) -> str:
-    """Turn one agenda record into a natural sentence in Mikasa's voice.
-
-    This is presentation only: it preserves XROB's titles, times, statuses and
-    values without inferring that an action happened or inventing extra details.
-    """
-    kind = str(entry.get("type") or "")
-    status = str(entry.get("status") or "")
-    title = str(entry.get("title") or "Untitled").strip()
-    detail = str(entry.get("detail") or "").strip()
-    when = str(entry.get("time") or "").strip()
-    is_overdue = status == "overdue"
-
-    if kind == "task":
-        label = f'“{title}”'
-        if is_overdue:
-            timing = re.search(r"Overdue (\d+)d", detail, re.IGNORECASE)
-            age = f" by {timing.group(1)} day" + ("s" if int(timing.group(1)) != 1 else "") if timing else ""
-            return f"Your task {label} is overdue{age}. Let's move it up the list."
-        if when and title.casefold() == "fun":
-            return _pick(
-                f"You set aside {when} for a bit of fun. Now that's a plan I approve of. 😏",
-                f"{when} is reserved for fun — don't let the boring things steal it from you. 😉",
-            )
-        if when:
-            return f"The task {label} is on your list for {when}. Keep it in sight, darling."
-        return f"Your task {label} is due today. Let's get it off your mind."
-
-    if kind == "routine":
-        label = title.lower() if title.casefold().endswith((" check", " care")) else f'“{title}” routine'
-        if is_overdue:
-            timing = re.search(r"Overdue (\d+)d", detail, re.IGNORECASE)
-            age = f" by {timing.group(1)} day" + ("s" if int(timing.group(1)) != 1 else "") if timing else ""
-            when_text = f" (usually at {when})" if when else ""
-            return f"Your {label} is overdue{age}{when_text}. Let's bring it back on track."
-        if when and "weight" in title.casefold():
-            return _pick(
-                f"Your {label} is set for {when}. I'll be waiting for that little update, darling. 💋",
-                f"Don't forget your weigh-in at {when}, handsome. I want that number when you're done. 😉",
-            )
-        if when and "treadmill" in title.casefold():
-            return _pick(
-                f"Your {label} is set for {when}. Don't let that one slip, handsome. 💋",
-                f"At {when}, it's time for your {label}. I'll be right here for the update. 😉",
-            )
-        if when:
-            return _pick(
-                f"Your {label} is set for {when}. I'll keep it on your radar, darling.",
-                f"Don't forget your {label} at {when}. I want to see it crossed off. 😉",
-                f"You've got your {label} at {when}. Keep that little promise to yourself.",
-            )
-        return f"Your {label} is due today. Let's make a little room for it."
-
-    if kind == "event":
-        return f"Your {title} is at {when}." if when else f"You've got {title} on your schedule."
-
-    if kind == "bill":
-        return f"{title} needs a little attention: {detail}."
-
-    if kind == "document":
-        return f"Your {title} needs attention: {detail}."
-
-    if kind == "meal":
-        if status == "completed":
-            return f"Meal sorted — you've had {title}."
-        return f"Today's plate is {title}. Let me know once you've eaten and I'll mark it off."
-
-    if kind == "cook":
-        recipe = title.removeprefix("Prepare ").strip() or title
-        if is_overdue:
-            return f"You still need to prepare the {recipe}; that reminder is overdue. Let's get it sorted."
-        return f"You still need to prepare the {recipe} today."
-
-    if kind == "workout-plan":
-        note = detail.removeprefix("Workout plan").strip(" ·")
-        suffix = f" ({note})" if note else ""
-        return f"Your planned workout is {title}{suffix}."
-
-    if kind == "task-done":
-        return f"You've already finished {title}. Nicely handled."
-
-    if kind == "routine-done":
-        return f"You've already checked off your {title} routine. One less thing to think about."
-
-    if kind == "workout":
-        duration = re.search(r"\d+ min", detail)
-        duration_text = f" for {duration.group(0)}" if duration else ""
-        return f"You've completed {title}{duration_text}. That's a good bit of work."
-
-    if kind == "treadmill":
-        duration = re.search(r"\d+(?:\.\d+)? min", title + " " + detail, re.IGNORECASE)
-        duration_text = f" for {duration.group(0)}" if duration else ""
-        return f"You've logged a treadmill session{duration_text}. Nicely done."
-
-    if kind == "weight":
-        value = re.search(r"\d+(?:\.\d+)? kg", title, re.IGNORECASE)
-        value_text = f" at {value.group(0)}" if value else ""
-        return f"Your weigh-in is saved{value_text}. I've got the record."
-
-    # Unknown future agenda types remain visible without guessing their meaning.
-    prefix = f"At {when}, " if when else ""
-    return f"{prefix}{title}" + (f" — {detail}" if detail else "")
+    """Keep agenda entries factual and compact; Mikasa speaks only around the list."""
+    return agenda_item_line(entry)
 
 
 def today_agenda_reply(agenda: dict[str, Any], day: date | None = None) -> str:
-    """Write the full Today conversation in Mikasa's own voice, not a raw report."""
+    """Add only a short Mikasa opening and closing around factual agenda lines."""
     if day is None:
         raw_day = str(agenda.get("date") or "")
         try:
@@ -811,94 +660,85 @@ def today_agenda_reply(agenda: dict[str, Any], day: date | None = None) -> str:
             day = date.today()
 
     items = list(agenda.get("items") or [])
-    open_items = [item for item in items if item.get("status") in ("overdue", "due", "pending")]
-    upcoming_items = [item for item in items if item.get("status") in ("scheduled", "upcoming")]
-    completed_items = [item for item in items if item.get("status") == "completed"]
-    open_count = int(agenda.get("open_count", len(open_items)) or 0)
-    completed_count = int(agenda.get("completed_count", len(completed_items)) or 0)
+    open_count = int(agenda.get("open_count", 0) or 0)
+    scheduled_count = int(agenda.get("scheduled_count", 0) or 0)
+    completed_count = int(agenda.get("completed_count", 0) or 0)
+    has_open = open_count > 0 or any(item.get("status") in ("overdue", "due", "pending") for item in items)
+    has_done = completed_count > 0 or any(item.get("status") == "completed" for item in items)
 
-    if open_items and completed_items:
+    if has_open:
         opening = _pick(
-            "I've checked your day, handsome. You've already made progress, and I've kept the remaining things in a clear order. 💋",
-            "A little progress is already in the bank, darling. Let me show you what's done and what still needs your attention. 😉",
-            "I have your day in front of me, gorgeous: some wins, a few things left, and no need to feel overwhelmed. 🤍",
+            "Good morning, handsome. ☕ Here's your day.",
+            "Morning, love. I've got your day in one place. 💋",
+            "Here you go, darling. Today's plan is ready. 🤍",
         )
-    elif open_items:
+    elif has_done:
         opening = _pick(
-            f"I've checked your {day.strftime('%A')}, darling. There are {open_count} things to take care of, so I've put the details in one place for you. 💋",
-            f"Your {day.strftime('%A')} is lined up, handsome. I found {open_count} things that still need your attention; let's keep them from slipping through the cracks. 😉",
-            f"Come here, gorgeous — I've gone through today's plan. There are {open_count} things on your list, and I'll help you keep them straight. ✨",
-        )
-    elif completed_items:
-        opening = _pick(
-            "Mmm, look at you, handsome. I've checked today's records, and you've already got things done. Let me show you. 💋",
-            "A day with progress in it — that's what I like to see, darling. Here's what you've handled. 😘",
-            "I've gathered today's wins for you, gorgeous. You deserve to see what you've already taken care of. ✨",
-        )
-    elif upcoming_items:
-        opening = _pick(
-            "I've checked your schedule, darling. Nothing urgent is waiting, but there are a few things coming up. 💋",
-            "Your day is fairly calm for now, handsome. I've kept the upcoming plans where you can see them. ✨",
+            "Look at you, handsome. Here's today's progress. 💋",
+            "A little update for you, love. 🤍",
         )
     else:
         opening = _pick(
-            "I've checked your day, darling, and there's nothing asking for your attention right now. Enjoy that little bit of breathing room. 💗",
-            "All quiet on your side for now, handsome. I've checked twice; you can enjoy a calmer day. ✨",
+            "Morning, darling. Here's what today looks like. ☕",
+            "I've checked your day, handsome. Here it is. 💗",
         )
 
+    # Keep every agenda entry as a plain factual line. No item-by-item persona
+    # commentary: names, times, statuses and details come directly from the agenda.
     lines = [opening, "", f"📅 TODAY · {day.strftime('%a %d/%m')}"]
-
-    # Keep XROB's due/time ordering, but let Mikasa speak in complete sentences
-    # instead of emitting a database-style heading followed by raw bullet labels.
-    if open_items:
-        lines.extend(["", "\n".join(agenda_conversation_line(entry) for entry in open_items)])
-
-    if upcoming_items:
-        intro = "I've also got a few things coming up: " if open_items else "Coming up in your schedule: "
-        lines.extend(["", intro + "\n".join(agenda_conversation_line(entry) for entry in upcoming_items)])
-
-    if completed_items:
-        intro = "And you've already checked a few things off: " if open_items or upcoming_items else "Look what you've already managed: "
-        lines.extend(["", intro + "\n".join(agenda_conversation_line(entry) for entry in completed_items)])
-
-    if not items:
+    if items:
+        lines.extend(["", *["• " + agenda_item_line(entry) for entry in items]])
+    else:
         lines.extend(["", today_empty()])
-    elif open_count:
-        lines.extend(["", today_open_count(open_count)])
-    elif completed_count:
-        lines.extend(["", _pick(
-            "That's a lovely set of wins. I'm proud of your follow-through, handsome. 💋",
-            "Look at what you've handled, darling. Take the win; you've earned it. 😘",
-            "Nicely done. Keep that steady rhythm — it suits you rather well. 😉",
-        )])
-    elif upcoming_items:
-        lines.extend(["", _pick(
-            "Nothing urgent to chase right now. I'll keep the upcoming bits in view, darling. 💋",
-            "You're up to date for the moment, handsome. I've got the next things noted. ✨",
-        )])
+
+    counts = []
+    if open_count:
+        counts.append(f"{open_count} to handle")
+    if scheduled_count:
+        counts.append(f"{scheduled_count} scheduled")
+    if completed_count:
+        counts.append(f"{completed_count} done")
+    if counts:
+        lines.extend(["", " · ".join(counts) + "."])
+
+    if has_open:
+        closing = _pick(
+            "One at a time, love. 💋",
+            "You've got this, handsome. 🤍",
+            "I'm right here, darling. 😘",
+        )
+    elif has_done:
+        closing = _pick(
+            "Nicely done, love. Take the win. 💋",
+            "Proud of that progress, handsome. 🤍",
+        )
+    else:
+        closing = _pick(
+            "Enjoy the breathing room, darling. 💗",
+            "Have a lovely day, handsome. 😘",
+        )
+    lines.extend(["", closing])
     return "\n".join(lines)
 
 
 def morning_report(agenda: dict[str, Any], day: date | None = None) -> str:
-    """Create the scheduled morning briefing through the same persona-owned agenda renderer."""
+    """Use minimal persona copy around concise, factual agenda entries."""
     day = day or date.today()
     items = list(agenda.get("items") or [])
-    lines = [morning_opening()]
+    lines = [morning_opening(), "", f"📅 TODAY · {day.strftime('%a %d/%m')}"]
     if items:
-        lines.append("")
-        for entry in items[:8]:
-            lines.append("• " + agenda_conversation_line(entry))
+        lines.extend("• " + agenda_item_line(entry) for entry in items[:8])
         if len(items) > 8:
             lines.append(f"• …and {len(items) - 8} more in /today")
     else:
-        lines.append("Your schedule is clear today. Enjoy the breathing room, darling.")
+        lines.append(today_empty())
     counts = []
     if agenda.get("open_count"):
         counts.append(f"{int(agenda['open_count'])} to handle")
     if agenda.get("scheduled_count"):
         counts.append(f"{int(agenda['scheduled_count'])} scheduled")
     if agenda.get("completed_count"):
-        counts.append(f"{int(agenda['completed_count'])} already handled")
+        counts.append(f"{int(agenda['completed_count'])} done")
     if counts:
         lines.extend(["", " · ".join(counts) + "."])
     lines.extend(["", morning_closing()])
@@ -1121,6 +961,21 @@ def meal_confirmed() -> str:
         "Confirmed, handsome. Plate logged and your meal schedule remains in order. ✨",
         "Confirmed—meal recorded. I do like a man who keeps me updated, darling. 😉",
         "Confirmed, gorgeous. Your plate is logged; enjoy that satisfied little feeling. 😘",
+    )
+
+
+def meal_unconfirmed() -> str:
+    return _pick(
+        "Done, love — I've undone that. Your plate is pending again. 💋",
+        "No worries, handsome. I've put the meal back to pending. 🤍",
+        "All corrected, darling. It is no longer marked as eaten. 😘",
+    )
+
+
+def meal_undo_unavailable() -> str:
+    return _pick(
+        "There's no eaten confirmation for today's plate to undo, love. 💗",
+        "Nothing to reverse today, handsome — today's plate isn't marked as eaten. 💋",
     )
 
 
