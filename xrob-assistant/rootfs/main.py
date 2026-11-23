@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-APP_VERSION = '1.0.4'
+APP_VERSION = '1.0.5'
 APP_RELEASE_CHANNEL = 'stable'
 DATA = Path(os.getenv('XROB_DATA_DIR', '/config'))
 DATA.mkdir(parents=True, exist_ok=True)
@@ -1259,7 +1259,7 @@ def export_mikasa_coverage_report():
     ])
     return PlainTextResponse(
         '\n'.join(lines).rstrip() + '\n',
-        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.4.txt"'},
+        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.5.txt"'},
     )
 
 
@@ -3475,6 +3475,17 @@ async def _send_telegram_text(client, message: str, *, chat_id: str | None = Non
         json=payload,
     )
     _telegram_response_data(sent, 'sendMessage')
+    if context == 'photo_feedback':
+        _telegram_setting_set('mikasa_photo_feedback_pending_at', datetime.now().isoformat(timespec='seconds'))
+        _telegram_setting_set('mikasa_last_outbound_prompt', 'photo_feedback')
+    elif context == 'photo_confirmation':
+        _telegram_setting_set('mikasa_last_outbound_prompt', 'photo_confirmation')
+    else:
+        # A later Telegram message becomes the most recent prompt. This avoids
+        # an old photo YES/NO stealing a meal or another app confirmation.
+        _telegram_setting_set('mikasa_photo_feedback_pending_at', '')
+        _telegram_setting_set('mikasa_photo_replace_confirmation_pending', '')
+        _telegram_setting_set('mikasa_last_outbound_prompt', 'other')
 
 
 async def _send_scheduled_mikasa_messages(client, now: datetime) -> None:
@@ -3526,6 +3537,7 @@ async def _apply_mikasa_profile_photo(client, photo_path: Path, now: datetime | 
     _telegram_setting_set('mikasa_photo_active_file', photo_path.name)
     _telegram_setting_set('mikasa_photo_last_changed_at', now.isoformat(timespec='seconds'))
     _telegram_setting_set('mikasa_photo_feedback_pending', photo_path.name)
+    _telegram_setting_set('mikasa_photo_feedback_pending_at', '')
     _telegram_setting_set('mikasa_photo_last_attempt_at', now.isoformat(timespec='seconds'))
 
     caption = mikasa_persona.ensure_voice(mikasa_persona.photo_changed_message(), context='message')
@@ -3536,13 +3548,104 @@ async def _apply_mikasa_profile_photo(client, photo_path: Path, now: datetime | 
             files={'photo': (photo_path.name, content, 'image/jpeg')},
         )
         _telegram_response_data(preview, 'sendPhoto')
+        _telegram_setting_set('mikasa_photo_feedback_pending_at', now.isoformat(timespec='seconds'))
+        _telegram_setting_set('mikasa_last_outbound_prompt', 'photo_feedback')
     except Exception as exc:
         # A profile update is already confirmed; a preview failure must not roll it back.
         print(f'Mikasa profile photo changed, but preview delivery failed: {exc}', flush=True)
         try:
-            await _send_telegram_text(client, caption, context='message')
+            await _send_telegram_text(client, caption, context='photo_feedback')
         except Exception as fallback_exc:
             print(f'Mikasa profile-photo feedback message failed: {fallback_exc}', flush=True)
+
+
+MIKASA_PHOTO_CONFIRMATION_TTL = timedelta(minutes=15)
+
+
+def _request_mikasa_photo_replacement() -> str:
+    """Ask before changing a profile photo; the affirmative reply is state-scoped."""
+    photos = _mikasa_available_photos()
+    active = _telegram_setting_get('mikasa_photo_active_file', '')
+    alternatives = [item for item in photos if item.name != active]
+    if not alternatives:
+        _telegram_setting_set('mikasa_photo_feedback_pending', '')
+        _telegram_setting_set('mikasa_photo_feedback_pending_at', '')
+        return mikasa_persona.photo_unavailable_reply()
+    _telegram_setting_set('mikasa_photo_feedback_pending', '')
+    _telegram_setting_set('mikasa_photo_feedback_pending_at', '')
+    _telegram_setting_set('mikasa_photo_change_requested', '0')
+    _telegram_setting_set(
+        'mikasa_photo_replace_confirmation_pending',
+        datetime.now().isoformat(timespec='seconds'),
+    )
+    _telegram_setting_set('mikasa_last_outbound_prompt', 'photo_confirmation')
+    return mikasa_persona.photo_change_requested_reply()
+
+
+def _mikasa_photo_confirmation_reply(raw: str) -> str | None:
+    """Consume YES/NO only while a recent Mikasa photo prompt is awaiting a reply.
+
+    This router runs before app commands, preventing a photo approval from
+    accidentally reaching the meal YES/NO check-in. Any unrelated message
+    cancels a pending replacement prompt so later confirmations are not stale.
+    """
+    low = _normalize_telegram_command_text(raw)
+    yes = {'yes', 'y', 'yeah', 'yep', 'sure', 'okay', 'ok', 'please do', 'do it',
+           'go ahead', 'replace it', 'yes please', 'yes replace it', 'confirm'}
+    no = {'no', 'n', 'nope', 'nah', 'keep it', 'leave it', 'leave it as it is',
+          'dont replace it', "don't replace it", 'no thanks', 'cancel', '/cancel'}
+    photo_pending = _telegram_setting_get('mikasa_photo_replace_confirmation_pending', '')
+    feedback_pending = _telegram_setting_get('mikasa_photo_feedback_pending', '')
+    feedback_at = _telegram_setting_get('mikasa_photo_feedback_pending_at', '')
+
+    # Existing guided app forms and record-deletion confirmations take priority.
+    # A photo prompt must never consume a YES/NO that is already answering one.
+    if _telegram_get_state() and low in (yes | no):
+        _telegram_setting_set('mikasa_photo_replace_confirmation_pending', '')
+        _telegram_setting_set('mikasa_photo_feedback_pending_at', '')
+        return None
+
+    if photo_pending:
+        try:
+            started = datetime.fromisoformat(photo_pending)
+            is_fresh = datetime.now() - started <= MIKASA_PHOTO_CONFIRMATION_TTL
+        except (TypeError, ValueError):
+            is_fresh = False
+        _telegram_setting_set('mikasa_photo_replace_confirmation_pending', '')
+        if is_fresh and _telegram_setting_get('mikasa_last_outbound_prompt') == 'photo_confirmation' and low in yes:
+            photos = _mikasa_available_photos()
+            active = _telegram_setting_get('mikasa_photo_active_file', '')
+            if not any(item.name != active for item in photos):
+                return mikasa_persona.photo_unavailable_reply()
+            _telegram_setting_set('mikasa_photo_change_requested', '1')
+            return mikasa_persona.photo_replacement_approved_reply()
+        if is_fresh and _telegram_setting_get('mikasa_last_outbound_prompt') == 'photo_confirmation' and low in no:
+            return mikasa_persona.photo_replacement_declined_reply()
+        if (not is_fresh or _telegram_setting_get('mikasa_last_outbound_prompt') != 'photo_confirmation') and low in (yes | no):
+            return mikasa_persona.photo_confirmation_expired_reply()
+
+    if feedback_pending and low in yes | no:
+        try:
+            sent_at = datetime.fromisoformat(feedback_at)
+            is_fresh = datetime.now() - sent_at <= MIKASA_PHOTO_CONFIRMATION_TTL
+        except (TypeError, ValueError):
+            is_fresh = False
+        if is_fresh and _telegram_setting_get('mikasa_last_outbound_prompt') == 'photo_feedback':
+            _telegram_setting_set('mikasa_photo_feedback_pending', '')
+            _telegram_setting_set('mikasa_photo_feedback_pending_at', '')
+            if low in yes:
+                _telegram_setting_set('mikasa_photo_feedback_last', 'liked:' + feedback_pending)
+                return mikasa_persona.photo_liked_reply()
+            return _request_mikasa_photo_replacement()
+        # Keep explicit replies such as "I like it" available for the normal
+        # photo-feedback handler, but don't let an old bare YES steal a meal.
+        _telegram_setting_set('mikasa_photo_feedback_pending_at', '')
+
+    # Any new non-confirmation message ends a photo replacement prompt. A
+    # fresh photo-feedback prompt remains available for explicit photo wording.
+    if not photo_pending and low not in yes | no:
+        _telegram_setting_set('mikasa_photo_feedback_pending_at', '')
+    return None
 
 
 async def _maybe_rotate_mikasa_photo(client, now: datetime | None = None, *, force: bool = False) -> bool:
@@ -3809,8 +3912,13 @@ async def telegram_poll():
                             c.execute('DELETE FROM telegram_inbox WHERE update_id < (SELECT COALESCE(MAX(update_id),0)-2000 FROM telegram_inbox) AND sent_at IS NOT NULL')
 
                     reply_keyboard = _telegram_context_keyboard(keyboard)
+                    outbound_context = (
+                        'photo_confirmation'
+                        if _telegram_setting_get('mikasa_photo_replace_confirmation_pending', '')
+                        else 'message'
+                    )
                     await _send_telegram_text(
-                        client, reply, chat_id=chat, reply_markup=reply_keyboard, context='message'
+                        client, reply, chat_id=chat, reply_markup=reply_keyboard, context=outbound_context
                     )
 
                     # Persist the reply as delivered and advance the offset only
@@ -4774,8 +4882,9 @@ async def _telegram_command_core(text: str) -> str:
     today = date.today()
     today_iso = today.isoformat()
 
-    # A photo reaction is handled only for explicit phrases, never a bare YES/NO
-    # that could belong to meal or record-confirmation flows.
+    # Explicit photo phrases remain supported. Bare YES/NO photo replies are
+    # handled by _mikasa_photo_confirmation_reply() only while a fresh photo
+    # prompt is pending, before this command router can reach meal check-ins.
     photo_pending = _telegram_setting_get('mikasa_photo_feedback_pending', '')
     photo_likes = {'i like it', 'i love it', 'love it', 'like it', 'its beautiful', "it's beautiful",
                    'beautiful', 'gorgeous', 'pretty', 'nice picture', 'nice pic', 'looks good', 'i like the picture'}
@@ -4786,22 +4895,9 @@ async def _telegram_command_core(text: str) -> str:
         _telegram_setting_set('mikasa_photo_feedback_last', 'liked:' + photo_pending)
         return mikasa_persona.photo_liked_reply()
     if photo_pending and low in photo_changes:
-        photos = _mikasa_available_photos()
-        alternatives = [item for item in photos if item.name != _telegram_setting_get('mikasa_photo_active_file', '')]
-        _telegram_setting_set('mikasa_photo_feedback_pending', '')
-        if not alternatives:
-            return mikasa_persona.photo_unavailable_reply()
-        _telegram_setting_set('mikasa_photo_change_requested', '1')
-        return mikasa_persona.photo_change_requested_reply()
+        return _request_mikasa_photo_replacement()
     if low in {'/photo', 'another mikasa photo', 'change mikasa photo', 'change your photo'}:
-        if not _mikasa_available_photos():
-            return mikasa_persona.photo_unavailable_reply()
-        alternatives = [item for item in _mikasa_available_photos()
-                        if item.name != _telegram_setting_get('mikasa_photo_active_file', '')]
-        if not alternatives:
-            return mikasa_persona.photo_unavailable_reply()
-        _telegram_setting_set('mikasa_photo_change_requested', '1')
-        return mikasa_persona.photo_change_requested_reply()
+        return _request_mikasa_photo_replacement()
 
     if low in {'/status', 'status', 'app status', 'xrob status', 'my progress', 'progress'}:
         return mikasa_persona.app_status_reply(_mikasa_app_status_context())
@@ -5747,6 +5843,9 @@ def _telegram_persona_prefix(raw: str, reply: str) -> str:
 async def telegram_command(text: str) -> str:
     """Mikasa voice and app-aware shortcuts around XROB's validated command engine."""
     raw = str(text or '').strip()
+    photo_confirmation = _mikasa_photo_confirmation_reply(raw)
+    if photo_confirmation is not None:
+        return mikasa_persona.ensure_voice(photo_confirmation, context='message')
     management = _telegram_manage_request(raw)
     if management is not None:
         return mikasa_persona.command_reply(raw, management)
