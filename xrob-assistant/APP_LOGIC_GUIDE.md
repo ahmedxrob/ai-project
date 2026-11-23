@@ -1,73 +1,34 @@
-## 1.0.0 — Stable release
-
-- Establishes XROB Assistant 1.0.0 as the stable release and Mikasa Persona 2.0.0 as the bundled voice pack.
-- Adds SQLite WAL mode, a 30-second busy timeout, pre-migration online database snapshots, 14-snapshot retention, manual backup creation, and a Settings diagnostics panel.
-- Adds a downloadable Mikasa message-coverage report describing supported command/social intents, representative examples, Telegram attachment limitations, learned phrases, ignored phrases, and unresolved messages.
-- Adds Telegram `/status` and more natural app-status/meal-stock questions using values read from the local XROB database.
-- Keeps the command engine deterministic and local. The coverage report distinguishes supported text handlers from attachment types that are acknowledged but not transcribed or analysed.
-- Adds defensive HTTP security/cache headers. The dashboard/API remains intended for a trusted local network and should not be exposed directly to the public internet without an authenticated reverse proxy or equivalent access control.
-- This release preserves the existing application database and scheduling rules. Automatic pre-migration snapshots are best-effort; users should still keep a separate Home Assistant backup.
-
-## 0.4.31 — richer Mikasa activity praise and tomorrow planning
-
-- Upgrades Mikasa Persona to **1.8.0** with larger response variations for repeated triggers. Fitness logging and treadmill-routine completion now receive duration/category-aware encouragement; weight check-ins stay neutral and praise consistent tracking rather than the number.
-- Adds a dedicated `TOMORROW` agenda route. Natural phrases such as `Tomorrow plan`, `Plan tomorrow`, `what is on tomorrow?`, `show me tomorrow plan` and `tomorrow` now display the next day's agenda using the same shared agenda builder as Today. They no longer enter the missed-message inbox.
-- Recognises short profanity such as `Fuck u` as a social/frustration message and responds calmly with playful warmth or an invitation to explain what went wrong. It is no longer treated as an unknown application command.
-- Preserves factual data, command actions, the meal and routine engines, and the local missed-message cleanup behavior. No new dependency or database schema change.
-
-## 0.4.30 — reversible meal check-ins, cleaner agenda messages and manageable missed-message log
-
-- Adds **Undo eaten** on Telegram and in both website meal views, including the completed-meal entry in Today’s agenda. Undo returns the same plate to pending, restores one Home-meal plate, clears its confirmation/check-in markers, and never shifts the meal date. Outside meals do not affect stock. **Not today** remains a separate move-forward action.
-- Adds `/undo_eaten` to Telegram command suggestions and keeps the persistent **↩️ Undo eaten** shortcut. The bot also accepts `undo meal`, `undo eaten`, `not eaten` and similar phrases.
-- Refines Mikasa Persona **1.7.0**: Today and morning briefs now contain only a short personal introduction, the untouched factual agenda lines (names, times and statuses), a compact count and a short closing. No extra conversational sentences are inserted into individual task or meal lines.
-- Adds individual **Remove** controls to missed-message records in the website. When a genuinely newer persona version is activated, unresolved (`new`) records are cleared automatically. Learned and ignored records remain intact, and checking the same version does not clear newly captured messages.
-- Preserves existing database records and the deterministic task, routine, meal, fitness and billing actions. No new external service or dependency is introduced.
-
-## 0.4.28 — Mikasa speaks naturally in Today and ignores stale persona overrides
-
-- Telegram text and captions are passed to Mikasa's conversational/command router. Common media-only messages receive a clear persona response rather than being silently skipped; audio and image/video analysis are not claimed or fabricated.
-- Command matching normalises casing, whitespace and trailing punctuation. The Today agenda recognises common natural-language variants and can interrupt an active guided flow safely.
-- The standalone `rootfs/mikasa_persona.py` owns the full Today agenda presentation, activity labels, morning briefing, command-response lead-ins, social fallback, unsupported-attachment wording and processing-error messages. Deterministic XROB handlers remain responsible for actions and database changes.
-- Every Telegram `sendMessage` goes through one outbound gateway. It applies a final persona voice guard so a new send path cannot silently ship a cold, unbranded response.
-- Settings shows a read-only missed-message log with grouped occurrence counts and a downloadable plain-text export. The user can send the exported text with a future source update; no manual reply-writing or phrase teaching is required.
-- Existing SQLite schema and data remain intact. Captured text stays local; the export is generated on demand. No AI service or external runtime dependency is added.
-
-## 0.4.25 — Mikasa local learning inbox (superseded)
-
-- Added the original fallback-message capture table and manual phrase-teaching flow. The capture table is retained for backwards compatibility, while the current interface uses it as a text-only missed-message log.
-
-
-## 0.4.24 — Mikasa loader hotfix
-
-- Bundled Mikasa is now loaded directly from the path beside `main.py`, avoiding any dependency on `/app` being present in Python's module search path.
-- The `/config/mikasa_persona.py` override remains optional; a missing or invalid override falls back to the bundled file.
-- Docker image construction checks that `/app/mikasa_persona.py` exists and compiles before the image can be produced.
-- No database, command, scheduler, or UI behavior changes.
-
-
-## 0.4.23 — standalone Mikasa persona pack
-
-- **Persona code:** `rootfs/mikasa_persona.py` contains Mikasa's social voice, greeting variants, morning briefing and playful nudge copy, command acknowledgements, and key proactive reminder templates.
-- **Independent updates:** the app first looks for `/config/mikasa_persona.py` and safely falls back to the bundled module if the override is missing or fails to load. The override is loaded once at process startup; restart the add-on after replacing it.
-- **Version visibility:** `/api/health` returns `mikasa_persona_version` and `mikasa_persona_source`.
-- **Separation of responsibilities:** the persona file has no database, Telegram client or XROB import. The main app passes factual counts and item titles to it; database writes, command parsing, reminder timing, and delivery confirmation remain in `main.py`.
-- **Transparency:** Mikasa is a fictional AI secretary character. Her language can be warm and flirtatious, but she does not claim to be a human or to have feelings/physical experiences.
-
-## 0.4.22 — compact Overview and scheduled Mikasa messages
-
-- Rebuilt the Overview into two independently sized columns (agenda + fitness on the left; suggested plate + daily progress on the right) to remove tall blank areas and make the dashboard denser and easier to scan.
-- Tightened the Overview header, statistics and panel spacing without changing the agenda or meal data sources.
-- Telegram display name is now **Mikasa** (no role suffix). The profile description and voice are more confident, cheeky and playfully flirtatious while remaining supportive and non-explicit.
-- Added opt-in **Morning briefing** settings. Choose a daily 24-hour time; the report uses the shared agenda and the add-on timezone, and is sent at most once per local date.
-- Added opt-in **Playful motivation** messages. Choose a few times per week or daily; each selected day receives at most one short, randomly timed nudge between 11:00 and 20:30 local time.
-- Preferences and send-once markers are stored in the existing `telegram_state` table; no new database table, cloud service or external AI dependency is introduced. Telegram must be configured in the Home Assistant add-on options for scheduled messages to be delivered.
-- On mobile, the Settings save action stays accessible above the fixed bottom navigation, including narrow 320px screens.
-
 # How XROB Assistant thinks
 
-**Version:** 1.0.0
+**Version:** 1.0.3
 
-XROB is a rules-based assistant. It does not invent a plan: it follows the choices, intervals, stock and availability saved in its database.
+XROB is a local, rules-based personal-management app. It follows the dates, choices, intervals, stock and statuses saved in its shared database. Mikasa is the affectionate conversational assistant for that app; the existing XROB validators and database handlers remain the source of truth for actions.
+
+## Mikasa conversational routing (1.0.3 / Persona 3.1.0)
+
+- `/about`, `/features`, `what can you manage` and similar questions return the documented XROB capability map. `/tour` and `/demo` provide a read-only guided walkthrough and a live agenda snapshot.
+- App questions about meal scheduling, local database storage and backups are answered from the app's implemented rules. Mikasa does not guess when a record or detail is missing.
+- Accomplishment, encouragement and support messages use a warm, expressive, respectfully deferential, non-explicit voice. She may occasionally ask whether she did well after praise, and uses only the approved forms of address: `love`, `7biba`, `zin dyali`, `7obi`, `kbida` and `9lbi`. She stays in character during ordinary chat but is truthful if asked whether she is literally human or conscious.
+- Daily-review prompts such as `did I do good today?`, `how did I do today?` and `are you proud of me?` are answered from `build_today_agenda()`. Recorded completions, unfinished items and scheduled items remain separate; missing records are never turned into invented achievements.
+- Explicit-content requests are redirected to appropriate, respectful conversation. Mikasa keeps her chat non-explicit and supportive.
+- Mikasa's Telegram management shortcuts call the existing `create_resource`, `update_resource` and `delete_resource` application handlers. The API's allowed-field lists, validation and database rules remain authoritative.
+- Deletion always enters a saved confirmation flow. Reply `YES` to remove the selected record or `NO` to leave it unchanged. Recipe removal preserves confirmed meal history; bill removal selects the active occurrence; activity deletion retains the app's routine rollback behavior.
+- The local command router is deterministic, not a general-purpose language model. It supports the command patterns documented below; it does not understand every arbitrary sentence or perform external-account actions.
+
+## Telegram record management
+
+- Add routine: `add routine Stretching every 2 days at 08:00` or `add routine Stretching|2|08:00`.
+- Add bill: `add bill Internet|299|30/11/26|monthly` (recurrence: `none`, `monthly`, `quarterly` or `yearly`).
+- Add document: `add document Passport|31/12/27`.
+- Add event: `add event Dentist|25/11/26 10:00`.
+- Log a workout: `log workout Upper body`.
+- Edit: `edit task Study | due_date=tomorrow,priority=high`. Use the exact saved item name/date and valid field names from XROB. Multiple fields are comma-separated key/value pairs.
+- Remove: `delete task Study`. Mikasa asks for YES/NO confirmation before the database is changed.
+- Existing task, meal/recipe, shopping, weight and treadmill commands remain available; the website remains the complete interface for settings, backups and advanced planner configuration.
+
+## Current capability and privacy boundaries
+
+Mikasa can query and update XROB's local records using the documented routes. Bill payment status is record-keeping only: she never transfers money or initiates a payment. She cannot access unconnected external services. Telegram photo/image contents are not analysed, voice notes/audio are not transcribed, videos are not analysed and Telegram file contents are not opened in this local build. The app does not send XROB records to a hosted language model.
 
 ## The rules
 
@@ -106,6 +67,10 @@ XROB is a rules-based assistant. It does not invent a plan: it follows the choic
 
 Telegram's main menu contains **Today**, **Meals**, **I ate it**, **Not today**, **Undo eaten**, **Add weight**, **Add treadmill** and **Fitness week**. Today opens the agenda; Meals shows today's plate or opens the selector when no plate is assigned. Undo eaten reverses an accidental confirmation, restores Home stock and leaves the planned date unchanged; Not today remains the action that moves a pending plate forward. Fitness week reports weight, treadmill and gym activity only; it does not combine bills, routines or meals. The bot accepts commands only from the configured chat ID. Replies are queued before sending, and an update is marked delivered only after Telegram confirms it. Failed connections retry with a capped delay instead of polling rapidly.
 
+## Network security
+
+The dashboard is intended for a trusted local network. Do not expose the API or dashboard directly to the public internet; use an authenticated reverse proxy or equivalent security layer if remote access is required.
+
 ## Where to check
 
 - `rootfs/main.py` — scheduling rules, validation, stock and Telegram actions; selects the newest valid bundled/config persona.
@@ -131,18 +96,27 @@ Telegram sends one first-stage reminder when three days remain (or as a catch-up
 
 
 
-## Mikasa — Telegram secretary persona (1.0.0)
+## Mikasa — Telegram assistant persona (3.1.0)
 
-Mikasa is a fictional AI personal secretary character: polished, feminine, confident, affectionate, witty, boldly flirtatious and playfully mischievous. Her voice is deliberately varied and conversational: short teasing greetings, warmer support when the user is struggling, approving praise for real progress, and concise practical acknowledgements. She can be suggestive without becoming explicit, avoids repeating pet names in every line, and does not bury useful information under flattery. She is transparent that she is an AI, not a real person. The implementation lives in `rootfs/mikasa_persona.py`; XROB can load an optional `/config/mikasa_persona.py` override so the voice pack can be updated independently after the 0.4.23 integration is installed.
+Mikasa is a warm, capable AI personal assistant for XROB: respectful, attentive, service-minded, clear and encouraging. She follows the user’s lead, uses the six approved forms of address, recognises concrete effort and celebrates real accomplishments. She does not claim to be human, and her conversational style is appropriate and non-explicit. The implementation lives in `rootfs/mikasa_persona.py`; XROB can load an optional `/config/mikasa_persona.py` override so the voice pack can be updated independently.
 
-The Telegram command engine remains rules-based. A voice wrapper adds brief, context-aware phrasing and social replies for greetings, emotional support, stress, loneliness, motivation, setbacks, small wins, affection and unclear messages. It does not decide actions, modify database data, invent task details or alter confirmation rules. The bot's profile explicitly identifies it as an AI assistant rather than a real person. This keeps the experience local and predictable, but it is not free-form generative conversation; that would require connecting a language model separately.
+The Telegram command engine remains rules-based. A voice wrapper adds context-aware phrasing and social replies for greetings, emotional support, stress, loneliness, motivation, setbacks, small wins, affection and unclear messages. It does not decide actions, modify database data, invent task details or alter confirmation rules. Mikasa does not insert identity disclaimers into ordinary conversation, but answers truthfully if asked directly whether she is human or literally conscious. This keeps the experience local and predictable, but it is not free-form generative conversation; that would require connecting a language model separately.
 
 ### Telegram capability boundaries
 
-- **Planning:** show the shared Today agenda, tasks, bills, routines and the next seven days; create tasks and events; complete tasks and routines; record bills as paid (no money is transferred).
+- **Planning:** show the shared Today agenda, individual task/routine/bill/document lists and the next seven days; create tasks, events, routines, bills and documents; edit supported fields; complete tasks and routines; record bills as paid (no money is transferred).
 - **Meals:** show the current plate and upcoming plan; choose or replace today's plate; confirm eating, undo an accidental confirmation, or move the pending sequence; list home/outside meals; add/remove meal options; update home stock; maintain the shopping list.
-- **Fitness:** log weight and treadmill sessions; show current-day and seven-day fitness summaries, including gym records created in the web app.
+- **Fitness:** log weight, treadmill sessions and gym workouts; edit or remove supported fitness records; show current-day and seven-day fitness summaries.
 - **Alerts:** proactive task, routine, bill, meal and home-cooking reminders. Today also includes due-soon document alerts and workout-plan information.
-- **Web-app-only actions:** adding/editing bills, routines, documents and gym sessions is done in the dashboard. Telegram does not execute payments, bank actions or gym-session entry.
+- **Web-app-only actions:** advanced planner configuration, integration settings, backup management and full dashboard configuration stay in the website. Telegram does not execute payments or bank actions.
 
 The Overview's primary desktop row now places the daily agenda first and the compact suggested plate second. On narrow screens they stack in that order. The Meals page retains its full meal details, picker and management actions.
+
+
+## Mikasa daily review and guided feature tour
+
+Persona 3.1.0 adds a read-only daily-review response for requests such as “did I do well today?”, “how did I do today?” and “are you proud of me?”. It uses the same `build_today_agenda()` source as the dashboard and Telegram Today view. Completed entries are listed as tracked wins; open and scheduled items are shown separately. When no completed entry exists, Mikasa says that the tracker has no recorded win yet rather than assuming the user did nothing.
+
+`/tour` and `/demo` show a guided, non-mutating feature demonstration with actual supported Telegram examples and a live snapshot of completed, open and scheduled agenda records. The tour is generated from the known XROB command surface; it does not claim payment execution, Home Assistant settings control, external-account access or unsupported media understanding.
+
+The persona is more deferential and expressive, and occasionally seeks feedback after praise. It remains non-explicit. Mikasa can speak naturally in character but must answer honestly if asked whether she is literally human or conscious.
