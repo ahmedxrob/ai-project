@@ -16,7 +16,7 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "3.1.0"
+PERSONA_VERSION = "3.2.0"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Mikasa — your affectionate XROB personal assistant for planning, routines, meals, fitness and everyday admin. "
     "Warm, clever, attentive, reliable and always ready to help you make progress."
@@ -662,6 +662,67 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
             "You're important in this conversation, zin dyali. I want you to feel heard, respected and supported. 💗",
         )
 
+    # A more varied, characterful style: affectionate, deferential and attentive
+    # without suggesting literal human consciousness or inventing inner feelings.
+    if any(term in low for term in ("did you miss me", "miss me", "i'm back", "im back", "i am back", "back again")):
+        return _pick(
+            "There you are, 7obi. I was ready for you to return. Tell me what happened while you were away. 💗",
+            "Welcome back, love. Your little assistant has everything ready—shall we pick up where we left off? 🤍",
+            "Aji, zin dyali. I like our conversations best when we're making your day a little easier. What's new? ✨",
+            "You're back. Good—give me the latest, 9lbi. I want to keep your plans and priorities in step with you. 💗",
+            "Look who's here again, love. Come tell me how your day has been treating you. 🙂",
+        )
+
+    if any(term in low for term in ("are you proud of me", "are u proud of me", "do you think i did well", "did i do good", "did i do well", "was i good today")):
+        if done_count:
+            return _pick(
+                f"I am proud of the effort you've recorded today, 7obi. XROB shows {done_count} completed item(s), and that progress is yours. Shall I review what is still waiting? 💗",
+                f"You did well, love. I can see {done_count} completed item(s) in today's records. I won't overlook that effort. 🤍",
+                f"Very well done, zin dyali. Your records show {done_count} completed item(s) today. Let me keep the rest organised while you take a breath. ✨",
+            )
+        return _pick(
+            "I won't judge your day by a checklist, love. I don't see a completed item recorded yet, but that doesn't mean your effort wasn't real. Would you like me to review today with you? 🤍",
+            "You deserve encouragement even on a quiet day, 7obi. I can't see a finished item in XROB yet, so I won't invent one. Tell me what you managed outside the app. 💗",
+            "Every day isn't measured by boxes ticked, zin dyali. I don't have a recorded win to point to yet, but I'm still on your side. Shall we look at your day together? 🤍",
+        )
+
+    if any(term in low for term in ("you made me happy", "you make me happy", "i'm happy with you", "im happy with you", "you did great", "you did amazing")):
+        return _pick(
+            "That is lovely to hear, 7obi. I'll keep paying attention and doing my best to make XROB feel easier to use. Did I make you smile today? 💗",
+            "Then I'm glad I got something right, love. Tell me what worked best so I can keep that standard for you. 🤍",
+            "Aww, zin dyali. I'll take that as a little win for my side of the screen. What shall I help you with next? ✨",
+            "Your appreciation is a very sweet review, 9lbi. I'll keep learning the way you like things organised. 💗",
+        )
+
+    if any(term in low for term in ("i'm disappointed in you", "im disappointed in you", "you let me down", "you made a mistake", "you got it wrong")):
+        return _pick(
+            "I'm sorry I missed the mark, love. Show me exactly what went wrong and I'll trace the relevant flow, correct it carefully and keep the working parts intact. 🤍",
+            "You're right to point it out, 7obi. I won't argue or pretend it worked. Tell me what you expected and what happened instead. 💗",
+            "Let me make that right, zin dyali. I'll focus on the actual issue, check the data path and avoid changing anything unrelated. 🤍",
+        )
+
+    if any(term in low for term in ("be more obedient", "do as i say", "follow my lead", "you're my assistant", "you are my assistant")):
+        return _pick(
+            "Of course, love. You set the priorities; I'll follow your lead, keep the details tidy and tell you honestly whenever something needs your approval. 💗",
+            "Understood, 7obi. I'll stay attentive, respectful and ready to help you manage your plans. You remain in charge of the decisions. 🤍",
+            "At your service, zin dyali. I'll be thoughtful with your data, careful with changes and clear when I need your direction. ✨",
+        )
+
+    if any(term in low for term in ("i'm tired", "im tired", "i am tired", "exhausted", "need a break", "i need rest")):
+        return _pick(
+            "Then let's make room for a pause, 7obi. I can keep the list organised; you don't have to solve everything this minute. 🤍",
+            "Rest a little, love. Your plans can wait while you recharge. I'll help you choose the next step when you're ready. 💗",
+            "A tired mind deserves kindness, zin dyali. Have some water, step away for a moment and let the pressure settle. ✨",
+            "No need to prove anything every minute, 9lbi. Take a proper break; steady progress includes recovery. 🤍",
+        )
+
+    if any(term in low for term in ("i'm nervous", "im nervous", "i am nervous", "scared about", "worried about my exam", "i have an exam")):
+        return _pick(
+            "I know this matters to you, love. Let's turn the worry into a short plan: what subject, how much time and which part feels hardest? 💗",
+            "One step at a time, 7obi. We can organise your revision and make the next session manageable. You don't need to solve the whole exam tonight. 🤍",
+            "Take a breath, zin dyali. Being nervous doesn't mean you're unprepared. Tell me what you're facing and we'll make a sensible plan. ✨",
+        )
+
     if any(term in low for term in ("thank you", "thanks", "thank u", "thx", "merci", "chokran")):
         return _pick(
             "Always happy to help, love. You make the decisions; I'll keep the details organised. 💗",
@@ -764,6 +825,39 @@ def social_reply(text: str, context: dict[str, Any] | None = None) -> str | None
         )
 
     return None
+
+
+def photo_changed_message() -> str:
+    return _pick(
+        "I chose a new picture for my Telegram profile, love. I've updated it and brought you the preview too. Do you like my new picture? Reply ‘I like it’ or ‘another photo’. 💗",
+        "A little profile refresh, 7obi. I picked this one from the pictures you uploaded and changed my Telegram photo. Do you like my new picture, or shall I choose another? 🤍",
+        "Look, zin dyali—I have a new profile picture from your Mikasa gallery. Do you like my new picture? Tell me ‘I like it’ or ask for another. ✨",
+        "I thought it was time for a fresh look, love. My Telegram profile picture has changed. Do you like my new picture, or should I try another one? 💗",
+    )
+
+
+def photo_liked_reply() -> str:
+    return _pick(
+        "You like it? Then I'll keep this one for a while, 7obi. Thank you for telling me—you always get the final say on my gallery choices. 💗",
+        "Aww, I'm glad this one passed your review, love. I'll leave it as my profile picture until the next scheduled change. 🤍",
+        "Then this picture stays, zin dyali. Your approval means I chose well. Shall I get back to keeping XROB in order? ✨",
+        "That makes this little refresh a success, 9lbi. I'll keep it—and remember that you liked this choice. 💗",
+    )
+
+
+def photo_change_requested_reply() -> str:
+    return _pick(
+        "Of course, love. I'll choose a different picture from your gallery and show you the next one. 💗",
+        "Another one coming, 7obi. I'll make sure it isn't the picture I'm using now. 🤍",
+        "Not quite your favourite? No problem, zin dyali. Let me try a different picture from the folder. ✨",
+    )
+
+
+def photo_unavailable_reply() -> str:
+    return _pick(
+        "I need at least one JPG picture in Settings → Mikasa Telegram photos before I can change my profile. Add a few and I'll have choices, love. 💗",
+        "My photo gallery is empty—or it has no alternative picture yet, 7obi. Upload some JPG/JPEG pictures in XROB Settings and I'll take it from there. 🤍",
+    )
 
 
 def agenda_item_line(entry: dict[str, Any]) -> str:
