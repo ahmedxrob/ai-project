@@ -496,6 +496,9 @@ async function loadMikasaPhotos(){
  try{
   const data=await api('mikasa/photos');
   const photos=data.photos||[];
+  host.dataset.photoCount=String(data.count||0);
+  const toggle=$('#mikasa-photo-gallery-toggle');
+  if(toggle){const shown=!host.hidden;toggle.textContent=`${shown?'Hide':'Show'} Mikasa's pictures (${data.count||0})`;toggle.setAttribute('aria-expanded',String(shown));}
   if(status)status.textContent=`${data.count||0} photo${Number(data.count||0)===1?'':'s'} · Folder ${data.folder||'/config/mikasa_photos'}${data.telegram_configured?' · Telegram connected':' · Telegram not configured'}`;
   if(!photos.length){host.innerHTML='<div class="empty">Your Mikasa gallery is empty. Upload a few JPG pictures to get started. 💗</div>';return}
   host.innerHTML=photos.map(photo=>{
@@ -504,6 +507,13 @@ async function loadMikasaPhotos(){
   }).join('');
  }catch(error){if(status)status.textContent=`Could not load Mikasa's photo gallery: ${error.message}`}
 }
+$('#mikasa-photo-gallery-toggle')?.addEventListener('click',()=>{
+ const host=$('#mikasa-photo-gallery'),button=$('#mikasa-photo-gallery-toggle');if(!host||!button)return;
+ host.hidden=!host.hidden;
+ const count=Number(host.dataset.photoCount||0);
+ button.textContent=`${host.hidden?'Show':'Hide'} Mikasa's pictures (${count})`;
+ button.setAttribute('aria-expanded',String(!host.hidden));
+});
 async function uploadMikasaPhotos(){
  const input=$('#mikasa-photo-files'),button=$('#mikasa-photo-upload'),status=$('#mikasa-photo-status');
  const files=[...(input?.files||[])];if(!files.length){if(status)status.textContent='Choose one or more JPG/JPEG pictures first.';return}
