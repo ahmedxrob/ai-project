@@ -7,16 +7,19 @@ from datetime import datetime, date, timedelta, time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-APP_VERSION = '1.0.3'
+APP_VERSION = '1.0.4'
 APP_RELEASE_CHANNEL = 'stable'
 DATA = Path(os.getenv('XROB_DATA_DIR', '/config'))
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / 'xrob_assistant.db'
+MIKASA_PHOTO_DIR = DATA / 'mikasa_photos'
+MIKASA_PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+MIKASA_PHOTO_MAX_BYTES = 10 * 1024 * 1024
 WWW = Path(__file__).resolve().parent / 'www'
 TOKEN = os.getenv('XROB_TELEGRAM_TOKEN', '').strip()
 ALLOWED_CHAT = os.getenv('XROB_TELEGRAM_CHAT_ID', '').strip()
@@ -40,6 +43,7 @@ _MIKASA_REQUIRED_API = (
     'fallback_reply', 'unsupported_message', 'processing_error',
     'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed', 'app_status_reply',
     'agenda_item_line', 'agenda_conversation_line', 'today_agenda_reply', 'tomorrow_agenda_reply', 'daily_review_reply', 'morning_report', 'ensure_voice', 'command_reply',
+    'photo_changed_message', 'photo_liked_reply', 'photo_change_requested_reply', 'photo_unavailable_reply',
 )
 
 
@@ -711,6 +715,8 @@ TELEGRAM_PREFERENCE_DEFAULTS = {
     'playful_frequency': 'few',
     'mikasa_learning_enabled': '1',
     'mikasa_auto_update_enabled': '0',
+    'mikasa_photo_rotation_enabled': '0',
+    'mikasa_photo_rotation_interval': 'weekly',
 }
 
 
@@ -735,6 +741,8 @@ def get_telegram_preferences() -> dict[str, Any]:
         'playful_frequency': values['playful_frequency'],
         'mikasa_learning_enabled': values['mikasa_learning_enabled'] == '1',
         'mikasa_auto_update_enabled': values['mikasa_auto_update_enabled'] == '1',
+        'mikasa_photo_rotation_enabled': values['mikasa_photo_rotation_enabled'] == '1',
+        'mikasa_photo_rotation_interval': values['mikasa_photo_rotation_interval'],
         'telegram_configured': bool(TOKEN and ALLOWED_CHAT),
         'timezone': os.getenv('TZ', 'Local add-on time'),
     }
@@ -755,6 +763,7 @@ def save_telegram_settings(payload: Payload):
         ('playful_messages_enabled', 'playful_messages_enabled'),
         ('mikasa_learning_enabled', 'mikasa_learning_enabled'),
         ('mikasa_auto_update_enabled', 'mikasa_auto_update_enabled'),
+        ('mikasa_photo_rotation_enabled', 'mikasa_photo_rotation_enabled'),
     ):
         if field in data:
             if not isinstance(data[field], bool):
@@ -774,9 +783,129 @@ def save_telegram_settings(payload: Payload):
         if value not in ('few', 'daily'):
             raise HTTPException(400, 'Choose either a few times per week or daily.')
         updates['playful_frequency'] = value
+    if 'mikasa_photo_rotation_interval' in data:
+        value = str(data['mikasa_photo_rotation_interval'] or '').strip().lower()
+        if value not in ('daily', 'every_3_days', 'weekly'):
+            raise HTTPException(400, 'Choose daily, every 3 days, or weekly photo rotation.')
+        updates['mikasa_photo_rotation_interval'] = value
     for key, value in updates.items():
         _telegram_setting_set(key, value)
     return get_telegram_preferences()
+
+
+# Mikasa Telegram profile-photo gallery --------------------------------------
+def _mikasa_photo_filename(filename: str) -> str:
+    """Return a safe, flat JPG filename; never accept caller-supplied paths."""
+    raw = str(filename or '').strip().replace('\\', '/')
+    if '/' in raw or raw in ('', '.', '..'):
+        raise HTTPException(400, 'Choose a JPG/JPEG image file.')
+    source = Path(raw)
+    if source.suffix.lower() not in ('.jpg', '.jpeg'):
+        raise HTTPException(415, 'Telegram profile photos must be JPG/JPEG files.')
+    stem = re.sub(r'[^A-Za-z0-9_-]+', '_', source.stem).strip('_-')[:60] or 'mikasa'
+    return stem + '.jpg'
+
+
+def _mikasa_validate_jpeg(content: bytes) -> None:
+    if not content or len(content) > MIKASA_PHOTO_MAX_BYTES:
+        raise HTTPException(413, 'Each photo must be between 1 byte and 10 MB.')
+    if len(content) < 4 or content[:3] != b'\xff\xd8\xff' or b'\xff\xd9' not in content[-65536:]:
+        raise HTTPException(415, 'The uploaded file is not a complete JPEG image. Please use JPG/JPEG.')
+
+
+def _save_mikasa_photo(filename: str, content: bytes) -> dict[str, Any]:
+    safe_name = _mikasa_photo_filename(filename)
+    _mikasa_validate_jpeg(content)
+    target = MIKASA_PHOTO_DIR / safe_name
+    if target.exists():
+        stem = Path(safe_name).stem
+        index = 2
+        while (MIKASA_PHOTO_DIR / f'{stem}_{index}.jpg').exists():
+            index += 1
+        safe_name = f'{stem}_{index}.jpg'
+        target = MIKASA_PHOTO_DIR / safe_name
+    temporary = target.with_suffix('.jpg.part')
+    try:
+        temporary.write_bytes(content)
+        temporary.replace(target)
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise HTTPException(500, f'Could not save the photo: {exc}') from exc
+    return {'filename': safe_name, 'size_bytes': len(content), 'url': f'/api/mikasa/photos/file/{safe_name}'}
+
+
+def _mikasa_photo_gallery_payload() -> dict[str, Any]:
+    active = _telegram_setting_get('mikasa_photo_active_file', '')
+    photos = []
+    try:
+        items = sorted((item for item in MIKASA_PHOTO_DIR.iterdir()
+                        if item.is_file() and not item.is_symlink() and item.suffix.lower() == '.jpg'), key=lambda item: item.name.lower())
+    except OSError:
+        items = []
+    for item in items:
+        try:
+            size = item.stat().st_size
+        except OSError:
+            continue
+        photos.append({
+            'filename': item.name,
+            'size_bytes': size,
+            'url': f'/api/mikasa/photos/file/{item.name}',
+            'is_active': item.name == active,
+        })
+    return {
+        'folder': str(MIKASA_PHOTO_DIR),
+        'count': len(photos),
+        'photos': photos,
+        'active_filename': active or None,
+        'rotation_enabled': _telegram_setting_get('mikasa_photo_rotation_enabled', '0') == '1',
+        'rotation_interval': _telegram_setting_get('mikasa_photo_rotation_interval', 'weekly'),
+        'telegram_configured': bool(TOKEN and ALLOWED_CHAT),
+    }
+
+
+@app.get('/api/mikasa/photos')
+def list_mikasa_photos():
+    return _mikasa_photo_gallery_payload()
+
+
+@app.get('/api/mikasa/photos/file/{filename}')
+def get_mikasa_photo_file(filename: str):
+    if Path(filename).name != filename or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}(?:_[0-9]+)?\.jpg', filename):
+        raise HTTPException(404, 'Photo not found.')
+    target = MIKASA_PHOTO_DIR / filename
+    if target.is_symlink() or not target.is_file():
+        raise HTTPException(404, 'Photo not found.')
+    return FileResponse(target, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=3600'})
+
+
+@app.post('/api/mikasa/photos/upload')
+async def upload_mikasa_photo(request: Request, filename: str = Query(..., min_length=1, max_length=180)):
+    """Upload raw JPG bytes; no multipart parser or extra dependency is required."""
+    content_length = request.headers.get('content-length')
+    if content_length:
+        try:
+            if int(content_length) > MIKASA_PHOTO_MAX_BYTES:
+                raise HTTPException(413, 'Each photo must be 10 MB or smaller.')
+        except ValueError as exc:
+            raise HTTPException(400, 'Invalid Content-Length header.') from exc
+    content = await request.body()
+    saved = _save_mikasa_photo(filename, content)
+    return {'uploaded': True, **saved, **{'count': _mikasa_photo_gallery_payload()['count']}}
+
+
+@app.delete('/api/mikasa/photos/{filename}')
+def delete_mikasa_photo(filename: str):
+    if Path(filename).name != filename or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}(?:_[0-9]+)?\.jpg', filename):
+        raise HTTPException(404, 'Photo not found.')
+    target = MIKASA_PHOTO_DIR / filename
+    if target.is_symlink() or not target.is_file():
+        raise HTTPException(404, 'Photo not found.')
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise HTTPException(500, f'Could not remove the photo: {exc}') from exc
+    return {'deleted': True, 'filename': filename, 'count': _mikasa_photo_gallery_payload()['count']}
 
 
 # Mikasa voice-only GitHub updater --------------------------------------------
@@ -1130,7 +1259,7 @@ def export_mikasa_coverage_report():
     ])
     return PlainTextResponse(
         '\n'.join(lines).rstrip() + '\n',
-        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.3.txt"'},
+        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.4.txt"'},
     )
 
 
@@ -3365,6 +3494,108 @@ async def _send_scheduled_mikasa_messages(client, now: datetime) -> None:
             print(f'Mikasa playful message warning: {exc}', flush=True)
 
 
+def _mikasa_photo_interval_days(value: str | None = None) -> int:
+    return {'daily': 1, 'every_3_days': 3, 'weekly': 7}.get(
+        str(value or _telegram_setting_get('mikasa_photo_rotation_interval', 'weekly')), 7
+    )
+
+
+def _mikasa_available_photos() -> list[Path]:
+    try:
+        return sorted((item for item in MIKASA_PHOTO_DIR.iterdir()
+                       if item.is_file() and not item.is_symlink() and item.suffix.lower() == '.jpg'), key=lambda item: item.name.lower())
+    except OSError:
+        return []
+
+
+async def _apply_mikasa_profile_photo(client, photo_path: Path, now: datetime | None = None) -> None:
+    """Upload a fresh static JPG through Bot API 9.4 and ask for the user's opinion."""
+    import httpx
+    now = now or datetime.now()
+    photo_path = Path(photo_path)
+    if photo_path.is_symlink() or not photo_path.is_file() or photo_path.parent.resolve() != MIKASA_PHOTO_DIR.resolve():
+        raise FileNotFoundError('The selected Mikasa photo is no longer in the gallery.')
+    content = photo_path.read_bytes()
+    _mikasa_validate_jpeg(content)
+    profile = await client.post(
+        f'https://api.telegram.org/bot{TOKEN}/setMyProfilePhoto',
+        data={'photo': json.dumps({'type': 'static', 'photo': 'attach://photo_file'})},
+        files={'photo_file': (photo_path.name, content, 'image/jpeg')},
+    )
+    _telegram_response_data(profile, 'setMyProfilePhoto')
+    _telegram_setting_set('mikasa_photo_active_file', photo_path.name)
+    _telegram_setting_set('mikasa_photo_last_changed_at', now.isoformat(timespec='seconds'))
+    _telegram_setting_set('mikasa_photo_feedback_pending', photo_path.name)
+    _telegram_setting_set('mikasa_photo_last_attempt_at', now.isoformat(timespec='seconds'))
+
+    caption = mikasa_persona.ensure_voice(mikasa_persona.photo_changed_message(), context='message')
+    try:
+        preview = await client.post(
+            f'https://api.telegram.org/bot{TOKEN}/sendPhoto',
+            data={'chat_id': ALLOWED_CHAT, 'caption': caption},
+            files={'photo': (photo_path.name, content, 'image/jpeg')},
+        )
+        _telegram_response_data(preview, 'sendPhoto')
+    except Exception as exc:
+        # A profile update is already confirmed; a preview failure must not roll it back.
+        print(f'Mikasa profile photo changed, but preview delivery failed: {exc}', flush=True)
+        try:
+            await _send_telegram_text(client, caption, context='message')
+        except Exception as fallback_exc:
+            print(f'Mikasa profile-photo feedback message failed: {fallback_exc}', flush=True)
+
+
+async def _maybe_rotate_mikasa_photo(client, now: datetime | None = None, *, force: bool = False) -> bool:
+    """Apply one different gallery photo when the configured interval is due."""
+    now = now or datetime.now()
+    requested = _telegram_setting_get('mikasa_photo_change_requested', '0') == '1'
+    enabled = _telegram_setting_get('mikasa_photo_rotation_enabled', '0') == '1'
+    if not (enabled or force or requested) or not TOKEN or not ALLOWED_CHAT:
+        return False
+
+    last_attempt_raw = _telegram_setting_get('mikasa_photo_last_attempt_at', '')
+    if not (force or requested) and last_attempt_raw:
+        try:
+            last_attempt = datetime.fromisoformat(last_attempt_raw)
+            if now - last_attempt < timedelta(minutes=30):
+                return False
+        except ValueError:
+            pass
+
+    last_changed_raw = _telegram_setting_get('mikasa_photo_last_changed_at', '')
+    if not (force or requested) and last_changed_raw:
+        try:
+            last_changed = datetime.fromisoformat(last_changed_raw)
+            if now - last_changed < timedelta(days=_mikasa_photo_interval_days()):
+                return False
+        except ValueError:
+            pass
+
+    photos = _mikasa_available_photos()
+    if not photos:
+        return False
+    active = _telegram_setting_get('mikasa_photo_active_file', '')
+    alternatives = [item for item in photos if item.name != active]
+    if not alternatives:
+        # A single currently active image is not needlessly re-uploaded. The
+        # user can add another image and the next scheduled check will use it.
+        if active and photos[0].name == active:
+            if requested:
+                _telegram_setting_set('mikasa_photo_change_requested', '0')
+            return False
+        alternatives = photos
+    selected = random.choice(alternatives)
+    _telegram_setting_set('mikasa_photo_last_attempt_at', now.isoformat(timespec='seconds'))
+    try:
+        await _apply_mikasa_profile_photo(client, selected, now)
+    except Exception as exc:
+        # Throttle failures and retain the active photo; never claim a failed update.
+        print(f'Mikasa profile-photo update failed; keeping the previous picture: {exc}', flush=True)
+        return False
+    _telegram_setting_set('mikasa_photo_change_requested', '0')
+    return True
+
+
 async def reminder_loop():
     """Send Telegram reminders, including staged bill notices and four-hour urgent bill follow-ups."""
     import httpx
@@ -3374,6 +3605,10 @@ async def reminder_loop():
                 now = datetime.now()
                 today = now.date()
                 await _send_scheduled_mikasa_messages(client, now)
+                try:
+                    await _maybe_rotate_mikasa_photo(client, now)
+                except Exception as photo_exc:
+                    print(f'Mikasa profile-photo rotation warning: {photo_exc}', flush=True)
                 normalize_overdue_routine_dates(today)
                 reminders = []
                 reminders.extend(build_bill_reminders(now))
@@ -3456,6 +3691,7 @@ def _telegram_bot_commands() -> list[dict[str, str]]:
         {'command': 'about', 'description': 'Explain XROB features and how Mikasa can help'},
         {'command': 'features', 'description': 'Show the areas Mikasa can manage'},
         {'command': 'tour', 'description': "Take a guided tour of Mikasa's live app features"},
+        {'command': 'photo', 'description': "Ask Mikasa to choose another Telegram profile picture"},
         {'command': 'today', 'description': 'Show today agenda'},
         {'command': 'tomorrow', 'description': 'Show tomorrow agenda'},
         {'command': 'status', 'description': 'Show your XROB progress and app status'},
@@ -4538,6 +4774,35 @@ async def _telegram_command_core(text: str) -> str:
     today = date.today()
     today_iso = today.isoformat()
 
+    # A photo reaction is handled only for explicit phrases, never a bare YES/NO
+    # that could belong to meal or record-confirmation flows.
+    photo_pending = _telegram_setting_get('mikasa_photo_feedback_pending', '')
+    photo_likes = {'i like it', 'i love it', 'love it', 'like it', 'its beautiful', "it's beautiful",
+                   'beautiful', 'gorgeous', 'pretty', 'nice picture', 'nice pic', 'looks good', 'i like the picture'}
+    photo_changes = {'another photo', 'another picture', 'change it', 'change the photo', 'different photo',
+                     'try another', 'not this one', "i don't like it", 'i do not like it', 'dont like it', 'new picture'}
+    if photo_pending and low in photo_likes:
+        _telegram_setting_set('mikasa_photo_feedback_pending', '')
+        _telegram_setting_set('mikasa_photo_feedback_last', 'liked:' + photo_pending)
+        return mikasa_persona.photo_liked_reply()
+    if photo_pending and low in photo_changes:
+        photos = _mikasa_available_photos()
+        alternatives = [item for item in photos if item.name != _telegram_setting_get('mikasa_photo_active_file', '')]
+        _telegram_setting_set('mikasa_photo_feedback_pending', '')
+        if not alternatives:
+            return mikasa_persona.photo_unavailable_reply()
+        _telegram_setting_set('mikasa_photo_change_requested', '1')
+        return mikasa_persona.photo_change_requested_reply()
+    if low in {'/photo', 'another mikasa photo', 'change mikasa photo', 'change your photo'}:
+        if not _mikasa_available_photos():
+            return mikasa_persona.photo_unavailable_reply()
+        alternatives = [item for item in _mikasa_available_photos()
+                        if item.name != _telegram_setting_get('mikasa_photo_active_file', '')]
+        if not alternatives:
+            return mikasa_persona.photo_unavailable_reply()
+        _telegram_setting_set('mikasa_photo_change_requested', '1')
+        return mikasa_persona.photo_change_requested_reply()
+
     if low in {'/status', 'status', 'app status', 'xrob status', 'my progress', 'progress'}:
         return mikasa_persona.app_status_reply(_mikasa_app_status_context())
 
@@ -5233,7 +5498,7 @@ def _telegram_capabilities_message() -> str:
     return (
         'Mikasa — your XROB assistant.\n' +
         mikasa_persona.help_intro() + '\n\n' +
-        'For a guided tour with live examples and a snapshot of your records, send /tour.\n\n' +
+        'For a guided tour with live examples and a snapshot of your records, send /tour. To ask me to choose a different profile picture, send /photo.\n\n' +
         '📅 YOUR DAY\n'
         '• /today — tasks, routines, events, workouts, meals, bill and document alerts, and completed activity.\n'
         '• /tomorrow — tomorrow’s agenda; /status — app progress, latest fitness records, meal stock and bills.\n'
@@ -5251,6 +5516,9 @@ def _telegram_capabilities_message() -> str:
         '• YES / NO — confirm eating or safely move the pending meal plan.\n'
         '• /addrecipe, /stock, /homemeals, /outsidemeals, /deletemeal — manage meals and Home stock.\n'
         '• /shopping, /additem, bought tomatoes — manage shopping.\n\n'
+        '🖼️ MIKASA PHOTO GALLERY\n'
+        '• Upload JPG/JPEG pictures in XROB Settings → Mikasa Telegram photos. If automatic rotation is enabled, I choose a different gallery photo on your selected schedule and send you a preview asking what you think.\n'
+        '• /photo — ask me to choose another uploaded picture now.\n\n'
         '💪 YOUR WELLBEING\n'
         '• Send 82.4 or weight 82.4 20/11/26 — record weight.\n'
         '• Send 30 or treadmill 30 yesterday — record treadmill minutes (5 km/h, 0% incline estimates).\n'
