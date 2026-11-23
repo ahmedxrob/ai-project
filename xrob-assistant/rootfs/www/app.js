@@ -450,6 +450,8 @@ function syncMikasaPreferenceControls(){
  if(playfulOptions)playfulOptions.classList.toggle('is-disabled',!playful);
  $('#mikasa-morning-time')?.toggleAttribute('disabled',!morning);
  $('#mikasa-playful-frequency')?.toggleAttribute('disabled',!playful);
+ const photoEnabled=!!$('#mikasa-photo-rotation-enabled')?.checked;
+ $('#mikasa-photo-rotation-interval')?.toggleAttribute('disabled',!photoEnabled);
 }
 async function loadMikasaPreferences(){
  const status=$('#mikasa-settings-status');
@@ -461,12 +463,15 @@ async function loadMikasaPreferences(){
   $('#mikasa-playful-frequency').value=prefs.playful_frequency||'few';
   $('#mikasa-learning-enabled').checked=prefs.mikasa_learning_enabled!==false;
   $('#mikasa-auto-update-enabled').checked=!!prefs.mikasa_auto_update_enabled;
+  $('#mikasa-photo-rotation-enabled').checked=!!prefs.mikasa_photo_rotation_enabled;
+  $('#mikasa-photo-rotation-interval').value=prefs.mikasa_photo_rotation_interval||'weekly';
   syncMikasaPreferenceControls();
   if(status)status.textContent=prefs.telegram_configured?`Telegram connected · ${prefs.timezone||'Local time'}`:'Save your preferences here. Telegram messages start after you configure the token and chat ID in the Home Assistant add-on options.';
  }catch(error){if(status)status.textContent=`Could not load Telegram settings: ${error.message}`}
 }
 $('#mikasa-morning-enabled')?.addEventListener('change',syncMikasaPreferenceControls);
 $('#mikasa-playful-enabled')?.addEventListener('change',syncMikasaPreferenceControls);
+$('#mikasa-photo-rotation-enabled')?.addEventListener('change',syncMikasaPreferenceControls);
 $('#mikasa-settings-save')?.addEventListener('click',async()=>{
  const button=$('#mikasa-settings-save'),status=$('#mikasa-settings-status');
  button.disabled=true;button.textContent='Saving…';
@@ -477,13 +482,58 @@ $('#mikasa-settings-save')?.addEventListener('click',async()=>{
    playful_messages_enabled:$('#mikasa-playful-enabled').checked,
    playful_frequency:$('#mikasa-playful-frequency').value||'few',
    mikasa_learning_enabled:$('#mikasa-learning-enabled').checked,
-   mikasa_auto_update_enabled:$('#mikasa-auto-update-enabled').checked
+   mikasa_auto_update_enabled:$('#mikasa-auto-update-enabled').checked,
+   mikasa_photo_rotation_enabled:$('#mikasa-photo-rotation-enabled').checked,
+   mikasa_photo_rotation_interval:$('#mikasa-photo-rotation-interval').value||'weekly'
   }})});
   if(status)status.textContent=result.telegram_configured?`Saved · Telegram connected · ${result.timezone||'Local time'}`:'Saved · Configure Telegram token and chat ID in the Home Assistant add-on options to receive messages.';
   toast('Mikasa message settings saved');
  }catch(error){if(status)status.textContent=error.message;toast(error.message)}
  finally{button.disabled=false;button.textContent='Save message settings'}
 });
+async function loadMikasaPhotos(){
+ const host=$('#mikasa-photo-gallery'),status=$('#mikasa-photo-status');if(!host)return;
+ try{
+  const data=await api('mikasa/photos');
+  const photos=data.photos||[];
+  if(status)status.textContent=`${data.count||0} photo${Number(data.count||0)===1?'':'s'} · Folder ${data.folder||'/config/mikasa_photos'}${data.telegram_configured?' · Telegram connected':' · Telegram not configured'}`;
+  if(!photos.length){host.innerHTML='<div class="empty">Your Mikasa gallery is empty. Upload a few JPG pictures to get started. 💗</div>';return}
+  host.innerHTML=photos.map(photo=>{
+   const url=photo.url+'?v='+encodeURIComponent(photo.filename);
+   return `<article class="mikasa-photo-item"><img src="${esc(url)}" alt="Mikasa photo ${esc(photo.filename)}" loading="lazy"><div class="mikasa-photo-meta"><b>${esc(photo.filename)}</b><small>${humanBytes(photo.size_bytes)}${photo.is_active?' · Current Telegram photo':''}</small><button type="button" class="mini-btn danger" data-delete-mikasa-photo="${esc(photo.filename)}">Remove</button></div>${photo.is_active?'<span class="tag good">Current</span>':''}</article>`;
+  }).join('');
+ }catch(error){if(status)status.textContent=`Could not load Mikasa's photo gallery: ${error.message}`}
+}
+async function uploadMikasaPhotos(){
+ const input=$('#mikasa-photo-files'),button=$('#mikasa-photo-upload'),status=$('#mikasa-photo-status');
+ const files=[...(input?.files||[])];if(!files.length){if(status)status.textContent='Choose one or more JPG/JPEG pictures first.';return}
+ button.disabled=true;button.textContent='Uploading…';
+ let uploaded=0;const errors=[];
+ try{
+  for(const file of files){
+   if(!/\.jpe?g$/i.test(file.name)||file.type&&file.type!=='image/jpeg'){errors.push(`${file.name}: JPG/JPEG only`);continue}
+   if(file.size>10*1024*1024){errors.push(`${file.name}: larger than 10 MB`);continue}
+   const url='/api/mikasa/photos/upload?filename='+encodeURIComponent(file.name);
+   const response=await fetch(url,{method:'POST',headers:{'Content-Type':'image/jpeg'},body:file,cache:'no-store'});
+   const result=await response.json().catch(()=>({}));
+   if(!response.ok){errors.push(`${file.name}: ${result.detail||'upload failed'}`);continue}
+   uploaded++;
+  }
+  if(input)input.value='';
+  if(status)status.textContent=errors.length?`Uploaded ${uploaded}. ${errors.join(' · ')}`:`Uploaded ${uploaded} photo${uploaded===1?'':'s'} to /config/mikasa_photos.`;
+  if(uploaded)toast(`${uploaded} Mikasa photo${uploaded===1?'':'s'} uploaded`);
+  await loadMikasaPhotos();
+ }catch(error){if(status)status.textContent=`Photo upload failed: ${error.message}`;toast(error.message)}
+ finally{button.disabled=false;button.textContent='Upload selected photos'}
+}
+async function deleteMikasaPhoto(filename){
+ if(!confirm(`Remove ${filename} from Mikasa's gallery?`))return;
+ try{await api('mikasa/photos/'+encodeURIComponent(filename),{method:'DELETE'});toast('Photo removed from Mikasa’s gallery');await loadMikasaPhotos()}
+ catch(error){toast(error.message)}
+}
+$('#mikasa-photo-upload')?.addEventListener('click',uploadMikasaPhotos);
+$('#mikasa-photo-gallery')?.addEventListener('click',event=>{const button=event.target.closest('[data-delete-mikasa-photo]');if(button)deleteMikasaPhoto(button.dataset.deleteMikasaPhoto)});
+
 async function loadMikasaLearning(){
  const host=$('#mikasa-learning-list'),status=$('#mikasa-learning-status'),badge=$('#mikasa-learning-count');
  if(!host)return;
@@ -579,7 +629,8 @@ $('#mikasa-learning-enabled')?.addEventListener('change',()=>{
  if(label)label.textContent=$('#mikasa-learning-enabled').checked?'Missed-message logging is enabled. Save message settings to apply.':'Missed-message logging is paused. Save message settings to apply.';
 });
 loadMikasaPreferences();
+loadMikasaPhotos();
 loadMikasaLearning();
 loadMikasaUpdateStatus();
 loadSystemDiagnostics();
-$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaUpdateStatus();loadSystemDiagnostics()}}});window.addEventListener('focus',()=>{refresh();if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaUpdateStatus();loadSystemDiagnostics()}});refresh();setInterval(refresh,60000);setInterval(()=>{if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaUpdateStatus();loadSystemDiagnostics()}},60000);
+$$('.date-entry').forEach(x=>{if(!x.value)x.value=displayDateInput(today)});$('#treadmill-form [name="duration_min"]').addEventListener('input',updateTreadmillPreview);document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaPhotos();loadMikasaUpdateStatus();loadSystemDiagnostics()}}});window.addEventListener('focus',()=>{refresh();if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaPhotos();loadMikasaUpdateStatus();loadSystemDiagnostics()}});refresh();setInterval(refresh,60000);setInterval(()=>{if($('#settings')?.classList.contains('active')){loadMikasaLearning();loadMikasaPhotos();loadMikasaUpdateStatus();loadSystemDiagnostics()}},60000);
