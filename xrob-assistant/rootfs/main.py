@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-APP_VERSION = '1.0.2'
+APP_VERSION = '1.0.3'
 APP_RELEASE_CHANNEL = 'stable'
 DATA = Path(os.getenv('XROB_DATA_DIR', '/config'))
 DATA.mkdir(parents=True, exist_ok=True)
@@ -39,7 +39,7 @@ _MIKASA_REQUIRED_API = (
     'meal_suggestion', 'meal_checkin', 'meal_confirmed', 'meal_unconfirmed', 'meal_undo_unavailable', 'meal_moved', 'task_created',
     'fallback_reply', 'unsupported_message', 'processing_error',
     'task_completed', 'bill_paid', 'today_empty', 'today_open_count', 'routine_completed', 'app_status_reply',
-    'agenda_item_line', 'agenda_conversation_line', 'today_agenda_reply', 'tomorrow_agenda_reply', 'morning_report', 'ensure_voice', 'command_reply',
+    'agenda_item_line', 'agenda_conversation_line', 'today_agenda_reply', 'tomorrow_agenda_reply', 'daily_review_reply', 'morning_report', 'ensure_voice', 'command_reply',
 )
 
 
@@ -1130,7 +1130,7 @@ def export_mikasa_coverage_report():
     ])
     return PlainTextResponse(
         '\n'.join(lines).rstrip() + '\n',
-        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.2.txt"'},
+        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.3.txt"'},
     )
 
 
@@ -3455,6 +3455,7 @@ def _telegram_bot_commands() -> list[dict[str, str]]:
         {'command': 'help', 'description': 'Show available actions'},
         {'command': 'about', 'description': 'Explain XROB features and how Mikasa can help'},
         {'command': 'features', 'description': 'Show the areas Mikasa can manage'},
+        {'command': 'tour', 'description': "Take a guided tour of Mikasa's live app features"},
         {'command': 'today', 'description': 'Show today agenda'},
         {'command': 'tomorrow', 'description': 'Show tomorrow agenda'},
         {'command': 'status', 'description': 'Show your XROB progress and app status'},
@@ -3927,6 +3928,16 @@ def _telegram_manage_request(raw: str) -> str | None:
 def _mikasa_app_knowledge_reply(raw: str) -> str | None:
     """Answer XROB questions from a curated map of implemented behavior."""
     low = _normalize_telegram_command_text(raw)
+    tour_queries = {
+        '/tour', '/demo', 'tour', 'demo', 'show me a demo', 'show me a tour',
+        'give me a tour', 'give me a demo', 'take me on a tour',
+        'demonstrate your features', 'demonstrate all features',
+        'show me everything you can do', 'show all your features',
+        'walk me through your features', 'guide me through the app',
+    }
+    if low in tour_queries:
+        return _telegram_feature_tour_message()
+
     overview_queries = {
         '/about', '/features', 'about xrob', 'what is xrob', 'what is xrob assistant',
         'what do you know about this app', 'what do you know about xrob',
@@ -5222,6 +5233,7 @@ def _telegram_capabilities_message() -> str:
     return (
         'Mikasa — your XROB assistant.\n' +
         mikasa_persona.help_intro() + '\n\n' +
+        'For a guided tour with live examples and a snapshot of your records, send /tour.\n\n' +
         '📅 YOUR DAY\n'
         '• /today — tasks, routines, events, workouts, meals, bill and document alerts, and completed activity.\n'
         '• /tomorrow — tomorrow’s agenda; /status — app progress, latest fitness records, meal stock and bills.\n'
@@ -5246,6 +5258,78 @@ def _telegram_capabilities_message() -> str:
         mikasa_persona.help_boundary() + '\n\n' +
         'Send /cancel to stop a guided entry.'
     )
+
+
+
+def _telegram_feature_tour_message() -> str:
+    """Show verified XROB actions and a live read-only snapshot; perform no mutations."""
+    context = _mikasa_app_status_context()
+    agenda = context.get('agenda_items') or []
+    completed = [item for item in agenda if item.get('status') == 'completed']
+    open_items = [item for item in agenda if item.get('status') in {'overdue', 'due', 'pending'}]
+    scheduled = [item for item in agenda if item.get('status') in {'scheduled', 'upcoming'}]
+    lines = [
+        mikasa_persona.help_intro(),
+        '',
+        'Here is a guided tour of what I can actually manage inside XROB. These are examples only; I have not changed anything.',
+        '',
+        '📅 YOUR DAY & PLANNER',
+        '• /today · /tomorrow · /agenda · /status — review your day, upcoming events and overall progress.',
+        '• /tasks · /routines · /bills · /documents — inspect each saved list directly.',
+        '• task Revise biology tomorrow at 18:00 — create a task; task done Revise biology — complete it.',
+        '• add event Dentist|25/11/26 10:00 — add an appointment.',
+        '',
+        '🔁 ROUTINES & HABITS',
+        '• done Shower — complete a due routine; reply “not now” to a routine reminder to move it to tomorrow.',
+        '• add routine Stretching every 2 days at 08:00 — create a repeating routine.',
+        '',
+        '💳 BILLS & DOCUMENTS',
+        '• add bill Internet|299|30/11/26|monthly — save a recurring bill.',
+        '• paid Electricity — mark its XROB record as paid; I never transfer money or make the payment.',
+        '• add document Passport|31/12/27 — track an expiry date and reminders.',
+        '',
+        '🍽 MEALS & SHOPPING',
+        '• /meals · /mealplan · /choosemeal · /homemeals · /outsidemeals — inspect and choose meals.',
+        '• YES / NO · /undo_eaten — confirm a meal, move a pending plan or undo an accidental confirmation.',
+        '• /addrecipe · /stock · /shopping · /additem · bought tomatoes — manage recipes, plates and shopping.',
+        '',
+        '💪 FITNESS & PROGRESS',
+        '• weight 82.4 · treadmill 30 · log workout Upper body — save fitness entries.',
+        '• /fitness · /fitnessweek — review your recorded weight, treadmill and workouts.',
+        "• Ask “did I do well today?” for a kind recap based on today's recorded wins and unfinished items.",
+        '',
+        '🛠 SAVED-RECORD MANAGEMENT',
+        '• edit task Revise biology | due_date=tomorrow,priority=high — update a supported record through XROB validation.',
+        '• delete task Revise biology — I show the exact item and wait for YES or NO before removing it.',
+        '• Supported record types include tasks, events, routines, bills, documents, recipes, shopping items, workouts, workout plans, weights and treadmill logs.',
+        '',
+        '🧠 APP KNOWLEDGE & LEARNING',
+        'Ask me how meal scheduling works, where local data and backups are stored, what is due, what your records show, or how to use a feature.',
+        'Ask “what do you know about me?” for a snapshot based only on your saved XROB records. Unrecognised text can be reviewed in the dashboard missed-message log when that setting is enabled.',
+        '',
+        f"LIVE SNAPSHOT · {len(completed)} tracked win(s) · {len(open_items)} open item(s) · {len(scheduled)} scheduled item(s)",
+    ]
+    for item in completed[:3]:
+        lines.append('• Completed today · ' + mikasa_persona.agenda_item_line(item))
+    for item in open_items[:8]:
+        lines.append('• Still open · ' + mikasa_persona.agenda_item_line(item))
+    for item in scheduled[:2]:
+        lines.append('• Scheduled · ' + mikasa_persona.agenda_item_line(item))
+    if context.get('today_meal') and context['today_meal'].get('recipe_name'):
+        meal = context['today_meal']
+        lines.append(f"Today's plate · {meal['recipe_name']} · {meal.get('status', 'planned')}")
+    if context.get('latest_weight') and context['latest_weight'].get('kg') is not None:
+        weight = context['latest_weight']
+        lines.append(f"Latest weight on record · {float(weight['kg']):g} kg · {weight.get('date', 'date not set')}")
+    if context.get('recent_treadmill') and context['recent_treadmill'].get('duration_min') is not None:
+        treadmill = context['recent_treadmill']
+        lines.append(f"Latest treadmill entry · {float(treadmill['duration_min']):g} min · {treadmill.get('date', 'date not set')}")
+    lines.extend([
+        '',
+        'I can manage the XROB functions above, but I cannot make payments, change Home Assistant settings, access unconnected accounts or operate features the app does not expose.',
+        'Choose any example and send it as a message, love. I will check the details before changing your records. 💗',
+    ])
+    return '\n'.join(lines)
 
 
 
@@ -5336,6 +5420,24 @@ def _mikasa_context_for_message(raw: str) -> dict[str, int]:
     }
 
 
+
+def _is_mikasa_daily_review_request(raw: str) -> bool:
+    low = _normalize_telegram_command_text(raw)
+    aliases = {
+        'did i do good today', 'did i do well today', 'did i do good', 'did i do well',
+        'how did i do today', 'how have i done today', 'was i productive today',
+        'have i done enough today', 'am i doing well today', 'are you proud of me',
+        'what did i get done today', 'what have i achieved today', 'review my day',
+        'give me a review of today', 'was today a good day for me',
+    }
+    if low in aliases:
+        return True
+    return bool(re.fullmatch(
+        r'(?:so )?(?:did i do (?:good|well)(?: today)?|how did i do today|'
+        r'was i productive today|are you proud of me|review my day)',
+        low,
+    ))
+
 def _telegram_social_reply(raw: str) -> str | None:
     """Route social messages and app-aware questions without guessing facts."""
     low = re.sub(r'\s+', ' ', str(raw or '').strip().lower()).rstrip('.!?')
@@ -5345,6 +5447,19 @@ def _telegram_social_reply(raw: str) -> str | None:
     countdown = _mikasa_event_countdown_reply(raw)
     if countdown is not None:
         return countdown
+    if _is_mikasa_daily_review_request(raw):
+        return mikasa_persona.daily_review_reply(build_today_agenda())
+    if low in {
+        'what do you know about me', 'what do you remember about me',
+        'what do you know about my records', 'what information do you have about me',
+        'what data do you have about me', 'what do you know about my progress',
+    }:
+        context = _mikasa_app_status_context()
+        return (
+            "I can see the information you've saved in XROB—your planner, routines, meal records, bills, documents and fitness entries. "
+            "I don't invent personal details or know things outside the app's records, love. Here's the current picture:\n\n"
+            + mikasa_persona.app_status_reply(context)
+        )
     if low in ('what can you do', 'what do you do', 'how can you help', 'how can you help me',
                'what can you help with', 'capabilities'):
         return _telegram_capabilities_message()
