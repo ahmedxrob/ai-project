@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-APP_VERSION = '1.0.1'
+APP_VERSION = '1.0.2'
 APP_RELEASE_CHANNEL = 'stable'
 DATA = Path(os.getenv('XROB_DATA_DIR', '/config'))
 DATA.mkdir(parents=True, exist_ok=True)
@@ -923,16 +923,16 @@ MIKASA_LEARNING_MAX_TEXT = 1200
 # are representative phrases, not a promise to understand arbitrary wording.
 MIKASA_CAPABILITY_CATALOG = [
     ('Daily planning', ['/today', 'today please', "what's on today", 'tomorrow plan', '/tomorrow', '/week', 'next 7 days', 'what needs my attention', 'what did I finish today']),
-    ('Tasks', ['task Study tomorrow at 18:00', 'task done Study', '/tasks', 'what are my tasks', 'done Buy groceries']),
-    ('Events and appointments', ['/event Dentist|23/11/26 10:00', '/agenda', 'show my agenda', 'what appointments do I have', 'how many days left for exams']),
-    ('Routines', ['/routines', 'what are my routines', 'done Shower', 'complete treadmill check']),
-    ('Fitness and weight', ['weight 82.4', 'treadmill 30', 'treadmill 30 yesterday', '/fitness', '/fitnessweek', 'fitness stats', 'what is my current weight']),
-    ('Meals and cooking', ['/meals', '/choosemeal', '/mealplan', "what's for dinner", 'YES', 'NO', 'undo eaten', '/undo_eaten', '/addrecipe', '/stock Chicken|3', '/homemeals', '/outsidemeals']),
-    ('Shopping', ['/shopping', '/additem', 'bought tomatoes']),
-    ('Bills and documents', ['/bills', 'what do I owe', 'paid Electricity', '/documents', 'what documents are expiring']),
-    ('App awareness', ['/status', 'app status', 'my progress', 'how am I doing', 'how are my meals', 'what is left today']),
-    ('Social conversation', ['hello / good morning', 'thank you', 'I love you', 'I need a hug', 'motivate me', 'I am stressed', 'Fuck u', 'are you a real person']),
-    ('Settings and help', ['/help', 'what can you do', 'cancel', 'back']),
+    ('Tasks', ['task Study tomorrow at 18:00', 'task done Study', '/tasks', 'what are my tasks', 'edit task Study | due_date=tomorrow', 'delete task Study']),
+    ('Events and appointments', ['/event Dentist|25/11/26 10:00', 'add event Dentist|25/11/26 10:00', '/agenda', 'show my agenda', 'how many days left for exams']),
+    ('Routines', ['/routines', 'what are my routines', 'done Shower', 'add routine Stretching every 2 days at 08:00', 'edit routine Shower | interval_days=2']),
+    ('Fitness and weight', ['weight 82.4', 'treadmill 30', 'treadmill 30 yesterday', 'log workout Upper body', '/fitness', '/fitnessweek', 'what is my current weight']),
+    ('Meals and cooking', ['/meals', '/choosemeal', '/mealplan', "what's for dinner", 'YES', 'NO', 'undo eaten', '/undo_eaten', '/addrecipe', '/stock Chicken|3', '/homemeals', '/outsidemeals', 'edit recipe Chicken | plates_ready=4']),
+    ('Shopping', ['/shopping', '/additem', 'bought tomatoes', 'edit shopping tomatoes | checked=yes']),
+    ('Bills and documents', ['/bills', 'what do I owe', 'paid Electricity', 'add bill Internet|299|30/11/26|monthly', '/documents', 'add document Passport|31/12/27']),
+    ('App awareness', ['/status', '/about', '/features', 'app status', 'my progress', 'how am I doing', 'how are my meals', 'how does meal scheduling work']),
+    ('Social conversation', ['hello / good morning', 'thank you', 'I love you', 'I need a hug', 'motivate me', 'I am stressed', 'I passed my exam', 'are you a real person']),
+    ('Settings and help', ['/help', '/about', '/features', 'how do I edit records', 'what can you not do', 'cancel', 'back']),
 ]
 
 MIKASA_ATTACHMENT_CAPABILITIES = [
@@ -1130,7 +1130,7 @@ def export_mikasa_coverage_report():
     ])
     return PlainTextResponse(
         '\n'.join(lines).rstrip() + '\n',
-        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.1.txt"'},
+        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.2.txt"'},
     )
 
 
@@ -3453,6 +3453,8 @@ def _telegram_bot_commands() -> list[dict[str, str]]:
     return [
         {'command': 'start', 'description': 'Open the XROB quick menu'},
         {'command': 'help', 'description': 'Show available actions'},
+        {'command': 'about', 'description': 'Explain XROB features and how Mikasa can help'},
+        {'command': 'features', 'description': 'Show the areas Mikasa can manage'},
         {'command': 'today', 'description': 'Show today agenda'},
         {'command': 'tomorrow', 'description': 'Show tomorrow agenda'},
         {'command': 'status', 'description': 'Show your XROB progress and app status'},
@@ -3653,6 +3655,368 @@ def _telegram_match_named_item(query: str, items: list[dict], field: str = 'name
     matches = exact or [item for item in items if wanted and wanted in _telegram_name_key(item.get(field, ''))]
     return (matches[0] if len(matches) == 1 else None), matches
 
+
+
+TELEGRAM_MANAGE_RESOURCE_ALIASES = {
+    'task': 'tasks', 'tasks': 'tasks',
+    'event': 'events', 'events': 'events', 'appointment': 'events', 'appointments': 'events',
+    'routine': 'routines', 'routines': 'routines', 'habit': 'routines', 'habits': 'routines',
+    'bill': 'bills', 'bills': 'bills',
+    'document': 'documents', 'documents': 'documents', 'doc': 'documents', 'docs': 'documents',
+    'meal': 'recipes', 'meals': 'recipes', 'recipe': 'recipes', 'recipes': 'recipes',
+    'shopping': 'shopping_items', 'grocery': 'shopping_items', 'groceries': 'shopping_items',
+    'workout': 'workouts', 'workouts': 'workouts',
+    'workout plan': 'workout_plan',
+    'weight': 'weights', 'weights': 'weights',
+    'treadmill': 'treadmill',
+}
+
+TELEGRAM_EDIT_FIELD_ALIASES = {
+    'tasks': {'name': 'title', 'date': 'due_date', 'due': 'due_date', 'time': 'due_time'},
+    'events': {'name': 'title', 'date': 'start_at', 'when': 'start_at', 'time': 'start_at'},
+    'bills': {'amount': 'amount_mad', 'due': 'due_date', 'date': 'due_date'},
+    'routines': {'interval': 'interval_days', 'every': 'interval_days', 'time': 'routine_time', 'due': 'next_due', 'date': 'next_due'},
+    'documents': {'date': 'expiry_date', 'expiry': 'expiry_date', 'expires': 'expiry_date'},
+    'recipes': {'stock': 'plates_ready', 'plates': 'plates_ready', 'calories': 'calories_kcal', 'kcal': 'calories_kcal', 'interval': 'eating_interval_days'},
+    'shopping_items': {'done': 'checked', 'purchased': 'checked', 'status': 'checked'},
+    'workouts': {'title': 'name'},
+    'workout_plan': {'title': 'name', 'day': 'weekday'},
+    'weights': {'weight': 'kg'},
+    'treadmill': {'minutes': 'duration_min', 'duration': 'duration_min'},
+}
+
+
+def _telegram_resource_items(resource: str) -> list[dict[str, Any]]:
+    """Read selectable rows for Mikasa management, preserving bill-series semantics."""
+    if resource == 'bills':
+        return active_bill_occurrences()
+    if resource == 'recipes':
+        return rows('SELECT * FROM recipes WHERE is_active=1 ORDER BY name COLLATE NOCASE')
+    if resource not in TABLES:
+        return []
+    table, _ = TABLES[resource]
+    return rows(f'SELECT * FROM {table} ORDER BY id DESC LIMIT 500')
+
+
+def _telegram_resource_name_field(resource: str) -> str:
+    return 'title' if resource in ('tasks', 'events') else 'name'
+
+
+def _telegram_find_resource_item(resource: str, query: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    items = _telegram_resource_items(resource)
+    if resource in {'weights', 'treadmill'}:
+        # Fitness logs are naturally identified by their saved calendar date.
+        try:
+            day = _telegram_parse_date(query).isoformat()
+            matches = [item for item in items if str(item.get('date') or '') == day]
+        except ValueError:
+            matches = []
+        if not matches and resource == 'weights':
+            wanted = _telegram_name_key(query)
+            matches = [item for item in items if wanted and _telegram_name_key(str(item.get('kg') or '')) == wanted]
+        return (matches[0] if len(matches) == 1 else None), matches
+    field = _telegram_resource_name_field(resource)
+    matched, matches = _telegram_match_named_item(query, items, field)
+    if resource == 'workout_plan' and not matched:
+        day_match, day_matches = _telegram_match_named_item(query, items, 'weekday')
+        if day_match or day_matches:
+            return day_match, day_matches
+    return matched, matches
+
+
+def _telegram_parse_datetime(value: str) -> str:
+    text_value = re.sub(r'(?i)\bat\b', ' ', str(value or '').strip())
+    time_match = re.search(r'(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)', text_value)
+    if not time_match:
+        raise ValueError('Please include a time in 24-hour HH:MM format, for example 25/11/26 10:00.')
+    time_value = f'{int(time_match.group(1)):02d}:{time_match.group(2)}'
+    date_text = (text_value[:time_match.start()] + ' ' + text_value[time_match.end():]).strip(' ,')
+    parsed_day = _telegram_parse_date(date_text or 'today')
+    if parsed_day is None:
+        raise ValueError('I could not understand that date.')
+    return f'{parsed_day.isoformat()}T{time_value}'
+
+
+def _telegram_parse_management_fields(resource: str, specification: str) -> dict[str, Any]:
+    """Parse a small, explicit key=value patch; API validators remain authoritative."""
+    _, allowed = TABLES[resource]
+    fields: dict[str, Any] = {}
+    segments = re.split(r',\s*(?=[a-zA-Z_][a-zA-Z0-9_ ]*\s*(?:=|:))', specification.strip())
+    for segment in segments:
+        match = re.match(r'^\s*([a-zA-Z_][a-zA-Z0-9_ ]*)\s*(?:=|:)\s*(.*?)\s*$', segment)
+        if not match:
+            raise ValueError('Use field=value pairs separated by commas, for example due_date=tomorrow,due_time=18:00.')
+        key = re.sub(r'\s+', '_', match.group(1).strip().lower())
+        value = match.group(2).strip()
+        key = TELEGRAM_EDIT_FIELD_ALIASES.get(resource, {}).get(key, key)
+        if key not in allowed:
+            valid = ', '.join(allowed)
+            raise ValueError(f"I can't change '{key}' for this item. Available fields: {valid}.")
+
+        if key in {'due_date', 'next_due', 'last_done', 'expiry_date', 'date'}:
+            fields[key] = None if value.lower() in {'none', 'clear', 'no date'} else _telegram_parse_date(value).isoformat()
+        elif key in {'start_at', 'end_at'}:
+            fields[key] = None if value.lower() in {'none', 'clear'} else _telegram_parse_datetime(value)
+        elif key in {'due_time', 'routine_time', 'routine_late_time'}:
+            if value.lower() in {'none', 'clear', 'no time'}:
+                fields[key] = None
+            else:
+                parsed = datetime.strptime(value, '%H:%M')
+                fields[key] = parsed.strftime('%H:%M')
+        elif key in {'amount_mad', 'kg', 'duration_min', 'distance_km', 'speed_kmh', 'incline', 'calories_kcal', 'weight_kg', 'servings'}:
+            fields[key] = None if value.lower() in {'none', 'clear'} and key == 'calories_kcal' else float(value.replace(',', '.'))
+        elif key in {'interval_days', 'reminder_days', 'routine_rollover_after_late', 'plates_ready', 'eating_interval_days', 'batch_plates', 'sets', 'checked'}:
+            if key == 'checked':
+                if value.lower() in {'yes', 'true', '1', 'done', 'purchased', 'checked'}:
+                    fields[key] = 1
+                elif value.lower() in {'no', 'false', '0', 'open', 'pending', 'unchecked'}:
+                    fields[key] = 0
+                else:
+                    raise ValueError('For checked, use yes or no.')
+            else:
+                number = float(value)
+                if not number.is_integer():
+                    raise ValueError(f'{key.replace("_", " ").title()} must be a whole number.')
+                fields[key] = int(number)
+        elif key in {'ingredients_json', 'excluded_weekdays_json'}:
+            items = [part.strip() for part in re.split(r'[;|]', value) if part.strip()]
+            fields[key] = json.dumps(items, ensure_ascii=False)
+        else:
+            fields[key] = value
+    if not fields:
+        raise ValueError('Tell me which field you want to change.')
+    return fields
+
+
+def _telegram_format_management_error(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        detail = str(exc.detail)
+        return detail[:700]
+    if isinstance(exc, (ValueError, TypeError, OverflowError)):
+        return str(exc)[:700]
+    return 'I could not complete that change. Nothing has been confirmed as successful; please check the record and try again.'
+
+
+def _telegram_manage_request(raw: str) -> str | None:
+    """Handle explicit add/edit/delete requests for XROB records from Telegram."""
+    text_value = str(raw or '').strip()
+    if not text_value:
+        return None
+
+    # Generic editing uses an explicit, auditable field list after a pipe.
+    aliases = sorted(TELEGRAM_MANAGE_RESOURCE_ALIASES, key=len, reverse=True)
+    alias_pattern = '|'.join(re.escape(alias) for alias in aliases)
+    edit_match = re.match(
+        rf'(?is)^(?:/edit|edit|update|change|set)\s+(?P<kind>{alias_pattern})\s+(?P<target>.+?)\s*\|\s*(?P<fields>.+)$',
+        text_value,
+    )
+    if edit_match:
+        _telegram_set_state(None)
+        resource = TELEGRAM_MANAGE_RESOURCE_ALIASES[edit_match.group('kind').lower()]
+        target = edit_match.group('target').strip()
+        try:
+            matched, matches = _telegram_find_resource_item(resource, target)
+            if not matched:
+                if len(matches) > 1:
+                    field = _telegram_resource_name_field(resource)
+                    options = ', '.join(str(item.get(field) or 'Untitled') for item in matches[:6])
+                    return f'I found more than one match. Which one did you mean: {options}?'
+                return f"I couldn't find a saved {edit_match.group('kind')} called '{target}'."
+            changes = _telegram_parse_management_fields(resource, edit_match.group('fields'))
+            result = update_resource(resource, int(matched['id']), Payload(data=changes))
+            field = _telegram_resource_name_field(resource)
+            name = str((result or matched).get(field) or target)
+            summary_fields = ', '.join(f'{key.replace("_", " ")}={value}' for key, value in changes.items())
+            return f'✅ Updated {edit_match.group("kind")} · {name}\nSaved: {summary_fields}.'
+        except Exception as exc:
+            return f"I couldn't update that record: {_telegram_format_management_error(exc)}"
+
+    # Deletion always enters a confirmation state before touching the database.
+    delete_match = re.match(rf'(?is)^(?:/delete|delete|remove)\s+(?P<kind>{alias_pattern})\s+(?P<target>.+?)\s*$', text_value)
+    if delete_match:
+        _telegram_set_state(None)
+        resource = TELEGRAM_MANAGE_RESOURCE_ALIASES[delete_match.group('kind').lower()]
+        target = delete_match.group('target').strip()
+        try:
+            matched, matches = _telegram_find_resource_item(resource, target)
+            if not matched:
+                if len(matches) > 1:
+                    field = _telegram_resource_name_field(resource)
+                    options = ', '.join(str(item.get(field) or 'Untitled') for item in matches[:6])
+                    return f'I found several matches. Please use the exact name: {options}.'
+                return f"I couldn't find a saved {delete_match.group('kind')} called '{target}'."
+            field = _telegram_resource_name_field(resource)
+            name = str(matched.get(field) or target)
+            _telegram_set_flow('delete_resource', 'confirm', {
+                'resource': resource, 'id': int(matched['id']), 'name': name,
+                'kind': delete_match.group('kind').lower(),
+                'series_id': matched.get('series_id'),
+            })
+            extra = ' This removes only the selected bill occurrence, not its other history.' if resource == 'bills' else ''
+            if resource == 'recipes':
+                extra = ' Confirmed eaten-meal history is preserved.'
+            return f"Should I remove {delete_match.group('kind')} '{name}'?{extra}\nReply YES to confirm or NO to keep it."
+        except Exception as exc:
+            return f"I couldn't prepare that removal: {_telegram_format_management_error(exc)}"
+
+    # New record helpers for the remaining app areas; tasks, meals, shopping and
+    # events also retain their existing dedicated/guided handlers below.
+    add_match = re.match(r'(?is)^(?:/add|add|create|new|log)\s+(?P<kind>routine|bill|document|doc|workout|event|appointment)\s+(?P<body>.+)$', text_value)
+    if add_match:
+        _telegram_set_state(None)
+        kind = add_match.group('kind').lower()
+        body = add_match.group('body').strip()
+        try:
+            if kind in {'event', 'appointment'}:
+                parts = [part.strip() for part in body.split('|', 1)]
+                if len(parts) != 2 or not parts[0]:
+                    raise ValueError('Use: add event Dentist|25/11/26 10:00.')
+                data = {'title': parts[0], 'start_at': _telegram_parse_datetime(parts[1]), 'category': 'personal'}
+                result = create_resource('events', Payload(data=data))
+            elif kind == 'routine':
+                parts = [part.strip() for part in body.split('|')]
+                if len(parts) >= 2:
+                    name = parts[0]
+                    interval = int(parts[1])
+                    routine_time = parts[2] if len(parts) >= 3 else '10:00'
+                else:
+                    pattern = re.match(r'(?is)^(.+?)(?:\s+every\s+(\d+)\s+days?)?(?:\s+at\s+(\d{1,2}:\d{2}))?$', body)
+                    name = pattern.group(1).strip() if pattern else ''
+                    interval = int(pattern.group(2) or 1) if pattern else 1
+                    routine_time = pattern.group(3) if pattern and pattern.group(3) else '10:00'
+                if not name:
+                    raise ValueError('Give the routine a name, for example: add routine Stretching every 2 days at 08:00.')
+                result = create_resource('routines', Payload(data={
+                    'name': name, 'interval_days': interval, 'routine_time': routine_time,
+                    'next_due': date.today().isoformat(), 'category': 'personal',
+                }))
+            elif kind == 'bill':
+                parts = [part.strip() for part in body.split('|')]
+                if len(parts) < 3:
+                    raise ValueError('Use: add bill Internet|299|30/11/26|monthly. Recurrence can be none, monthly, quarterly or yearly.')
+                recurrence = parts[3].lower() if len(parts) >= 4 and parts[3] else 'none'
+                result = create_resource('bills', Payload(data={
+                    'name': parts[0], 'amount_mad': float(parts[1].replace(',', '.')),
+                    'due_date': _telegram_parse_date(parts[2]).isoformat(), 'recurrence': recurrence,
+                    'status': 'unpaid', 'reminder_days': 3,
+                }))
+            elif kind in {'document', 'doc'}:
+                parts = [part.strip() for part in body.split('|', 1)]
+                if len(parts) != 2:
+                    raise ValueError('Use: add document Passport|31/12/27.')
+                result = create_resource('documents', Payload(data={
+                    'name': parts[0], 'expiry_date': _telegram_parse_date(parts[1]).isoformat(),
+                    'reminder_days': 30,
+                }))
+            else:  # workout / log workout
+                name = body.split('|', 1)[0].strip()
+                if not name:
+                    raise ValueError('Give the workout a name, for example: log workout Upper body.')
+                result = create_resource('workouts', Payload(data={
+                    'name': name, 'date': date.today().isoformat(), 'notes': '',
+                }))
+            label_field = _telegram_resource_name_field({'event': 'events', 'appointment': 'events', 'doc': 'documents'}.get(kind, kind + 's'))
+            name = str((result or {}).get(label_field) or body.split('|', 1)[0])
+            return f'✅ Added {kind} · {name}. It is saved in XROB, love.'
+        except Exception as exc:
+            return f"I couldn't add that {kind}: {_telegram_format_management_error(exc)}"
+
+    return None
+
+
+def _mikasa_app_knowledge_reply(raw: str) -> str | None:
+    """Answer XROB questions from a curated map of implemented behavior."""
+    low = _normalize_telegram_command_text(raw)
+    overview_queries = {
+        '/about', '/features', 'about xrob', 'what is xrob', 'what is xrob assistant',
+        'what do you know about this app', 'what do you know about xrob',
+        'explain this app', 'how does xrob work', 'what does this app do',
+        'what can you manage', 'what can you control', 'show app features', 'app features',
+        'show me what you can manage', 'what parts of my app can you manage',
+        'give me an overview of the app', 'explain all app features',
+    }
+    if low in overview_queries:
+        return _telegram_capabilities_message()
+
+    management_queries = {
+        'how do i edit records', 'how can you edit records', 'how do i update records',
+        'how do i change a saved item', 'how can you change my records', 'how do i manage records',
+        'how can you manage my app', 'can you edit my records', 'can you update my records',
+    }
+    if low in management_queries:
+        return (
+            "Of course, love. I use XROB's own validated record handlers. To edit, write "
+            "`edit task Study | due_date=tomorrow,priority=high` and replace the resource, saved name and fields. "
+            "Supported types include tasks, events, routines, bills, documents, recipes, shopping items, workouts, "
+            "workout plans, weights and treadmill logs. To remove, write `delete task Study`; I'll ask you to reply "
+            "YES or NO before anything is deleted. Add tasks with `task Study tomorrow at 18:00`, routines/bills/" 
+            "documents/events with `add ...`, workouts with `log workout ...`, recipes with `/addrecipe` and shopping "
+            "items with `/additem`. 💗"
+        )
+
+    delete_queries = {'how do i delete a record', 'how do i remove an item', 'can you delete records', 'how does delete work'}
+    if low in delete_queries:
+        return (
+            "Tell me the record type and its saved name, for example `delete task Study`. I'll identify the exact match, "
+            "show you what will be removed and wait for YES or NO. A NO keeps it unchanged, love. 💗"
+        )
+
+    limitation_queries = {'what can you not do', 'what can you not manage', 'what are your limits', 'what are your limitations'}
+    if low in limitation_queries:
+        return (
+            "I can manage the XROB records and flows listed in /help, but I cannot make payments, access unconnected "
+            "external accounts, change Home Assistant settings, or perform arbitrary actions outside XROB. In this local "
+            "build I also cannot analyse Telegram photos/videos, transcribe voice notes or open Telegram file contents. "
+            "I would rather tell you clearly than pretend, 7obi. 🤍"
+        )
+
+    architecture_queries = {
+        'how do you work', 'how do you think', 'are you connected to an ai model',
+        'do you use chatgpt', 'are you using a language model', 'do you use cloud ai',
+        'are you a real ai assistant',
+    }
+    if low in architecture_queries:
+        return (
+            "I'm Mikasa, the XROB assistant, love. This version uses a local rules-based command and conversation router "
+            "connected to XROB's database and validated actions; it is not connected to a general-purpose cloud language "
+            "model. That keeps your app records local to the add-on, but it means I understand the supported commands and "
+            "documented app questions—not every possible sentence. 🤍"
+        )
+
+    meal_rule_queries = {
+        'how does meal scheduling work', 'how does the meal planner work',
+        'what are the meal scheduling rules', 'explain my meal plan rules',
+        'why is this meal scheduled', 'how are meals scheduled',
+    }
+    if low in meal_rule_queries or ('meal' in low and any(term in low for term in ('rules', 'schedule logic', 'automatic scheduling'))):
+        return (
+            "Of course, 7obi. Here is how your meal planner behaves:\n"
+            "• One plate is reserved per date.\n"
+            "• Each recipe follows its saved minimum repeat interval from its latest planned or eaten occurrence.\n"
+            "• Closed weekdays and dates you marked free are skipped.\n"
+            "• Home meals need ready stock; scheduled plates reserve stock, and confirming a plate as eaten updates the kitchen count.\n"
+            "• Your manual future choices and confirmed eating history are preserved when the automatic plan is rebuilt.\n"
+            "• ‘Not today’ moves the pending plan forward without compressing a recipe's saved interval.\n"
+            "I won't silently replace an eaten plate or refill a date you deliberately left empty. 💗"
+        )
+
+    backup_queries = {'how do backups work', 'where are my backups', 'does xrob make backups', 'database backup'}
+    if low in backup_queries:
+        return (
+            "XROB stores its database in the add-on configuration directory. It can create an online SQLite snapshot "
+            "before migrations, keep a rolling set of recent snapshots, and create a manual backup from Settings. "
+            "Those snapshots are a safety net, not a replacement for a separate Home Assistant backup, love. 🤍"
+        )
+
+    privacy_queries = {'where is my data stored', 'is my xrob data local', 'does xrob use cloud ai', 'is this app local'}
+    if low in privacy_queries:
+        return (
+            "Your XROB records are kept in the add-on's local configuration database. Telegram messages are processed "
+            "by the configured bot connection; the app's command engine itself uses local rules and your saved records. "
+            "This build does not send your records to a hosted language model, love. 🤍"
+        )
+
+    return None
 
 
 def _telegram_get_state() -> str | None:
@@ -4170,6 +4534,28 @@ async def _telegram_command_core(text: str) -> str:
     state = _telegram_get_state()
     conversation_active = bool(state)
     flow_state = _telegram_get_flow()
+
+    # Mikasa's generic delete flow is deliberately explicit and survives restarts.
+    if flow_state and flow_state.get('flow') == 'delete_resource':
+        if low in {'yes', 'y', 'confirm', 'delete', '/yes', '/confirm'}:
+            payload = dict(flow_state.get('data') or {})
+            _telegram_set_state(None)
+            resource = str(payload.get('resource') or '')
+            item_id = int(payload.get('id') or 0)
+            name = str(payload.get('name') or 'record')
+            kind = str(payload.get('kind') or resource.rstrip('s'))
+            try:
+                result = delete_resource(resource, item_id)
+                if resource == 'recipes' and result.get('history_preserved'):
+                    return f"Done, love. {name} was removed from your active meals; its confirmed history is safe. 💗"
+                return f"Done, 7obi. {kind.title()} '{name}' has been removed from XROB. 💗"
+            except Exception as exc:
+                return f"I couldn't remove {name}: {_telegram_format_management_error(exc)}"
+        if low in {'no', 'n', 'cancel', '/no', '/cancel', 'keep'}:
+            _telegram_set_state(None)
+            return 'Of course, love. I kept the record exactly as it was. 💗'
+        return 'Please reply YES to confirm the removal or NO to keep the record. Nothing has been deleted yet.'
+
     if low in ('/cancel', 'cancel', 'stop'):
         _telegram_set_state(None)
         return 'Cancelled. Nothing was saved.'
@@ -4834,14 +5220,18 @@ async def _telegram_command_core(text: str) -> str:
 def _telegram_capabilities_message() -> str:
     """Describe only actions the current Telegram implementation really supports."""
     return (
+        'Mikasa — your XROB assistant.\n' +
         mikasa_persona.help_intro() + '\n\n' +
         '📅 YOUR DAY\n'
         '• /today — tasks, routines, events, workouts, meals, bill and document alerts, and completed activity.\n'
         '• /tomorrow — tomorrow’s agenda; /status — app progress, latest fitness records, meal stock and bills.\n'
         '• /tasks, /bills, /routines, /documents, /agenda — see your saved lists and expiry dates.\n'
-        '• You can also ask naturally: what are my tasks, what do I owe, what is left today, or what did I finish today.\n'
+        '• Ask naturally: what are my tasks, what do I owe, what is left today, or what did I finish today.\n'
         '• task Study tomorrow at 18:00 — add a task; task done Study — finish it.\n'
-        '• /event Dentist|25/11/26 10:00 — add an appointment; ask how many days until Exams for a countdown.\n'
+        '• /event Dentist|25/11/26 10:00 or add event Dentist|25/11/26 10:00 — add an appointment.\n'
+        '• Add records: add routine Stretching every 2 days at 08:00; add bill Internet|299|30/11/26|monthly; add document Passport|31/12/27; log workout Upper body.\n'
+        '• Edit saved records with explicit fields: edit task Study | due_date=tomorrow,priority=high. Fields must use the names shown by XROB.\n'
+        '• Edit/delete supported records: tasks, events, routines, bills, documents, recipes, shopping items, workouts, workout plans, weights and treadmill logs. Delete always asks YES/NO.\n'
         '• done Shower — complete a routine; paid Electricity — mark a bill paid.\n'
         '• Reply not now to a routine reminder to move that routine to tomorrow.\n\n'
         '🍽️ MEALS & SHOPPING\n'
@@ -4949,6 +5339,9 @@ def _mikasa_context_for_message(raw: str) -> dict[str, int]:
 def _telegram_social_reply(raw: str) -> str | None:
     """Route social messages and app-aware questions without guessing facts."""
     low = re.sub(r'\s+', ' ', str(raw or '').strip().lower()).rstrip('.!?')
+    knowledge = _mikasa_app_knowledge_reply(raw)
+    if knowledge is not None:
+        return knowledge
     countdown = _mikasa_event_countdown_reply(raw)
     if countdown is not None:
         return countdown
@@ -4969,8 +5362,11 @@ def _telegram_persona_prefix(raw: str, reply: str) -> str:
 
 
 async def telegram_command(text: str) -> str:
-    """Mikasa voice pack around the unchanged, deterministic command engine."""
+    """Mikasa voice and app-aware shortcuts around XROB's validated command engine."""
     raw = str(text or '').strip()
+    management = _telegram_manage_request(raw)
+    if management is not None:
+        return mikasa_persona.command_reply(raw, management)
     social = _telegram_social_reply(raw)
     if social is not None:
         return social
