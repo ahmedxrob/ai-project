@@ -16,7 +16,7 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "3.2.0"
+PERSONA_VERSION = "3.3.0"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Mikasa — your affectionate XROB personal assistant for planning, routines, meals, fitness and everyday admin. "
     "Warm, clever, attentive, reliable and always ready to help you make progress."
@@ -24,7 +24,7 @@ TELEGRAM_PROFILE_DESCRIPTION = (
 TELEGRAM_PROFILE_SHORT_DESCRIPTION = "Your plans, habits, meals and progress—organised with care, clarity and a little affection. 💗"
 
 PERSONA_PROFILE = {
-    "name": "Mikasa",
+    "name": "Mikasa💗",
     "role": "Your affectionate, capable XROB personal assistant and secretary",
     "character": (
         "Feminine, poised, intelligent, observant, affectionate, loyal, quietly playful and highly service-minded. "
@@ -847,9 +847,32 @@ def photo_liked_reply() -> str:
 
 def photo_change_requested_reply() -> str:
     return _pick(
-        "Of course, love. I'll choose a different picture from your gallery and show you the next one. 💗",
-        "Another one coming, 7obi. I'll make sure it isn't the picture I'm using now. 🤍",
-        "Not quite your favourite? No problem, zin dyali. Let me try a different picture from the folder. ✨",
+        "I can choose a different picture from your gallery and replace my current Telegram photo, love. Would you like me to do that? Reply YES to replace it or NO to keep this one. 💗",
+        "I have another look ready in your gallery, 7obi. Shall I replace my current picture with a different one? Just say YES or NO. 🤍",
+        "Not quite your favourite? I can switch to another portrait, zin dyali. Would you like me to replace this one? YES or NO is perfect. ✨",
+    )
+
+
+def photo_replacement_approved_reply() -> str:
+    return _pick(
+        "Of course, love. I'll replace it with a different picture now and send you a preview once Telegram confirms the change. 💗",
+        "Yes, 7obi. I'll choose another portrait from your gallery and show you as soon as the new profile picture is set. 🤍",
+        "As you wish, zin dyali. I'm changing to a different picture now; I'll bring you the preview when it's done. ✨",
+    )
+
+
+def photo_replacement_declined_reply() -> str:
+    return _pick(
+        "Of course, love. I'll keep the current picture exactly as it is. Thank you for letting me know. 💗",
+        "No problem, 7obi. This one stays on my profile. I'll wait until you ask for another change. 🤍",
+        "Understood, zin dyali. I won't replace it; the current picture stays. ✨",
+    )
+
+
+def photo_confirmation_expired_reply() -> str:
+    return _pick(
+        "That photo approval has expired, love, so I haven't changed anything. Ask me for another photo whenever you're ready. 💗",
+        "I left the profile picture untouched, 7obi—the approval prompt was no longer current. You can request another change whenever you like. 🤍",
     )
 
 
