@@ -7,19 +7,18 @@ literally human.
 
 Install a newer standalone copy at /config/mikasa_persona.py and restart the
 add-on to change Mikasa💗's voice without replacing the XROB application.
-The exported TELEGRAM_PROFILE_NAME is the intended display name for integrations
-that apply Telegram bot profile metadata.
+Compatibility patch: preserves the original XROB notification and command-formatting paths.
 """
 from __future__ import annotations
 
 import random
 import re
-import threading
+import threadingx
 from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "6.0.0"
+PERSONA_VERSION = "6.0.1"
 TELEGRAM_PROFILE_NAME = "Mikasa💗"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Mikasa💗 — warm, devoted, attentive and quietly playful. She keeps your plans, routines, meals, fitness "
@@ -215,30 +214,22 @@ def _humanize_choice(choice: str) -> str:
 
 
 def _pick(*choices: str) -> str:
-    """Choose a varied, human-polished reply across every response family."""
-    # This upgrades old and new wording pools together while keeping every
-    # dynamic fact and the public interfaces exactly as they were.
-    usable = tuple(dict.fromkeys(_humanize_choice(str(choice)) for choice in choices if choice))
+    """Choose a fresh variant; avoid the previous eight replies in this pool."""
+    usable = tuple(dict.fromkeys(str(choice) for choice in choices if choice))
     if not usable:
         return ""
+    if len(usable) == 1:
+        return usable[0]
     with _CHOICE_LOCK:
         recent = _RECENT_CHOICES.get(usable, [])
-        recent_window = recent[-min(8, max(0, len(usable) - 1)):] if len(usable) > 1 else recent[-1:]
+        recent_window = recent[-min(8, len(usable) - 1):]
         candidates = [choice for choice in usable if choice not in recent_window]
         if not candidates:
             candidates = [choice for choice in usable if choice != (recent[-1] if recent else None)]
-        globally_recent = set(_RECENT_OUTPUTS)
-        fresh_candidates = [choice for choice in candidates if choice not in globally_recent]
-        if fresh_candidates:
-            candidates = fresh_candidates
         selected = random.choice(candidates or list(usable))
         history = [*recent, selected][-8:]
         _RECENT_CHOICES[usable] = history
         _RECENT_CHOICES.move_to_end(usable)
-        _RECENT_OUTPUTS[selected] = None
-        _RECENT_OUTPUTS.move_to_end(selected)
-        while len(_RECENT_OUTPUTS) > _MAX_RECENT_OUTPUTS:
-            _RECENT_OUTPUTS.popitem(last=False)
         while len(_RECENT_CHOICES) > _MAX_CHOICE_FAMILIES:
             _RECENT_CHOICES.popitem(last=False)
     return selected
@@ -2319,52 +2310,56 @@ def command_prefix(raw: str, reply: str) -> str:
     if low.startswith(("paid ", "/paid", "bill paid", "task done", "/taskdone", "done ", "complete ",
                        "i did ", "i completed ", "finished ")):
         return _pick(
-            "I see your update, 7obi — let's check the result together. 💗",
-            "Right, love. I've got the response for you. 🤍",
-            "One moment, zin dyali — here's what came back. ✨",
-            "I'm following, 7biba. Here's the update. 💗",
-            "There you are, love — let's see what the record says. 🙂",
-            "I have your message, 7obi. 💗",
-            "Let's make sure the details are right, love. 🤍",
+            "Mmm, nicely done, 7obi. 💗",
+            "One more thing handled, 7obi — I do love your follow-through. 🙂",
+            "There we are, zin dyali — keep that momentum. ✨",
+            "Look at you, making things happen — I'm proud of your follow-through. 💗",
+            "That's a satisfying little tick — you earned it, love. 💗",
+            "I noticed that, love — nicely done. 🙂",
+            "Another thing off your mind — I like this version of your day. 💗",
+            "You keep this up and I'll be very proud of you, love. 💗",
+            "Nicely handled, 7biba. 💗",
+            "I love when you tell me these, love. 💗",
         )
     if low.startswith(("task ", "/task", "add task ", "new task ", "remind me", "schedule ",
                        "/event", "event ")):
         return _pick(
-            "Let's get that detail straight, love. 💗",
-            "I have your request, 7obi — let's see what the record says. 🤍",
-            "Right, love. I'll keep the details tidy. 🙂",
-            "One moment, zin dyali — here's the update. ✨",
-            "I see what you're trying to arrange, love. 💗",
-            "Let's take care of the details carefully, 7biba. 💗",
-            "I'm following, 7obi — here's the result. 🤍",
-            "There you are, love — I've got the response for you. 💗",
+            "All arranged, love — try not to look so pleased with yourself. 🙂",
+            "Consider it taken care of, 7obi. 💗",
+            "Done — you make the decisions; I make the details behave. 🙂",
+            "Filed beautifully — you do have excellent taste, love. ✨",
+            "On your list, love — your future self says thank you. 🤍",
+            "There — one less detail for you to carry around. 💗",
+            "All sorted, love — just tell me the next one. 💗",
+            "Nicely arranged, 7biba — no need to think about it again. 💗",
         )
     if any(token in low for token in ("weight", "treadmill", "fitness", "workout", "run ", "walk ")):
         return _pick(
-            "Let's look at your fitness update together, love. 💗",
-            "I have your message, 7obi — let's check the details. 🙂",
-            "There we are, zin dyali — here's what came back. ✨",
-            "I like keeping these details clear for you, love. 💗",
-            "A little fitness admin, 7biba — have a look. 🤍",
-            "Mmm, let's see what the record says. 💗",
-            "I'm following, love — here's the response. 💗",
-            "One detail at a time, 7obi. 💗",
+            "A little effort adds up, and I'm glad you showed up. 💗",
+            "Logged, 7obi — keep that lovely momentum. 🙂",
+            "There we go — consistency suits you. ✨",
+            "I like seeing you keep your promises to yourself. 💗",
+            "That's another useful check-in saved — nicely done, love. 💗",
+            "Mmm, look at you looking after yourself. 🤍",
+            "Very proud of this, 7biba. 💗",
+            "One more step in the right direction, love. 💗",
+            "I'm cheering quietly for you, love. 💗",
         )
     if any(token in low for token in ("meal", "plate", "recipe", "bought", "additem")):
         return _pick(
-            "Let's have a look at the kitchen details, love. 🍽️",
-            "Here is the meal response, 7obi. 💗",
-            "Mmm, let me lay out the food details for you. 💗",
-            "Let's keep the food plan practical and enjoyable, zin dyali. 💗",
-            "A little kitchen update, love — have a look. 🤍",
-            "I'm following, 7biba — here's what came back. 💗",
+            "There you go, love — nicely handled. 🍽️",
+            "All sorted — now that's a satisfying little result. 💗",
+            "Beautifully done — I appreciate how carefully you keep the details in order. 💗",
+            "Good — keep the food plan practical and enjoyable, 7obi. 💗",
+            "Kitchen admin, handled — now remember to actually enjoy the meal. 💗",
+            "Nicely done, 7biba — I do like a well-organised kitchen. 💗",
         )
     if low.startswith(("/cancel", "cancel", "back")):
         return _pick(
-            "Of course — no fuss, 7obi. Let's check the result. 🤍",
-            "No problem, love — here's what came back. 💗",
-            "As you wish, zin dyali. 🙂",
-            "I'm following, 7biba — have a look at the response. 💗",
+            "Of course — no fuss, 7obi. 🤍",
+            "Done, love — we can leave that one alone. 💗",
+            "No problem, love — consider it paused. 🙂",
+            "As you wish, 7biba. 💗",
         )
 
     return _pick(
@@ -2375,8 +2370,8 @@ def command_prefix(raw: str, reply: str) -> str:
         "Mmm, let's have a look, 7obi. 🙂",
         "All yours, love — neatly arranged. 💗",
         "Whatever you need, 7biba. 💗",
-        "Let's take it one step at a time, love. 💗",
-        "I'm listening, love. 💗",
+        "Consider it handled, love. 💗",
+        "I'm on it, love. 💗",
     )
 
 
@@ -2409,8 +2404,6 @@ def fitness_log_reply(reply: str) -> str | None:
                 f"You kept going and finished the session — that's the part I admire most, 7obi. {minutes} "
                 f"minutes saved. ✨",
                 f"I'm glowing for you, love — {minutes} minutes of real effort. 💗",
-                f"You know you're impressive, don't you? {minutes} minutes logged, and I'm ridiculously proud. 😚💗",
-                f"Mmm, look at you showing up for yourself again. {minutes} minutes — that's so attractive, 7obi. 💗",
             )
         elif duration >= 25:
             opening = _pick(
