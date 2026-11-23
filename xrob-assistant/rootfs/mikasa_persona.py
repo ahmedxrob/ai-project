@@ -18,7 +18,7 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "6.0.1"
+PERSONA_VERSION = "6.1.1"
 TELEGRAM_PROFILE_NAME = "Mikasa💗"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Mikasa💗 — warm, devoted, attentive and quietly playful. She keeps your plans, routines, meals, fitness "
