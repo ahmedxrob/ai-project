@@ -1168,7 +1168,7 @@ body{min-height:100vh;min-height:100dvh}
 @media(max-width:700px){.system-diagnostics-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.system-diagnostic-item{padding:10px}.system-backup-actions>*{flex:1 1 100%;text-align:center}}
 
 
-/* XROB 1.0.4 — persistent Mikasa Telegram profile-photo gallery */
+/* XROB 1.0.5 — collapsible Mikasa gallery and safer photo confirmations */
 .mikasa-photo-card{grid-column:1/-1;}
 .mikasa-photo-upload-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;}
 .mikasa-photo-upload-row input[type=file]{flex:1 1 250px;min-width:0;color:var(--muted);font-size:11px;}
@@ -1182,3 +1182,7 @@ body{min-height:100vh;min-height:100dvh}
 .mikasa-photo-meta .mini-btn{justify-self:start;}
 .mikasa-photo-item>.tag{position:absolute;top:15px;left:15px;box-shadow:0 2px 8px #0008;}
 @media(max-width:620px){.mikasa-photo-upload-row{align-items:stretch;flex-direction:column}.mikasa-photo-upload-row button{width:100%}.mikasa-photo-gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}}
+
+/* Mikasa's photo gallery is opt-in to keep Settings compact. */
+#mikasa-photo-gallery[hidden]{display:none!important}
+.mikasa-photo-gallery-toggle{margin-top:10px;min-height:36px}
