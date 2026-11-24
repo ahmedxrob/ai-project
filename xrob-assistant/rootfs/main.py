@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-APP_VERSION = '1.0.5'
+APP_VERSION = '1.0.6'
 APP_RELEASE_CHANNEL = 'stable'
 DATA = Path(os.getenv('XROB_DATA_DIR', '/config'))
 DATA.mkdir(parents=True, exist_ok=True)
@@ -558,9 +558,7 @@ TABLES = {
 @asynccontextmanager
 async def lifespan(app):
     init_db()
-    cleared = _clear_resolved_mikasa_learning(str(getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown')))
-    if cleared:
-        print(f'Cleared {cleared} unresolved Mikasa message(s) after persona update.', flush=True)
+    _record_mikasa_learning_persona_version(str(getattr(mikasa_persona, 'PERSONA_VERSION', 'unknown')))
     try:
         maintain_meal_schedule()
     except Exception as exc:
@@ -993,14 +991,12 @@ async def _check_and_install_mikasa_update() -> dict[str, Any]:
                 MIKASA_PERSONA_SOURCE = 'config override'
                 _telegram_setting_set('mikasa_update_last_checked', checked_at)
                 _telegram_setting_set('mikasa_update_latest_version', remote_version)
-                cleared_messages = _clear_resolved_mikasa_learning(remote_version)
-                _telegram_setting_set('mikasa_update_last_result', f'Updated to {remote_version}')
-                if cleared_messages:
-                    _telegram_setting_set('mikasa_update_last_result', f'Updated to {remote_version} · cleared {cleared_messages} resolved message(s)')
+                _record_mikasa_learning_persona_version(remote_version)
+                _telegram_setting_set('mikasa_update_last_result', f'Updated to {remote_version} · learning inbox preserved')
                 return {
                     'updated': True,
-                    'cleared_missed_messages': cleared_messages,
-                    'message': f'Mikasa updated to {remote_version}. Her new voice is active now. Cleared {cleared_messages} resolved missed-message entries.',
+                    'cleared_missed_messages': 0,
+                    'message': f'Mikasa updated to {remote_version}. Her new voice is active now; your missed-message inbox was preserved.',
                     'backup': str(backup_path) if backup_path else '',
                     **_mikasa_update_status(),
                 }
@@ -1054,11 +1050,11 @@ MIKASA_CAPABILITY_CATALOG = [
     ('Daily planning', ['/today', 'today please', "what's on today", 'tomorrow plan', '/tomorrow', '/week', 'next 7 days', 'what needs my attention', 'what did I finish today']),
     ('Tasks', ['task Study tomorrow at 18:00', 'task done Study', '/tasks', 'what are my tasks', 'edit task Study | due_date=tomorrow', 'delete task Study']),
     ('Events and appointments', ['/event Dentist|25/11/26 10:00', 'add event Dentist|25/11/26 10:00', '/agenda', 'show my agenda', 'how many days left for exams']),
-    ('Routines', ['/routines', 'what are my routines', 'done Shower', 'add routine Stretching every 2 days at 08:00', 'edit routine Shower | interval_days=2']),
+    ('Routines', ['/routines', 'what are my routines', 'done Shower', 'shower done', 'I showered', 'I took a shower', 'add routine Stretching every 2 days at 08:00', 'edit routine Shower | interval_days=2']),
     ('Fitness and weight', ['weight 82.4', 'treadmill 30', 'treadmill 30 yesterday', 'log workout Upper body', '/fitness', '/fitnessweek', 'what is my current weight']),
     ('Meals and cooking', ['/meals', '/choosemeal', '/mealplan', "what's for dinner", 'YES', 'NO', 'undo eaten', '/undo_eaten', '/addrecipe', '/stock Chicken|3', '/homemeals', '/outsidemeals', 'edit recipe Chicken | plates_ready=4']),
     ('Shopping', ['/shopping', '/additem', 'bought tomatoes', 'edit shopping tomatoes | checked=yes']),
-    ('Bills and documents', ['/bills', 'what do I owe', 'paid Electricity', 'add bill Internet|299|30/11/26|monthly', '/documents', 'add document Passport|31/12/27']),
+    ('Bills and documents', ['/bills', 'what bills are next', 'paid Electricity', 'add bill Internet|30/11/26', 'add bill Internet|299|30/11/26|monthly (amount optional)', '/documents', 'add document Passport|31/12/27']),
     ('App awareness', ['/status', '/about', '/features', 'app status', 'my progress', 'how am I doing', 'how are my meals', 'how does meal scheduling work']),
     ('Social conversation', ['hello / good morning', 'thank you', 'I love you', 'I need a hug', 'motivate me', 'I am stressed', 'I passed my exam', 'are you a real person']),
     ('Settings and help', ['/help', '/about', '/features', 'how do I edit records', 'what can you not do', 'cancel', 'back']),
@@ -1131,22 +1127,20 @@ def _mikasa_learning_counts() -> dict[str, int]:
     return result
 
 
-def _clear_resolved_mikasa_learning(persona_version: str) -> int:
-    """Clear unresolved messages whenever a genuinely new persona version is activated.
+def _record_mikasa_learning_persona_version(persona_version: str) -> int:
+    """Record the active persona version without deleting the user's learning inbox.
 
-    Learned and ignored records are retained; only the open missed-message inbox is
-    cleared because those patterns were supplied for the persona improvement.
+    Unresolved messages are valuable examples for future improvements. They remain
+    available until the user marks, ignores or deletes them explicitly.
     """
     version = str(persona_version or 'unknown').strip()
     previous = _telegram_setting_get('mikasa_learning_persona_version', '')
     if not version or version == previous:
         return 0
     with connect() as c:
-        cur = c.execute("DELETE FROM mikasa_learning_log WHERE status='new'")
-        deleted = int(cur.rowcount or 0)
         c.execute("INSERT INTO telegram_state(key,value) VALUES('setting:mikasa_learning_persona_version',?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (version,))
-    return deleted
+    return 0
 
 
 @app.get('/api/mikasa/learning')
@@ -1259,7 +1253,7 @@ def export_mikasa_coverage_report():
     ])
     return PlainTextResponse(
         '\n'.join(lines).rstrip() + '\n',
-        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.5.txt"'},
+        headers={'Content-Disposition': 'attachment; filename="mikasa-message-coverage-v1.0.6.txt"'},
     )
 
 
@@ -2435,15 +2429,25 @@ def create_resource(resource: str, payload: Payload):
         data['due_date'] = validate_date_field(data.get('due_date'), 'Bill due date')
         if not data['due_date']:
             raise HTTPException(400, 'Bill due date is required.')
+        raw_amount = data.get('amount_mad')
+        if raw_amount in ('', None):
+            data['amount_mad'] = None
+        else:
+            try:
+                amount = float(raw_amount)
+                if not math.isfinite(amount) or amount < 0:
+                    raise ValueError()
+                data['amount_mad'] = amount
+            except (TypeError, ValueError, OverflowError):
+                raise HTTPException(400, 'Bill amount must be a finite, non-negative number when supplied.')
         try:
-            amount = float(data.get('amount_mad', 0))
             reminder_raw = float(data.get('reminder_days', 3))
             reminder_days = int(reminder_raw)
-            if not math.isfinite(amount) or not math.isfinite(reminder_raw) or amount < 0 or reminder_days < 0 or reminder_raw != reminder_days: raise ValueError()
-            data['amount_mad'] = amount
+            if not math.isfinite(reminder_raw) or reminder_days < 0 or reminder_raw != reminder_days:
+                raise ValueError()
             data['reminder_days'] = reminder_days
         except (TypeError, ValueError, OverflowError):
-            raise HTTPException(400, 'Bill amount and reminder days must be finite, non-negative numbers.')
+            raise HTTPException(400, 'Reminder days must be a non-negative whole number.')
     if resource == 'documents':
         data['expiry_date'] = validate_date_field(data.get('expiry_date'), 'Document expiry date')
         if not data.get('expiry_date'): raise HTTPException(400, 'Document expiry date is required.')
@@ -2658,11 +2662,15 @@ def update_resource(resource: str, item_id: int, payload: Payload):
         if 'status' in data and data['status'] not in ('unpaid', 'paid'):
             raise HTTPException(400, 'Bill status must be unpaid or paid.')
         if 'amount_mad' in data:
-            try:
-                amount = float(data['amount_mad'])
-                if not math.isfinite(amount) or amount < 0: raise ValueError()
-                data['amount_mad'] = amount
-            except (TypeError, ValueError): raise HTTPException(400, 'Bill amount must be a finite, non-negative number.')
+            if data['amount_mad'] in ('', None):
+                data['amount_mad'] = None
+            else:
+                try:
+                    amount = float(data['amount_mad'])
+                    if not math.isfinite(amount) or amount < 0: raise ValueError()
+                    data['amount_mad'] = amount
+                except (TypeError, ValueError, OverflowError):
+                    raise HTTPException(400, 'Bill amount must be a finite, non-negative number when supplied.')
         if 'reminder_days' in data:
             try:
                 raw_days = float(data['reminder_days'])
@@ -2989,6 +2997,19 @@ def complete_routine(routine_id:int):
         c.execute('UPDATE routines SET last_done=?,next_due=? WHERE id=?',(latest,next_due,routine_id))
     return one('SELECT * FROM routines WHERE id=?',(routine_id,))
 
+@app.post('/api/routines/{routine_id}/tomorrow')
+def move_routine_to_tomorrow(routine_id: int):
+    """Move the next due date to tomorrow without creating or changing a completion log."""
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        routine = c.execute('SELECT id,name,next_due FROM routines WHERE id=?', (routine_id,)).fetchone()
+        if not routine:
+            raise HTTPException(404, 'Routine not found.')
+        c.execute('UPDATE routines SET next_due=? WHERE id=?', (tomorrow, routine_id))
+    return {'id': routine_id, 'name': str(routine['name']), 'next_due': tomorrow, 'scheduled_for': 'tomorrow'}
+
+
 @app.patch('/api/routines/{routine_id}/last-record')
 def edit_routine_last_record(routine_id: int, payload: Payload):
     r=one('SELECT * FROM routines WHERE id=?',(routine_id,))
@@ -3177,7 +3198,7 @@ def build_today_agenda(day: date | None = None) -> dict[str, Any]:
             state, timing = 'due', 'Due today'
         else:
             state, timing = 'upcoming', f'Due in {days_left}d'
-        add('bill', int(bill['id']), bill['name'], f'{amount:.2f} MAD · {timing}', state,
+        add('bill', int(bill['id']), bill['name'], f'Bill · {timing}', state,
             item_date=bill['due_date'])
 
     # Documents appear as soon as their configured reminder window begins.
@@ -3384,7 +3405,8 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
             if one("SELECT id FROM notification_log WHERE kind='bill-3day' AND item_id=? AND reminder_date=?",
                    (int(bill['id']), reminder_key)):
                 continue
-            message = mikasa_persona.reminder_bill_early(bill['name'], f'{amount:.2f}', days_left, due_label)
+            amount_text = f'{amount:.2f}' if amount > 0 else ''
+            message = mikasa_persona.reminder_bill_early(bill['name'], amount_text, days_left, due_label)
             reminders.append(('bill-3day', int(bill['id']), reminder_key, message))
         elif days_left <= 1:
             # Use the persisted send timestamp, not a wall-clock bucket, so the
@@ -3406,7 +3428,8 @@ def build_bill_reminders(now: datetime | None = None) -> list[tuple[str, int, st
                 due_status = 'Due today'
             else:
                 due_status = f'Overdue by {abs(days_left)} days'
-            message = mikasa_persona.reminder_bill(bill['name'], f'{amount:.2f}', due_status, due_label)
+            amount_text = f'{amount:.2f}' if amount > 0 else ''
+            message = mikasa_persona.reminder_bill(bill['name'], amount_text, due_status, due_label)
             reminders.append(('bill-4h', int(bill['id']), reminder_key, message))
     return reminders
 
@@ -4001,6 +4024,75 @@ def _telegram_match_named_item(query: str, items: list[dict], field: str = 'name
     return (matches[0] if len(matches) == 1 else None), matches
 
 
+def _telegram_completion_forms(value: str) -> set[str]:
+    '''Return conservative base/past/gerund forms for saved routine matching.'''
+    text = _telegram_name_key(value)
+    text = re.sub(r'^(?:the|a|an|my)\s+', '', text)
+    text = re.sub(r'^(?:took|take|had|have|ate|drank)\s+(?:the|a|an|my)\s+', '', text)
+    words = text.split()
+    if not words:
+        return set()
+    forms = {text}
+    # Natural reports can inflect the verb at the start of a multiword routine
+    # (for example, 'I brushed my teeth' should match 'Brush teeth').
+    # Try each word so both single-word and multiword routine names work.
+    for index, word in enumerate(words):
+        candidates: set[str] = set()
+        if word.endswith('ied') and len(word) > 3:
+            candidates.add(word[:-3] + 'y')
+        elif word.endswith('ed') and len(word) > 2:
+            stem = word[:-2]
+            candidates.update((stem, stem + 'e'))
+        elif word.endswith('d') and len(word) > 1:
+            candidates.add(word[:-1])
+        elif word.endswith('ing') and len(word) > 4:
+            stem = word[:-3]
+            candidates.update((stem, stem + 'e'))
+        for candidate in candidates:
+            forms.add(' '.join(words[:index] + [candidate] + words[index+1:]))
+    return {form for form in forms if form}
+
+
+
+def _telegram_routine_completion_query(raw: str) -> str | None:
+    """Extract a routine name from 'done Shower', 'shower done', or natural variants."""
+    low = _normalize_telegram_command_text(raw)
+    low = re.sub(r'[.!?,]+$', '', low).strip()
+    patterns = (
+        r'^(?:i\s+am\s+)?done\s+with\s+(.+)$',
+        r'^(?:/done(?:@[a-z0-9_]+)?|done|complete|completed|finish|finished|i did|i have done|i\s+did|i have completed|i completed|i finished)\s+(.+)$',
+        r'^(?:mark|check off)\s+(.+?)\s+(?:as\s+)?done$',
+        r'^(.+?)\s+(?:is\s+)?(?:done|completed|finished)$',
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, low)
+        if match:
+            return re.sub(r'^(?:the|a|an|my)\s+', '', match.group(1).strip())
+
+    # Natural reports such as "I showered", "I've brushed my teeth" or
+    # "I took a shower". These are only acted on when they match a saved routine.
+    natural = re.sub(r"^(?:i have |i've |i am |i'm |i )", '', low).strip()
+    natural = re.sub(r'^just\s+', '', natural)
+    natural = re.sub(r'^(?:took|take|had|have|ate|drank)\s+(?:the|a|an|my)\s+', '', natural)
+    natural = re.sub(r'\b(?:the|a|an|my)\b', ' ', natural)
+    natural = re.sub(r'\s+', ' ', natural).strip()
+    natural = re.sub(r'\s+(?:today|already|just)$', '', natural)
+    return natural or None
+
+
+def _telegram_match_routine_completion(raw: str, routines: list[dict]) -> tuple[dict | None, list[dict], str | None]:
+    query = _telegram_routine_completion_query(raw)
+    if not query:
+        return None, [], None
+    query_forms = _telegram_completion_forms(query)
+    matches = [routine for routine in routines
+               if query_forms & _telegram_completion_forms(str(routine.get('name') or ''))]
+    if not matches:
+        matched, matches = _telegram_match_named_item(query, routines)
+        return matched, matches, query
+    return (matches[0] if len(matches) == 1 else None), matches, query
+
+
 
 TELEGRAM_MANAGE_RESOURCE_ALIASES = {
     'task': 'tasks', 'tasks': 'tasks',
@@ -4237,14 +4329,28 @@ def _telegram_manage_request(raw: str) -> str | None:
                 }))
             elif kind == 'bill':
                 parts = [part.strip() for part in body.split('|')]
-                if len(parts) < 3:
-                    raise ValueError('Use: add bill Internet|299|30/11/26|monthly. Recurrence can be none, monthly, quarterly or yearly.')
-                recurrence = parts[3].lower() if len(parts) >= 4 and parts[3] else 'none'
-                result = create_resource('bills', Payload(data={
-                    'name': parts[0], 'amount_mad': float(parts[1].replace(',', '.')),
-                    'due_date': _telegram_parse_date(parts[2]).isoformat(), 'recurrence': recurrence,
-                    'status': 'unpaid', 'reminder_days': 3,
-                }))
+                if len(parts) < 2 or not parts[0]:
+                    raise ValueError('Use: add bill Internet|30/11/26 (amount optional), or Internet|299|30/11/26|monthly.')
+                bill_data = {'name': parts[0], 'status': 'unpaid', 'reminder_days': 3, 'recurrence': 'none'}
+                try:
+                    due_date = _telegram_parse_date(parts[1])
+                    if len(parts) >= 3 and parts[2]:
+                        bill_data['recurrence'] = parts[2].lower()
+                except (TypeError, ValueError):
+                    if len(parts) < 3:
+                        raise ValueError('Add a due date. Example: add bill Internet|30/11/26. Amount is optional.')
+                    try:
+                        amount = float(parts[1].replace(',', '.'))
+                        if not math.isfinite(amount) or amount < 0:
+                            raise ValueError()
+                    except (TypeError, ValueError, OverflowError):
+                        raise ValueError('Use: add bill Internet|30/11/26 or Internet|299|30/11/26|monthly.')
+                    bill_data['amount_mad'] = amount
+                    due_date = _telegram_parse_date(parts[2])
+                    if len(parts) >= 4 and parts[3]:
+                        bill_data['recurrence'] = parts[3].lower()
+                bill_data['due_date'] = due_date.isoformat()
+                result = create_resource('bills', Payload(data=bill_data))
             elif kind in {'document', 'doc'}:
                 parts = [part.strip() for part in body.split('|', 1)]
                 if len(parts) != 2:
@@ -5341,7 +5447,7 @@ async def _telegram_command_core(text: str) -> str:
                 label = 'due today'
             else:
                 label = f'in {days}d'
-            lines.append(f"• {bill['name']} · {float(bill['amount_mad']):.2f} MAD · {label} ({due.strftime('%d/%m/%y')})")
+            lines.append(f"• {bill['name']} · {label} ({due.strftime('%d/%m/%y')})")
         lines.append('')
         lines.append('After paying: paid BILL NAME')
         return '\n'.join(lines)
@@ -5486,7 +5592,7 @@ async def _telegram_command_core(text: str) -> str:
         next_open = next((bill for bill in active_bill_occurrences()
                           if int(bill.get('series_id') or bill['id']) == series_id), None)
         next_text = f" Next bill due {_telegram_date_label(next_open['due_date'])}." if next_open else ''
-        return mikasa_persona.bill_paid(matched['name'], f"{float(matched['amount_mad']):.2f} MAD", next_text)
+        return mikasa_persona.bill_paid(matched['name'], '', next_text)
 
     # Bare /taskdone displays open items for convenient selection.
     if low in ('/taskdone','task done','finish task','complete task'):
@@ -5528,36 +5634,19 @@ async def _telegram_command_core(text: str) -> str:
             return str(exc)
 
     # Complete a routine. A bare /done shows which routines need attention.
-    done_command = re.match(r'(?i)^/done(?:@[a-z0-9_]+)?(?:\s+(.+))?$', raw)
-    done_name = None
-    if low in ('done', 'complete routine', 'mark routine done') or (done_command and not done_command.group(1)):
+    if low in ('done', 'complete routine', 'mark routine done', '/done'):
         due_now = rows("SELECT name FROM routines WHERE next_due<=? ORDER BY COALESCE(routine_time,'23:59'),name", (today_iso,))
-        return 'Routines to check off:\n' + ('\n'.join('• ' + item['name'] for item in due_now) if due_now else 'None due today.') + '\n\nComplete one: done ROUTINE NAME'
-    if done_command and done_command.group(1):
-        done_name = done_command.group(1).strip()
-    elif low.startswith('done ') or low.startswith('complete '):
-        done_name = re.sub(r'^(?:done|complete)\s+', '', raw, flags=re.I).strip()
-    else:
-        mark_match = re.match(r'(?i)^mark\s+(.+?)\s+(?:as\s+)?done$', raw)
-        if mark_match:
-            done_name = mark_match.group(1).strip()
-        else:
-            did_match = re.match(r'(?i)^(?:i did|i completed|finished)\s+(.+)$', raw)
-            if did_match:
-                done_name = did_match.group(1).strip()
+        return 'Routines to check off:\n' + ('\n'.join('• ' + item['name'] for item in due_now) if due_now else 'None due today.') + '\n\nComplete one: done ROUTINE NAME (or ROUTINE NAME done)'
+    routines = rows('SELECT * FROM routines')
+    matched, matches, done_name = _telegram_match_routine_completion(raw, routines)
     if done_name:
-        wanted = _telegram_name_key(done_name)
-        wanted = re.sub(r'^(?:the|my)\s+', '', wanted)
-        wanted = re.sub(r'\s+routine$', '', wanted)
-        routines = rows('SELECT * FROM routines')
-        matched, matches = _telegram_match_named_item(wanted, routines)
         if not matched:
             if len(matches) > 1:
-                return 'Which routine? ' + ', '.join(item['name'] for item in matches[:5])
-            return f"I couldn't find '{done_name}'. Send Routines to see your list."
+                return 'Which routine did you complete, love? ' + ', '.join(item['name'] for item in matches[:6])
+            return f"I couldn't match '{done_name}' to a saved routine. Send Routines to see your list. Nothing was changed. 🤍"
         updated = complete_routine(matched['id'])
         next_due = _telegram_date_label(updated.get('next_due'))
-        return mikasa_persona.routine_completed(updated['name'], next_due) 
+        return mikasa_persona.routine_completed(updated['name'], next_due)
 
     if low in ('/event', '/add_event'):
         return 'To add an event, use: /event Dentist|20/11/26 10:00'
@@ -5605,8 +5694,8 @@ def _telegram_capabilities_message() -> str:
         '• Add records: add routine Stretching every 2 days at 08:00; add bill Internet|299|30/11/26|monthly; add document Passport|31/12/27; log workout Upper body.\n'
         '• Edit saved records with explicit fields: edit task Study | due_date=tomorrow,priority=high. Fields must use the names shown by XROB.\n'
         '• Edit/delete supported records: tasks, events, routines, bills, documents, recipes, shopping items, workouts, workout plans, weights and treadmill logs. Delete always asks YES/NO.\n'
-        '• done Shower — complete a routine; paid Electricity — mark a bill paid.\n'
-        '• Reply not now to a routine reminder to move that routine to tomorrow.\n\n'
+        '• done Shower or shower done — complete a routine; paid Electricity — mark a bill paid.\n'
+        '• Use the Tomorrow button on a routine to move its next due date to tomorrow.\n\n'
         '🍽️ MEALS & SHOPPING\n'
         '• /meals, /choosemeal, /mealplan — view or choose plates.\n'
         '• YES / NO — confirm eating or safely move the pending meal plan.\n'
@@ -5644,7 +5733,7 @@ def _telegram_feature_tour_message() -> str:
         '• add event Dentist|25/11/26 10:00 — add an appointment.',
         '',
         '🔁 ROUTINES & HABITS',
-        '• done Shower — complete a due routine; reply “not now” to a routine reminder to move it to tomorrow.',
+        '• done Shower or shower done — complete a routine; use Tomorrow in the Routines page to reschedule one.',
         '• add routine Stretching every 2 days at 08:00 — create a repeating routine.',
         '',
         '💳 BILLS & DOCUMENTS',
