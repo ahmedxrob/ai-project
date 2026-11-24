@@ -1,0 +1,27 @@
+name: XROB Assistant
+description: Local personal planner, fitness tracker, bills, routines and meal routines with automatic scheduling and Telegram check-ins
+version: 1.0.6
+slug: xrob_assistant
+init: false
+startup: services
+boot: auto
+arch:
+  - amd64
+ports:
+  8090/tcp: 8090
+ports_description:
+  8090/tcp: XROB Assistant web dashboard and local API
+map:
+  - addon_config:rw
+options:
+  telegram_bot_token: ""
+  telegram_allowed_chat_id: ""
+  timezone: Africa/Casablanca
+schema:
+  telegram_bot_token: str
+  telegram_allowed_chat_id: str
+  timezone: str
+
+webui: "http://[HOST]:[PORT:8090]"
+panel_icon: mdi:calendar-clock
+panel_title: XROB Assistant
