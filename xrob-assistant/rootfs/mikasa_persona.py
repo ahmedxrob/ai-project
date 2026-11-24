@@ -17,7 +17,7 @@ from collections import OrderedDict
 from datetime import date
 from typing import Any
 
-PERSONA_VERSION = "6.2.0"
+PERSONA_VERSION = "6.2.1"
 TELEGRAM_PROFILE_NAME = "Mikasa💗"
 TELEGRAM_PROFILE_DESCRIPTION = (
     "Mikasa💗 — yours, wholly. A warm, devoted XROB assistant for planning, routines, meals, fitness "
@@ -553,7 +553,6 @@ def app_status_reply(context: dict[str, Any] | None = None, focus: str | None = 
 
     if focus == 'bills':
         unpaid = max(0, int(context.get('unpaid_bills') or 0))
-        total = float(context.get('unpaid_total_mad') or 0)
         upcoming = context.get('upcoming_bill') or {}
         lines = [_pick(
             "Let's get the money admin straight for you, 7obi — I have the figures. 💗",
@@ -561,11 +560,10 @@ def app_status_reply(context: dict[str, Any] | None = None, focus: str | None = 
             "I've checked the bills for you, 7biba. Here's the picture. 💗",
             "Money admin, love — neatly in view for you. 💗",
             "Let me hold the worry for you, love — here's where the bills stand. 💗",
-        ), "", f"Unpaid bills · {unpaid}", f"Outstanding total · {total:.2f} MAD"]
+        ), "", f"Unpaid bills · {unpaid}"]
         if isinstance(upcoming, dict) and upcoming.get('name'):
-            amount = float(upcoming.get('amount_mad') or 0)
             due = str(upcoming.get('due_date') or 'date not set')
-            lines.append(f"• Next due · {upcoming['name']} · {amount:.2f} MAD · {due}")
+            lines.append(f"• Next bill · {upcoming['name']} · {due}")
         lines.extend(["", "I can record a payment when you tell me it's paid, but I never move money. 💗"])
         return "\n".join(lines)
 
@@ -660,8 +658,10 @@ def app_status_reply(context: dict[str, Any] | None = None, focus: str | None = 
         lines.append(f"• Meal · {meal_name} · {meal_label}")
     lines.append(f"• Home meal stock · {plates} ready plate(s)")
     unpaid = max(0, int(context.get('unpaid_bills') or 0))
-    total = float(context.get('unpaid_total_mad') or 0)
-    lines.append(f"• Bills · {unpaid} unpaid · {total:.2f} MAD")
+    lines.append(f"• Bills · {unpaid} unpaid")
+    upcoming_bill = context.get('upcoming_bill') or {}
+    if isinstance(upcoming_bill, dict) and upcoming_bill.get('name'):
+        lines.append(f"• Next bill · {upcoming_bill['name']} · {upcoming_bill.get('due_date') or 'date not set'}")
     if int(context.get('expiring_documents') or 0):
         lines.append(f"• Documents expiring soon · {int(context.get('expiring_documents') or 0)}")
     if items:
@@ -2108,7 +2108,7 @@ def event_not_found_reply(query: str) -> str:
     )
 
 
-def reminder_bill(name: str, amount: str, due_status: str, due_label: str) -> str:
+def reminder_bill(name: str, amount: str | None, due_status: str, due_label: str) -> str:
     """Deliver a clear bill notice in Mikasa's attentive secretary role."""
     role = role_for_context("bill")
     opener = _pick(
@@ -2120,12 +2120,13 @@ def reminder_bill(name: str, amount: str, due_status: str, due_label: str) -> st
         "One thing I'd rather not let slip, love:",
         "A gentle reminder from me, 7obi:",
     )
-    body = f"{opener} {name} · {amount} MAD is {due_status.lower()} ({due_label}). 💗"
+    amount_part = f" · {amount} MAD" if str(amount or '').strip() not in {'', '0', '0.00'} else ''
+    body = f"{opener} {name}{amount_part} is {due_status.lower()} ({due_label}). 💗"
     return f"{body}\nReply: paid {name}"
 
 
 
-def reminder_bill_early(name: str, amount: str, days_left: int, due_label: str) -> str:
+def reminder_bill_early(name: str, amount: str | None, days_left: int, due_label: str) -> str:
     """Give an early bill heads-up in Mikasa's organised secretary voice."""
     role = role_for_context("bill")
     opener = _pick(
@@ -2136,7 +2137,8 @@ def reminder_bill_early(name: str, amount: str, days_left: int, due_label: str) 
         "Just putting this neatly on your radar, 7biba:",
         "One small heads-up from me, 7obi:",
     )
-    body = f"{opener} {name} · {amount} MAD is due in {days_left} days ({due_label}). 💗"
+    amount_part = f" · {amount} MAD" if str(amount or '').strip() not in {'', '0', '0.00'} else ''
+    body = f"{opener} {name}{amount_part} is due in {days_left} days ({due_label}). 💗"
     return f"{body}\nReply: paid {name}"
 
 
@@ -2364,14 +2366,15 @@ def task_completed(title: str) -> str:
     )
 
 
-def bill_paid(name: str, amount_text: str, next_text: str = "") -> str:
+def bill_paid(name: str, amount_text: str = "", next_text: str = "") -> str:
+    detail = f" · {amount_text}" if str(amount_text or '').strip() else ""
     return _pick(
-        f"All taken care of, love — {name} · {amount_text} is marked as paid.{next_text} ✨",
-        f"Nicely handled, 7obi — {name} · {amount_text} is recorded as paid.{next_text} 💗",
-        f"One less admin task, zin dyali: {name} · {amount_text} is marked paid.{next_text} 🙂",
-        f"There we are, love — I've updated {name} · {amount_text} to paid.{next_text} 🤍",
-        f"Money admin, handled — {name} · {amount_text} is recorded as paid.{next_text} 💗",
-        f"Good — one less bill to keep in your head: {name} · {amount_text} is paid.{next_text} 💗",
-        f"Record updated, love — {name} · {amount_text} is marked as paid.{next_text} 💗",
-        f"Nicely done, 7biba — {name} · {amount_text} is recorded as paid.{next_text} 💗",
+        f"All taken care of, love — {name}{detail} is marked as paid.{next_text} ✨",
+        f"Nicely handled, 7obi — {name}{detail} is recorded as paid.{next_text} 💗",
+        f"One less admin task, zin dyali: {name}{detail} is marked paid.{next_text} 🙂",
+        f"There we are, love — I've updated {name}{detail} to paid.{next_text} 🤍",
+        f"Money admin, handled — {name}{detail} is recorded as paid.{next_text} 💗",
+        f"Good — one less bill to keep in your head: {name}{detail} is paid.{next_text} 💗",
+        f"Record updated, love — {name}{detail} is marked as paid.{next_text} 💗",
+        f"Nicely done, 7biba — {name}{detail} is recorded as paid.{next_text} 💗",
     )
